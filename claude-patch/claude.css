@@ -1,0 +1,4 @@
+/* MyClaude: стрелки «назад/вперёд» в заголовке окна не нужны, только место занимают */
+.draggable-none > button[aria-label="Back"], .draggable-none > button[aria-label="Forward"] { display: none !important; }
+/* MyClaude: строка действий под сообщением (копировать, форк, время «3 minutes ago») видна всегда, не только при наведении */
+[aria-label="Message actions"] { opacity: 1 !important; }
