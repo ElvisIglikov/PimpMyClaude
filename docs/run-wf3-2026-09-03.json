@@ -1,19 +1,25 @@
 {
   "plan": "README «План» 3а + отчёты verify WF1 (полоска узкая как в ElvisOS, растяжение в главном окне), иконки меню, fallback команд через probe.js, блок ⌘Q",
   "project": "⚪MyClaude",
-  "status": "идёт",
-  "script_path": null,
-  "run_id": null,
+  "status": "финиш",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-MyClaude/267ec025-afa8-4b5a-9337-224aef63fb25/workflows/scripts/myclaude-wf3-fixes-wf_bb805003-dd9.js",
+  "run_id": "wf_bb805003-dd9",
   "watchdog": "watchdog-myclaude-0309",
   "next_steps": [
-    "дождаться A3/B3 + сверок",
-    "гейт: живой тест ручки (Hammerspoon double-click), установка Lua-модулей, README, коммит"
+    "Элвис смотрит глазами",
+    "перепатч v6 когда удобно",
+    "Обкэшить и ⌘N — живой тест"
   ],
   "log": [
     {
       "at": "2026-09-03T01:44:41+05:00",
       "who": "оркестратор",
       "what": "WF3 запущен: A3 inject.js, B3 Lua ×2, сверки Opus max"
+    },
+    {
+      "at": "2026-09-03T02:24:16+05:00",
+      "who": "прогон",
+      "what": "A3 ok, B3 fix-needed → 1 medium + 5 low поправлены оркестратором (TTL probe, каналы, лог, кэш иконок, enable ⌘Q, atCeiling). Живой гейт: полоска 96×18 во всех окнах, двойной клик (clickState 2 через Hammerspoon) растянул до 837 и обратно, scroll через probe-канал дошёл до всех 4 окон. Lua-модули установлены и перезагружены, статусы running"
     }
   ]
 }

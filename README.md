@@ -19,7 +19,7 @@
 
 Живой скрипт, лоадер v6 выполняет его в каждой странице Claude и перечитывает при изменении файла
 (копия лежит в `~/Library/Application Support/MyClaude/inject.js`). Поведение как в ElvisOS:
-- Едва заметная полоска над полем ввода, ярче при наведении. Тянуть вверх/вниз — высота поля.
+- Узкая (96 px) едва заметная полоска по центру над полем ввода, ярче при наведении. Тянуть вверх/вниз — высота поля.
 - Одинарный клик: поле схлопывается в полоску и обратно (из растянутого — тоже схлопывается).
 - Двойной клик: растянуть до потолка окна; ещё раз двойной — обычная высота.
 - После отправки поле НЕ сворачивается. Работает и в окнах «Open in new window».
@@ -38,15 +38,21 @@
 ```bash
 cp ~/_ElvisProjects/MyClaude/hammerspoon/claude_minimize_menu.lua ~/.hammerspoon/ && echo 'pcall(function() require("claude_minimize_menu") end)' >> ~/.hammerspoon/init.lua && hs -c 'hs.reload()'
 ```
-Пункты Свернуть/Развернуть/Прокрутить/Обкэшить идут через `command.json` — нужен лоадер v6
-(`patch-claude.mjs` поставить заново, когда удобно перезапустить Claude).
+У пунктов иконки (💰 💬 ⬇️ ⬆️ ▦ 👀 ⏬). Команды идут двумя каналами: `command.json` (лоадер v6) и временно
+`probe.js` (лоадер v5, задержка до 2 с). Проверено живьём 03.09: Прокрутить доводит все окна до низа.
+
+## ⌘Q не закрывает Claude (`hammerspoon/claude_noquit.lua`)
+
+Пока окно Claude впереди, ⌘Q перехватывается и показывает подсказку; выход только через меню Claude → Quit.
+Установка: `cp hammerspoon/claude_noquit.lua ~/.hammerspoon/`, в init.lua `pcall(function() require("claude_noquit") end)`, `hs -c 'hs.reload()'`.
+Статус: `hs -c 'return require("claude_noquit").status()'`, снять: `…stop()`.
 
 ## План
 
 1. ✅ Ручка, свернуть/развернуть (WF1, `docs/plan-wf1-2026-09-03.md`).
 2. ✅ Меню семь пунктов (WF1 + WF2, `docs/plan-wf2-2026-09-03.md`); «3 min ago» — WF2/A2.
 3. Сторож обновлений — отложен по слову Элвиса.
-3а. ⌘Q не должен закрывать Claude (слово Элвиса 03.09 01:30: случайно нажал, закрылись все четыре окна). Блокировать ⌘Q в Claude, выход только через меню. Hammerspoon-модуль `claude_noquit.lua` (hs.hotkey ⌘Q активен только когда Claude впереди, через hs.application.watcher).
+3а. ✅ ⌘Q не закрывает Claude (`claude_noquit.lua`, WF3).
 4. MyClaude.app на Swift для команды (Маша, Алла, Денис): установщик, меню и авто-Allow без Hammerspoon,
    подпись Developer ID + нотаризация. Отдельный воркфлоу после закрытия фишек.
 

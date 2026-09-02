@@ -19,6 +19,14 @@
 -- has focus, hence w:focus() and a short delay before every write. The exception is `scroll`: it
 -- is meant for every window at once, so it is written without focusing anything.
 --
+-- TEMPORARY (loader v5): the installed loader has no command.json channel — it only re-runs
+-- probe.js in every page whenever that file changes (mtime+size, polled each 2 s). So every
+-- command is ALSO written to probe.js as a one-line dispatch of the same event; the loader picks
+-- it up on its next poll (≤ 2 s) and drops the return value into probe-result.json, overwriting
+-- whatever diagnostic probe was there. Once loader v6 is installed set M.commandChannel = "json":
+-- with both channels live the page gets each command twice (inject.js does not dedupe by id),
+-- which collapse/expand/scroll survive but `cashout` would run twice.
+--
 -- Install:
 --   cp claude_minimize_menu.lua ~/.hammerspoon/
 --   add to ~/.hammerspoon/init.lua:   pcall(function() require("claude_minimize_menu") end)
@@ -28,6 +36,7 @@
 --   hs -c 'return require("claude_minimize_menu").status()'
 --   hs -c 'return require("claude_minimize_menu").stop()'
 --   hs -c 'require("claude_minimize_menu").enabled = false'   -- pause without stopping the timer
+--   hs -c 'require("claude_minimize_menu").commandChannel = "json"'   -- after loader v6
 
 local M = {}
 
@@ -41,8 +50,16 @@ M.buttonCacheSeconds = 0.5     -- AXMinimizeButton geometry cache, per window
 M.windowCacheSeconds = 1.0     -- window list cache (frames are still read every tick)
 M.focusDelay = 0.1             -- focus → command, so document.hasFocus() is true in the page
 M.cashoutNewChatDelay = 0.4    -- cashout command → ⌘N
+M.probeLagSeconds = 2.5        -- probe channel only: the loader re-reads probe.js on a 2 s poll + page walk
+M.probeTtlSeconds = 15         -- probe channel only: a stale probe.js must not replay on loader start
 M.minCellWidth = 360           -- «Расставить»: narrower cells drop a column (patch minWindowWidth)
+M.iconSize = 18                -- px, side of the square an emoji menu icon is drawn into
+M.iconColor = { white = 0.5 }  -- only monochrome glyphs (▦) take it; canvas text is white by
+                               -- default, i.e. invisible on a light menu. Mid grey reads on both,
+                               -- and a baked image cannot follow a later dark/light switch.
+M.commandChannel = "both"      -- "both" | "json" (loader v6) | "probe" (loader v5 only)
 M.commandPath = os.getenv("HOME") .. "/Library/Application Support/MyClaude/command.json"
+M.probePath = os.getenv("HOME") .. "/Library/Application Support/MyClaude/probe.js"
 
 local timer, popup = nil, nil
 local app, appCheckedAt = nil, 0
@@ -102,13 +119,11 @@ local function inside(pt, r)
   return pt.x >= r.x and pt.x <= r.x + r.w and pt.y >= r.y and pt.y <= r.y + r.h
 end
 
--- {"id","action","at"} written atomically: tmp file next to the target, then os.rename.
-local function writeCommand(action)
-  local dir = M.commandPath:match("^(.*)/[^/]+$")
-  local id = string.format("%d-%04d", math.floor(now() * 1000), math.random(0, 9999))
-  local body = string.format('{"id":"%s","action":"%s","at":"%s"}',
-    id, action, os.date("!%Y-%m-%dT%H:%M:%SZ"))
-  local tmp = M.commandPath .. ".tmp"
+-- tmp file next to the target, then os.rename: the loader polls these files and must never see a
+-- half-written one. The tmp has to live in the same directory for the rename to be atomic.
+local function writeAtomic(path, body)
+  local dir = path:match("^(.*)/[^/]+$")
+  local tmp = path .. ".tmp"
 
   local f = io.open(tmp, "w")
   if not f and dir then
@@ -122,14 +137,41 @@ local function writeCommand(action)
   f:write(body)
   f:close()
 
-  local ok, err = os.rename(tmp, M.commandPath)
+  local ok, err = os.rename(tmp, path)
   if not ok then
     os.remove(tmp)
     log("rename failed: %s", tostring(err))
     return false
   end
+  return true
+end
+
+-- {"id","action","at"} → command.json (loader v6) and/or probe.js (loader v5, see the header).
+-- The probe file carries the same JSON inside a dispatch call plus the id as a trailing comment,
+-- so two commands in the same second still change the file the loader stamps by mtime+size.
+local function writeCommand(action)
+  local id = string.format("%d-%04d", math.floor(now() * 1000), math.random(0, 9999))
+  local json = string.format('{"id":"%s","action":"%s","at":"%s"}',
+    id, action, os.date("!%Y-%m-%dT%H:%M:%SZ"))
+
+  local done = {}
+  if M.commandChannel == "both" or M.commandChannel == "json" then
+    if writeAtomic(M.commandPath, json) then done[#done + 1] = "json" end
+  end
+  if M.commandChannel == "both" or M.commandChannel == "probe" then
+    -- Self-expiring: the loader replays the last probe.js on every start (probeStamp begins
+    -- empty), so an old command must become a no-op. mtimeMs makes the stamp unique; the id
+    -- comment is only a readable label.
+    local expires = math.floor((now() + M.probeTtlSeconds) * 1000)
+    if writeAtomic(M.probePath,
+      "if (Date.now() < " .. expires .. ") "
+      .. "window.dispatchEvent(new CustomEvent('myclaude-command',{detail:" .. json .. "}));\n"
+      .. "// " .. id .. "\n") then done[#done + 1] = "probe" end
+  end
+  if #done == 0 then return false end
+
   lastCommand = string.format("%s @ %s", action, os.date("%H:%M:%S"))
-  log("command %s id=%s", action, id)
+  log("command %s id=%s via %s", action, id, table.concat(done, "+"))
   return true
 end
 
@@ -150,8 +192,12 @@ local function cashout(w)
   w:focus()
   hs.timer.doAfter(M.focusDelay, function()
     writeCommand("cashout")
-    -- the page stashes the answer, then a fresh chat picks the stash up
-    hs.timer.doAfter(M.cashoutNewChatDelay, function() newChat(w) end)
+    -- the page stashes the answer, then a fresh chat picks the stash up. Through probe.js the
+    -- command waits for the loader's next poll, so ⌘N has to wait for that too — otherwise the
+    -- new chat is already open by the time the old one gets told to stash anything.
+    local delay = M.cashoutNewChatDelay
+    if M.commandChannel ~= "json" then delay = delay + M.probeLagSeconds end
+    hs.timer.doAfter(delay, function() newChat(w) end)
   end)
 end
 
@@ -216,18 +262,49 @@ local function showAll(w)
   end
 end
 
+-- hs.menubar wants an hs.image per item and there is no emoji→image call, so each emoji is drawn
+-- once into a square canvas and cached. Misses are cached as false too: a canvas that fails is not
+-- retried on every popup, the menu just loses its pictures — never its items.
+local icons = {}
+
+local function icon(emoji)
+  local hit = icons[emoji]
+  if hit ~= nil then return hit or nil end
+
+  local size = M.iconSize
+  local ok, image = pcall(function()
+    local c = hs.canvas.new({ x = 0, y = 0, w = size, h = size })
+    if not c then return nil end
+    c:appendElements({
+      type = "text",
+      text = emoji,
+      textSize = math.floor(size * 0.78),         -- the glyph box is taller than the glyph itself
+      textAlignment = "center",
+      textColor = M.iconColor,
+      frame = { x = 0, y = 0, w = size, h = size },
+    })
+    local img = c:imageFromCanvas()
+    c:delete()                                    -- the canvas is never shown: free it right away
+    return img
+  end)
+  if not ok then log("icon %s failed: %s", emoji, tostring(image)) end
+
+  icons[emoji] = (ok and image) or false
+  return icons[emoji] or nil
+end
+
 local function menuItems(w)
   return {
-    { title = "Обкэшить",   fn = function() cashout(w) end },
-    { title = "Новый чат",  fn = function() newChat(w) end },
+    { title = "Обкэшить",   image = icon("💰"), fn = function() cashout(w) end },
+    { title = "Новый чат",  image = icon("💬"), fn = function() newChat(w) end },
     { title = "-" },
-    { title = "Свернуть",   fn = function() stageAction(w, "collapse") end },
-    { title = "Развернуть", fn = function() stageAction(w, "expand") end },
+    { title = "Свернуть",   image = icon("⬇️"), fn = function() stageAction(w, "collapse") end },
+    { title = "Развернуть", image = icon("⬆️"), fn = function() stageAction(w, "expand") end },
     { title = "-" },
-    { title = "Расставить", fn = function() arrange() end },
-    { title = "Показать",   fn = function() showAll(w) end },
+    { title = "Расставить", image = icon("▦"),  fn = function() arrange() end },
+    { title = "Показать",   image = icon("👀"), fn = function() showAll(w) end },
     -- scroll goes to every window, so no focus() first
-    { title = "Прокрутить", fn = function() writeCommand("scroll") end },
+    { title = "Прокрутить", image = icon("⏬"), fn = function() writeCommand("scroll") end },
   }
 end
 
@@ -307,6 +384,7 @@ function M.stop()
   if timer then timer:stop(); timer = nil end
   if popup then popup:delete(); popup = nil end
   windows, windowsAt, buttons = {}, 0, {}
+  icons = {}                                      -- so iconSize/iconColor changes take effect on restart
   hoverId, hoverSince, suppressed, menuOpen = nil, 0, false, false
   log("stopped")
 end

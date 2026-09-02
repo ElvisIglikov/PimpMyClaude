@@ -23,7 +23,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf2-a2-1";
+  const VERSION = "wf3-a3-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -60,9 +60,16 @@
   // «Обкэшить» кладёт перенос в localStorage: забирает его ДРУГОЕ окно (⌘N).
   const CASHOUT_KEY = "myclaude-cashout";
 
-  // Зона захвата полоски. У донора 18; здесь 8 — по слову Элвиса «полоска едва
-  // заметная»: чем тоньше зона, тем меньше она накрывает соседей сверху.
-  const HANDLE_HEIGHT = 8;
+  // Зона захвата полоски — как у донора. Заметность даёт не зона (она
+  // прозрачная), а сама линия в 2 точки, поэтому «полоска едва заметная» от
+  // высокой зоны не толстеет, зато мышью в неё попадаешь. Полоска сидит верхом
+  // на кромке рамки, то есть выше кромки её ровно половина — донорские 9 точек,
+  // больше не поднимаемся.
+  const HANDLE_HEIGHT = 18;
+  // Полоска узкая и строго по центру поля (донор): во всю ширину рамки её зона
+  // захвата накрывает кнопки и параметры по краям поля, и Элвис назвал такую
+  // полоску «широченной». Сотни точек хватает, чтобы схватить её мышью.
+  const HANDLE_NARROW_WIDTH = 96;
   // Отступ свёрнутой полоски от краёв рамки: её собственное скругление плюс
   // пара точек, но не меньше этого.
   const HANDLE_MIN_INSET = 10;
@@ -93,6 +100,12 @@
   // контейнер Claude верх поля дальше не пустил, и замеренный пол пора
   // запомнить: в следующий раз целимся сразу в него.
   const CEILING_WASTE_SLACK = 3;
+  // Сколько места сверх обычной высоты обязана оставлять полю отметка, чтобы
+  // считаться потолком. Меньше — это не потолок, а промах замера: низ шапки,
+  // найденный вплотную к полю, или пол, записанный по рамке, которая и не
+  // думала двигаться. Целиться в такую отметку — значит не делать ничего, и
+  // именно так двойной клик и умирал в главном окне.
+  const CEILING_MIN_ROOM = 80;
   // Сдвиг в пределах этого допуска — ещё клик, а не перетаскивание.
   const CLICK_SLACK = 4;
   // Одиночный клик ждёт возможного второго: без задержки каждый двойной клик
@@ -141,6 +154,15 @@
   // Приметы ленты разговора: если хоть одна внутри кандидата в блок ввода —
   // кандидат не тот, и сворачивать его нельзя.
   const TRANSCRIPT_SELECTOR = '.epitaxy-transcript-width,[data-testid="assistant-message"],.font-claude-response,[data-testid="epitaxy-virtual-transcript"]';
+  // Приметы того, что разговор уже идёт. Список широкий намеренно: разметка
+  // чата в claude.ai и в окне Claude Code разная, и в сборке 1.40609.1 живой
+  // оказалась не всякая — `.epitaxy-transcript-width` там нет вовсе (замер
+  // оркестратора), из-за чего разговор считался пустым чатом. Ленты
+  // `[data-testid="epitaxy-virtual-transcript"]` в списке нет намеренно: она
+  // висит в окне и до первого сообщения, и пустой чат перестал бы быть пустым.
+  const CHAT_STARTED_SELECTOR = '.font-claude-response,[data-user-message-bubble],' +
+    '[data-testid="assistant-message"],.epitaxy-user-turn,.epitaxy-transcript-width,' +
+    '[aria-label="Message actions"]';
 
   const now = () => (typeof performance?.now === "function" ? performance.now() : Date.now());
 
@@ -671,9 +693,11 @@
     const span = wide ? base.width : Math.round(innerWidth * 0.6);
     const left = wide ? base.left : Math.round((innerWidth - span) / 2);
     const collapsedInset = handleInset(state.composerBlock);
-    // Свёрнутая полоска — 80 % ширины по центру: полной шириной она наезжала бы
-    // зоной захвата на надпись «Opus 5 · Max» и кругляшок рядом с ней.
-    const width = Math.round(Math.max(64, (span - collapsedInset * 2) * COLLAPSED_WIDTH_SCALE));
+    // Та же узкая полоска, что и на открытом поле (донор): полной шириной она
+    // наезжала бы зоной захвата на надпись «Opus 5 · Max» и кругляшок рядом с
+    // ней. В совсем узком окне её ужимает ещё и доля от ширины рамки.
+    const width = Math.round(Math.max(64,
+      Math.min(HANDLE_NARROW_WIDTH, (span - collapsedInset * 2) * COLLAPSED_WIDTH_SCALE)));
     const row = state.modelRow?.isConnected ? state.modelRow.getBoundingClientRect() : null;
     handle.style.display = "flex";
     handle.style.left = `${Math.round(left + (span - width) / 2)}px`;
@@ -744,10 +768,14 @@
     const rect = state.shell.getBoundingClientRect();
     if (rect.width < 200 || rect.bottom <= 0 || rect.top >= innerHeight) { handle.style.display = "none"; return; }
     handle.style.display = "flex";
-    // Во всю ширину рамки поля и верхом на её кромке. Поле выше своего
+    // Узкая полоска по центру рамки и верхом на её кромке (донор). Место под
+    // неё считаем от полной ширины за вычетом скруглений: в совсем узком окне
+    // полоска ужимается, а на скругления не выезжает. Поле выше своего
     // контейнера всё равно не поднимается, поэтому кромке ничего не мешает.
-    handle.style.left = `${Math.round(rect.left)}px`;
-    handle.style.width = `${Math.round(rect.width)}px`;
+    const stripRoom = Math.max(64, rect.width - handleInset(state.shell) * 2);
+    const stripWidth = Math.round(Math.min(HANDLE_NARROW_WIDTH, stripRoom));
+    handle.style.left = `${Math.round(rect.left + (rect.width - stripWidth) / 2)}px`;
+    handle.style.width = `${stripWidth}px`;
     handle.style.top = `${Math.round(Math.max(topLimit() - HANDLE_HEIGHT / 2, rect.top - HANDLE_HEIGHT / 2))}px`;
     // Проверяем после расстановки: хит-тест идёт по новому месту полоски. Во
     // время перетаскивания не прячем — курсор держит именно её.
@@ -931,11 +959,11 @@
   // Пустой чат: разговора ещё нет, и над полем висит шапка с приветствием и
   // выбором проекта. В Claude Code своя разметка разговора, без классов обычного
   // чата (замер донора: ноль .font-claude-response даже посреди переписки),
-  // поэтому смотрим ещё и на его ленту.
-  const isFreshChat = () =>
-    document.querySelectorAll(".font-claude-response").length === 0 &&
-    document.querySelectorAll("[data-user-message-bubble]").length === 0 &&
-    document.querySelectorAll(".epitaxy-transcript-width").length === 0;
+  // поэтому примет несколько — см. CHAT_STARTED_SELECTOR. Прежние три приметы
+  // в сборке 1.40609.1 не срабатывали ни одна, и разговор считался пустым чатом:
+  // из-за этого двойной клик целился в «низ шапки», найденный вплотную к полю,
+  // и не растягивал поле вовсе.
+  const isFreshChat = () => document.querySelectorAll(CHAT_STARTED_SELECTOR).length === 0;
   // Низ шапки пустого чата: самый нижний осмысленный блок над рамкой ввода. Не
   // по классам — Claude их перегенерирует, — а по геометрии: строка выбора
   // проекта стоит прямо над полем и попадает сюда сама.
@@ -962,14 +990,35 @@
     const memo = state.ceilingFloor;
     return memo != null && memo.key === ceilingFloorKey() ? memo.top : null;
   };
+  // Годится ли отметка в цель. Мерим не «насколько выше нынешнего верха» (эта
+  // разница у растянутого поля своя, и atCeiling с разворотом разошлись бы), а
+  // сколько места отметка оставляет полю до низа рамки: низ рамки прибит к
+  // строке модели и от ступени не зависит. Меньше обычной высоты с запасом —
+  // отметка вырожденная, и целиться в неё нельзя.
+  const aimUsable = aim => {
+    if (aim == null || !state.shell?.isConnected) return false;
+    return state.shell.getBoundingClientRect().bottom - aim >= naturalHeight() + CEILING_MIN_ROOM;
+  };
+  // Куда целимся верхом поля: обычно в низ титульной полосы, в пустом чате — в
+  // низ шапки, но только пока шапка оставляет полю место. Одна точка на всех:
+  // atCeiling и разворот обязаны считать одинаково, иначе двойной клик начинает
+  // мигать между «растянуть» и «вернуть обычную».
+  const stretchLimit = () => {
+    const limit = topLimit();
+    if (!isFreshChat()) return limit;
+    const header = freshHeaderBottom();
+    return header != null && header > limit && aimUsable(header) ? header : limit;
+  };
   // Верх поля уже у потолка — значит тянуть дальше некуда. Мерим не до
   // расчётного потолка, а до замеренного упора контейнера: выше него верх поля
   // не поднимется, сколько ни тяни, и без этого повторный двойной клик перестал
   // бы возвращать обычную высоту — намеренный недобор съел бы весь допуск.
   const atCeiling = () => {
     if (state.shell == null || state.stage !== STAGE_STRETCHED) return false;
-    const limit = isFreshChat() ? (freshHeaderBottom() ?? topLimit()) : topLimit();
+    const limit = stretchLimit();
     const floor = ceilingFloorTop();
+    // Пол берём без aimUsable: в очень низком окне отвергнутый пол уводил бы цель на
+    // титульную полосу, и растянутое поле никогда не считалось бы «у потолка».
     const aim = floor != null && floor > limit ? floor : limit;
     return state.shell.getBoundingClientRect().top <= aim + CEILING_UNDERSHOOT + 10;
   };
@@ -988,7 +1037,7 @@
     const gone = () => state.shell !== shell || !shell.isConnected;
     const limit = ceilingTop ?? topLimit();
     const floor = ceilingFloorTop();
-    const aim = floor != null && floor > limit ? floor : limit;
+    const aim = floor != null && floor > limit && aimUsable(floor) ? floor : limit;
     const before = shell.getBoundingClientRect().top;
     // Опорная высота годится только осмысленная: свёрнутое поле даёт нули, и от
     // нуля цель вышла бы вдвое больше нужного.
@@ -1008,7 +1057,13 @@
     // Прибавка, не ушедшая вверх. Она и показывает настоящий упор контейнера.
     const wasted = grew - moved;
     if (wasted > CEILING_WASTE_SLACK) {
-      state.ceilingFloor = { key: ceilingFloorKey(), top: Math.round(after) };
+      // Упор запоминаем, только если рамка вообще сдвинулась. Замер по
+      // неподвижной рамке равен её нынешнему верху, а он потом идёт целью —
+      // и разворот запирается на обычной высоте навсегда. Причин не сдвинуться
+      // хватает и без упора контейнера: черновик выше поля, подрезка по низу
+      // окна, чужая раскладка. Тогда высоту так же отдаём назад, но память
+      // чистим — следующая попытка начнёт с чистого листа.
+      state.ceilingFloor = moved > 0 ? { key: ceilingFloorKey(), top: Math.round(after) } : null;
       // Контейнер не пустил заметно выше: поджимаем ровно на пустоту — один раз
       // и всё. В следующий раз этот же упор возьмётся из памяти.
       setStage(STAGE_STRETCHED, { height: Math.max(base, applied - wasted - CEILING_UNDERSHOOT) });
@@ -1039,9 +1094,9 @@
     // В пустом чате шапку не съедаем: над полем стоят приветствие и кнопки
     // проекта, и без них непонятно даже, в какой папке откроется разговор.
     // Низ шапки меряем уже по возвращённому полю: у свёрнутого верх стоит ниже,
-    // и в замер попали бы блоки, которые поле собой закроет.
-    const headerTop = isFreshChat() ? freshHeaderBottom() : null;
-    stretchToCeiling(headerTop ?? undefined);
+    // и в замер попали бы блоки, которые поле собой закроет. Разбор «шапка или
+    // титульная полоса» — в stretchLimit(), общий с atCeiling.
+    stretchToCeiling(stretchLimit());
     layout();
   };
   // Двойной клик — сразу максимум, без лесенки. Ступени остались за одиночным
