@@ -1,7 +1,7 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/MyClaude/docs/plan-wf2-2026-09-03.md",
   "project": "⚪MyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-MyClaude/267ec025-afa8-4b5a-9337-224aef63fb25/workflows/scripts/myclaude-wf2-b2-wf_d1f30bcc-1ad.js",
   "run_id": "wf_d1f30bcc-1ad",
   "watchdog": "watchdog-myclaude-0309 (общий с WF1)",
@@ -24,6 +24,17 @@
       "at": "2026-09-03T00:49:43+05:00",
       "who": "прогон",
       "what": "B2 готов, сверка Fable: ok (1 low — формулировка отчёта, кода не требует). Файл hammerspoon/claude_minimize_menu.lua. Ждёт установки на гейте вместе с B"
+    },
+    {
+      "at": "2026-09-03T01:06:19+05:00",
+      "who": "оркестратор",
+      "what": "A2 (scroll + короткое время) запущен, run wf_1f606745-ced; сверка Opus max по новым правилам"
+    },
+    {
+      "at": "2026-09-03T01:44:41+05:00",
+      "who": "прогон",
+      "what": "A2 готов и сверен (Opus max): scroll + короткое время. Сессия обрывалась (⌘Q Элвиса), верификация поднята resume. inject.js wf2-a2-1 выложен живьём через probe: «14 min ago» видно во всех окнах, ручка вернулась"
     }
-  ]
+  ],
+  "run_id_a2": "wf_1f606745-ced"
 }

@@ -10,7 +10,8 @@
 // Что делает: над полем ввода рисует едва заметную полоску. Потянул — меняешь
 // высоту, клик — свернуть/вернуть, двойной клик — во всю высоту окна. Плюс
 // команды из Hammerspoon (событие window "myclaude-command"): collapse, expand,
-// cashout.
+// cashout, scroll. И сокращает время под сообщениями («3 minutes ago» → «3 min
+// ago»).
 //
 // Логика ступеней, порогов и кликов перенесена из донора ElvisOS
 // (~/_ElvisProjects/ElvisOS/Resources/claude-chat-cleaner-inject.js, разделы
@@ -22,7 +23,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf1-a-1";
+  const VERSION = "wf2-a2-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -220,6 +221,20 @@
     clickTimer: 0,
     cashoutTimer: 0,
     giveUpTimer: 0,
+    // Прокрутка ленты: кто едет, до какой высоты доехали и сколько доборов
+    // осталось. Кадр и таймер добора снимаются вместе, одним clearScrollWatch.
+    scroller: null,
+    scrollRaf: 0,
+    scrollTimer: 0,
+    scrollSteps: 0,
+    scrollSeen: 0,
+    scrollRuns: 0,
+    // Короткое время под сообщениями: за кем смотрим и когда был последний
+    // проход (троттлинг, см. TIME_MIN_GAP).
+    timeTarget: null,
+    timeTimer: 0,
+    timeAt: 0,
+    timeRuns: 0,
     scheduled: false,
     rafId: 0,
     layoutTimer: 0,
@@ -1070,10 +1085,12 @@
     const outer = nodes.filter(node => !nodes.some(other => other !== node && other.contains(node)));
     return outer[outer.length - 1] ?? null;
   };
+  // Строгая примета разметки, если она сегодня жива, надёжнее общего списка.
+  const lastAnswerNode = () =>
+    pickAnswer(document.querySelectorAll('[data-testid="assistant-message"]'))
+    ?? pickAnswer(document.querySelectorAll(ANSWER_SELECTOR));
   const lastAnswerText = () => {
-    // Строгая примета разметки, если она сегодня жива, надёжнее общего списка.
-    const hit = pickAnswer(document.querySelectorAll('[data-testid="assistant-message"]'))
-      ?? pickAnswer(document.querySelectorAll(ANSWER_SELECTOR));
+    const hit = lastAnswerNode();
     return hit == null ? "" : rawText(hit).trim();
   };
   const clearCashout = () => { try { localStorage.removeItem(CASHOUT_KEY); } catch {} };
@@ -1145,7 +1162,187 @@
     return true;
   };
 
-  // ---- 13. Команды снаружи ------------------------------------------------
+  // ---- 13. Прокрутка ленты ------------------------------------------------
+  // Команда «Прокрутить»: поставить ленту разговора на последнее сообщение.
+  // В отличие от collapse/expand она адресована ВСЕМ окнам сразу, поэтому
+  // фокуса не спрашивает (см. onCommand).
+  //
+  // Лента Claude Code — сама себе скролл-контейнер и помечена
+  // epitaxy-virtual-transcript. В обычном чате claude.ai такой приметы нет, и
+  // там работает запасной путь донора: ближайший прокручиваемый предок
+  // последнего сообщения.
+  const SCROLL_SELECTOR = '[data-testid="epitaxy-virtual-transcript"]';
+  // Меньше этого запаса — контейнер не прокручивается вовсе, брать его незачем.
+  const SCROLL_MIN_ROOM = 8;
+  // Виртуальная лента дорисовывает хвост уже после первого скролла: кадр плюс
+  // до пяти доборов по 120 мс покрывают и самое медленное досчитывание высоты.
+  const SCROLL_STEPS = 5;
+  const SCROLL_STEP_MS = 120;
+
+  const scrollRoom = node => {
+    const height = Number(node?.scrollHeight);
+    const view = Number(node?.clientHeight);
+    if (!Number.isFinite(height) || !Number.isFinite(view)) return 0;
+    return height - view;
+  };
+  const scrollerFor = node => {
+    let current = node?.parentElement ?? null;
+    while (current && current !== document.body && current !== document.documentElement) {
+      if (scrollRoom(current) > SCROLL_MIN_ROOM) {
+        let overflow = "";
+        try { overflow = getComputedStyle(current).overflowY ?? ""; } catch {}
+        if (/(auto|scroll)/.test(overflow)) return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  };
+  // Последнее сообщение. Ответ ассистента — самая надёжная примета; если его
+  // ещё нет (первый вопрос в свежем чате), годится любой узел ленты.
+  const lastMessageNode = () => {
+    let answer = null;
+    try { answer = lastAnswerNode(); } catch {}
+    if (answer?.isConnected) return answer;
+    try {
+      const nodes = document.querySelectorAll(TRANSCRIPT_SELECTOR);
+      return nodes[nodes.length - 1] ?? null;
+    } catch { return null; }
+  };
+  const findScroller = () => {
+    let virtual = null;
+    try { virtual = document.querySelector(SCROLL_SELECTOR); } catch {}
+    if (virtual?.isConnected && scrollRoom(virtual) > SCROLL_MIN_ROOM) return virtual;
+    return scrollerFor(lastMessageNode()) ?? (virtual?.isConnected ? virtual : null);
+  };
+  const clearScrollWatch = () => {
+    if (state.scrollRaf) { cancelAnimationFrame(state.scrollRaf); state.scrollRaf = 0; }
+    if (state.scrollTimer) { clearTimeout(state.scrollTimer); state.scrollTimer = 0; }
+    state.scrollSteps = 0;
+    state.scroller = null;
+  };
+  track(clearScrollWatch);
+  // Ниже scrollHeight браузер сам зажимает до предела прокрутки — целимся в
+  // него, а не в разницу с clientHeight: та врёт, пока хвост ещё дорисовывают.
+  const scrollDown = target => {
+    const height = Number(target?.scrollHeight);
+    if (!Number.isFinite(height)) return 0;
+    try { target.scrollTop = height; } catch {}
+    return height;
+  };
+  const scrollTail = () => {
+    state.scrollTimer = 0;
+    if (!state.alive) return;
+    const target = state.scroller;
+    if (!target?.isConnected) { clearScrollWatch(); return; }
+    const height = Number(target.scrollHeight) || 0;
+    // Лента перестала расти — хвост на месте, дёргать её дальше незачем.
+    if (height <= state.scrollSeen) { clearScrollWatch(); return; }
+    state.scrollSeen = height;
+    state.scrollSteps -= 1;
+    scrollDown(target);
+    if (state.scrollSteps <= 0) { clearScrollWatch(); return; }
+    state.scrollTimer = setTimeout(scrollTail, SCROLL_STEP_MS);
+  };
+  const runScroll = () => {
+    // Прошлая прокрутка (двойной клик по пункту меню) свои доборы доигрывать не
+    // должна: цель могла смениться, а два ряда таймеров спорили бы друг с другом.
+    clearScrollWatch();
+    const target = findScroller();
+    if (!target?.isConnected) return false;
+    state.scrollRuns += 1;
+    state.scroller = target;
+    state.scrollSeen = scrollDown(target);
+    state.scrollSteps = SCROLL_STEPS;
+    state.scrollRaf = requestAnimationFrame(() => {
+      state.scrollRaf = 0;
+      if (!state.alive) return;
+      const node = state.scroller;
+      if (!node?.isConnected) { clearScrollWatch(); return; }
+      // Кадр скроллит без условий: он и есть тот самый добор за подставленной
+      // высотой последнего сообщения.
+      state.scrollSeen = Math.max(state.scrollSeen, scrollDown(node));
+      state.scrollTimer = setTimeout(scrollTail, SCROLL_STEP_MS);
+    });
+    return true;
+  };
+
+  // ---- 14. Короткое время под сообщениями ---------------------------------
+  // Под каждым сообщением Claude пишет «3 minutes ago» — по слову Элвиса, это
+  // визуальный шум. Сокращаем в самом тексте: minutes → min, seconds → sec,
+  // hours → h, days → d. Всё остальное («Just now», числа, «ago») не трогаем.
+  const TIME_SELECTOR = '[aria-label="Message actions"] time';
+  const TIME_LONG = /\b(?:seconds?|minutes?|hours?|days?)\b/;
+  // Часики тикают: Claude сам перерисовывает текст, и правку приходится
+  // повторять. Проход — обход всех строк действий, поэтому не чаще раза в
+  // 250 мс, как и раскладка.
+  const TIME_MIN_GAP = 250;
+  const shortenTime = text => text
+    .replace(/\bminutes?\b/g, "min")
+    .replace(/\bseconds?\b/g, "sec")
+    .replace(/\bhours?\b/g, "h")
+    .replace(/\bdays?\b/g, "d");
+  // Правим текстовые узлы, а не textContent целиком: внутри <time> у Claude
+  // бывает своя разметка, и перезапись текстом снесла бы её.
+  const shortenTextNodes = node => {
+    if (node == null) return;
+    if (node.nodeType === 3) {
+      const text = node.nodeValue ?? "";
+      // Уже коротко — молчим. Правка порождает мутацию, мутация зовёт нас
+      // обратно, и без этой проверки круг наблюдатель ↔ правка не разорвать.
+      if (!TIME_LONG.test(text)) return;
+      node.nodeValue = shortenTime(text);
+      return;
+    }
+    const kids = node.childNodes;
+    if (!kids) return;
+    for (let index = 0; index < kids.length; index += 1) shortenTextNodes(kids[index]);
+  };
+  const timeObserver = new MutationObserver(() => scheduleShortTime());
+  const stopTimeWatch = () => {
+    try { timeObserver.disconnect(); } catch {}
+    state.timeTarget = null;
+  };
+  track(stopTimeWatch);
+  // Лента приезжает позже инжекта, поэтому до неё смотрим за body, а как
+  // появится — переезжаем на неё: мимо body идут ещё и поле ввода с боковой
+  // панелью, а строки действий живут только в ленте.
+  const watchTime = () => {
+    if (!state.alive || !state.watching) return false;
+    let target = null;
+    try { target = document.querySelector(SCROLL_SELECTOR); } catch {}
+    if (!target?.isConnected) target = document.body ?? null;
+    if (!target || target === state.timeTarget) return false;
+    try { timeObserver.disconnect(); } catch {}
+    state.timeTarget = target;
+    try {
+      timeObserver.observe(target, { characterData: true, childList: true, subtree: true });
+    } catch { state.timeTarget = null; }
+    return state.timeTarget != null;
+  };
+  const runShortTime = () => {
+    state.timeTimer = 0;
+    if (!state.alive || !state.watching) return;
+    state.timeAt = now();
+    state.timeRuns += 1;
+    try {
+      for (const node of document.querySelectorAll(TIME_SELECTOR)) shortenTextNodes(node);
+    } catch {}
+    watchTime();
+  };
+  const cancelShortTime = () => {
+    if (!state.timeTimer) return;
+    clearTimeout(state.timeTimer);
+    state.timeTimer = 0;
+  };
+  track(cancelShortTime);
+  const scheduleShortTime = () => {
+    if (state.timeTimer || !state.alive || !state.watching) return;
+    const wait = Math.max(0, TIME_MIN_GAP - (now() - state.timeAt));
+    if (wait === 0) { runShortTime(); return; }
+    state.timeTimer = setTimeout(runShortTime, wait);
+  };
+
+  // ---- 15. Команды снаружи ------------------------------------------------
   // command.json доставляется лоадером во ВСЕ страницы разом, поэтому команду
   // берёт только окно под фокусом — и только то, где вообще есть поле ввода
   // (в оболочке file://…/main_window и на логине его нет).
@@ -1153,6 +1350,10 @@
     const detail = event?.detail;
     const action = typeof detail?.action === "string" ? detail.action : "";
     if (!action || !state.alive) return;
+    // «Прокрутить» — исключение: она адресована всем окнам, а не одному под
+    // фокусом, и поля ввода ей не нужно — нужна лента. На чужой странице ленты
+    // нет, и команда там тихо ничего не делает.
+    if (action === "scroll") { runScroll(); return; }
     if (!document.hasFocus()) return;
     if (!state.editor?.isConnected) return;
     if (action === "collapse") setStage(STAGE_COLLAPSED);
@@ -1161,7 +1362,7 @@
     // Неизвестные команды игнорируем молча: их может слать не только наш модуль.
   };
 
-  // ---- 14. Подписки -------------------------------------------------------
+  // ---- 16. Подписки -------------------------------------------------------
   on(handle, "pointerdown", onPointerDown);
   on(handle, "click", onClick);
   on(handle, "dblclick", onDoubleClick);
@@ -1175,9 +1376,16 @@
   const observer = new MutationObserver(onMutated);
   observer.observe(document.documentElement, { childList: true, subtree: true });
   track(() => observer.disconnect());
+  // Наблюдатель за временем — отдельный: у него свои цель (лента, а не весь
+  // документ), свой набор мутаций (ещё и characterData) и свой троттлинг.
+  watchTime();
 
   const heartbeat = setInterval(() => {
     if (!state.alive) return;
+    // Лента могла смениться целиком (React пересобрал разговор): наблюдатель за
+    // временем остался бы висеть на выброшенном узле и оглох — мутаций оттуда
+    // больше не придёт, а значит и переехать сам он уже не сможет.
+    if (state.timeTarget && !state.timeTarget.isConnected && watchTime()) scheduleShortTime();
     if (state.scheduled) {
       // Запланированный кадр так и не пришёл (окно спрятано или перекрыто, и
       // macOS остановил requestAnimationFrame) — доводим руками.
@@ -1199,6 +1407,10 @@
     observer.disconnect();
     clearInterval(heartbeat);
     cancelPendingLayout();
+    // Страница признана чужой — строк действий с временем на ней нет и не
+    // будет, так что и второй наблюдатель уходит вместе с первым.
+    cancelShortTime();
+    stopTimeWatch();
   };
   state.giveUpTimer = setTimeout(() => {
     state.giveUpTimer = 0;
@@ -1209,7 +1421,7 @@
   }, GIVE_UP_MS);
   track(() => { if (state.giveUpTimer) { clearTimeout(state.giveUpTimer); state.giveUpTimer = 0; } });
 
-  // ---- 15. Снятие экземпляра ---------------------------------------------
+  // ---- 17. Снятие экземпляра ---------------------------------------------
   const dispose = () => {
     state.alive = false;
     // Штатная высота редактора возвращается здесь: снимаем переменную, атрибуты
@@ -1262,6 +1474,9 @@
       layoutRuns: state.layoutRuns,
       mutationBatches: state.mutationBatches,
       mutationSkipped: state.mutationSkipped,
+      scrollRuns: state.scrollRuns,
+      timeRuns: state.timeRuns,
+      timeWatched: Boolean(state.timeTarget),
       cashout: readCashout() != null,
     }),
   };
@@ -1273,6 +1488,9 @@
   // откатывается целиком, а причина остаётся в окне для разбора.
   try {
     armCashoutWatch();
+    // Первый проход по времени — сразу: те сообщения, что уже на экране, ждать
+    // ближайшей мутации не должны.
+    runShortTime();
     layout();
   } catch (error) {
     try { dispose(); } catch {}

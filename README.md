@@ -46,6 +46,7 @@ cp ~/_ElvisProjects/MyClaude/hammerspoon/claude_minimize_menu.lua ~/.hammerspoon
 1. ✅ Ручка, свернуть/развернуть (WF1, `docs/plan-wf1-2026-09-03.md`).
 2. ✅ Меню семь пунктов (WF1 + WF2, `docs/plan-wf2-2026-09-03.md`); «3 min ago» — WF2/A2.
 3. Сторож обновлений — отложен по слову Элвиса.
+3а. ⌘Q не должен закрывать Claude (слово Элвиса 03.09 01:30: случайно нажал, закрылись все четыре окна). Блокировать ⌘Q в Claude, выход только через меню. Hammerspoon-модуль `claude_noquit.lua` (hs.hotkey ⌘Q активен только когда Claude впереди, через hs.application.watcher).
 4. MyClaude.app на Swift для команды (Маша, Алла, Денис): установщик, меню и авто-Allow без Hammerspoon,
    подпись Developer ID + нотаризация. Отдельный воркфлоу после закрытия фишек.
 

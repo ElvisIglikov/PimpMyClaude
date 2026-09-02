@@ -1,0 +1,19 @@
+{
+  "plan": "README «План» 3а + отчёты verify WF1 (полоска узкая как в ElvisOS, растяжение в главном окне), иконки меню, fallback команд через probe.js, блок ⌘Q",
+  "project": "⚪MyClaude",
+  "status": "идёт",
+  "script_path": null,
+  "run_id": null,
+  "watchdog": "watchdog-myclaude-0309",
+  "next_steps": [
+    "дождаться A3/B3 + сверок",
+    "гейт: живой тест ручки (Hammerspoon double-click), установка Lua-модулей, README, коммит"
+  ],
+  "log": [
+    {
+      "at": "2026-09-03T01:44:41+05:00",
+      "who": "оркестратор",
+      "what": "WF3 запущен: A3 inject.js, B3 Lua ×2, сверки Opus max"
+    }
+  ]
+}

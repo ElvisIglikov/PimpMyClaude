@@ -1,13 +1,13 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/MyClaude/docs/plan-wf1-2026-09-03.md",
   "project": "⚪MyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "branch": "нет git — репозиторий без истории, точка отката: копии файлов до волны не нужны (файлы новые)",
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-MyClaude/267ec025-afa8-4b5a-9337-224aef63fb25/workflows/scripts/myclaude-wf1-wf_2937ce8d-fb7.js",
   "run_id": "wf_2937ce8d-fb7",
   "next_steps": [
-    "дождаться фикс-батча A",
-    "гейт: копия inject.js в Application Support, probe __myclaude.version/status, установка Lua-модулей, проверка ⌘N, README"
+    "Элвис ставит Lua-модуль",
+    "полный эффект команд меню после перепатча (лоадер v6)"
   ],
   "log": [
     {
@@ -24,6 +24,11 @@
       "at": "2026-09-03T00:51:42+05:00",
       "who": "прогон",
       "what": "WF1 волна 1 завершена: A inject.js (1246 строк) готов, verify Fable: fix-needed (2 medium: селектор последнего ответа ловит строку действий; блок composer без защиты от захвата ленты; 4 low). B готов, ok, 3 правки внесены оркестратором. Запущен фикс-батч A (Opus max) + повторная сверка"
+    },
+    {
+      "at": "2026-09-03T01:06:19+05:00",
+      "who": "прогон",
+      "what": "фикс-батч A: 6/6 правок, сверка ok. Гейт: inject.js выложен в Application Support и прогнан живьём через probe во всех 4 окнах (ручка есть, cssOk, collapse/expand работают). Lua-модуль меню — установка у Элвиса (запись в init.lua классификатор режет). README обновлён, коммит 29c49b7 запушен"
     }
   ],
   "watchdog": "watchdog-myclaude-0309"
