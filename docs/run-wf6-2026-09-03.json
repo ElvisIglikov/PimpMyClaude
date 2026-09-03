@@ -1,13 +1,13 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf6-2026-09-03.md",
   "project": "⚪PimpMyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "trelvis": "#5313 #5314 #5315 #5316",
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf6-wave1-wf_7d67b6f2-c1d.js",
   "run_id": "wf_7d67b6f2-c1d",
   "next_steps": [
-    "Элвис смотрит темы/шрифты/мои темы в меню",
-    "волна 2: сверка, README/TEAM.md, релиз 1.2.0 вместе с WF7"
+    "раздать ~/Desktop/PimpMyClaude-1.2.0.zip + инструкцию",
+    "Элвис: живьём 🚀 Workflow (абзацы), примерка → «Расставить», тема на чат"
   ],
   "log": [
     {
@@ -29,6 +29,11 @@
       "at": "2026-09-03T22:35:05+05:00",
       "who": "прогон",
       "what": "волна 1 готова: A fix-needed (1 medium алиасы шрифта, 3 low), B ok (5 low) — внесено. Гейт живьём: старые темы окон пережили новый формат, шрифт окна/всем работает, темы не задеты. Приложение пересобрано и стоит в /Applications. Коммит на wf6"
+    },
+    {
+      "at": "2026-09-04T01:06:38+05:00",
+      "who": "оркестратор",
+      "what": "сверка WF6–9 ok после правок (2 medium внесены), релиз 1.2.0 (5) нотаризован, wf6 слит в main 61e1480, zip на рабочем столе. Финиш"
     }
   ],
   "critic": {
@@ -37,7 +42,7 @@
     "findings": "27, критичных 5 — внесены"
   },
   "branch": "wf6 (тег wf6-start)",
-  "watchdog": "watchdog-pimpmyclaude-wf6-0309",
+  "watchdog": "watchdog-pimpmyclaude-wf6-0309 (снят)",
   "orchestrator": "Fable 5.1 high",
   "wave1": {
     "run_id": "wf_7d67b6f2-c1d",

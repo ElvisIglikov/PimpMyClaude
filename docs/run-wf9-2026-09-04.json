@@ -1,14 +1,14 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf9-2026-09-04.md",
   "project": "⚪PimpMyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "trelvis": "#5324 #5325 #5326 #5327 #5328 #5329",
   "branch": "wf6",
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf9-wave2-wf_0af32fb1-6e4.js",
   "run_id": "wf_0af32fb1-6e4",
   "next_steps": [
-    "волна 2: сверка WF6–9 + README/TEAM.md (идёт)",
-    "релиз 1.2.0, zip, слить wf6 в main, снять сторож"
+    "раздать ~/Desktop/PimpMyClaude-1.2.0.zip + инструкцию",
+    "Элвис: живьём 🚀 Workflow (абзацы), примерка → «Расставить», тема на чат"
   ],
   "log": [
     {
@@ -30,9 +30,14 @@
       "at": "2026-09-04T00:52:19+05:00",
       "who": "прогон",
       "what": "фикс-батч A2 ok (3 low), B2 ok (2 low). Гейт живьём: полоска на кромке с сегментами во всех окнах, сводка Vkusnoff разобрана в подсказку, приложение подменено за 2 с (Workflow, клавиши, категории, темы по кругу). Волна 2 запущена"
+    },
+    {
+      "at": "2026-09-04T01:06:38+05:00",
+      "who": "оркестратор",
+      "what": "сверка WF6–9 ok после правок (2 medium внесены), релиз 1.2.0 (5) нотаризован, wf6 слит в main 61e1480, zip на рабочем столе. Финиш"
     }
   ],
-  "watchdog": "watchdog-pimpmyclaude-wf6-0309 (общий)",
+  "watchdog": "watchdog-pimpmyclaude-wf6-0309 (снят)",
   "wave1": {
     "run_id": "wf_c25db97f-56d",
     "status": "финиш"
