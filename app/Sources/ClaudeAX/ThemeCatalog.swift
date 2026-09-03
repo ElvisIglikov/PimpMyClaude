@@ -138,6 +138,10 @@ final class ThemeStore {
     func windowFontID(title: String) -> String? { windowID(ThemeStore.fontByWindowKey, title: title) }
 
     var allThemeID: String? { defaults.string(forKey: ThemeStore.allKey) }
+    /// Все запомненные темы окон: «🎲 Случайно» смотрит по ним, тёмные сейчас окна или светлые
+    /// (план WF10 п. 2). Память неточная (галки ключуются по заголовку), и это здесь не страшно —
+    /// решается только «тёмная или светлая».
+    var windowThemeIDs: [String] { Array(map(ThemeStore.byWindowKey).values) }
     var allFontID: String? { defaults.string(forKey: ThemeStore.fontAllKey) }
 
     func setWindowTheme(_ id: String?, title: String) {

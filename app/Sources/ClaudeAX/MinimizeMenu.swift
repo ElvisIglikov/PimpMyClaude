@@ -176,6 +176,18 @@ final class MinimizeMenu: NSObject {
         config.deleteMyTheme = { [weak self] my in
             DispatchQueue.main.async { self?.actions.myThemes.delete(id: my.id) }
         }
+        // Автопокраска адресуется всем окнам на экране, а не окну под курсором; примерку она
+        // не закрепляет (`committed` не трогаем) — после popUp окну вернут сохранённое, а следом
+        // придёт своя тема из очереди канала.
+        config.autoPaint = { [weak self] preset in
+            DispatchQueue.main.async { self?.actions.autoPaint(preset: preset) }
+        }
+        config.autoPaintAgain = { [weak self] in
+            DispatchQueue.main.async { self?.actions.autoPaintAgain() }
+        }
+        config.autoPaintReset = { [weak self] in
+            DispatchQueue.main.async { self?.actions.autoPaintReset(window: window) }
+        }
         let menu = MinimizeMenu.build(config: config)
 
         shows += 1
@@ -198,18 +210,20 @@ final class MinimizeMenu: NSObject {
     }
 
     /// «Сохранить как мою тему…»: имя спрашиваем модально, пару берём из последней команды
-    /// этого приложения. Тему ни разу не выбирали — сохранять нечего, показываем алерт.
+    /// этого приложения — а у автопокрашенного окна из его же автотемы (план WF10 п. 6),
+    /// иначе оно предложило бы «Радуга · 137°» от соседнего окна.
+    /// Тему ни разу не выбирали — сохранять нечего, показываем алерт.
     /// После диалога фокус возвращается окну Claude, как после самого меню.
     private func saveMyTheme(window: AXUIElement) {
         // Пока висит диалог, тик наведения не должен всплывать меню поверх него.
         menuOpen = true
         defer { menuOpen = false; app.focus(window: window) }
-        guard let theme = actions.lastAppliedTheme else {
+        guard let theme = actions.themeToSave(window: window) else {
             MinimizeMenu.warn(MenuModel.myThemeEmptyAlert)
             return
         }
         guard let name = MinimizeMenu.askThemeName(default: theme.name) else { return }
-        if actions.saveMyTheme(name: name) == nil {
+        if actions.saveMyTheme(name: name, window: window) == nil {
             MinimizeMenu.warn("Не удалось записать my-themes.json в Application Support/MyClaude")
         }
     }
@@ -237,6 +251,11 @@ final class MinimizeMenu: NSObject {
         var previewFont: (Font?) -> Void = { _ in }
         var saveMyTheme: () -> Void = {}
         var deleteMyTheme: (MyTheme) -> Void = { _ in }
+        /// «🌈 Автопокраска» (план WF10): набор красит все окна на экране, окно под курсором
+        /// ему не нужно — поэтому те же три замыкания подходят и меню-бару приложения.
+        var autoPaint: (AutoPaintPreset) -> Void = { _ in }
+        var autoPaintAgain: () -> Void = {}
+        var autoPaintReset: () -> Void = {}
     }
 
     /// Меню кнопки: семь пунктов с разделителями, затем — если каталог тем не пуст — разделитель
@@ -254,12 +273,34 @@ final class MinimizeMenu: NSObject {
             menu.addItem(item)
             if MenuModel.separatorsAfter.contains(entry.command) { menu.addItem(.separator()) }
         }
-        // Каталога нет (старый бандл без themes.json) — меню остаётся прежним, семь пунктов.
-        guard !config.themes.isEmpty || !config.fonts.isEmpty else { return menu }
+        // Каталога нет (старый бандл без themes.json) — подменю «Тема» и «Шрифт» не появляются,
+        // но «Автопокраска» палитры считает сама и живёт всегда (план WF10 п. 1).
         menu.addItem(.separator())
         if !config.themes.isEmpty { menu.addItem(themeItem(config)) }
         if !config.fonts.isEmpty { menu.addItem(fontItem(config)) }
+        menu.addItem(autoPaintItem(config))
         return menu
+    }
+
+    /// «🌈 Автопокраска ▸»: наборы, разделитель, «🎲 Случайно», «🔁 Ещё раз» и сброс всем окнам
+    /// (план WF10 п. 1). Предпросмотра тут нет: набор красит все окна разом, примерять нечего.
+    static func autoPaintItem(_ config: MenuConfig) -> NSMenuItem {
+        let submenu = NSMenu(title: MenuModel.autoPaintTitle)
+        submenu.autoenablesItems = false
+        for preset in AutoPaint.presets {
+            let item = BlockMenuItem(title: preset.title) { config.autoPaint(preset) }
+            item.image = icon(preset.icon)
+            submenu.addItem(item)
+        }
+        submenu.addItem(.separator())
+        let random = BlockMenuItem(title: AutoPaint.random.title) { config.autoPaint(AutoPaint.random) }
+        random.image = icon(AutoPaint.random.icon)
+        submenu.addItem(random)
+        let again = BlockMenuItem(title: MenuModel.autoPaintAgainTitle) { config.autoPaintAgain() }
+        again.image = icon(MenuModel.autoPaintAgainIcon)
+        submenu.addItem(again)
+        submenu.addItem(BlockMenuItem(title: MenuModel.autoPaintResetTitle) { config.autoPaintReset() })
+        return submenuItem(title: MenuModel.autoPaintTitle, icon: MenuModel.autoPaintIcon, submenu: submenu)
     }
 
     /// «🎨 Тема ▸»: список окна, вложенное «Всем окнам ▸» и свои темы.

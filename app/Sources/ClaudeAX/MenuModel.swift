@@ -157,6 +157,48 @@ enum MenuModel {
     static let themeScopeWindow = "window"
     static let themeScopeAll = "all"
 
+    // MARK: - автопокраска (план WF10)
+
+    /// Подменю после «🔤 Шрифт ▸»: наборы, разделитель, «Случайно», «Ещё раз», сброс всем окнам.
+    /// Каталог тем ему не нужен — палитры набор считает сам, поэтому оно есть всегда.
+    static let autoPaintTitle = "Автопокраска"
+    static let autoPaintIcon = "🌈"
+    static let autoPaintAgainTitle = "Ещё раз"
+    static let autoPaintAgainIcon = "🔁"
+    /// Сброс слоя темы всем окнам сразу: `theme: null`, `scope: "all"`.
+    static let autoPaintResetTitle = "Как у Claude (все окна)"
+    /// Красить нечего: окон Claude на экране нет или ни у одного нет AX-заголовка
+    /// (без заголовка страница не понимает, какому окну адресована тема).
+    static let autoPaintNoWindowsAlert = "Не нашёл окон Claude с заголовком — красить нечего"
+
+    /// Заголовки-заглушки: у окна с таким именем чата нет, и тема ляжет на ключ, общий для
+    /// всех таких окон, — они покрасятся одинаково. Про это HUD и предупреждает.
+    static let unnamedChatTitles = ["claude", "new chat"]
+
+    static func isUnnamedChat(_ title: String) -> Bool {
+        let text = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return text.isEmpty || unnamedChatTitles.contains(text)
+    }
+
+    /// HUD перед покраской: окна красятся по одному раз в 600 мс, и без строки это выглядит
+    /// как зависшее меню. Окон на экране больше, чем цветов, — сразу говорим почему.
+    static func autoPaintStart(windows: Int, unnamed: Int) -> String {
+        let count = "\(windows) \(windowsWord(windows))"
+        guard unnamed > 0 else { return "Крашу \(count)…" }
+        return "Крашу \(count); \(unnamed) без имени чата — одним цветом"
+    }
+
+    /// «1 окно», «2 окна», «5 окон».
+    static func windowsWord(_ count: Int) -> String {
+        let hundreds = abs(count) % 100, ones = abs(count) % 10
+        if (11...14).contains(hundreds) { return "окон" }
+        switch ones {
+        case 1: return "окно"
+        case 2...4: return "окна"
+        default: return "окон"
+        }
+    }
+
     /// ⌘Q — не пункт меню, а блокировка выхода (claude_noquit.lua).
     static let quitKey = KeySpec(mods: [.command], name: "q")
     static let quitMessage = "⌘Q в Claude заблокирован — выход через меню Claude → Quit"

@@ -82,6 +82,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         menu.addItem(withTitle: "Снять…", action: #selector(uninstall), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Статус…", action: #selector(showStatus), keyEquivalent: "").target = self
         menu.addItem(.separator())
+        // Дубль подменю с жёлтой кнопки (план WF10 п. 1): красит все окна Claude на экране,
+        // окно под курсором для этого не нужно.
+        menu.addItem(ax.autoPaintMenuItem())
+        menu.addItem(.separator())
         for toggle in [autoAllowItem, minimizeMenuItem, blockQuitItem, loginItem] {
             toggle.target = self
             menu.addItem(toggle)

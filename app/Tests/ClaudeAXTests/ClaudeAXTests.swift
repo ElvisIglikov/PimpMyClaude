@@ -96,8 +96,9 @@ final class ClaudeAXTests: XCTestCase {
 
     /// Клавиши обязаны доехать до самих пунктов меню: у семи — свои, у «Workflow» — никакой.
     func testMenuItemsCarryKeyEquivalents() throws {
+        // Хвост меню («Автопокраска», а с каталогом — ещё «Тема» и «Шрифт») клавиш не носит.
         let items = MinimizeMenu.build(config: MinimizeMenu.MenuConfig())
-            .items.filter { !$0.isSeparatorItem }
+            .items.filter { !$0.isSeparatorItem && !$0.hasSubmenu }
         XCTAssertEqual(items.count, MenuModel.entries.count)
         XCTAssertEqual(items.map { $0.keyEquivalent },
                        ["", "n", "n", String(UnicodeScalar(UInt32(NSDownArrowFunctionKey))!),
@@ -430,12 +431,13 @@ final class ClaudeAXTests: XCTestCase {
         config.deleteMyTheme = { deleted.append($0.id) }
         let menu = MinimizeMenu.build(config: config)
 
-        // Семь пунктов и два подменю; разделителей три — после «Новый чат», «Развернуть» и перед темами.
-        XCTAssertEqual(menu.items.filter { !$0.isSeparatorItem }.count, MenuModel.entries.count + 2)
+        // Семь пунктов и три подменю; разделителей три — после «Новый чат», «Развернуть» и перед темами.
+        XCTAssertEqual(menu.items.filter { !$0.isSeparatorItem }.count, MenuModel.entries.count + 3)
         XCTAssertEqual(menu.items.filter { $0.isSeparatorItem }.count, 3)
         XCTAssertTrue(menu.items[MenuModel.entries.count + 2].isSeparatorItem)
         let submenus = menu.items.filter { $0.hasSubmenu }
-        XCTAssertEqual(submenus.map { $0.title }, ["Тема", "Шрифт"])
+        // «Автопокраска» стоит сразу за «Шрифт» (план WF10 п. 1).
+        XCTAssertEqual(submenus.map { $0.title }, ["Тема", "Шрифт", "Автопокраска"])
 
         // MARK: подменю «Тема» — секции, «Всем окнам ▸» внутри, свои темы
         let theme = try XCTUnwrap(submenus.first?.submenu)
@@ -470,7 +472,7 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(themeAll.items.last?.state, .on) // всем окнам ничего не задано → «Как у Claude»
 
         // MARK: подменю «Шрифт»
-        let font = try XCTUnwrap(submenus.last?.submenu)
+        let font = try XCTUnwrap(menu.items.first { $0.title == MenuModel.fontTitle }?.submenu)
         XCTAssertEqual(font.items.map { $0.isSeparatorItem ? "—" : $0.title },
                        ["С ЗАСЕЧКАМИ", "Georgia", "МОНОШИРИННЫЕ", "SF Mono", "—",
                         "Системный (как у Claude)", "Всем окнам"])
@@ -514,8 +516,10 @@ final class ClaudeAXTests: XCTestCase {
                        ["ТЁМНЫЕ", "Фиолетовая", "СВЕТЛЫЕ", "Арктика", "—", "Как у Claude", "—",
                         "Всем окнам", "Сохранить как мою тему…"])
 
-        // Каталога нет — меню прежнее, из семи пунктов.
-        XCTAssertTrue(MinimizeMenu.build(config: MinimizeMenu.MenuConfig()).items.allSatisfy { !$0.hasSubmenu })
+        // Каталога нет — «Тема» и «Шрифт» пропадают, «Автопокраска» остаётся: палитры она
+        // считает сама и в themes.json не заглядывает (план WF10 п. 1).
+        XCTAssertEqual(MinimizeMenu.build(config: MinimizeMenu.MenuConfig()).items
+            .filter { $0.hasSubmenu }.map { $0.title }, [MenuModel.autoPaintTitle])
     }
 
     func testHoverPreviewsThemeAndFont() throws {
@@ -883,6 +887,231 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(list.count, MyThemesStore.limit)
         XCTAssertEqual(list.first?.id, "user-5")
         XCTAssertEqual(list.last?.id, "user-24")
+    }
+
+    // MARK: - автопокраска (план WF10)
+
+    /// Двенадцать hue по кругу — как раз то, что раскладывает «Радуга» на дюжине окон.
+    private static let wheelHues: [Double] = (0..<12).map { Double($0) * 30 }
+
+    func testAutoPaintPaletteIsValidAndReadable() throws {
+        for light in [false, true] {
+            for hue in ClaudeAXTests.wheelHues {
+                // Крайние силы — «Пастель»/«Неон» и края «Монохрома».
+                for strength in [0.0, 0.35, 0.5, 1.0] {
+                    let where_ = "hue \(Int(hue))° \(light ? "светлая" : "тёмная") сила \(strength)"
+                    let palette = AutoPaint.palette(hue: hue, light: light, strength: strength)
+                    XCTAssertEqual(Set(palette.keys), Set(Theme.paletteOrder), where_)
+                    for key in Theme.paletteOrder {
+                        let hex = try XCTUnwrap(palette[key], where_)
+                        XCTAssertNotNil(hex.range(of: "^#[0-9a-f]{6}$", options: .regularExpression),
+                                        "\(where_): \(key) = \(hex)")
+                    }
+                    let background = try XCTUnwrap(palette["background"])
+                    // Текст на фоне — AAA (≥ 7), приглушённый текст и акцент — AA (≥ 4,5).
+                    let text = try XCTUnwrap(AutoPaint.contrast(hex: try XCTUnwrap(palette["foreground"]),
+                                                                hex: background))
+                    XCTAssertGreaterThanOrEqual(text, AutoPaint.textContrast, "\(where_): текст на фоне")
+                    for key in ["muted", "accent"] {
+                        let value = try XCTUnwrap(AutoPaint.contrast(hex: try XCTUnwrap(palette[key]),
+                                                                     hex: background))
+                        XCTAssertGreaterThanOrEqual(value, AutoPaint.accentContrast, "\(where_): \(key)")
+                    }
+                    // «Трендовые, не кричащие»: насыщенность фона ≤ 60 % (фикс-батч п. 2 — на
+                    // 45 % выходило серо). Считаем её обратно из hex — по нему цвет и увидят.
+                    let saturation = try XCTUnwrap(AutoPaint.saturation(hex: background))
+                    XCTAssertLessThanOrEqual(saturation, AutoPaint.maxBackgroundSaturation, where_)
+                    // Боковина темнее фона, панель светлее (у светлой темы — наоборот).
+                    XCTAssertNotEqual(palette["sidebar"], background, where_)
+                    XCTAssertNotEqual(palette["panel"], background, where_)
+                }
+            }
+        }
+    }
+
+    func testAutoPaintAccentStaysInContrastBand() throws {
+        // Акцент кладём в полосу контраста, а не в пол (фикс-батч п. 1): иначе жёлтый с зелёным
+        // на тёмном фоне уходят за 10 и кричат, а синий с фиолетовым висят на 4,5 и тонут.
+        // Проверка — весь круг с шагом 10°, в обоих режимах.
+        for light in [false, true] {
+            let mode = light ? "светлая" : "тёмная"
+            let cap = AutoPaint.accentContrastCap(light: light)
+            var luminances: [Double] = []
+            for step in 0..<36 {
+                let hue = Double(step) * 10
+                let palette = AutoPaint.palette(hue: hue, light: light)
+                let accent = try XCTUnwrap(palette["accent"])
+                let value = try XCTUnwrap(AutoPaint.contrast(hex: accent,
+                                                             hex: try XCTUnwrap(palette["background"])))
+                XCTAssertGreaterThanOrEqual(value, AutoPaint.accentContrast, "\(mode) hue \(Int(hue))°")
+                XCTAssertLessThanOrEqual(value, cap, "\(mode) hue \(Int(hue))°")
+                let channels = try XCTUnwrap(AutoPaint.channels(hex: accent))
+                luminances.append(AutoPaint.luminance(r: channels.r, g: channels.g, b: channels.b))
+            }
+            // Полоса держит и яркость: по кругу акцент разъезжается не больше чем вдвое —
+            // иначе одно окно из четырёх било бы в глаза, а другое пряталось.
+            let spread = try XCTUnwrap(luminances.max()) / max(try XCTUnwrap(luminances.min()), 0.0001)
+            XCTAssertLessThanOrEqual(spread, 2, "\(mode): яркость акцента разъехалась в \(spread) раза")
+        }
+    }
+
+    func testAutoPaintSpreadsHuesAroundTheWheelLeftToRight() throws {
+        // Четыре окна в ряд, перемешанные: красим слева направо (тот же порядок, что «Расставить»).
+        let frames = [
+            CGRect(x: 900, y: 30, width: 440, height: 900),   // 0 — третье слева
+            CGRect(x: 20, y: 0, width: 440, height: 900),     // 1 — первое
+            CGRect(x: 1360, y: 10, width: 440, height: 900),  // 2 — четвёртое
+            CGRect(x: 460, y: 20, width: 440, height: 900),   // 3 — второе
+        ]
+        XCTAssertEqual(ArrangeLayout.order(of: frames), [1, 3, 0, 2])
+
+        let rainbow = try XCTUnwrap(AutoPaint.preset(id: "rainbow"))
+        let themes = AutoPaint.themes(preset: rainbow, scheme: rainbow.scheme,
+                                      count: frames.count, start: 100, light: false)
+        XCTAssertEqual(themes.map { $0.id },
+                       ["auto-rainbow-100", "auto-rainbow-190", "auto-rainbow-280", "auto-rainbow-10"])
+        XCTAssertEqual(themes.map { $0.name },
+                       ["Радуга · 100°", "Радуга · 190°", "Радуга · 280°", "Радуга · 10°"])
+        // Четыре окна — четыре разных цвета, разведённых ровно на четверть круга.
+        XCTAssertEqual(Set(themes.map { $0.palette["background"] }).count, 4)
+        let hues = AutoPaint.hues(scheme: .wheel, count: 4, start: 100)
+        for index in 1..<hues.count {
+            XCTAssertEqual(AutoPaint.normalized(hues[index] - hues[index - 1]), 90, accuracy: 0.001)
+        }
+        // Одно окно — середина диапазона (план п. 4); сектор «Заката» обходит 0°.
+        XCTAssertEqual(AutoPaint.hues(scheme: .sector(180, 260), count: 1, start: 0), [220])
+        XCTAssertEqual(AutoPaint.hues(scheme: .sector(350, 420), count: 2, start: 0), [7.5, 42.5])
+        // «Ещё раз» крутит старт внутри сектора, наружу не выпуская.
+        for hue in AutoPaint.hues(scheme: .sector(180, 260), count: 3, start: AutoPaint.againStep) {
+            XCTAssertTrue((180...260).contains(hue), "\(hue)° вышел из «Океана»")
+        }
+        // «Монохром» — один hue на все окна, но фон у каждого своей светлоты.
+        let mono = try XCTUnwrap(AutoPaint.preset(id: "mono"))
+        let shades = AutoPaint.themes(preset: mono, scheme: mono.scheme, count: 3, start: 210, light: false)
+        XCTAssertEqual(shades.map { $0.id }, Array(repeating: "auto-mono-210", count: 3))
+        XCTAssertEqual(Set(shades.map { $0.palette["background"] }).count, 3)
+        XCTAssertEqual(AutoPaint.hues(scheme: .wheel, count: 0, start: 0), [])
+    }
+
+    func testAutoPaintRandomSchemesGiveOneHuePerWindow() throws {
+        // «Случайно» берёт схему из четырёх (аналоговая, триада, сплит, тетрада) — и на N окон
+        // обязана дать N разных цветов, даже когда окон больше, чем углов в схеме.
+        for (index, scheme) in AutoPaint.randomSchemes.enumerated() {
+            for count in [1, 3, 5] {
+                let hues = AutoPaint.hues(scheme: scheme, count: count, start: 200)
+                XCTAssertEqual(hues.count, count, "схема \(index)")
+                XCTAssertEqual(Set(hues.map { Int($0.rounded()) }).count, count,
+                               "схема \(index) повторила цвет на \(count) окнах")
+                for hue in hues { XCTAssertTrue((0..<360).contains(hue), "\(hue)° вне круга") }
+            }
+        }
+        // Схема «Случайно» выбирается на каждый запуск, у остальных наборов она своя всегда.
+        let ocean = try XCTUnwrap(AutoPaint.preset(id: "ocean"))
+        XCTAssertEqual(AutoPaint.schemeIndex(for: AutoPaint.random, pick: { 2 }), 2)
+        XCTAssertNil(AutoPaint.schemeIndex(for: ocean, pick: { 2 }))
+        XCTAssertEqual(AutoPaint.scheme(for: AutoPaint.random, index: 2), AutoPaint.randomSchemes[2])
+        XCTAssertEqual(AutoPaint.scheme(for: ocean, index: 2), .sector(180, 260))
+        // «🔁 Ещё раз» повторяет ту же схему (фикс-батч п. 5): индекс из памяти, а не новый.
+        XCTAssertEqual(AutoPaint.schemeIndex(for: AutoPaint.random, repeating: 1, pick: { 3 }), 1)
+        XCTAssertEqual(AutoPaint.schemeIndex(for: AutoPaint.random, repeating: 99, pick: { 3 }),
+                       AutoPaint.randomSchemes.count - 1)
+        // «Случайно» решает тёмная/светлая по окнам, поэтому своего режима у него нет.
+        XCTAssertNil(AutoPaint.random.light)
+        XCTAssertEqual(AutoPaint.presets.map { $0.light }, [false, true, false, false, false, false, false, false])
+    }
+
+    func testAutoPaintThemePayloadMatchesContract() throws {
+        // Тема уезжает обычной командой на окно (план п. 4): scope window, адресация заголовком,
+        // слой шрифта не трогаем.
+        let rainbow = try XCTUnwrap(AutoPaint.preset(id: "rainbow"))
+        let theme = AutoPaint.theme(preset: rainbow, hue: 137, light: false)
+        let body = themeBody(theme: .set(theme), font: .keep, id: "1-0001", at: 0)
+        XCTAssertTrue(body.hasPrefix("{\"id\":\"1-0001\",\"action\":\"theme\",\"at\":\"1970-01-01T00:00:00Z\","
+            + "\"scope\":\"window\",\"title\":\"Vkusnoff\",\"theme\":{\"id\":\"auto-rainbow-137\","
+            + "\"name\":\"Радуга · 137°\",\"type\":\"dark\",\"palette\":{\"accent\":\"#"), body)
+        XCTAssertFalse(body.contains("\"font\""))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let payload = try XCTUnwrap(json["theme"] as? [String: Any])
+        XCTAssertEqual(payload["type"] as? String, "dark")
+        XCTAssertEqual(Set(try XCTUnwrap(payload["palette"] as? [String: String]).keys),
+                       Set(Theme.paletteOrder))
+        // Светлый набор помечает тему светлой — по типу страница ставит color-scheme.
+        XCTAssertEqual(AutoPaint.theme(preset: try XCTUnwrap(AutoPaint.preset(id: "pastel")),
+                                       hue: 359.7, light: true).id, "auto-pastel-0")
+    }
+
+    func testAutoPaintRemembersPresetStartAndScheme() throws {
+        // План п. 5: последний запуск (набор, старт, схема, режим) живёт в UserDefaults,
+        // «Ещё раз» = старт +37°.
+        let defaults = MemoryDefaults()
+        let store = AutoPaintStore(defaults: defaults)
+        XCTAssertNil(store.last?.preset)
+        store.remember(preset: "ocean", start: 350)
+        XCTAssertEqual(store.last?.preset, "ocean")
+        XCTAssertEqual(try XCTUnwrap(store.last?.start), 350, accuracy: 0.001)
+        XCTAssertNil(try XCTUnwrap(store.last).scheme) // у набора со своей схемой индекса нет
+        XCTAssertNil(try XCTUnwrap(store.last).light)
+        store.remember(preset: "ocean", start: 350 + AutoPaint.againStep)
+        XCTAssertEqual(try XCTUnwrap(store.last?.start), 27, accuracy: 0.001) // круг замкнулся
+        // «Случайно» кладёт индекс схемы и режим — «Ещё раз» повторит ту же гармонию и не
+        // перевернёт светлые окна в тёмные (фикс-батч п. 5): галки-то с них уже сняты.
+        store.remember(preset: "random", start: 10, scheme: 3, light: true)
+        XCTAssertEqual(try XCTUnwrap(store.last).scheme, 3)
+        XCTAssertEqual(try XCTUnwrap(store.last).light, true)
+        XCTAssertEqual(AutoPaint.scheme(for: AutoPaint.random,
+                                        index: AutoPaint.schemeIndex(for: AutoPaint.random,
+                                                                     repeating: store.last?.scheme ?? nil)),
+                       AutoPaint.randomSchemes[3])
+        XCTAssertEqual(AutoPaint.preset(id: "ocean")?.title, "Океан")
+        XCTAssertNil(AutoPaint.preset(id: "нет такого"))
+        // Ключ — тот, что читает живое приложение.
+        XCTAssertNotNil(defaults.values[AutoPaintStore.key])
+    }
+
+    func testAutoPaintHUDCountsWindowsAndUnnamedChats() {
+        // Строка перед покраской (фикс-батч п. 4): окон на экране столько же, сколько цветов, —
+        // говорим просто, сколько красим.
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 1, unnamed: 0), "Крашу 1 окно…")
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 4, unnamed: 0), "Крашу 4 окна…")
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 5, unnamed: 0), "Крашу 5 окон…")
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 11, unnamed: 0), "Крашу 11 окон…")
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 22, unnamed: 0), "Крашу 22 окна…")
+        // Окна без имени чата делят один ключ темы — им достанется один цвет, и это не сбой.
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 4, unnamed: 2),
+                       "Крашу 4 окна; 2 без имени чата — одним цветом")
+        // Заголовки-заглушки считаем безымянными, имя чата — нет.
+        for title in ["", "  ", "Claude", "claude", "New chat", " New Chat "] {
+            XCTAssertTrue(MenuModel.isUnnamedChat(title), title)
+        }
+        for title in ["Vkusnoff", "Новый разбор", "Claude Code"] {
+            XCTAssertFalse(MenuModel.isUnnamedChat(title), title)
+        }
+    }
+
+    func testAutoPaintMenuHasPresetsRandomAgainAndReset() throws {
+        var painted: [String] = []
+        var again = 0
+        var reset = 0
+        var config = menuConfig()
+        config.autoPaint = { painted.append($0.id) }
+        config.autoPaintAgain = { again += 1 }
+        config.autoPaintReset = { reset += 1 }
+        let submenu = try XCTUnwrap(MinimizeMenu.build(config: config).items
+            .first { $0.title == MenuModel.autoPaintTitle }?.submenu)
+
+        // Наборы, разделитель, «Случайно», «Ещё раз», сброс всем окнам (план п. 1).
+        XCTAssertEqual(submenu.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Радуга", "Пастель", "Закат", "Океан", "Лес", "Ягоды", "Неон", "Монохром",
+                        "—", "Случайно", "Ещё раз", "Как у Claude (все окна)"])
+        XCTAssertTrue(submenu.items.allSatisfy { !$0.hasSubmenu })
+        // Предпросмотра у автопокраски нет: набор красит все окна разом.
+        XCTAssertNil(submenu.delegate)
+        XCTAssertTrue(submenu.items.compactMap { ($0 as? BlockMenuItem)?.preview }.isEmpty)
+
+        for item in submenu.items where !item.isSeparatorItem { click(item) }
+        XCTAssertEqual(painted, AutoPaint.presets.map { $0.id } + ["random"])
+        XCTAssertEqual(again, 1)
+        XCTAssertEqual(reset, 1)
     }
 
     /// Наведение на пункт без popUp: так его зовёт AppKit — через делегата подменю.

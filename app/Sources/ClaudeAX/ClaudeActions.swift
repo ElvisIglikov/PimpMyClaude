@@ -49,21 +49,29 @@ final class ClaudeActions {
     let fonts: [Font]
     let themeStore: ThemeStore
     let myThemes: MyThemesStore
+    /// Последний набор автопокраски и его старт — из них «🔁 Ещё раз» (план WF10 п. 5).
+    let autoPaintStore: AutoPaintStore
 
     /// Что это приложение применило последним — из этого делается «моя тема» (план п. 4).
     /// Сброс слоя обнуляет: «Как у Claude» + «Сохранить как мою тему…» сохранять нечего.
     private(set) var lastAppliedTheme: Theme?
+    /// Автотемы по заголовку окна (план WF10 п. 6): автопокраска красит все окна разом и
+    /// `lastAppliedTheme` не трогает — иначе «Сохранить как мою тему…» на одном окне предложило
+    /// бы цвет соседнего. Окно, покрашенное набором, отдаёт свой цвет.
+    private(set) var autoPaintedThemes: [String: Theme] = [:]
     private(set) var lastAppliedFont: Font?
 
     init(app: ClaudeApp, commands: CommandChannel,
          themes: [Theme] = ThemeCatalog.bundled, fonts: [Font] = FontCatalog.available,
-         themeStore: ThemeStore = ThemeStore(), myThemes: MyThemesStore = MyThemesStore()) {
+         themeStore: ThemeStore = ThemeStore(), myThemes: MyThemesStore = MyThemesStore(),
+         autoPaintStore: AutoPaintStore = AutoPaintStore()) {
         self.app = app
         self.commands = commands
         self.themes = themes
         self.fonts = fonts
         self.themeStore = themeStore
         self.myThemes = myThemes
+        self.autoPaintStore = autoPaintStore
     }
 
     var lastCommand: String { commands.lastCommand }
@@ -198,12 +206,20 @@ final class ClaudeActions {
                    font: myTheme.font.map { Layer.set($0) } ?? .keep, window: window)
     }
 
-    /// «Сохранить как мою тему…»: пара из последней применённой темы и шрифта.
+    /// «Сохранить как мою тему…»: пара из темы этого окна и последнего шрифта.
     /// Тема ни разу не выбиралась — сохранять нечего (меню покажет алерт).
     @discardableResult
-    func saveMyTheme(name: String) -> [MyTheme]? {
-        guard let theme = lastAppliedTheme else { return nil }
+    func saveMyTheme(name: String, window: AXUIElement? = nil) -> [MyTheme]? {
+        guard let theme = themeToSave(window: window) else { return nil }
         return myThemes.add(name: name, theme: theme, font: lastAppliedFont)
+    }
+
+    /// Что предложит «Сохранить как мою тему…» (и каким именем): у автопокрашенного окна — его
+    /// собственную автотему (план WF10 п. 6), у остальных — последнюю применённую этим
+    /// приложением. Иначе на окне «Радуги» сохранялся бы цвет соседнего окна.
+    func themeToSave(window: AXUIElement?) -> Theme? {
+        let title = window.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
+        return autoPaintedThemes[title] ?? lastAppliedTheme
     }
 
     /// Галки в меню и «последнее применённое» — по слоям: слой `.keep` остаётся как был.
@@ -212,13 +228,18 @@ final class ClaudeActions {
             if !theme.isKeep {
                 themeStore.setAllTheme(theme.value?.id)
                 themeStore.clearWindowThemes()
+                // Автотем на окнах больше нет: тему всем окнам задали руками.
+                autoPaintedThemes.removeAll()
             }
             if !font.isKeep {
                 themeStore.setAllFont(font.value?.id)
                 themeStore.clearWindowFonts()
             }
         } else {
-            if !theme.isKeep { themeStore.setWindowTheme(theme.value?.id, title: title) }
+            if !theme.isKeep {
+                themeStore.setWindowTheme(theme.value?.id, title: title)
+                autoPaintedThemes[title] = nil // цвет окна выбрали руками — автотема устарела
+            }
             if !font.isKeep { themeStore.setWindowFont(font.value?.id, title: title) }
         }
         if !theme.isKeep { lastAppliedTheme = theme.value }
@@ -268,6 +289,104 @@ final class ClaudeActions {
                                                preview: preview, theme: theme, font: font)
         // Примерка идёт мимо очереди канала: мышь скользит по списку, ждать 600 мс нечего.
         return commands.write(action: "theme", fields: fields, priority: .preview)
+    }
+
+    // MARK: - автопокраска (план WF10)
+
+    /// «🌈 Автопокраска»: все окна Claude на экране красятся гармонично по цветовому кругу —
+    /// каждому окну своя тема обычной командой `theme` со `scope: "window"`, через очередь
+    /// канала (600 мс на окно). Возвращает, сколько окон покрашено.
+    /// Галки в подменю «Тема» автопокраска не ставит (план п. 4): выбранной темы у окна нет,
+    /// у него сгенерированная.
+    @discardableResult
+    func autoPaint(preset: AutoPaintPreset) -> Int {
+        paint(preset: preset, start: Double(Int.random(in: 0..<360)),
+              scheme: AutoPaint.schemeIndex(for: preset))
+    }
+
+    /// «🔁 Ещё раз»: тот же набор И та же схема, старт на +37° (план п. 5) — иначе после
+    /// «Случайно» это был бы уже другой набор, а не тот же, повёрнутый.
+    /// Набора в памяти нет — берём первый.
+    @discardableResult
+    func autoPaintAgain() -> Int {
+        let last = autoPaintStore.last
+        let preset = last.flatMap { AutoPaint.preset(id: $0.preset) } ?? AutoPaint.presets[0]
+        return paint(preset: preset, start: (last?.start ?? 0) + AutoPaint.againStep,
+                     scheme: AutoPaint.schemeIndex(for: preset, repeating: last?.scheme ?? nil),
+                     light: last?.light ?? nil)
+    }
+
+    /// «Как у Claude (все окна)»: сброс слоя темы всем окнам одной командой (`theme: null`,
+    /// `scope: "all"`). Шрифт не трогаем — слои независимы.
+    @discardableResult
+    func autoPaintReset(window: AXUIElement? = nil) -> Bool {
+        applyTheme(scope: MenuModel.themeScopeAll, theme: .reset, font: .keep, window: window)
+    }
+
+    private func paint(preset: AutoPaintPreset, start: Double, scheme index: Int?,
+                       light repeated: Bool? = nil) -> Int {
+        let windows = paintableWindows()
+        let titles = windows.titles
+        guard !titles.isEmpty else {
+            onWarning?(MenuModel.autoPaintNoWindowsAlert)
+            return 0
+        }
+        // Окна красятся по одному раз в 600 мс — молча это выглядит как зависшее меню.
+        onWarning?(MenuModel.autoPaintStart(windows: windows.onScreen, unnamed: windows.unnamed))
+        // Режим у набора свой; у «Случайно» — тот же, что в прошлый раз («Ещё раз» повторяет
+        // набор целиком), а на первый раз — по памяти окон. После покраски галки сняты, и
+        // сама память уже пуста — потому режим и ложится в AutoPaintStore.
+        let light = preset.light ?? repeated ?? prefersLightWindows()
+        let themes = AutoPaint.themes(preset: preset,
+                                      scheme: AutoPaint.scheme(for: preset, index: index),
+                                      count: titles.count, start: start, light: light)
+        for (title, theme) in zip(titles, themes) {
+            let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: title,
+                                                   theme: .set(theme), font: .keep)
+            commands.write(action: "theme", fields: fields)
+            // Галку в «Тема» снимаем: цвет у окна теперь сгенерированный, а старая отметка
+            // показывала бы тему каталога, которой на окне уже нет (план п. 4).
+            themeStore.setWindowTheme(nil, title: title)
+            // А «Сохранить как мою тему…» на этом окне должно предложить его цвет (план п. 6).
+            autoPaintedThemes[title] = theme
+        }
+        autoPaintStore.remember(preset: preset.id, start: start, scheme: index, light: light)
+        return titles.count
+    }
+
+    /// Окна Claude на экране для покраски: заголовки слева направо, затем сверху вниз (порядок
+    /// тот же, что у «Расставить»), и счётчики для HUD. Окно без AX-заголовка пропускаем:
+    /// страница узнаёт окно только по нему, а пустой заголовок значит «окно в фокусе» —
+    /// покрасились бы все в один цвет. Одинаковые заголовки схлопываются по той же причине:
+    /// тема живёт на чате, и двум окнам одного чата достанется один цвет — про это HUD и говорит.
+    private func paintableWindows() -> (titles: [String], onScreen: Int, unnamed: Int) {
+        guard let pid = app.pid else { return ([], 0, 0) }
+        let windows = ClaudeApp.onScreenFrames(pid: pid)
+        guard !windows.isEmpty else { return ([], 0, 0) }
+        var seen = Set<String>()
+        var titles: [String] = []
+        var unnamed = 0
+        for index in ArrangeLayout.order(of: windows.map { $0.frame }) {
+            let title = app.window(matching: windows[index].frame)
+                .flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
+            if MenuModel.isUnnamedChat(title) { unnamed += 1 }
+            guard !title.isEmpty, seen.insert(title).inserted else { continue }
+            titles.append(title)
+        }
+        // Про «одним цветом» говорим, только когда своего цвета кому-то и правда не досталось.
+        return (titles, windows.count, titles.count < windows.count ? unnamed : 0)
+    }
+
+    /// «🎲 Случайно» красит в тон окнам: светлые сейчас или тёмные. Знаем мы об этом только по
+    /// своей же памяти (`ThemeStore` — что это приложение применяло); ничего не применяли —
+    /// считаем тёмными, как у Claude по умолчанию.
+    private func prefersLightWindows() -> Bool {
+        var known: [String: Bool] = [:]
+        for theme in themes { known[theme.id] = theme.isLight }
+        for my in myThemes.load() { known[my.id] = my.type == "light" }
+        let ids = themeStore.windowThemeIDs + [themeStore.allThemeID].compactMap { $0 }
+        let types = ids.compactMap { known[$0] }
+        return types.filter { $0 }.count > types.filter { !$0 }.count
     }
 
     // MARK: - оконные команды
