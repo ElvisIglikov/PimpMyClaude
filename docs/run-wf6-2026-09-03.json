@@ -1,13 +1,14 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf6-2026-09-03.md",
   "project": "⚪PimpMyClaude",
-  "status": "план",
+  "status": "идёт",
   "trelvis": "#5313 #5314 #5315 #5316",
-  "script_path": null,
-  "run_id": null,
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf6-wave1-wf_7d67b6f2-c1d.js",
+  "run_id": "wf_7d67b6f2-c1d",
   "next_steps": [
-    "Элвис: «запускай»",
-    "ветка wf6 + тег, сторож, волна 1: A inject.js/themes.json + B Swift (Opus max), V-A/V-B"
+    "волна 1 идёт: A (24 темы, шрифт в inject.js), B (Swift меню/шрифты/мои темы) → V-A, V-B",
+    "гейт: inject.js живьём, старый формат, два слоя, bundle",
+    "волна 2: сверка, релиз 1.2.0, README/TEAM.md"
   ],
   "log": [
     {
@@ -19,11 +20,19 @@
       "at": "2026-09-03T21:55:52+05:00",
       "who": "оркестратор",
       "what": "критик Opus max: 27 правок, 5 критичных — внесены в план; жду «запускай»"
+    },
+    {
+      "at": "2026-09-03T22:02:54+05:00",
+      "who": "оркестратор",
+      "what": "Элвис: «побольше тем для девчат, шрифтов побольше с моно, начинай». План дополнен (24 темы, 30+ шрифтов), ветка wf6, сторож, волна 1 запущена (A+B Opus max, V-A/V-B Opus max)"
     }
   ],
   "critic": {
     "run_id": "wf_7a1c51ec-16f",
     "model": "Opus max",
     "findings": "27, критичных 5 — внесены"
-  }
+  },
+  "branch": "wf6 (тег wf6-start)",
+  "watchdog": "watchdog-pimpmyclaude-wf6-0309",
+  "orchestrator": "Fable 5.1 high"
 }
