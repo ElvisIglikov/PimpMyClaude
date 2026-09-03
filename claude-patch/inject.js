@@ -25,7 +25,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf5-a-6";
+  const VERSION = "wf5-a-7";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -426,6 +426,49 @@ ${THEME_ROOT_SELECTOR} {
   --surface-1: ${panel} !important;
   --surface-2: ${surface2} !important;
   --surface-3: ${mixHex(panel, foreground, 0.04)} !important;
+  --clay: ${accent} !important;
+  --clay-emphasized: ${mixHex(accent, foreground, 0.24)} !important;
+  --border: ${mixHex(accent, background, 0.72)} !important;
+  --border-strong: ${mixHex(accent, background, 0.50)} !important;
+  --border-stronger: ${mixHex(accent, background, 0.30)} !important;
+  --border-accent: ${accent} !important;
+  --bg-neutral: ${surface1} !important;
+  --bg-neutral-hover: ${surface2} !important;
+  --on-primary: ${background} !important;
+  --on-accent: ${background} !important;
+  --on-brand: ${background} !important;
+  --ring-color: ${mixHex(accent, background, 0.42)} !important;
+  --cds-page-bg: ${background} !important;
+  --cds-surface-0: ${background} !important;
+  --cds-surface-1: ${surface1} !important;
+  --cds-surface-2: ${surface2} !important;
+  --cds-surface-3: ${panel} !important;
+  --cds-surface-panel: ${panel} !important;
+  --cds-surface-popover: ${surface2} !important;
+  --cds-text-primary: ${foreground} !important;
+  --cds-text-secondary: ${muted} !important;
+  --cds-text-muted: ${mixHex(muted, background, 0.22)} !important;
+  --cds-text-accent: ${accent} !important;
+  --cds-border: ${mixHex(accent, background, 0.72)} !important;
+  --cds-border-strong: ${mixHex(accent, background, 0.50)} !important;
+  --cds-border-stronger: ${mixHex(accent, background, 0.30)} !important;
+  --cds-border-accent: ${accent} !important;
+  --cds-clay: ${accent} !important;
+  --cds-clay-emphasized: ${mixHex(accent, foreground, 0.24)} !important;
+  --cds-fill-accent: ${accent} !important;
+  --cds-fill-accent-hover: ${mixHex(accent, foreground, 0.20)} !important;
+  --cds-fill-brand: ${accent} !important;
+  --cds-fill-brand-hover: ${mixHex(accent, foreground, 0.20)} !important;
+  --cds-fill-primary: ${foreground} !important;
+  --cds-fill-primary-hover: ${mixHex(foreground, background, 0.12)} !important;
+  --cds-fill-secondary: ${surface2} !important;
+  --cds-fill-secondary-hover: ${panel} !important;
+  --cds-fill-field: ${surface1} !important;
+  --cds-fill-control: ${surface2} !important;
+  --cds-fill-control-hover: ${panel} !important;
+  --cds-fill-ghost-hover: ${mixHex(accent, background, 0.82)} !important;
+  --cds-oncolor-200: ${background} !important;
+  --cds-oncolor-300: ${background} !important;
   --surface-panel: ${panel} !important;
   --surface-popover: ${surface2} !important;
   --text-primary: ${foreground} !important;

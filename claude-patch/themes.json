@@ -5,55 +5,118 @@
       "id": "violet",
       "name": "Фиолетовая",
       "type": "dark",
-      "palette": { "accent": "#b57bff", "background": "#130d1f", "foreground": "#ece2fb", "sidebar": "#0d0817", "panel": "#1c1430", "muted": "#a795c4" }
+      "palette": {
+        "accent": "#b57bff",
+        "background": "#221640",
+        "foreground": "#efe7ff",
+        "sidebar": "#180f2e",
+        "panel": "#2d1f52",
+        "muted": "#b3a2d6"
+      }
     },
     {
       "id": "blue",
       "name": "Синяя",
       "type": "dark",
-      "palette": { "accent": "#5b9bff", "background": "#0b1220", "foreground": "#dfe8fb", "sidebar": "#070d18", "panel": "#131d31", "muted": "#92a6c6" }
+      "palette": {
+        "accent": "#5b9bff",
+        "background": "#122446",
+        "foreground": "#e4ecfb",
+        "sidebar": "#0c1a33",
+        "panel": "#1a3160",
+        "muted": "#9db1d6"
+      }
     },
     {
       "id": "green",
       "name": "Зелёная",
       "type": "dark",
-      "palette": { "accent": "#46d18b", "background": "#0a1410", "foreground": "#dcf3e6", "sidebar": "#061009", "panel": "#112119", "muted": "#8ab8a1" }
+      "palette": {
+        "accent": "#46d18b",
+        "background": "#0f2e22",
+        "foreground": "#dff5e9",
+        "sidebar": "#0a2118",
+        "panel": "#164031",
+        "muted": "#93c4ab"
+      }
     },
     {
       "id": "orange",
       "name": "Оранжевая",
       "type": "dark",
-      "palette": { "accent": "#ff9147", "background": "#17100a", "foreground": "#f7e6d8", "sidebar": "#100b06", "panel": "#241a11", "muted": "#c2a289" }
+      "palette": {
+        "accent": "#ff9147",
+        "background": "#3a2010",
+        "foreground": "#f9e9dc",
+        "sidebar": "#2a170b",
+        "panel": "#4a2b16",
+        "muted": "#cfae92"
+      }
     },
     {
       "id": "matrix",
       "name": "Matrix",
       "type": "dark",
-      "palette": { "accent": "#1eff5a", "background": "#0d120d", "foreground": "#b8ffca", "sidebar": "#0d120d", "panel": "#141c15", "muted": "#9bffb8" }
+      "palette": {
+        "accent": "#1eff5a",
+        "background": "#0b1f0b",
+        "foreground": "#b8ffca",
+        "sidebar": "#071607",
+        "panel": "#123012",
+        "muted": "#9bffb8"
+      }
     },
     {
       "id": "dracula",
       "name": "Dracula",
       "type": "dark",
-      "palette": { "accent": "#bd93f9", "background": "#282a36", "foreground": "#f8f8f2", "sidebar": "#21222c", "panel": "#343746", "muted": "#6272a4" }
+      "palette": {
+        "accent": "#bd93f9",
+        "background": "#282a36",
+        "foreground": "#f8f8f2",
+        "sidebar": "#21222c",
+        "panel": "#343746",
+        "muted": "#6272a4"
+      }
     },
     {
       "id": "tokyo",
       "name": "Tokyo Night",
       "type": "dark",
-      "palette": { "accent": "#7aa2f7", "background": "#1a1b26", "foreground": "#a9b1d6", "sidebar": "#16161e", "panel": "#1f2335", "muted": "#787c99" }
+      "palette": {
+        "accent": "#7aa2f7",
+        "background": "#1a1b26",
+        "foreground": "#a9b1d6",
+        "sidebar": "#16161e",
+        "panel": "#1f2335",
+        "muted": "#787c99"
+      }
     },
     {
       "id": "gray",
       "name": "Серая",
       "type": "dark",
-      "palette": { "accent": "#a8b3c4", "background": "#131518", "foreground": "#e6e8ec", "sidebar": "#0e1013", "panel": "#1c1f24", "muted": "#9096a0" }
+      "palette": {
+        "accent": "#a8b3c4",
+        "background": "#131518",
+        "foreground": "#e6e8ec",
+        "sidebar": "#0e1013",
+        "panel": "#1c1f24",
+        "muted": "#9096a0"
+      }
     },
     {
       "id": "arctic",
       "name": "Светлая Arctic",
       "type": "light",
-      "palette": { "accent": "#0066ff", "background": "#f3f8ff", "foreground": "#07152a", "sidebar": "#e3efff", "panel": "#ffffff", "muted": "#4d6580" }
+      "palette": {
+        "accent": "#0066ff",
+        "background": "#f3f8ff",
+        "foreground": "#07152a",
+        "sidebar": "#e3efff",
+        "panel": "#ffffff",
+        "muted": "#4d6580"
+      }
     }
   ]
 }
