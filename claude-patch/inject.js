@@ -13,7 +13,8 @@
 // cashout, scroll, theme. И сокращает время под сообщениями («3 minutes ago» →
 // «3 min ago»). Команда theme красит окно по палитре из claude-patch/themes.json
 // (раздел «2а. Темы окна»): у каждого окна своя тема, она переживает перезапуск
-// Claude.
+// Claude. А на границе поля ввода и строки инструментов рисует полосу прогресса
+// воркфлоу по строке состояния из последнего ответа (раздел «2б»).
 //
 // Логика ступеней, порогов и кликов перенесена из донора ElvisOS
 // (~/_ElvisProjects/ElvisOS/Resources/claude-chat-cleaner-inject.js, разделы
@@ -25,7 +26,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf6-a-1";
+  const VERSION = "wf7-a-3";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -908,6 +909,266 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // бы окно вовсе без полоски.
   try { if (!restoreTheme()) watchThemeTitle(); } catch {}
 
+  // ---- 2б. Полоса прогресса воркфлоу --------------------------------------
+  // Тонкая светящаяся линия на границе поля ввода и строки инструментов:
+  // насколько прошёл марафон воркфлоу. Вид взят у «полосы кэша» донора ElvisOS
+  // (Resources/claude-chat-cleaner-inject.js): две точки высотой, свечение двумя
+  // тенями, ширина едет плавно.
+  //
+  // Источник — сам чат, а не хранилище: последняя строка состояния в ответах
+  // ассистента («💭⚪[Проект](docs/status.md) · WF 6 из 7 · 40%💭», формат из
+  // SkilZZZ/AGENTS.md). Поэтому каждое окно считает по своему разговору, ничего
+  // не хранит и ни с кем не синхронизируется.
+  //
+  // Строки состояния нет — полосы нет вовсе (довод донора): пустая полоса
+  // утверждала бы «марафон только начался» ровно там, где марафона нет.
+  //
+  // Отступление от плана: полоса не absolute внутри блока ввода, а fixed по
+  // координатам — как и сама ручка. Довод записан в разделе 4 прямым текстом:
+  // рамка поля живёт в чужом дереве, и свой узел туда лучше не вставлять. React
+  // пересобирает низ окна на каждую смену модели, а position:absolute потребовал
+  // бы ещё и менять position у чужого контейнера. Место на экране от этого не
+  // меняется: считаем его по boundingClientRect строки инструментов.
+  const PROGRESS_ID = "myclaude-progress-bar";
+  // Ширина едет 400 мс: быстрее — дёрганье на каждом ответе, медленнее — полоса
+  // заметно отстаёт от цифры в чате.
+  const PROGRESS_MOVE_MS = 400;
+  // Перечитывать ленту чаще раза в секунду незачем: строка состояния меняется
+  // раз в ответ, а innerText сообщения — это принудительный reflow.
+  const PROGRESS_MIN_GAP = 1000;
+  // Страховочный перечёт: в тихом окне мутаций ленты может не быть вовсе.
+  const PROGRESS_IDLE_MS = 10000;
+  // Сколько последних ответов просматриваем. Строку состояния пишет каждый
+  // ответ, поэтому дальше десятка забираться незачем, а перечитывать весь
+  // длинный разговор раз в секунду — уже заметная работа.
+  const PROGRESS_LOOKBACK = 12;
+  // Ответы ассистента. Строка действий под ответом и реплики Элвиса сюда не
+  // попадают: обе приметы носят только сами ответы.
+  const PROGRESS_ANSWER_SELECTOR = '[data-testid="assistant-message"],div.font-claude-response';
+  const PROGRESS_ACCENT_FALLBACK = "#8b5cf6";
+  // Цвет по состоянию: ждём Элвиса — жёлтая, упало — красная; «идёт» и «готово»
+  // берут акцент темы окна (её красит раздел 2а).
+  const PROGRESS_PAINT = { wait: "#f5c542", fail: "#ef4444" };
+
+  // >>> разбор строки состояния (кусок вырезает скретч-тест по этим маркерам)
+  // Значки состояния из шаблона строки. Порядок — старшинство: 🛑 сильнее ✋,
+  // ✋ сильнее ✅, ✅ сильнее 💭. Шаблон несёт один и тот же значок по краям,
+  // поэтому спорить им обычно не о чем; старшинство решает те случаи, когда в
+  // строку попало два разных.
+  const PROGRESS_STATES = [["🛑", "fail"], ["✋", "wait"], ["✅", "done"], ["💭", "run"]];
+  // «WF 6 из 7 · 40%»: счёт марафона и процент текущего воркфлоу. Процента может
+  // не быть (готовый воркфлоу пишется без него). «WF» — тоже необязательно, но
+  // без него счёт засчитывается только рядом с ✅: «5 из 5» без значка — это
+  // обычная фраза из ответа, а не строка состояния.
+  const PROGRESS_RE = /(WF\s+)?(\d+)\s+из\s+(\d+)(?:\s*[·•]\s*(\d+)\s*%)?/g;
+  // Берём ПОСЛЕДНЕЕ совпадение в тексте: строка состояния стоит последней
+  // строкой ответа, а выше по тексту легко встречается пересказ чужой строки.
+  const parseProgressText = (text) => {
+    const source = String(text ?? "");
+    if (source === "") return null;
+    let found = null;
+    PROGRESS_RE.lastIndex = 0;
+    for (let match = PROGRESS_RE.exec(source); match; match = PROGRESS_RE.exec(source)) {
+      // Значок ищем в той же строке, а не во всём ответе: ✅ стоит чуть ли не в
+      // каждом списке сделанного, и любое «2 из 2» стало бы строкой состояния.
+      const from = source.lastIndexOf("\n", match.index) + 1;
+      const end = source.indexOf("\n", match.index);
+      const line = source.slice(from, end === -1 ? source.length : end);
+      const hit = PROGRESS_STATES.find(([icon]) => line.includes(icon));
+      const mark = hit ? hit[1] : null;
+      if (!match[1] && mark !== "done") continue;
+      const wf = Number(match[2]);
+      const count = Number(match[3]);
+      if (!Number.isFinite(wf) || !Number.isFinite(count) || wf < 1 || count < 1) continue;
+      const done = mark === "done";
+      const raw = match[4] === undefined ? null : Number(match[4]);
+      const pct = done ? 100 : (raw == null ? null : Math.min(100, Math.max(0, raw)));
+      // Прогресс марафона: закрытые воркфлоу целиком плюс доля текущего.
+      // Готово — сразу полная полоса, сколько бы процентов ни было написано
+      // рядом.
+      const share = done ? 1 : ((wf - 1) + (pct ?? 0) / 100) / count;
+      const total = Math.round(Math.min(1, Math.max(0, share)) * 1000) / 10;
+      found = { wf, of: count, pct, total, state: mark ?? "run" };
+    }
+    return found;
+  };
+  // <<< разбор строки состояния
+
+  const progressState = { info: null, reason: "полоса ещё не считалась", paint: "", at: 0, runs: 0, timer: 0, pulse: 0 };
+
+  // Полосу сносим по id, как ручку и стили: упавшая на середине установка
+  // оставляет её в окне, а реестра отмены у неё уже нет.
+  for (const orphan of document.querySelectorAll(`#${PROGRESS_ID}`)) orphan.remove();
+
+  const progressBar = document.createElement("div");
+  progressBar.id = PROGRESS_ID;
+  // aria-hidden и никакого aria-live: полоса меняется на каждом ответе, и
+  // VoiceOver проговаривал бы её без остановки (довод донора).
+  progressBar.setAttribute("aria-hidden", "true");
+  // Стили — прямо в узел, без <style>: CSP страницы может не пустить нашу
+  // таблицу (см. state.cssOk в разделе 4), а element.style ей неподвластен.
+  for (const [name, value] of Object.entries({
+    position: "fixed", display: "none", left: "0px", top: "0px", width: "0px", height: "2px",
+    "border-radius": "999px", "pointer-events": "none", "z-index": "2147483645",
+    transition: `width ${PROGRESS_MOVE_MS}ms linear`,
+  })) progressBar.style.setProperty(name, value);
+  (document.body ?? document.documentElement).appendChild(progressBar);
+  track(() => progressBar.remove());
+
+  // --accent-brand и у Claude, и у наших тем (раздел 2а) хранит не цвет, а
+  // тройку HSL: «251.000 40.000% 54.500%». Подставить её в background как есть
+  // нельзя — объявление отбросится и полоса станет невидимой, поэтому тройку
+  // заворачиваем в hsl() сами, а на всё незнакомое берём фиолетовый донора.
+  const progressAccent = () => {
+    let raw = "";
+    // В окне Claude Code палитра живёт на .epitaxy-root, а не на html.
+    try {
+      const host = state.composerBlock ?? document.querySelector(".epitaxy-root") ?? document.documentElement;
+      raw = getComputedStyle(host).getPropertyValue("--accent-brand").trim();
+    } catch {}
+    if (!raw) return PROGRESS_ACCENT_FALLBACK;
+    if (/^(?:#|rgba?\(|hsla?\(|oklch\(|lab\(|lch\(|color\()/i.test(raw)) return raw;
+    if (/^[\d.]+(?:deg)?\s+[\d.]+%\s+[\d.]+%$/.test(raw)) return `hsl(${raw})`;
+    return PROGRESS_ACCENT_FALLBACK;
+  };
+
+  // Строка инструментов («Auto», «+», микрофон, справа «Fable 5.1 · High») — тот
+  // же сосед рамки снизу, которого уже нашла раскладка ручки. Запасной путь — по
+  // имени модели в тексте: раскладка могла ещё не пройти, а своего класса у
+  // строки нет.
+  const PROGRESS_MODEL_RE = /\b(?:Fable|Opus|Sonnet|Haiku)\b/;
+  const progressRow = (block) => {
+    const row = state.modelRow;
+    if (row?.isConnected && block.contains(row)) return row;
+    for (let node = block.lastElementChild; node; node = node.previousElementSibling) {
+      const rect = node.getBoundingClientRect();
+      if (rect.height < MODEL_ROW_MIN_HEIGHT || rect.height > 200) continue;
+      if (PROGRESS_MODEL_RE.test(node.textContent ?? "")) return node;
+      if (/model/i.test(node.getAttribute("aria-label") ?? "")) return node;
+    }
+    return null;
+  };
+
+  // Меню модели и effort раскрываются вверх ровно над этой границей, а полоса
+  // висит поверх страницы и рисовалась бы сквозь них. Хит-тест, как у ручки
+  // (раздел 8), здесь не нужен: полоса ничего не ловит мышью, хватает
+  // пересечения с открытым меню или модалкой.
+  const progressCovered = (top, left, right) => {
+    for (const node of document.querySelectorAll(OVERLAY_SELECTOR)) {
+      const rect = node.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (rect.top <= top + 2 && rect.bottom >= top - 2 && rect.left <= right && rect.right >= left) return true;
+    }
+    return false;
+  };
+
+  const progressHide = () => {
+    if (progressBar.style.display !== "none") progressBar.style.setProperty("display", "none");
+  };
+
+  // Одно место решает и про причину, и про видимость: иначе status().progress
+  // рассказывал бы одно, а окно показывало другое.
+  const progressApply = () => {
+    const block = state.composerBlock?.isConnected ? state.composerBlock : null;
+    if (!block) { progressState.reason = "нет блока композера"; progressHide(); return; }
+    const row = progressRow(block);
+    if (!row) { progressState.reason = "нет строки инструментов"; progressHide(); return; }
+    const info = progressState.info;
+    if (!info) { progressState.reason = "нет строки состояния"; progressHide(); return; }
+    const rect = row.getBoundingClientRect();
+    if (rect.width < 80 || rect.bottom <= 0 || rect.top >= innerHeight) {
+      progressState.reason = "строка инструментов вне окна";
+      progressHide();
+      return;
+    }
+    const top = Math.round(rect.top) - 1;
+    // Мерим только под самой полосой: меню модели раскрывается справа и полосу не закрывает.
+    const barWidth = Math.max(2, Math.round(rect.width * info.total / 100));
+    if (progressCovered(top, rect.left, rect.left + barWidth)) {
+      progressState.reason = "полосу закрыло меню";
+      progressHide();
+      return;
+    }
+    progressState.reason = null;
+    const paint = PROGRESS_PAINT[info.state] ?? progressAccent();
+    if (progressState.paint !== paint) {
+      progressState.paint = paint;
+      progressBar.style.setProperty("background", paint);
+      // Свечение двумя тенями — приём донора: широкий мягкий ореол и второй
+      // проход по той же тени, отчего свет плотнее у самой линии.
+      progressBar.style.setProperty("box-shadow", `0 0 18px ${paint},0 0 6px ${paint}`);
+    }
+    // Даже нулевой прогресс рисуем двумя точками: полоса шириной 0 — это не
+    // «начали», а размытая клякса от одного свечения.
+    const width = barWidth;
+    progressBar.style.setProperty("left", `${Math.round(rect.left)}px`);
+    progressBar.style.setProperty("top", `${top}px`);
+    progressBar.style.setProperty("width", `${width}px`);
+    const title = `Воркфлоу ${info.wf} из ${info.of}` + (info.pct == null ? "" : ` · ${info.pct} %`);
+    // Подсказка честнее читается в разборе окна, чем мышью: полоса в две точки
+    // указателя не ловит (pointer-events:none), наводиться тут не на что.
+    if (progressBar.title !== title) progressBar.title = title;
+    progressBar.style.setProperty("display", "block");
+  };
+  // Раскладку ручки полоса не имеет права уронить: её зовут из чужого кода.
+  const placeProgress = () => { try { progressApply(); } catch {} };
+
+  // Идём от последнего ответа к более старым и останавливаемся на первом, где
+  // строка нашлась: это и есть «последняя по ленте».
+  const progressRead = () => {
+    // Те же приметы ответа, что у «Обкэшить» (ANSWER_SELECTOR + answerUsable): разметка
+    // claude.ai и окна Claude Code разная, свой узкий селектор в 1.40609.1 не находил ничего.
+    let nodes = [];
+    try {
+      const all = [...document.querySelectorAll(ANSWER_SELECTOR)].filter(answerUsable);
+      nodes = all.filter(node => !all.some(other => other !== node && other.contains(node)));
+    } catch {}
+    const stop = Math.max(0, nodes.length - PROGRESS_LOOKBACK);
+    for (let index = nodes.length - 1; index >= stop; index -= 1) {
+      const node = nodes[index];
+      if (!node?.isConnected) continue;
+      // Черновик в поле ввода ответом не считается: там Элвис вполне может
+      // держать недописанную строку состояния.
+      if (state.composerBlock?.contains(node)) continue;
+      const info = parseProgressText(node.innerText ?? node.textContent ?? "");
+      if (info) return info;
+    }
+    // Запасной путь: в окнах «Open in new window» приметы ответа почти не совпадают
+    // (проверено 04.09: 0–3 узла на сотню сообщений, лента виртуальная). Тогда читаем
+    // текст всего окна без черновика в поле ввода — в нём строка состояния есть.
+    try {
+      let text = document.body?.innerText ?? "";
+      const draft = (state.composerBlock?.innerText ?? "").trim();
+      if (draft && text.endsWith(draft)) text = text.slice(0, -draft.length);
+      else if (draft) text = text.replace(draft, "");
+      return parseProgressText(text);
+    } catch { return null; }
+  };
+
+  const progressRefresh = () => {
+    if (!state.alive || !state.watching) return;
+    progressState.at = now();
+    progressState.runs += 1;
+    progressState.info = progressRead();
+    progressApply();
+  };
+  // Троттлинг откладыванием, а не пропуском: последняя мутация ленты — как раз
+  // та, что дописала строку состояния, и терять её нельзя.
+  const progressSchedule = () => {
+    if (progressState.timer || !state.alive || !state.watching) return;
+    const wait = Math.max(0, PROGRESS_MIN_GAP - (now() - progressState.at));
+    if (wait === 0) { progressRefresh(); return; }
+    progressState.timer = setTimeout(() => {
+      progressState.timer = 0;
+      try { progressRefresh(); } catch {}
+    }, wait);
+  };
+  track(() => { if (progressState.timer) { clearTimeout(progressState.timer); progressState.timer = 0; } });
+  // Тихое окно мутаций не даёт вовсе (чат открыт и не двигается), поэтому сверх
+  // тика ленты — редкий страховочный перечёт.
+  progressState.pulse = setInterval(() => { try { progressRefresh(); } catch {} }, PROGRESS_IDLE_MS);
+  track(() => { clearInterval(progressState.pulse); progressState.pulse = 0; });
+
   // ---- 3. Сироты прошлых установок ---------------------------------------
   // Реестра у них могло и не быть (падение до его заполнения), а в окне они уже
   // висят. Сносим по id и по своим атрибутам — иначе полосок в окне остаётся
@@ -1370,6 +1631,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     state.scheduled = false;
     state.layoutAt = now();
     state.layoutRuns += 1;
+    // Полоса прогресса (раздел 2б) переезжает вместе с полем. Зовём её дважды:
+    // здесь — чтобы её достали и те проходы, что кончатся ранним выходом
+    // (свёрнутое поле, потерянный редактор), и в самом конце — чтобы во время
+    // тяги она не отставала на проход от только что изменённой высоты.
+    placeProgress();
     const editor = findEditor();
     // Страховка от мигания: даже если редактор потерялся, свёрнутое состояние не
     // сбрасываем, пока жив хоть один схлопнутый узел.
@@ -1423,6 +1689,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // время перетаскивания не прячем — курсор держит именно её.
     state.handleCovered = !state.dragging && popupCoversHandle();
     if (state.handleCovered) handle.style.display = "none";
+    placeProgress();
   };
 
   const cancelPendingLayout = () => {
@@ -2025,6 +2292,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       for (const node of document.querySelectorAll(TIME_SELECTOR)) shortenTextNodes(node);
     } catch {}
     watchTime();
+    // Тик времени сообщений заодно двигает полосу прогресса (раздел 2б): он
+    // приходит от наблюдателя за лентой, то есть ровно тогда, когда в разговоре
+    // что-то изменилось. Свой троттлинг у полосы отдельный, в секунду.
+    try { progressSchedule(); } catch {}
   };
   const cancelShortTime = () => {
     if (!state.timeTimer) return;
@@ -2131,6 +2402,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // будет, так что и второй наблюдатель уходит вместе с первым.
     cancelShortTime();
     stopTimeWatch();
+    clearInterval(progressState.pulse);
+    progressState.pulse = 0;
   };
   state.giveUpTimer = setTimeout(() => {
     state.giveUpTimer = 0;
@@ -2198,6 +2471,17 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       timeRuns: state.timeRuns,
       timeWatched: Boolean(state.timeTarget),
       cashout: readCashout() != null,
+      // Полоса прогресса воркфлоу (раздел 2б): что вычитано из строки состояния
+      // последнего ответа и почему полосы нет, если её нет. total — доля всего
+      // марафона в процентах, pct — процент текущего воркфлоу.
+      progress: {
+        wf: progressState.info?.wf ?? null,
+        of: progressState.info?.of ?? null,
+        pct: progressState.info?.pct ?? null,
+        total: progressState.info?.total ?? null,
+        state: progressState.info?.state ?? null,
+        reason: progressState.reason,
+      },
       // Тема и шрифт окна: что применено, под каким ключом хранится и откуда
       // взялось (session — своя сессия окна, window — карта по ключу, all —
       // запись «для всех»). У слоёв источники независимы.
@@ -2229,6 +2513,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // ближайшей мутации не должны.
     runShortTime();
     layout();
+    // Полоса прогресса — сразу после первой раскладки: блок ввода к этому
+    // моменту уже найден, и ждать ближайшей мутации ленты ей нечего.
+    progressRefresh();
   } catch (error) {
     try { dispose(); } catch {}
     window.__myclaudeFailure = {
