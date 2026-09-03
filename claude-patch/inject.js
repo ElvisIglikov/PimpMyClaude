@@ -30,7 +30,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf9-a-4";
+  const VERSION = "wf11-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1095,7 +1095,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Тонкая светящаяся линия на нижней кромке рамки поля ввода: насколько прошёл
   // марафон воркфлоу. Вид взят у «полосы кэша» донора ElvisOS
   // (Resources/claude-chat-cleaner-inject.js): две точки высотой, свечение двумя
-  // тенями, ширина едет плавно.
+  // тенями, заливка едет плавно.
+  //
+  // WF11 (плавный хвост): лента чата виртуальная, при прокрутке в неё попадают
+  // разные строки состояния — число сегментов гуляет. Раньше на каждую смену
+  // числа узлы пересоздавались, и вся полоса заново росла с нуля. Теперь узлы
+  // живут в пуле: меняется только хвост (недостающие проявляются, лишние гаснут),
+  // а заливка уже нарисованных сегментов едет от прежнего значения к новому.
   //
   // WF9 (полоска v2): линия разбита на сегменты — по одному на воркфлоу марафона
   // («WF N из M»), зазор 3 точки. Готовые полные, текущий залит на свои проценты,
@@ -1126,8 +1132,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const PROGRESS_ID = "myclaude-progress-bar";
   const PROGRESS_TIP_ID = "myclaude-progress-tip";
   // Ширина едет 400 мс: быстрее — дёрганье на каждом ответе, медленнее — полоса
-  // заметно отстаёт от цифры в чате.
+  // заметно отстаёт от цифры в чате. Тем же временем живут проявление и
+  // затухание сегментов и смена цвета состояния — движение у полосы одно.
   const PROGRESS_MOVE_MS = 400;
+  // Погасший сегмент убираем чуть позже конца затухания. Таймером, а не по
+  // transitionend: в свёрнутом окне переходы не идут и событие не придёт вовсе,
+  // а узел с opacity 0 остался бы висеть в разметке до самой смены числа.
+  const PROGRESS_DROP_MS = PROGRESS_MOVE_MS + 120;
   // Перечитывать ленту чаще раза в секунду незачем: строка состояния меняется
   // раз в ответ, а innerText сообщения — это принудительный reflow.
   const PROGRESS_MIN_GAP = 1000;
@@ -1346,6 +1357,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     position: "fixed", display: "none", left: "0px", top: "0px", width: "0px",
     height: `${PROGRESS_BAR_HEIGHT}px`, "align-items": "stretch", gap: `${PROGRESS_SEG_GAP}px`,
     "pointer-events": "none", "z-index": "2147483645",
+    // Сама коробка не анимируется НИКОГДА: место и ширину ей задаёт геометрия
+    // окна (resize, ручка, смена якоря), и переход тут означал бы, что полоса
+    // ползёт за краем поля ввода с опозданием. Пишем это прямым объявлением, а
+    // не молчанием: страница вправе объявить переход на всё подряд.
+    transition: "none",
   })) progressBar.style.setProperty(name, value);
   (document.body ?? document.documentElement).appendChild(progressBar);
   track(() => progressBar.remove());
@@ -1474,30 +1490,95 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Узлы сегментов: у каждого свой контур (track) и своя заливка (fill). Контур
   // отдельным узлом, а не прозрачностью самого сегмента, — иначе вместе с ним
   // выцвела бы и заливка текущего воркфлоу.
+  //
+  // Доля сегмента — flex-basis в процентах, а не flex:1 1 0. Довод в том, какие
+  // смены обязаны ехать плавно, а какие мгновенно: процент не меняется от того,
+  // что окно стало шире (переход не запускается — полоса перестраивается в тот
+  // же кадр), зато при смене числа сегментов проценты другие, и браузер сам
+  // проводит их переходом. Зазоры при этом съедает flex-shrink: сумма долей
+  // всегда ровно 100 %, лишнее ужимается поровну.
+  const PROGRESS_CELL_TRANS = `flex-basis ${PROGRESS_MOVE_MS}ms ease, ` +
+    `margin-left ${PROGRESS_MOVE_MS}ms ease, opacity ${PROGRESS_MOVE_MS}ms ease`;
+  const PROGRESS_FILL_TRANS =
+    `width ${PROGRESS_MOVE_MS}ms linear, background ${PROGRESS_MOVE_MS}ms ease, box-shadow ${PROGRESS_MOVE_MS}ms ease`;
+  const PROGRESS_TRACK_TRANS = `box-shadow ${PROGRESS_MOVE_MS}ms ease`;
+  // Живые сегменты слева направо и те, что сейчас гаснут (они ещё в разметке).
   const progressCells = [];
-  const progressBuild = (count) => {
+  const progressLeaving = [];
+
+  const progressDrop = (item) => {
+    if (item.timer) { clearTimeout(item.timer); item.timer = 0; }
+    const index = progressLeaving.indexOf(item);
+    if (index >= 0) progressLeaving.splice(index, 1);
+    item.cell.remove();
+  };
+  // Лишний сегмент не выдёргиваем из разметки на месте: гасим прозрачностью и
+  // убираем, когда затухание кончилось. Полоса при этом спрятана — гасить
+  // нечего, узел уходит сразу.
+  //
+  // Заодно гаснущий отдаёт своё место: доля едет в ноль, а отрицательное поле
+  // слева гасит его зазор (гаснущие всегда в хвосте, зазор перед ними есть
+  // всегда). Иначе оставшиеся сегменты сидели бы ужатыми все затухание и
+  // прыгнули бы вширь в тот миг, когда узел исчез из разметки.
+  const progressLeave = (item, instant) => {
+    if (instant) { progressDrop(item); return; }
+    progressLeaving.push(item);
+    for (const [name, value] of Object.entries({
+      opacity: "0", "flex-basis": "0%", "margin-left": `-${PROGRESS_SEG_GAP}px`,
+    })) item.cell.style.setProperty(name, value);
+    item.timer = setTimeout(() => { item.timer = 0; progressDrop(item); }, PROGRESS_DROP_MS);
+  };
+  track(() => { for (const item of progressLeaving.splice(0)) if (item.timer) clearTimeout(item.timer); });
+
+  const progressCell = () => {
+    const cell = document.createElement("div");
+    for (const [name, value] of Object.entries({
+      position: "relative", "flex-grow": "0", "flex-shrink": "1", "flex-basis": "100%",
+      "min-width": "0", "margin-left": "0px", height: "100%", "border-radius": "999px",
+      // Рождается прозрачным и без переходов: доли и цвета ему впишет тот же
+      // проход progressApply, и вписать их надо мгновенно — иначе новый сегмент
+      // поехал бы от нуля, то есть ровно то, от чего уходим.
+      opacity: "0", transition: "none",
+    })) cell.style.setProperty(name, value);
+    const track = document.createElement("div");
+    for (const [name, value] of Object.entries({
+      position: "absolute", left: "0", top: "0", right: "0", bottom: "0",
+      "border-radius": "999px", opacity: "0.25", transition: "none",
+    })) track.style.setProperty(name, value);
+    const fill = document.createElement("div");
+    for (const [name, value] of Object.entries({
+      position: "absolute", left: "0", top: "0", bottom: "0", width: "0%",
+      "border-radius": "999px", transition: "none",
+    })) fill.style.setProperty(name, value);
+    cell.appendChild(track);
+    cell.appendChild(fill);
+    return { cell, track, fill, timer: 0, born: true };
+  };
+
+  // Пул: число сегментов гуляет при каждой прокрутке ленты, и пересоздавать их
+  // нельзя — новый узел не помнит, на сколько был залит прежний. Меняется
+  // только хвост.
+  const progressBuild = (count, instant) => {
     if (progressCells.length === count) return;
-    for (const item of progressCells) item.cell.remove();
-    progressCells.length = 0;
-    for (let index = 0; index < count; index += 1) {
-      const cell = document.createElement("div");
-      for (const [name, value] of Object.entries({
-        position: "relative", flex: "1 1 0", "min-width": "0", height: "100%", "border-radius": "999px",
-      })) cell.style.setProperty(name, value);
-      const track = document.createElement("div");
-      for (const [name, value] of Object.entries({
-        position: "absolute", left: "0", top: "0", right: "0", bottom: "0",
-        "border-radius": "999px", opacity: "0.25",
-      })) track.style.setProperty(name, value);
-      const fill = document.createElement("div");
-      for (const [name, value] of Object.entries({
-        position: "absolute", left: "0", top: "0", bottom: "0", width: "0%",
-        "border-radius": "999px", transition: `width ${PROGRESS_MOVE_MS}ms linear`,
-      })) fill.style.setProperty(name, value);
-      cell.appendChild(track);
-      cell.appendChild(fill);
-      progressBar.appendChild(cell);
-      progressCells.push({ cell, track, fill });
+    if (progressCells.length > count) {
+      for (const item of progressCells.splice(count)) progressLeave(item, instant);
+      return;
+    }
+    while (progressCells.length < count) {
+      // Ещё не убранный сегмент возвращаем на место, а не рожаем новый:
+      // гаснущие стоят в разметке ПОСЛЕ живых, и новый узел встал бы за ними.
+      const back = progressLeaving.shift();
+      if (back) {
+        if (back.timer) { clearTimeout(back.timer); back.timer = 0; }
+        // Долю ему впишет тот же проход, а прозрачность и поле возвращаем здесь.
+        back.cell.style.setProperty("opacity", "1");
+        back.cell.style.setProperty("margin-left", "0px");
+        progressCells.push(back);
+        continue;
+      }
+      const item = progressCell();
+      progressBar.appendChild(item.cell);
+      progressCells.push(item);
     }
   };
 
@@ -1582,17 +1663,32 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     progressState.anchor = onFrame ? "рамка" : "строка инструментов";
     const shares = progressShares(info, width);
     progressState.segments = shares;
-    progressBuild(shares.length);
+    // Полоса сейчас спрятана — значит это её появление: ни первый показ при
+    // открытии окна, ни возврат из-под закрывшегося меню анимировать нечего,
+    // всё пишется сразу набело.
+    const instant = progressBar.style.display !== "flex";
+    progressBuild(shares.length, instant);
     const accent = progressAccent();
     const hot = PROGRESS_PAINT[info.state] ?? accent;
     // Слитая в одну полоса — это и есть текущий воркфлоу целиком.
     const merged = shares.length === 1 && info.of > 1;
     const current = merged ? 0 : Math.min(shares.length - 1, Math.max(0, info.wf - 1));
+    // Доли считаем от сотни: сумма ровно 100 %, зазоры съедает flex-shrink.
+    const basis = `${Math.round(10000 / shares.length) / 100}%`;
+    // Узлы, которым этот проход пишется без переходов: свежерождённые и все
+    // подряд на появлении полосы. Переходы им вернём одним махом ниже.
+    const quiet = [];
     for (let index = 0; index < shares.length; index += 1) {
       const item = progressCells[index];
       if (!item) continue;
+      if (instant || item.born) {
+        for (const node of [item.cell, item.track, item.fill]) node.style.setProperty("transition", "none");
+        quiet.push(item);
+      }
       const share = shares[index];
       const paint = index === current ? hot : accent;
+      item.cell.style.setProperty("flex-basis", basis);
+      if (instant) item.cell.style.setProperty("opacity", "1");
       item.fill.style.setProperty("width", `${share}%`);
       item.fill.style.setProperty("background", paint);
       // Свечение двумя тенями — приём донора: широкий мягкий ореол и второй
@@ -1601,6 +1697,21 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       item.fill.style.setProperty("box-shadow", share > 0 ? `0 0 18px ${paint},0 0 6px ${paint}` : "none");
       // Контур в одну точку — «сюда марафон ещё не дошёл».
       item.track.style.setProperty("box-shadow", `inset 0 0 0 1px ${accent}`);
+    }
+    if (quiet.length > 0) {
+      // Принудительная раскладка одна на весь проход: без неё браузер сведёт обе
+      // записи стиля в один пересчёт, увидит только «переходы включены» и всё-таки
+      // проиграет движение от старых значений к новым.
+      try { progressBar.getBoundingClientRect(); } catch {}
+      for (const item of quiet) {
+        item.born = false;
+        item.cell.style.setProperty("transition", PROGRESS_CELL_TRANS);
+        item.track.style.setProperty("transition", PROGRESS_TRACK_TRANS);
+        item.fill.style.setProperty("transition", PROGRESS_FILL_TRANS);
+        // Хвост проявляется: узел уже нужной ширины и с готовой заливкой, ему
+        // осталось только всплыть. На появлении полосы он всплыл выше, разом.
+        item.cell.style.setProperty("opacity", "1");
+      }
     }
     progressBar.style.setProperty("left", `${left}px`);
     progressBar.style.setProperty("top", `${top}px`);
