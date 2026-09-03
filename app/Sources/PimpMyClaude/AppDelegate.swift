@@ -3,21 +3,26 @@ import ApplicationServices
 import ClaudeAX
 import Patcher
 import ServiceManagement
+import UserNotifications
 
 /// Меню-бар без окна (LSUIElement): статус патча, три кнопки установки и тумблеры фишек.
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
     private enum Key {
         static let autoAllow = "autoAllowEnabled"
         static let minimizeMenu = "minimizeMenuEnabled"
         static let blockQuit = "blockQuitEnabled"
         static let loginItemConfigured = "loginItemConfigured"
         static let claudePath = "claudeAppPath"
+        static let setupDone = "setupWindowSeen"
     }
 
-    private let ax: ClaudeAXControlling = ClaudeAXController()
+    private let ax = ClaudeAXController()
     private var statusItem: NSStatusItem?
     private var pollTimer: Timer?
     private var busy = false
+    private var setup: SetupWindow?
+    private var lastState: ClaudeState?
+    private var lostNotified = false
 
     private let stateItem = NSMenuItem(title: "Проверяю…", action: nil, keyEquivalent: "")
     private let autoAllowItem = NSMenuItem(title: "Авто-Allow", action: #selector(toggleAutoAllow), keyEquivalent: "")
@@ -32,10 +37,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildStatusItem()
         applySettingsToAX()
         ax.start()
+        Notifier.registerCategory(delegate: self)
         configureLoginItemOnFirstRun()
         refreshState()
         // `open -a PimpMyClaude.app --args --status` — окно статуса без похода в меню (нужно на гейте).
         if CommandLine.arguments.contains("--status") { showStatus() }
+        // Первый запуск: пошаговое окно разрешений. Закрыли — больше не всплываем,
+        // вернуться можно пунктом «Настроить разрешения…».
+        if !UserDefaults.standard.bool(forKey: Key.setupDone) { showSetup() }
 
         // Решение 4: проверка при активации Claude и раз в 60 с.
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -55,6 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.toolTip = "PimpMyClaude"
 
         let menu = NSMenu()
+        menu.delegate = self
+        menu.autoenablesItems = false // тумблеры гасим руками: без Accessibility их включать бессмысленно
         stateItem.isEnabled = false
         menu.addItem(stateItem)
         menu.addItem(.separator())
@@ -62,19 +73,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Снять…", action: #selector(uninstall), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Статус…", action: #selector(showStatus), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        for toggle in [autoAllowItem, minimizeMenuItem, blockQuitItem] {
+        for toggle in [autoAllowItem, minimizeMenuItem, blockQuitItem, loginItem] {
             toggle.target = self
             menu.addItem(toggle)
         }
+        blockQuitItem.toolTip = "⌘Q не закрывает Claude, пока его окно впереди. Работает и без Accessibility."
+        loginItem.toolTip = "Автозапуск при входе в систему; включается сам, когда приложение лежит в «Программах»."
         menu.addItem(.separator())
-        loginItem.target = self
-        menu.addItem(loginItem)
+        menu.addItem(withTitle: "Настроить разрешения…", action: #selector(showSetup), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "История авто-Allow…", action: #selector(showAutoAllowHistory), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "О программе", action: #selector(showAbout), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Выйти", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         item.menu = menu
         statusItem = item
         updateToggleMarks()
+    }
+
+    /// Меню открывают редко — обновляем прямо перед показом, чтобы галки и статус были свежие.
+    func menuWillOpen(_ menu: NSMenu) {
+        updateToggleMarks()
+        refreshState()
     }
 
     // ---------------------------------------------------------------- статус
@@ -97,6 +117,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func show(state: ClaudeState) {
         stateItem.title = state.menuTitle
         statusItem?.button?.toolTip = "PimpMyClaude — " + state.menuTitle
+        applyStatusIcon(state)
+        notifyIfPatchLost(state)
+        lastState = state
+    }
+
+    /// Значок в строке меню по статусу: стоит — галка, слетел — красный «!»,
+    /// не стоит — пустой кружок, Claude не найден — крестик. Нет SF Symbols — рисуем текстом.
+    private func applyStatusIcon(_ state: ClaudeState) {
+        guard let button = statusItem?.button else { return }
+        let symbol: String, fallback: String, alarm: Bool
+        switch state {
+        case .installed: (symbol, fallback, alarm) = ("checkmark.circle", "✓", false)
+        case .lost: (symbol, fallback, alarm) = ("exclamationmark.triangle.fill", "!", true)
+        case .notInstalled: (symbol, fallback, alarm) = ("circle.dashed", "○", false)
+        case .claudeNotFound: (symbol, fallback, alarm) = ("xmark.circle", "✗", false)
+        }
+        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+        guard var image = NSImage(systemSymbolName: symbol, accessibilityDescription: state.menuTitle)?
+            .withSymbolConfiguration(config) else {
+            button.image = nil
+            button.imagePosition = .noImage
+            button.title = fallback
+            return
+        }
+        // «Слетел» — единственное состояние, где надо что-то делать: красим в красный,
+        // остальные значки шаблонные и подстраиваются под светлую/тёмную строку меню.
+        if alarm, let red = image.withSymbolConfiguration(config.applying(.init(paletteColors: [.systemRed]))) {
+            image = red
+            image.isTemplate = false
+        } else {
+            image.isTemplate = true
+        }
+        button.image = image
+        button.imagePosition = .imageOnly
+        button.title = ""
+    }
+
+    /// Решение 4: одно уведомление «патч слетел» с кнопкой «Поставить снова»,
+    /// повторов нет, пока патч не вернулся на место.
+    private func notifyIfPatchLost(_ state: ClaudeState) {
+        if case .lost(let version, let reason) = state {
+            guard !lostNotified else { return }
+            // Флаг взводится только когда баннер реально отправлен: без разрешения на уведомления
+            // попробуем снова на следующей проверке (человек мог разрешить их в окне настройки).
+            Notifier.postPatchLost("Claude \(version): \(reason). Нажми «Поставить снова» — это полминуты.") { [weak self] sent in
+                if sent { self?.lostNotified = true }
+            }
+            return
+        }
+        if lostNotified {
+            lostNotified = false
+            Notifier.clearPatchLost()
+        }
     }
 
     // ---------------------------------------------------------------- поиск Claude
@@ -192,6 +265,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // ---------------------------------------------------------------- первый запуск, история, о программе
+
+    /// Пошаговое окно разрешений: первый запуск и пункт меню. Второй раз не плодим — поднимаем открытое.
+    @objc private func showSetup() {
+        if let setup = setup {
+            setup.show()
+            return
+        }
+        let window = SetupWindow(
+            stateText: { [weak self] in self?.stateItem.title ?? "" },
+            patchInstalled: { [weak self] in self?.lastState?.isInstalled ?? false },
+            onInstall: { [weak self] in self?.install() },
+            onClose: { [weak self] in
+                UserDefaults.standard.set(true, forKey: Key.setupDone)
+                self?.setup = nil
+            })
+        setup = window
+        window.show()
+    }
+
+    @objc private func showAutoAllowHistory() {
+        let window = OperationWindow(title: "История авто-Allow")
+        window.show()
+        let history = ax.autoAllowHistory()
+        if history.isEmpty {
+            window.append("Пока пусто: авто-Allow ещё ничего не нажимал.")
+            window.append("Он сам жмёт кнопки «Allow…» в диалогах Claude — кроме заголовков из списка исключений.")
+        } else {
+            for line in history { window.append(line) }
+        }
+        window.append("")
+        window.append("Исключения: " + (ax.blockedHeadings.isEmpty ? "нет" : ax.blockedHeadings.joined(separator: ", ")))
+        window.append("Диагностика: " + ax.statusText)
+        window.finish("")
+    }
+
+    @objc private func showAbout() {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "—"
+        let build = info["CFBundleVersion"] as? String ?? "—"
+        let alert = NSAlert()
+        alert.messageText = "PimpMyClaude \(version) (\(build))"
+        alert.informativeText = """
+            Прокачка Claude Desktop: узкие окна и поля, ручка над полем ввода, меню на кнопке «Свернуть» \
+            с горячими клавишами, авто-Allow и блокировка ⌘Q. Без Hammerspoon и Node.
+
+            \(Bundle.main.bundleURL.path)
+            Elvis Iglikov
+            """
+        alert.addButton(withTitle: "Понятно")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    // ---------------------------------------------------------------- уведомления
+
+    /// Баннер показываем, даже когда наше приложение впереди.
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
+    /// Кнопка «Поставить снова» (и клик по самому баннеру) — это обычная операция «Поставить».
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let action = response.actionIdentifier
+        if action == Notifier.installAction || action == UNNotificationDefaultActionIdentifier {
+            DispatchQueue.main.async { [weak self] in self?.install() }
+        }
+        completionHandler()
+    }
+
     private func askForClaude() -> URL? {
         if let url = chosenClaude(askIfSeveral: true) { return url }
         report(PatchError.claudeNotFound)
@@ -259,6 +406,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         minimizeMenuItem.state = defaults.bool(forKey: Key.minimizeMenu) ? .on : .off
         blockQuitItem.state = defaults.bool(forKey: Key.blockQuit) ? .on : .off
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+
+        // Без Универсального доступа живым остаётся только блок ⌘Q (Carbon-хоткеи доверия не просят),
+        // поэтому два верхних тумблера гасим и прямо в названии пишем, чего не хватает.
+        let trusted = ax.isAccessibilityTrusted || AXIsProcessTrusted()
+        let needsAX = "Включи PimpMyClaude в Универсальном доступе: пункт «Настроить разрешения…»"
+        autoAllowItem.isEnabled = trusted
+        autoAllowItem.title = trusted ? "Авто-Allow" : "Авто-Allow — нужен Accessibility"
+        autoAllowItem.toolTip = trusted ? "Сам жмёт «Allow…» в диалогах Claude." : needsAX
+        minimizeMenuItem.isEnabled = trusted
+        minimizeMenuItem.title = trusted ? "Меню на кнопке" : "Меню на кнопке — нужен Accessibility"
+        // Хоткеи меню живут отдельно от тумблера: он гасит само меню на жёлтой кнопке, клавиши остаются.
+        minimizeMenuItem.toolTip = trusted
+            ? "Меню на жёлтой кнопке окна. Горячие клавиши (⌘⌥↑ ↓ A S D) от него не зависят."
+            : needsAX
     }
 
     private func flip(_ key: String) -> Bool {
@@ -297,9 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let defaults = UserDefaults.standard
         guard !defaults.bool(forKey: Key.loginItemConfigured) else { updateToggleMarks(); return }
         // Dev-сборка из .build автозапуск не заводит — иначе в «Объектах входа» останется путь в .build.
-        let path = Bundle.main.bundleURL.path
-        let installed = path.hasPrefix("/Applications/") || path.hasPrefix(NSHomeDirectory() + "/Applications/")
-        guard installed else { updateToggleMarks(); return }
+        guard SetupWindow.isInApplicationsFolder else { updateToggleMarks(); return }
         defaults.set(true, forKey: Key.loginItemConfigured)
         try? SMAppService.mainApp.register()
         updateToggleMarks()
@@ -320,9 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Открыть настройки")
             alert.addButton(withTitle: "Потом")
             NSApp.activate(ignoringOtherApps: true)
-            if alert.runModal() == .alertFirstButtonReturn {
-                SystemSettings.open("x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
-            }
+            if alert.runModal() == .alertFirstButtonReturn { SystemSettings.open(SystemSettings.loginItems) }
         }
     }
 }

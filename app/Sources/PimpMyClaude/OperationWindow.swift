@@ -102,10 +102,12 @@ final class OperationWindow: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) { retained = nil }
 }
 
-/// Панели «Конфиденциальность и безопасность», куда шлём человека за разрешениями.
+/// Панели Системных настроек, куда шлём человека за разрешениями.
 enum SystemSettings {
     static let appManagement = "x-apple.systempreferences:com.apple.preference.security?Privacy_AppBundles"
     static let accessibility = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    static let notifications = "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
+    static let loginItems = "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
 
     static func open(_ link: String) {
         guard let url = URL(string: link) else { return }
