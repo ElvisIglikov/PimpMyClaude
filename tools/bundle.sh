@@ -14,7 +14,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/PimpMyClaude"
 cp "$ROOT/app/Resources/Info.plist" "$APP/Contents/Info.plist"
 for f in "$ROOT/claude-patch/inject.js" "$ROOT/claude-patch/claude.css" "$ROOT/claude-patch/entitlements.plist"; do
-  [ -f "$f" ] && cp "$f" "$APP/Contents/Resources/"
+  if [ ! -f "$f" ]; then echo "bundle.sh: нет ресурса $f" >&2; exit 1; fi
+  cp "$f" "$APP/Contents/Resources/"
 done
 codesign --force --options runtime --timestamp \
   --entitlements "$ROOT/app/Resources/PimpMyClaude.entitlements" \
