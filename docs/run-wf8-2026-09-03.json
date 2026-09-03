@@ -1,0 +1,30 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf8-2026-09-03.md",
+  "project": "⚪PimpMyClaude",
+  "status": "финиш",
+  "trelvis": "#5323",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf8-wave1-wf_3e900da1-019.js",
+  "run_id": "wf_3e900da1-019",
+  "next_steps": [
+    "релиз 1.2.0 общий (после WF9)"
+  ],
+  "log": [
+    {
+      "at": "2026-09-04T00:10:00+05:00",
+      "who": "оркестратор",
+      "what": "план WF8 (предпросмотр при наведении), без критика; ждёт освобождения inject.js после WF7"
+    },
+    {
+      "at": "2026-09-03T23:16:06+05:00",
+      "who": "оркестратор",
+      "what": "волна 1 запущена: A inject.js + B Swift (Opus max), verify"
+    },
+    {
+      "at": "2026-09-03T23:34:43+05:00",
+      "who": "прогон",
+      "what": "A ok (3 low), B ok (2 medium, 3 low) — внесено; живьём примерка/конец примерки; приложение пересобрано. Финиш"
+    }
+  ],
+  "branch": "wf6",
+  "watchdog": "watchdog-pimpmyclaude-wf6-0309 (общий)"
+}

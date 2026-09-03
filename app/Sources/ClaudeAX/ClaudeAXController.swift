@@ -15,6 +15,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
     private let actions: ClaudeActions
     private let autoAllow: AutoAllow
     private let menu: MinimizeMenu
+    private let statusFeed: StatusFeed
 
     private var observers: [NSObjectProtocol] = []
     private var watchdog: Timer?
@@ -31,8 +32,13 @@ public final class ClaudeAXController: ClaudeAXControlling {
         actions = ClaudeActions(app: app, commands: commands)
         autoAllow = AutoAllow(app: app, hud: hud)
         menu = MinimizeMenu(app: app, actions: actions)
+        statusFeed = StatusFeed(commands: commands)
         actions.onWindowsMoved = { [weak self] in self?.menu.clearCache() }
+        // «Workflow» на сборке без комплекта — плашкой на экран (критик п. 3 фикс-батча WF9).
+        actions.onWarning = { [weak self] text in self?.hud.show(text, seconds: 2.5) }
         app.onRestart = { [weak self] in self?.menu.clearCache() }
+        // Сводки перечитываются и по таймеру, и когда меню вот-вот всплывёт (решение 2 WF9).
+        menu.onWillShow = { [weak self] in self?.statusFeed.refresh() }
     }
 
     // MARK: - ClaudeAXControlling
@@ -48,6 +54,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
 
         autoAllow.start()
         menu.start()
+        statusFeed.start()
         observeActivation()
         claudeFrontmost = app.isFrontmost
         refreshHotkeys()
@@ -69,6 +76,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         started = false
         autoAllow.stop()
         menu.stop()
+        statusFeed.stop()
         hotkeys.removeAll()
         watchdog?.invalidate()
         watchdog = nil
@@ -113,6 +121,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         autoAllow=\(autoAllowEnabled)/\(autoAllow.isRunning) presses=\(autoAllow.pressCount) \
         menu=\(minimizeMenuEnabled)/\(menu.isRunning) menus=\(menu.shows) \
         blockQuit=\(blockQuitEnabled) blocks=\(blockedQuits) hotkeys=\(hotkeys.count) \
+        status=\(statusFeed.isRunning)/\(statusFeed.projectCount)/\(statusFeed.sentCount) \
         lastCommand=\(actions.lastCommand)
         """
     }
@@ -155,8 +164,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
         }
         var bindings: [HotkeyBinding] = []
         if isAccessibilityTrusted {
-            for (index, entry) in MenuModel.entries.enumerated() where entry.registersHotkey {
-                bindings.append(HotkeyBinding(id: UInt32(index + 1), key: entry.key) { [weak self] in
+            for (index, entry) in MenuModel.entries.enumerated() {
+                guard entry.registersHotkey, let key = entry.key else { continue }
+                bindings.append(HotkeyBinding(id: UInt32(index + 1), key: key) { [weak self] in
                     self?.actions.perform(entry.command, on: nil)
                 })
             }

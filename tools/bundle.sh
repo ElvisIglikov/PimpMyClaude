@@ -76,6 +76,12 @@ for f in "$ROOT/claude-patch/inject.js" "$ROOT/claude-patch/claude.css" "$ROOT/c
   if [ ! -f "$f" ]; then echo "bundle.sh: нет ресурса $f" >&2; exit 1; fi
   cp "$f" "$APP/Contents/Resources/"
 done
+# Комплект воркфлоу: пункт меню «Workflow» кладёт его в Application Support и вставляет KICKOFF.md в чат.
+KIT="$ROOT/resources/workflow-kit"
+for f in "$KIT/WORKFLOW.md" "$KIT/KICKOFF.md"; do
+  if [ ! -f "$f" ]; then echo "bundle.sh: нет ресурса $f" >&2; exit 1; fi
+done
+cp -R "$KIT" "$APP/Contents/Resources/workflow-kit"
 codesign --force --options runtime --timestamp \
   --entitlements "$ROOT/app/Resources/PimpMyClaude.entitlements" \
   --sign "$SIGN_ID" "$APP"

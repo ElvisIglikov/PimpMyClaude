@@ -76,6 +76,29 @@ final class PatcherTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: patcher.asarURL), patched)
     }
 
+    /// Решение 3 плана WF9: комплект воркфлоу из ресурсов сборки ложится рядом с command.json.
+    func testInstallLiveFilesCopiesWorkflowKit() throws {
+        let resources = scratch.appendingPathComponent("Resources", isDirectory: true)
+        let kit = resources.appendingPathComponent(Patcher.workflowKitDirName, isDirectory: true)
+        try FileManager.default.createDirectory(at: kit, withIntermediateDirectories: true)
+        try Data("правила".utf8).write(to: kit.appendingPathComponent("WORKFLOW.md"))
+        try Data("кикофф".utf8).write(to: kit.appendingPathComponent("KICKOFF.md"))
+        try Data("// inject".utf8).write(to: resources.appendingPathComponent("inject.js"))
+
+        var patcher = makePatcher()
+        patcher.resourcesDirectory = resources
+        try patcher.installLiveFiles(progress: { _ in })
+
+        let target = support.appendingPathComponent(Patcher.workflowDirName, isDirectory: true)
+        XCTAssertEqual(try String(contentsOf: target.appendingPathComponent("KICKOFF.md"), encoding: .utf8), "кикофф")
+        XCTAssertEqual(try String(contentsOf: target.appendingPathComponent("WORKFLOW.md"), encoding: .utf8), "правила")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: support.appendingPathComponent("inject.js").path))
+
+        // Комплекта в сборке нет (старый бандл) — установка не падает.
+        try FileManager.default.removeItem(at: kit)
+        try patcher.installLiveFiles(progress: { _ in })
+    }
+
     func testRestoreReturnsOriginalBytes() throws {
         let patcher = makePatcher()
         _ = try patcher.install()

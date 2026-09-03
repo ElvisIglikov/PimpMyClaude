@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Модификаторы горячей клавиши. Значения — маски Carbon `RegisterEventHotKey`
 /// (cmdKey 0x0100, shiftKey 0x0200, optionKey 0x0800, controlKey 0x1000).
@@ -27,6 +27,17 @@ struct KeyMods: OptionSet {
         if contains(.option) { s += "⌥" }
         return s
     }
+
+    /// Те же модификаторы для NSMenuItem: подсказку справа серым AppKit рисует сам
+    /// (решение 4 плана WF9) — в системном порядке и своим шрифтом.
+    var appKit: NSEvent.ModifierFlags {
+        var mask: NSEvent.ModifierFlags = []
+        if contains(.command) { mask.insert(.command) }
+        if contains(.shift) { mask.insert(.shift) }
+        if contains(.control) { mask.insert(.control) }
+        if contains(.option) { mask.insert(.option) }
+        return mask
+    }
 }
 
 /// Клавиша: имя как в `M.hotkeys` Lua-модуля («n», «down»), код — виртуальный код Carbon.
@@ -35,19 +46,24 @@ struct KeySpec {
     let name: String
 
     /// kVK_ANSI_A 0x00, S 0x01, D 0x02, Q 0x0C, N 0x2D, Down 0x7D, Up 0x7E.
-    private static let codes: [String: (code: UInt32, glyph: String)] = [
-        "a": (0x00, "A"),
-        "s": (0x01, "S"),
-        "d": (0x02, "D"),
-        "q": (0x0C, "Q"),
-        "n": (0x2D, "N"),
-        "down": (0x7D, "↓"),
-        "up": (0x7E, "↑"),
+    /// `equivalent` — тот же символ для `NSMenuItem.keyEquivalent`: у стрелок это
+    /// `NSDownArrowFunctionKey`/`NSUpArrowFunctionKey` из приватной зоны Юникода.
+    private static let codes: [String: (code: UInt32, glyph: String, equivalent: String)] = [
+        "a": (0x00, "A", "a"),
+        "s": (0x01, "S", "s"),
+        "d": (0x02, "D", "d"),
+        "q": (0x0C, "Q", "q"),
+        "n": (0x2D, "N", "n"),
+        "down": (0x7D, "↓", String(UnicodeScalar(UInt32(NSDownArrowFunctionKey))!)),
+        "up": (0x7E, "↑", String(UnicodeScalar(UInt32(NSUpArrowFunctionKey))!)),
     ]
 
     var keyCode: UInt32? { KeySpec.codes[name]?.code }
     var glyph: String { KeySpec.codes[name]?.glyph ?? name.uppercased() }
     var hint: String { mods.hint + glyph }
+    /// Пара для NSMenuItem: клавиша и её модификаторы (решение 4 плана WF9).
+    var keyEquivalent: String { KeySpec.codes[name]?.equivalent ?? name.lowercased() }
+    var modifierMask: NSEvent.ModifierFlags { mods.appKit }
 }
 
 /// Пункт меню на кнопке «Свернуть» — порядок, иконки и клавиши строго как в README.
@@ -55,16 +71,20 @@ struct MenuEntry {
     let command: ClaudeCommand
     let title: String
     let icon: String
-    let key: KeySpec
+    /// nil — у пункта клавиши нет вовсе («Workflow»: ⌘⌥W занят самим Claude).
+    let key: KeySpec?
     /// ⌘N — штатная клавиша самого Claude: показываем подсказку, но не регистрируем.
     let registersHotkey: Bool
 
-    /// «Обкэшить   ⌘⇧N» — три пробела перед подсказкой, как в Lua (`hint()`).
-    var menuTitle: String { title + "   " + key.hint }
+    /// Заголовок пункта — голое название: клавишу справа серым рисует AppKit по
+    /// `keyEquivalent`, хвоста «   ⌘⇧N» в заголовке больше нет (решение 4 плана WF9).
+    var menuTitle: String { title }
 }
 
 enum MenuModel {
     static let entries: [MenuEntry] = [
+        // «Workflow» — первым и без клавиши: ⌘⌥W у Claude свой.
+        MenuEntry(command: .workflow, title: "Workflow", icon: "🚀", key: nil, registersHotkey: false),
         MenuEntry(command: .cashout, title: "Обкэшить", icon: "💰",
                   key: KeySpec(mods: [.command, .shift], name: "n"), registersHotkey: true),
         MenuEntry(command: .newChat, title: "Новый чат", icon: "💬",
@@ -88,15 +108,52 @@ enum MenuModel {
         entries.first { $0.command == command }
     }
 
-    // MARK: - темы (WF5)
+    // MARK: - темы и шрифты (WF5, переложено в WF6)
 
-    /// Два подменю после семи пунктов, за разделителем. Хоткеев у тем нет — только меню.
-    static let windowThemeTitle = "Тема окна"
-    static let allWindowsThemeTitle = "Тема всех окон"
-    /// Последний пункт подменю — снять тему (в команде `"theme":null`).
+    /// Два подменю после семи пунктов, за разделителем. Хоткеев у них нет — только меню.
+    /// «Тема окна»/«Тема всех окон» из WF5 схлопнуты в одно «Тема» с вложенным «Всем окнам ▸»:
+    /// подменю стояли вплотную и при скольжении мыши вниз одно подменялось другим (жалоба #5313).
+    static let themeTitle = "Тема"
+    static let fontTitle = "Шрифт"
+    /// Вложенное подменю «всем окнам» и его disabled-заголовок — чтобы не спутать с окном.
+    static let allWindowsTitle = "Всем окнам"
+    static let allWindowsHeader = "ВСЕМ ОКНАМ"
+    /// Disabled-заголовки секций.
+    static let myThemesHeader = "МОИ ТЕМЫ"
+    static let darkThemesHeader = "ТЁМНЫЕ"
+    static let lightThemesHeader = "СВЕТЛЫЕ"
+    /// Секции подменю «Шрифт» — по категориям (решение 7 плана WF9), в порядке FontCategory.
+    static let serifFontsHeader = "С ЗАСЕЧКАМИ"
+    static let sansFontsHeader = "БЕЗ ЗАСЕЧЕК"
+    static let handFontsHeader = "РУКОПИСНЫЕ И ВЕСЁЛЫЕ"
+    static let monoFontsHeader = "МОНОШИРИННЫЕ"
+
+    static func fontsHeader(_ category: FontCategory) -> String {
+        switch category {
+        case .serif: return serifFontsHeader
+        case .sans: return sansFontsHeader
+        case .hand: return handFontsHeader
+        case .mono: return monoFontsHeader
+        }
+    }
+
+    /// Сброс слоя: в команде `"theme":null` / `"font":null`, второй слой не трогаем.
     static let themeResetTitle = "Как у Claude"
+    static let fontResetTitle = "Системный (как у Claude)"
+    /// Свои темы (план п. 4).
+    static let saveMyThemeTitle = "Сохранить как мою тему…"
+    static let deleteMyThemeTitle = "Удалить мою тему"
+    static let myThemeNamePrompt = "Имя своей темы"
+    static let myThemeNameHint = "Тема и шрифт запомнятся парой — применить их можно будет одним пунктом."
+    static let myThemeSaveButton = "Сохранить"
+    static let myThemeCancelButton = "Отмена"
+    static let myThemeEmptyAlert = "Сначала выбери тему — её и запомню вместе со шрифтом."
+    /// Клик по «🚀 Workflow» на сборке без комплекта (критик п. 3 фикс-батча WF9): молчать
+    /// нельзя — со стороны пункт выглядит сломанным.
+    static let workflowKitMissingAlert = "В сборке нет комплекта workflow-kit — поставь свежий PimpMyClaude.app"
     static let themeIcon = "🎨"
-    /// Значения поля `scope` команды `theme` (контракт п. 3 плана WF5).
+    static let fontIcon = "🔤"
+    /// Значения поля `scope` команды `theme` (контракт п. 5 плана WF6).
     static let themeScopeWindow = "window"
     static let themeScopeAll = "all"
 
