@@ -13,6 +13,10 @@ public enum Patcher {
     public static let requiredLoaderVersion = Asar.loaderVersion
     public static let claudeBundleID = "com.anthropic.claudefordesktop"
     public static let supportDirName = "MyClaude" // лоадер v6 уже смотрит сюда — не переименовывать
+    /// Комплект воркфлоу: `resources/workflow-kit` в бандле → `MyClaude/workflow` рядом с
+    /// command.json (решение 3 плана WF9). Имя папки в Application Support знает текст KICKOFF.md.
+    public static let workflowKitDirName = "workflow-kit"
+    public static let workflowDirName = "workflow"
 
     /// Значения по умолчанию для claude.json (настройки 👾 Элвиса из ElvisOS).
     public static let configDefaults: [String: Int] = ["minWindowWidth": 360, "sidePadding": 16]
@@ -480,6 +484,8 @@ public struct ClaudePatcher {
     }
 
     /// inject.js и claude.css — живые файлы лоадера v6; при установке обновляем на версию из сборки.
+    /// Туда же ложится комплект воркфлоу (`workflow-kit` → `workflow/`): путь к WORKFLOW.md зашит
+    /// в текст, который вставляет в поле ввода пункт меню «Workflow» (решение 3 плана WF9).
     func installLiveFiles(progress: (String) -> Void) throws {
         try ensureConfig()
         guard let directory = resourcesDirectory else { return }
@@ -488,7 +494,20 @@ public struct ClaudePatcher {
             guard FileManager.default.fileExists(atPath: source.path) else { continue }
             try Data(contentsOf: source).write(to: supportDirectory.appendingPathComponent(name), options: .atomic)
         }
+        try installWorkflowKit(from: directory)
         progress("Живые файлы в \(supportDirectory.path) обновлены.")
+    }
+
+    /// Комплекта в сборке нет (старый бандл) — молча пропускаем: пункт меню положит его сам.
+    func installWorkflowKit(from resources: URL) throws {
+        let source = resources.appendingPathComponent(Patcher.workflowKitDirName, isDirectory: true)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: source.path), !names.isEmpty else { return }
+        let target = supportDirectory.appendingPathComponent(Patcher.workflowDirName, isDirectory: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        for name in names.sorted() where !name.hasPrefix(".") {
+            try Data(contentsOf: source.appendingPathComponent(name))
+                .write(to: target.appendingPathComponent(name), options: .atomic)
+        }
     }
 
     // -------------------------------------------------------------- installed.json

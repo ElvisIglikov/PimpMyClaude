@@ -75,6 +75,7 @@ final class ClaudeActions {
     func perform(_ command: ClaudeCommand, on window: AXUIElement?) {
         let target = window ?? focusedWindow()
         switch command {
+        case .workflow: workflow(target)
         case .cashout: cashout(target)
         case .newChat: newChat(target)
         case .collapse: stage("collapse", target)
@@ -105,6 +106,36 @@ final class ClaudeActions {
             self.commands.write(action: "cashout", extra: ["title": title])
             self.after(self.cashoutNewChatDelay) { self.newChat(window) }
         }
+    }
+
+    // MARK: - Workflow (решение 3 плана WF9)
+
+    /// «🚀 Workflow»: комплект правил ложится в Application Support (путь к нему зашит в текст
+    /// кикоффа), а сам кикофф уходит командой в поле ввода окна — страница его вставляет и НЕ
+    /// отправляет. Окно адресуется AX-заголовком, как «Обкэшить»; фокус нужен до команды —
+    /// вставка идёт в поле ввода, а оно принимает текст только у страницы в фокусе.
+    /// Без доверия Accessibility окна нет: команда всё равно уходит с пустым заголовком —
+    /// страница понимает его как «окно в фокусе».
+    private func workflow(_ window: AXUIElement?) {
+        WorkflowKit.install()
+        guard let text = WorkflowKit.kickoff() else { return }
+        guard let window = window else {
+            commands.write(action: "workflow", fields: ClaudeActions.workflowFields(title: "", text: text))
+            return
+        }
+        app.focus(window: window)
+        after(focusDelay) { [weak self] in
+            let title = AX.string(window, kAXTitleAttribute) ?? ""
+            self?.commands.write(action: "workflow",
+                                 fields: ClaudeActions.workflowFields(title: title, text: text))
+        }
+    }
+
+    /// Поля команды после id, action, at: scope, title, text (контракт п. 3 плана WF9).
+    static func workflowFields(title: String, text: String) -> [(key: String, value: CommandValue)] {
+        [(key: "scope", value: .string(MenuModel.themeScopeWindow)),
+         (key: "title", value: .string(title)),
+         (key: "text", value: .string(text))]
     }
 
     // MARK: - темы и шрифты

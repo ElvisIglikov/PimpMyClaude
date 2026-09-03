@@ -14,7 +14,7 @@ private final class MemoryDefaults: ThemeDefaults {
 /// Только чистая логика: раскладка «Расставить», клавиши меню и формат command.json.
 /// Живой AX (окна Claude, авто-Allow, popUp) проверяется руками на гейте.
 final class ClaudeAXTests: XCTestCase {
-    func testSkeleton() { XCTAssertEqual(ClaudeCommand.allCases.count, 7) }
+    func testSkeleton() { XCTAssertEqual(ClaudeCommand.allCases.count, 8) }
 
     // MARK: - «Расставить»
 
@@ -60,23 +60,54 @@ final class ClaudeAXTests: XCTestCase {
     // MARK: - клавиши
 
     func testMenuKeysMatchReadme() {
-        let expected: [(ClaudeCommand, String, UInt32, Bool)] = [
-            (.cashout, "Обкэшить   ⌘⇧N", 0x2D, true),
-            (.newChat, "Новый чат   ⌘N", 0x2D, false), // ⌘N — штатная клавиша Claude, не регистрируем
-            (.collapse, "Свернуть   ⌘⌥↓", 0x7D, true),
-            (.expand, "Развернуть   ⌘⌥↑", 0x7E, true),
-            (.arrange, "Расставить   ⌘⌥A", 0x00, true),
-            (.show, "Показать   ⌘⌥S", 0x01, true),
-            (.scroll, "Прокрутить   ⌘⌥D", 0x02, true),
+        // Решение 4 плана WF9: заголовок — голое название, клавиша живёт в keyEquivalent,
+        // подсказку справа серым AppKit рисует сам.
+        let down = String(UnicodeScalar(UInt32(NSDownArrowFunctionKey))!)
+        let up = String(UnicodeScalar(UInt32(NSUpArrowFunctionKey))!)
+        let expected: [(ClaudeCommand, String, UInt32, String, NSEvent.ModifierFlags, Bool)] = [
+            (.cashout, "Обкэшить", 0x2D, "n", [.command, .shift], true),
+            // ⌘N — штатная клавиша Claude: показываем, но не регистрируем.
+            (.newChat, "Новый чат", 0x2D, "n", [.command], false),
+            (.collapse, "Свернуть", 0x7D, down, [.command, .option], true),
+            (.expand, "Развернуть", 0x7E, up, [.command, .option], true),
+            (.arrange, "Расставить", 0x00, "a", [.command, .option], true),
+            (.show, "Показать", 0x01, "s", [.command, .option], true),
+            (.scroll, "Прокрутить", 0x02, "d", [.command, .option], true),
         ]
-        XCTAssertEqual(MenuModel.entries.map { $0.command }, expected.map { $0.0 })
-        for (command, title, code, registers) in expected {
+        // «🚀 Workflow» — первым пунктом и без клавиши (⌘⌥W занят самим Claude).
+        XCTAssertEqual(MenuModel.entries.map { $0.command }, [.workflow] + expected.map { $0.0 })
+        let workflow = MenuModel.entry(for: .workflow)
+        XCTAssertEqual(workflow?.menuTitle, "Workflow")
+        XCTAssertNil(workflow?.key)
+        XCTAssertEqual(workflow?.registersHotkey, false)
+
+        for (command, title, code, equivalent, mask, registers) in expected {
             let entry = MenuModel.entry(for: command)
             XCTAssertEqual(entry?.menuTitle, title)
-            XCTAssertEqual(entry?.key.keyCode, code)
+            XCTAssertFalse(entry?.menuTitle.contains("⌘") ?? true, "клавиша осталась в заголовке")
+            XCTAssertEqual(entry?.key?.keyCode, code)
+            XCTAssertEqual(entry?.key?.keyEquivalent, equivalent)
+            XCTAssertEqual(entry?.key?.modifierMask, mask)
             XCTAssertEqual(entry?.registersHotkey, registers)
         }
-        XCTAssertEqual(MenuModel.entries.map { $0.icon }, ["💰", "💬", "⬇️", "⬆️", "▦", "👀", "⏬"])
+        XCTAssertEqual(MenuModel.entries.map { $0.icon },
+                       ["🚀", "💰", "💬", "⬇️", "⬆️", "▦", "👀", "⏬"])
+    }
+
+    /// Клавиши обязаны доехать до самих пунктов меню: у семи — свои, у «Workflow» — никакой.
+    func testMenuItemsCarryKeyEquivalents() throws {
+        let items = MinimizeMenu.build(config: MinimizeMenu.MenuConfig())
+            .items.filter { !$0.isSeparatorItem }
+        XCTAssertEqual(items.count, MenuModel.entries.count)
+        XCTAssertEqual(items.map { $0.keyEquivalent },
+                       ["", "n", "n", String(UnicodeScalar(UInt32(NSDownArrowFunctionKey))!),
+                        String(UnicodeScalar(UInt32(NSUpArrowFunctionKey))!), "a", "s", "d"])
+        XCTAssertEqual(items.map { $0.keyEquivalentModifierMask },
+                       [[], [.command, .shift], [.command], [.command, .option], [.command, .option],
+                        [.command, .option], [.command, .option], [.command, .option]])
+        XCTAssertEqual(items.map { $0.title },
+                       ["Workflow", "Обкэшить", "Новый чат", "Свернуть", "Развернуть",
+                        "Расставить", "Показать", "Прокрутить"])
     }
 
     func testCarbonModifiers() {
@@ -162,8 +193,38 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(ThemeCatalog.load(directory: dir).map { $0.id }, ["violet", "arctic"])
     }
 
+    /// Живой каталог из репозитория: `claude-patch/themes.json` кладёт в бандл tools/bundle.sh.
+    private static let repositoryRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+
+    func testBundledThemesGoAroundTheColourWheel() throws {
+        // Решение 5 плана WF9: имена по-русски, порядок — по цветовому кругу, id не меняются.
+        let themes = ThemeCatalog.load(directory: ClaudeAXTests.repositoryRoot
+            .appendingPathComponent("claude-patch", isDirectory: true))
+        XCTAssertEqual(themes.map { $0.id },
+                       ["red", "orange", "yellow", "green", "matrix", "teal", "tokyo", "blue",
+                        "violet", "dracula", "lilac", "pink", "crimson", "brown", "gray",
+                        "peach", "lemon", "cream", "mint", "sky", "arctic", "lavender", "sakura",
+                        "powder"])
+        // Меню режет каталог на две секции — порядок внутри каждой обязан остаться тем же.
+        XCTAssertEqual(themes.filter { !$0.isLight }.map { $0.name },
+                       ["Красная", "Оранжевая", "Жёлтая", "Зелёная", "Матрица", "Бирюзовая",
+                        "Токийская ночь", "Синяя", "Фиолетовая", "Дракула", "Сиреневая", "Розовая",
+                        "Малиновая", "Коричневая", "Серая"])
+        XCTAssertEqual(themes.filter { $0.isLight }.map { $0.name },
+                       ["Персиковая", "Лимонная", "Кремовая", "Мятная", "Небесная", "Светлая",
+                        "Лавандовая", "Сакура", "Пудровая"])
+        // Английских имён не осталось (Matrix, Dracula, Tokyo Night), палитра у всех полная.
+        for theme in themes {
+            XCTAssertEqual(Set(theme.palette.keys), Set(Theme.paletteOrder), theme.id)
+            let first = try XCTUnwrap(theme.name.unicodeScalars.first)
+            XCTAssertTrue((0x410...0x44F).contains(Int(first.value)), "имя «\(theme.name)» не по-русски")
+        }
+    }
+
     /// Шрифт для команды: моноширинный, семейство — голым именем (контракт п. 5).
-    private static let monoFont = Font(id: "sf-mono", family: "SF Mono", mono: true, displayName: "SF Mono")
+    private static let monoFont = Font(id: "sf-mono", family: "SF Mono", category: .mono, displayName: "SF Mono")
 
     private func themeBody(theme: Layer<Theme>, font: Layer<Font>,
                            scope: String = MenuModel.themeScopeWindow, title: String = "Vkusnoff",
@@ -270,7 +331,7 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(CommandValue.bool(true).json, "true")
         XCTAssertEqual(CommandValue.bool(false).json, "false")
         XCTAssertEqual(CommandValue.object([(key: "mono", value: .bool(false))]).json, "{\"mono\":false}")
-        XCTAssertEqual(Font(id: "georgia", family: "Georgia", mono: false, displayName: "Джорджия")
+        XCTAssertEqual(Font(id: "georgia", family: "Georgia", category: .serif, displayName: "Джорджия")
             .commandValue.json, "{\"id\":\"georgia\",\"family\":\"Georgia\",\"mono\":false}")
     }
 
@@ -283,7 +344,7 @@ final class ClaudeAXTests: XCTestCase {
     private func menuConfig() -> MinimizeMenu.MenuConfig {
         var config = MinimizeMenu.MenuConfig()
         config.themes = catalog()
-        config.fonts = [Font(id: "georgia", family: "Georgia", mono: false, displayName: "Georgia"),
+        config.fonts = [Font(id: "georgia", family: "Georgia", category: .serif, displayName: "Georgia"),
                         ClaudeAXTests.monoFont]
         config.myThemes = [myTheme()]
         config.windowThemeID = "arctic"
@@ -349,7 +410,7 @@ final class ClaudeAXTests: XCTestCase {
         // MARK: подменю «Шрифт»
         let font = try XCTUnwrap(submenus.last?.submenu)
         XCTAssertEqual(font.items.map { $0.isSeparatorItem ? "—" : $0.title },
-                       ["ОБЫЧНЫЕ", "Georgia", "МОНОШИРИННЫЕ", "SF Mono", "—",
+                       ["С ЗАСЕЧКАМИ", "Georgia", "МОНОШИРИННЫЕ", "SF Mono", "—",
                         "Системный (как у Claude)", "Всем окнам"])
         XCTAssertFalse(try XCTUnwrap(font.items.first).isEnabled)
         // Каждый пункт нарисован своим шрифтом.
@@ -358,7 +419,7 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(font.items.first { $0.title == "SF Mono" }).state, .on)
         let fontAll = try XCTUnwrap(font.items.first { $0.title == "Всем окнам" }?.submenu)
         XCTAssertEqual(fontAll.items.map { $0.isSeparatorItem ? "—" : $0.title },
-                       ["ВСЕМ ОКНАМ", "ОБЫЧНЫЕ", "Georgia", "МОНОШИРИННЫЕ", "SF Mono", "—",
+                       ["ВСЕМ ОКНАМ", "С ЗАСЕЧКАМИ", "Georgia", "МОНОШИРИННЫЕ", "SF Mono", "—",
                         "Системный (как у Claude)"])
 
         // MARK: нажатия — каждый пункт трогает ровно свой слой
@@ -519,6 +580,172 @@ final class ClaudeAXTests: XCTestCase {
         let capped = FontCatalog.build(installed: many, coversCyrillic: { _ in true }, displayName: { $0 })
         XCTAssertEqual(capped.count, FontCatalog.monoLimit)
         XCTAssertTrue(capped.allSatisfy { $0.mono })
+    }
+
+    func testFontCatalogSplitsFamiliesIntoFourSections() {
+        // Решение 7 плана WF9: четыре секции, каждая в порядке своего белого списка.
+        XCTAssertEqual(FontCategory.allCases, [.serif, .sans, .hand, .mono])
+        XCTAssertEqual(FontCategory.allCases.map { MenuModel.fontsHeader($0) },
+                       ["С ЗАСЕЧКАМИ", "БЕЗ ЗАСЕЧЕК", "РУКОПИСНЫЕ И ВЕСЁЛЫЕ", "МОНОШИРИННЫЕ"])
+        XCTAssertEqual(FontCatalog.serifFamilies,
+                       ["Georgia", "Palatino", "Baskerville", "Didot", "Hoefler Text",
+                        "Iowan Old Style", "Times New Roman"])
+        XCTAssertEqual(FontCatalog.sansFamilies,
+                       ["Helvetica Neue", "Avenir Next", "Futura", "Gill Sans", "Optima", "Verdana",
+                        "Trebuchet MS", "Arial", "Tahoma"])
+        XCTAssertEqual(FontCatalog.handFamilies,
+                       ["Comic Sans MS", "Chalkboard SE", "Noteworthy", "Marker Felt", "Bradley Hand",
+                        "Snell Roundhand", "Papyrus", "Copperplate", "American Typewriter"])
+        // Ни одно семейство не попало в две секции сразу.
+        let all = FontCategory.allCases.flatMap { FontCatalog.families($0) }
+        XCTAssertEqual(all.count, Set(all).count)
+
+        let installed = ["Georgia", "Times New Roman", "Arial", "Futura", "Papyrus", "Marker Felt",
+                         "Menlo", "Monaco"]
+        let fonts = FontCatalog.build(installed: installed, coversCyrillic: { _ in true },
+                                      displayName: { $0 })
+        XCTAssertEqual(fonts.map { $0.family },
+                       ["Georgia", "Times New Roman", "Futura", "Arial", "Marker Felt", "Papyrus",
+                        "Menlo", "Monaco"])
+        XCTAssertEqual(fonts.map { $0.category },
+                       [.serif, .serif, .sans, .sans, .hand, .hand, .mono, .mono])
+        // В команду по-прежнему уезжает булево mono, а не категория (контракт п. 5 WF6).
+        XCTAssertEqual(fonts.map { $0.mono }, [false, false, false, false, false, false, true, true])
+        XCTAssertFalse(fonts[0].commandValue.json.contains("serif"))
+
+        // Незнакомое семейство (шрифт из my-themes.json) — по флагу mono.
+        XCTAssertEqual(FontCatalog.category(family: "Papyrus", mono: false), .hand)
+        XCTAssertEqual(FontCatalog.category(family: "SF Mono", mono: false), .mono)
+        XCTAssertEqual(FontCatalog.category(family: "Fira Code", mono: true), .mono)
+        XCTAssertEqual(FontCatalog.category(family: "Fira Code", mono: false), .sans)
+    }
+
+    // MARK: - Workflow и сводки (план WF9)
+
+    func testWorkflowPayloadMatchesContract() throws {
+        // Побайтно, контракт п. 3 плана WF9: id, action, at, scope, title, text.
+        let body = CommandChannel.payload(action: "workflow",
+                                          fields: ClaudeActions.workflowFields(title: "Vkusnoff",
+                                                                               text: "Работаем\nдальше"),
+                                          id: "1756900000123-0042",
+                                          at: Date(timeIntervalSince1970: 1_756_900_000))
+        XCTAssertEqual(body, "{\"id\":\"1756900000123-0042\",\"action\":\"workflow\","
+            + "\"at\":\"2025-09-03T11:46:40Z\",\"scope\":\"window\",\"title\":\"Vkusnoff\","
+            + "\"text\":\"Работаем\\u000aдальше\"}")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(json["text"] as? String, "Работаем\nдальше")
+        XCTAssertEqual(json["scope"] as? String, "window")
+        // Без доверия Accessibility заголовка нет — страница поймёт это как «окно в фокусе».
+        XCTAssertTrue(CommandChannel.payload(action: "workflow",
+                                             fields: ClaudeActions.workflowFields(title: "", text: "x"),
+                                             id: "1-0001", at: Date(timeIntervalSince1970: 0))
+            .hasSuffix("\"scope\":\"window\",\"title\":\"\",\"text\":\"x\"}"))
+    }
+
+    func testWorkflowKitLandsInApplicationSupport() throws {
+        // Комплект из бандла (в тесте — из репозитория) ложится рядом с command.json.
+        let source = ClaudeAXTests.repositoryRoot
+            .appendingPathComponent("resources/workflow-kit", isDirectory: true)
+        let target = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: target) }
+        XCTAssertTrue(WorkflowKit.install(from: source, to: target))
+        for name in WorkflowKit.files {
+            XCTAssertEqual(try Data(contentsOf: target.appendingPathComponent(name)),
+                           try Data(contentsOf: source.appendingPathComponent(name)), name)
+        }
+        // В поле ввода уходит кикофф из бандла, и он ссылается на разложенные правила.
+        let kickoff = try XCTUnwrap(WorkflowKit.kickoff(directory: source))
+        XCTAssertTrue(kickoff.contains(WorkflowKit.rulesName), kickoff)
+        XCTAssertTrue(kickoff.contains("MyClaude/\(WorkflowKit.installedFolderName)"), kickoff)
+        // Комплекта нет — ни падения, ни текста.
+        XCTAssertFalse(WorkflowKit.install(from: nil, to: target))
+        XCTAssertNil(WorkflowKit.kickoff(directory: URL(fileURLWithPath: "/nope/\(UUID().uuidString)")))
+    }
+
+    func testStatusPayloadMatchesContract() throws {
+        // Побайтно, контракт п. 2 плана WF9: id, action, at, scope, projects[{name,text}].
+        let projects = [StatusProject(name: "PimpMyClaude", text: "# ⚪PimpMyClaude\n1️⃣ Workflow ✅"),
+                        StatusProject(name: "SkilZZZ", text: "# 🟣SkilZZZ")]
+        let body = CommandChannel.payload(action: "status", fields: StatusFeed.fields(projects),
+                                          id: "1-0001", at: Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(body, "{\"id\":\"1-0001\",\"action\":\"status\","
+            + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"all\",\"projects\":["
+            + "{\"name\":\"PimpMyClaude\",\"text\":\"# ⚪PimpMyClaude\\u000a1️⃣ Workflow ✅\"},"
+            + "{\"name\":\"SkilZZZ\",\"text\":\"# 🟣SkilZZZ\"}]}")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(json["scope"] as? String, "all")
+        let list = try XCTUnwrap(json["projects"] as? [[String: String]])
+        XCTAssertEqual(list.map { $0["name"] }, ["PimpMyClaude", "SkilZZZ"])
+        XCTAssertEqual(list.first?["text"], "# ⚪PimpMyClaude\n1️⃣ Workflow ✅")
+        // Проектов нет — пустой список, а не сломанный JSON (такую команду StatusFeed не шлёт).
+        XCTAssertEqual(CommandValue.array([]).json, "[]")
+        // Содержимое не менялось — хэш тот же; поменялось хоть в одном проекте — другой.
+        XCTAssertEqual(StatusFeed.digest(projects), StatusFeed.digest(projects))
+        XCTAssertNotEqual(StatusFeed.digest(projects),
+                          StatusFeed.digest([projects[0], StatusProject(name: "SkilZZZ", text: "!")]))
+    }
+
+    func testStatusScanReadsProjectSummaries() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func put(_ project: String, _ folder: String, _ text: String) throws {
+            let dir = root.appendingPathComponent(project).appendingPathComponent(folder)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: dir.appendingPathComponent(StatusFeed.statusFileName))
+        }
+        try put("PimpMyClaude", "docs", "# ⚪PimpMyClaude")
+        try put("PimpMyClaude", "work", "не эта")        // docs идёт первым
+        try put("Audited", "audit", "# аудит")
+        try put("Empty", "docs", "   \n")                 // пустая сводка не едет
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("NoStatus/src"),
+                                                withIntermediateDirectories: true)
+
+        let projects = StatusFeed.scan(root: root)
+        XCTAssertEqual(projects.map { $0.name }, ["Audited", "PimpMyClaude"]) // по алфавиту
+        XCTAssertEqual(projects.last?.text, "# ⚪PimpMyClaude")
+        // Папки проектов нет — ничего не читаем.
+        XCTAssertTrue(StatusFeed.scan(root: root.appendingPathComponent("нет")).isEmpty)
+
+        // projectsRoot из claude.json; ключа/файла нет — ~/_ElvisProjects.
+        let config = root.appendingPathComponent("claude.json")
+        try Data("{\"minWindowWidth\":360,\"projectsRoot\":\"~/Projects\"}".utf8).write(to: config)
+        XCTAssertEqual(StatusFeed.projectsRoot(configURL: config).path,
+                       NSString(string: "~/Projects").expandingTildeInPath)
+        try Data("{\"minWindowWidth\":360}".utf8).write(to: config)
+        XCTAssertEqual(StatusFeed.projectsRoot(configURL: config).path,
+                       NSString(string: StatusFeed.defaultProjectsRoot).expandingTildeInPath)
+        XCTAssertEqual(StatusFeed.projectsRoot(configURL: root.appendingPathComponent("нет.json")).path,
+                       NSString(string: StatusFeed.defaultProjectsRoot).expandingTildeInPath)
+    }
+
+    func testStatusSliceCutsOnWorkflowBlocks() {
+        let head = "# ⚪PimpMyClaude\nобновлено 01:55\n"
+        let block = { (index: Int) in "\(index)️⃣ Workflow ✅ готово\n" + String(repeating: "- строка сводки\n", count: 40) }
+        let text = head + (1...9).map(block).joined()
+        XCTAssertGreaterThan(text.utf8.count, StatusFeed.limit)
+
+        let slice = StatusFeed.slice(text)
+        XCTAssertLessThanOrEqual(slice.utf8.count, StatusFeed.limit)
+        XCTAssertTrue(slice.hasPrefix(head), slice)
+        // Режем по границе блока: последний блок в срезе — целый, следующего нет вовсе.
+        XCTAssertTrue(slice.hasSuffix("- строка сводки"), String(slice.suffix(40)))
+        let kept = (1...9).filter { slice.contains("\($0)️⃣ Workflow") }
+        XCTAssertEqual(kept, Array(1...kept.count))
+        XCTAssertGreaterThan(kept.count, 1)
+
+        // Влезает целиком — не трогаем ни байта.
+        XCTAssertEqual(StatusFeed.slice(head + block(1)), head + block(1))
+        // Ни один блок не влез — режем по знакам, UTF-8 не рвём.
+        let single = StatusFeed.slice(head + block(1), limit: 20)
+        XCTAssertLessThanOrEqual(single.utf8.count, 20)
+        XCTAssertTrue(head.hasPrefix(single), single)
+        XCTAssertTrue(StatusFeed.isWorkflowHeading("1️⃣ Workflow ✅ готово"))
+        XCTAssertTrue(StatusFeed.isWorkflowHeading("🔟 Workflow"))
+        XCTAssertFalse(StatusFeed.isWorkflowHeading("1. Workflow"))
+        XCTAssertFalse(StatusFeed.isWorkflowHeading("- строка сводки"))
+        XCTAssertFalse(StatusFeed.isWorkflowHeading(""))
     }
 
     // MARK: - мои темы

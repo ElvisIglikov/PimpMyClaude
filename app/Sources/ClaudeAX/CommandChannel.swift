@@ -8,6 +8,8 @@ enum CommandValue {
     case string(String)
     case bool(Bool)
     case object([(key: String, value: CommandValue)])
+    /// Список объектов — `projects` в команде `status` (контракт п. 2 плана WF9).
+    case array([CommandValue])
     case null
 
     var json: String {
@@ -15,6 +17,8 @@ enum CommandValue {
         case .string(let value): return CommandChannel.jsonString(value)
         case .bool(let value): return value ? "true" : "false"
         case .null: return "null"
+        case .array(let items):
+            return "[" + items.map { $0.json }.joined(separator: ",") + "]"
         case .object(let fields):
             let body = fields.map { "\(CommandChannel.jsonString($0.key)):\($0.value.json)" }
             return "{" + body.joined(separator: ",") + "}"
@@ -31,8 +35,19 @@ final class CommandChannel {
     static let directory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/MyClaude", isDirectory: true)
     static let path = directory.appendingPathComponent("command.json")
+    /// Сводка проектов (StatusFeed) — единственная команда, которую пишет не Элвис.
+    static let statusAction = "status"
 
     private(set) var lastCommand = "(none)"
+    /// Когда в последний раз писали НЕ сводку. Лоадер опрашивает файл раз в 500 мс и берёт
+    /// последнюю команду, поэтому сводка, посланная сразу после «Обкэшить», затёрла бы её
+    /// (решение 2 плана WF9: в течение 2 с после любой другой команды status не шлём).
+    private(set) var lastOtherCommandAt: Date?
+
+    /// Сколько прошло с последней команды меню; команд ещё не было — «бесконечно давно».
+    var secondsSinceOtherCommand: TimeInterval {
+        lastOtherCommandAt.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
+    }
 
     private static let stamp: DateFormatter = {
         let f = DateFormatter()
@@ -132,7 +147,9 @@ final class CommandChannel {
 
     private func write(action: String, body: String) -> Bool {
         guard CommandChannel.writeAtomic(CommandChannel.path, body) else { return false }
-        lastCommand = "\(action) @ \(CommandChannel.clock.string(from: Date()))"
+        let now = Date()
+        lastCommand = "\(action) @ \(CommandChannel.clock.string(from: now))"
+        if action != CommandChannel.statusAction { lastOtherCommandAt = now }
         return true
     }
 }

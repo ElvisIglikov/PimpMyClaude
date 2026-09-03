@@ -35,6 +35,8 @@ final class MinimizeMenu: NSObject {
     private var suppressed = false
     private var menuOpen = false
     private(set) var shows = 0
+    /// Меню сейчас всплывёт — самое время перечитать сводки проектов (решение 2 плана WF9).
+    var onWillShow: (() -> Void)?
 
     init(app: ClaudeApp, actions: ClaudeActions) {
         self.app = app
@@ -121,6 +123,7 @@ final class MinimizeMenu: NSObject {
     // MARK: - меню
 
     private func show(for window: AXUIElement, at rect: CGRect) {
+        onWillShow?()
         // Заголовок окна нужен и команде темы (адресация, как у «Обкэшить»), и галке в подменю.
         let title = AX.string(window, kAXTitleAttribute) ?? ""
         var config = MenuConfig()
@@ -243,6 +246,10 @@ final class MinimizeMenu: NSObject {
         for entry in MenuModel.entries {
             let item = BlockMenuItem(title: entry.menuTitle) { config.perform(entry.command) }
             item.image = icon(entry.icon)
+            // Клавишу справа серым AppKit рисует сам — в заголовке её больше нет (решение 4 WF9).
+            // Маску ставим и пустую: по умолчанию у NSMenuItem она ⌘, а у «Workflow» клавиши нет.
+            item.keyEquivalent = entry.key?.keyEquivalent ?? ""
+            item.keyEquivalentModifierMask = entry.key?.modifierMask ?? []
             menu.addItem(item)
             if MenuModel.separatorsAfter.contains(entry.command) { menu.addItem(.separator()) }
         }
@@ -339,9 +346,10 @@ final class MinimizeMenu: NSObject {
         if !all { submenu.delegate = PreviewMenuDelegate.shared }
         if all { submenu.addItem(header(MenuModel.allWindowsHeader)) }
 
-        for (title, fonts) in [(MenuModel.regularFontsHeader, config.fonts.filter { !$0.mono }),
-                               (MenuModel.monoFontsHeader, config.fonts.filter { $0.mono })]
-        where !fonts.isEmpty {
+        // Четыре секции по категориям (решение 7 плана WF9), в порядке FontCategory.
+        for (title, fonts) in FontCategory.allCases.map({ category in
+            (MenuModel.fontsHeader(category), config.fonts.filter { $0.category == category })
+        }) where !fonts.isEmpty {
             submenu.addItem(header(title))
             for font in fonts {
                 let item = BlockMenuItem(title: font.displayName) { config.apply(scope, .keep, .set(font)) }

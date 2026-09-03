@@ -81,8 +81,9 @@ final class MyThemesStore {
             if let raw = item["font"] as? [String: Any],
                let family = raw["family"] as? String,
                let clean = FontCatalog.sanitize(family: family) {
+                let mono = raw["mono"] as? Bool ?? false
                 font = Font(id: raw["id"] as? String ?? FontCatalog.id(for: clean), family: clean,
-                            mono: raw["mono"] as? Bool ?? false,
+                            category: FontCatalog.category(family: clean, mono: mono),
                             displayName: FontCatalog.localizedName(clean))
             }
             return MyTheme(id: id, name: clean(name: name), type: item["type"] as? String ?? "dark",

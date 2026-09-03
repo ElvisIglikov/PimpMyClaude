@@ -2,7 +2,9 @@ import Foundation
 
 /// Контракт между AX-модулем (батч B) и приложением (батч A/C). Менять только по согласованию на гейте.
 public enum ClaudeCommand: String, CaseIterable {
-    case cashout, newChat, collapse, expand, arrange, show, scroll
+    /// `workflow` — первый пункт меню (решение 3 плана WF9): кладёт комплект воркфлоу
+    /// в Application Support и вставляет текст кикоффа в поле ввода окна.
+    case workflow, cashout, newChat, collapse, expand, arrange, show, scroll
 }
 
 public protocol ClaudeAXControlling: AnyObject {
