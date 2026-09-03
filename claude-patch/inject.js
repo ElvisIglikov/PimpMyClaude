@@ -10,8 +10,10 @@
 // Что делает: над полем ввода рисует едва заметную полоску. Потянул — меняешь
 // высоту, клик — свернуть/вернуть, двойной клик — во всю высоту окна. Плюс
 // команды из Hammerspoon (событие window "myclaude-command"): collapse, expand,
-// cashout, scroll. И сокращает время под сообщениями («3 minutes ago» → «3 min
-// ago»).
+// cashout, scroll, theme. И сокращает время под сообщениями («3 minutes ago» →
+// «3 min ago»). Команда theme красит окно по палитре из claude-patch/themes.json
+// (раздел «2а. Темы окна»): у каждого окна своя тема, она переживает перезапуск
+// Claude.
 //
 // Логика ступеней, порогов и кликов перенесена из донора ElvisOS
 // (~/_ElvisProjects/ElvisOS/Resources/claude-chat-cleaner-inject.js, разделы
@@ -23,7 +25,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf3-a3-3";
+  const VERSION = "wf5-a-5";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -265,6 +267,382 @@
     mutationBatches: 0,
     mutationSkipped: 0,
   };
+
+  // ---- 2а. Темы окна ------------------------------------------------------
+  // Тема — конструируемая таблица стилей (adoptedStyleSheets) с переменными
+  // Claude, собранная из палитры шести цветов. Порт ElvisOS/Resources/claude-theme-manager.mjs
+  // (хелперы normalizeHex/rgb/mix/hslTriple и generateThemeCss), урезанный:
+  // без Epitaxy-блока Claude Code, без шкал --cds-gray/--cds-blue, без
+  // --tw-prose и скроллбаров. Всё с !important — стили самого Claude авторские
+  // и без !important, а claude.css лоадер вставляет как user-стили, и цветов в
+  // нём нет: конфликта каскада не возникает.
+  //
+  // Раздел стоит здесь, а не в конце файла, намеренно: сохранённая тема обязана
+  // вернуться в окно ДО того, как строится полоска ручки, иначе окно моргает
+  // чужими цветами. Ручку, «Обкэшить» и прокрутку модуль не трогает — у него
+  // свой узел и свои ключи хранилища myclaude-theme-*.
+  const THEME_STYLE_ID = "myclaude-theme";
+  // Тема этого окна на время его жизни: sessionStorage у каждого окна свой и
+  // переживает навигацию внутри окна (как высота поля выше).
+  const THEME_SESSION_KEY = "myclaude-theme-v1";
+  // Карта на перезапуск Claude: { main: тема главного окна, "<заголовок>": тема
+  // подчинённого окна, "*": тема для всех }. localStorage у окон общий.
+  const THEME_MAP_KEY = "myclaude-themes-v1";
+  const THEME_ALL_KEY = "*";
+  // Подчинённое окно («Open in new window») живёт на about:blank и получает
+  // заголовок позже, чем выполняется инжект. Ждём его короткой проверкой.
+  const THEME_TITLE_TICK_MS = 500;
+  const THEME_TITLE_WAIT_MS = 10000;
+  const THEME_ROOT_SELECTOR =
+    ':root, html, body, [data-mode], .cds-root, .dark, .light, .darkTheme, .lightTheme, .dframe-root';
+  const THEME_PALETTE_KEYS = ["accent", "background", "foreground", "sidebar", "panel", "muted"];
+  const THEME_FALLBACK = {
+    dark: { accent: "#60a5fa", background: "#0b1020", foreground: "#e5edff", sidebar: "#070b16", panel: "#121a30", muted: "#91a0bf" },
+    light: { accent: "#2563eb", background: "#ffffff", foreground: "#111827", sidebar: "#f3f4f6", panel: "#ffffff", muted: "#64748b" },
+  };
+
+  // Цветовая арифметика донора один в один: короткая запись #abc и запись с
+  // альфой приводятся к шести знакам, остальное падает на запасной цвет.
+  const normalizeHex = (value, fallback) => {
+    let source = typeof value === "string" ? value.trim() : fallback;
+    if (!/^#[0-9a-f]{3,8}$/i.test(source)) source = fallback;
+    let hex = String(source).slice(1);
+    if (![3, 4, 6, 8].includes(hex.length)) hex = String(fallback).slice(1);
+    if (hex.length === 3 || hex.length === 4) hex = hex.split("").map(part => part + part).join("");
+    return `#${hex.slice(0, 6).toLowerCase()}`;
+  };
+  const rgbOf = color => {
+    const hex = normalizeHex(color, "#000000").slice(1);
+    return [0, 2, 4].map(offset => Number.parseInt(hex.slice(offset, offset + 2), 16));
+  };
+  const hexOf = channels => `#${channels
+    .map(value => Math.round(Math.max(0, Math.min(255, value))).toString(16).padStart(2, "0"))
+    .join("")}`;
+  const mixHex = (left, right, ratio) => {
+    const from = rgbOf(left);
+    const to = rgbOf(right);
+    return hexOf(from.map((value, index) => value + (to[index] - value) * ratio));
+  };
+  // Переменные Claude хранят не цвет, а HSL-триплет «H S% L%»: страница сама
+  // подставляет его в hsl(...) и добавляет прозрачность.
+  const hslTriple = color => {
+    const [red, green, blue] = rgbOf(color).map(value => value / 255);
+    const max = Math.max(red, green, blue);
+    const min = Math.min(red, green, blue);
+    const lightness = (max + min) / 2;
+    const delta = max - min;
+    let hue = 0;
+    let saturation = 0;
+    if (delta !== 0) {
+      saturation = delta / (1 - Math.abs(2 * lightness - 1));
+      if (max === red) hue = 60 * (((green - blue) / delta) % 6);
+      else if (max === green) hue = 60 * ((blue - red) / delta + 2);
+      else hue = 60 * ((red - green) / delta + 4);
+    }
+    if (hue < 0) hue += 360;
+    return `${hue.toFixed(3)} ${(saturation * 100).toFixed(3)}% ${(lightness * 100).toFixed(3)}%`;
+  };
+
+  // Тема приходит снаружи (command.json) и из хранилища, то есть текстом, за
+  // который мы не отвечаем. Отсюда разбор: палитра — только шесть цветов и
+  // только hex, имя и id — без знаков, которыми можно закрыть комментарий или
+  // правило CSS. Не объект или нет палитры — темы нет вовсе.
+  const themeText = (raw, fallback) => {
+    const result = String(raw ?? "").replace(/[<>{};*\\/"']/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+    return result || fallback;
+  };
+  const normalizeTheme = value => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const palette = value.palette;
+    if (!palette || typeof palette !== "object" || Array.isArray(palette)) return null;
+    const type = value.type === "light" ? "light" : "dark";
+    const base = THEME_FALLBACK[type];
+    const clean = {};
+    for (const key of THEME_PALETTE_KEYS) clean[key] = normalizeHex(palette[key], base[key]);
+    return { id: themeText(value.id, "custom"), name: themeText(value.name, "Тема"), type, palette: clean };
+  };
+
+  const themeCss = theme => {
+    const light = theme.type === "light";
+    const base = THEME_FALLBACK[theme.type === "light" ? "light" : "dark"];
+    const background = normalizeHex(theme.palette?.background, base.background);
+    const foreground = normalizeHex(theme.palette?.foreground, base.foreground);
+    const accent = normalizeHex(theme.palette?.accent, base.accent);
+    const sidebar = normalizeHex(theme.palette?.sidebar, mixHex(background, foreground, 0.04));
+    const panel = normalizeHex(theme.palette?.panel, mixHex(background, foreground, 0.06));
+    const muted = normalizeHex(theme.palette?.muted, mixHex(foreground, background, 0.35));
+    // Две ступени поверхностей над фоном: карточки, поповеры, поля.
+    const surface1 = mixHex(background, foreground, light ? 0.025 : 0.045);
+    const surface2 = mixHex(background, foreground, light ? 0.05 : 0.075);
+    const border = mixHex(accent, background, 0.72);
+    const accentHot = mixHex(accent, foreground, 0.20);
+    return `/* PimpMyClaude · тема ${themeText(theme.name, "Тема")} · порт ElvisOS */
+${THEME_ROOT_SELECTOR} {
+  color-scheme: ${theme.type} !important;
+  --accent-brand: ${hslTriple(accent)} !important;
+  --accent-000: ${hslTriple(accent)} !important;
+  --accent-100: ${hslTriple(mixHex(accent, background, 0.12))} !important;
+  --accent-200: ${hslTriple(mixHex(accent, background, 0.30))} !important;
+  --accent-900: ${hslTriple(mixHex(accent, background, 0.78))} !important;
+  --accent-pro-000: ${hslTriple(accent)} !important;
+  --accent-pro-100: ${hslTriple(mixHex(accent, background, 0.12))} !important;
+  --accent-pro-200: ${hslTriple(mixHex(accent, background, 0.30))} !important;
+  --accent-pro-900: ${hslTriple(mixHex(accent, background, 0.78))} !important;
+  --bg-000: ${hslTriple(surface2)} !important;
+  --bg-100: ${hslTriple(surface1)} !important;
+  --bg-200: ${hslTriple(background)} !important;
+  --bg-300: ${hslTriple(mixHex(background, light ? "#000000" : "#ffffff", 0.015))} !important;
+  --bg-400: ${hslTriple(background)} !important;
+  --bg-500: ${hslTriple(background)} !important;
+  --text-000: ${hslTriple(foreground)} !important;
+  --text-100: ${hslTriple(foreground)} !important;
+  --text-200: ${hslTriple(mixHex(foreground, background, 0.15))} !important;
+  --text-300: ${hslTriple(mixHex(foreground, background, 0.28))} !important;
+  --text-400: ${hslTriple(mixHex(foreground, background, 0.42))} !important;
+  --text-500: ${hslTriple(mixHex(foreground, background, 0.55))} !important;
+  --border-100: ${hslTriple(mixHex(foreground, background, 0.25))} !important;
+  --border-200: ${hslTriple(mixHex(foreground, background, 0.45))} !important;
+  --border-300: ${hslTriple(mixHex(accent, background, 0.45))} !important;
+  --border-400: ${hslTriple(accent)} !important;
+  --oncolor-100: ${hslTriple(background)} !important;
+  --oncolor-200: ${hslTriple(background)} !important;
+  --oncolor-300: ${hslTriple(background)} !important;
+  --claude-accent-clay: ${accent} !important;
+  --claude-background-color: ${background} !important;
+  --claude-foreground-color: ${foreground} !important;
+  --claude-secondary-color: ${muted} !important;
+  --claude-border-color: ${mixHex(accent, background, 0.55)} !important;
+  --claude-text-color: ${foreground} !important;
+  --claude-border: ${border} !important;
+  --claude-border-300: ${border} !important;
+  --claude-border-300-more: ${mixHex(accent, background, 0.50)} !important;
+  --claude-text-100: ${foreground} !important;
+  --claude-text-200: ${mixHex(foreground, background, 0.15)} !important;
+  --claude-text-400: ${muted} !important;
+  --claude-text-500: ${mixHex(muted, background, 0.22)} !important;
+  --claude-description-text: ${muted} !important;
+  --page-bg: ${background} !important;
+  --surface-0: ${background} !important;
+  --surface-1: ${panel} !important;
+  --surface-2: ${surface2} !important;
+  --surface-3: ${mixHex(panel, foreground, 0.04)} !important;
+  --surface-panel: ${panel} !important;
+  --surface-popover: ${surface2} !important;
+  --text-primary: ${foreground} !important;
+  --text-secondary: ${muted} !important;
+  --text-muted: ${mixHex(muted, background, 0.22)} !important;
+  --fill-accent: ${accent} !important;
+  --fill-accent-hover: ${accentHot} !important;
+  --fill-brand: ${accent} !important;
+  --fill-brand-hover: ${accentHot} !important;
+  --fill-primary: ${accent} !important;
+  --fill-primary-hover: ${accentHot} !important;
+  --fill-secondary: ${surface2} !important;
+  --fill-secondary-hover: ${panel} !important;
+  --fill-field: ${panel} !important;
+  --fill-control: ${surface2} !important;
+  --fill-control-hover: ${mixHex(accent, background, 0.70)} !important;
+  --fill-ghost-hover: ${mixHex(accent, background, 0.82)} !important;
+  --df-z0: ${hslTriple(background)} !important;
+  --df-z1: ${hslTriple(surface1)} !important;
+  --df-z2: ${hslTriple(surface2)} !important;
+  --df-z3: ${hslTriple(panel)} !important;
+  --df-z4: ${hslTriple(mixHex(panel, foreground, 0.04))} !important;
+  --df-z5: ${hslTriple(mixHex(panel, foreground, 0.08))} !important;
+  --df-z6: ${hslTriple(mixHex(accent, background, 0.62))} !important;
+  --df-bg-page-hsl: ${hslTriple(background)} !important;
+  --df-bg-page: ${background} !important;
+  --df-bg-sidebar: ${sidebar} !important;
+  --df-sidebar-bg: ${sidebar} !important;
+  --df-web-sidebar-bg: ${sidebar} !important;
+  --df-surface-primary: ${panel} !important;
+  --df-hover: ${mixHex(accent, background, 0.82)} !important;
+  --df-selected: ${mixHex(accent, background, 0.70)} !important;
+  --df-chip-bg: ${surface2} !important;
+  --df-tray-hairline: ${mixHex(accent, background, 0.62)} !important;
+}
+html, body, #root, .dframe-root, .dframe-content, [class*="dframe-content"] { background: ${background} !important; color: ${foreground} !important; }
+.dframe-sidebar, [class*="dframe-sidebar"], [data-testid*="sidebar"] { background-color: ${sidebar} !important; background-image: none !important; }
+::selection { color: ${background} !important; background: ${accent} !important; }
+input, textarea, select, [contenteditable="true"] { caret-color: ${accent} !important; }
+`;
+  };
+
+  // Ключ окна. Заголовок главного окна меняется на каждом чате, поэтому оно
+  // хранит тему под постоянным `main`; подчинённые окна привязаны к одному
+  // разговору, и их заголовок как раз постоянен — он и есть ключ. Заголовка
+  // ещё нет — ключа нет, ждём (см. watchThemeTitle).
+  // Красим только окна Claude: claude.ai (главное) и about:blank («Open in new
+  // window»). Артефакты, браузерная панель (data:) и file: — не наши.
+  const themable = /^(https:\/\/claude\.ai\/|about:blank)/.test(location.href);
+  const themeKey = () => {
+    if (!themable) return null;
+    if (location.href.includes("claude.ai")) return "main";
+    const title = (document.title || "").trim();
+    return title ? `w:${title}` : null;
+  };
+  const readThemeMap = () => {
+    try {
+      const raw = localStorage.getItem(THEME_MAP_KEY);
+      const data = raw ? JSON.parse(raw) : null;
+      return data && typeof data === "object" && !Array.isArray(data) ? data : {};
+    } catch { return {}; }
+  };
+  const writeThemeMap = map => {
+    try {
+      if (!map || Object.keys(map).length === 0) localStorage.removeItem(THEME_MAP_KEY);
+      else localStorage.setItem(THEME_MAP_KEY, JSON.stringify(map));
+    } catch {}
+  };
+  // «Как у Claude» — это тоже выбор, а не отсутствие выбора: пишем "none",
+  // иначе окно на следующем инжекте покрасилось бы обратно из карты.
+  // Запись привязана к ключу окна: окно «Open in new window» — попап, и по
+  // спецификации HTML оно стартует с КОПИЕЙ sessionStorage главного окна.
+  // Без ключа подчинённое окно красилось бы темой главного.
+  const storeSessionTheme = theme => {
+    try {
+      sessionStorage.setItem(THEME_SESSION_KEY, JSON.stringify({ key: themeKey(), theme: theme ?? "none" }));
+    } catch {}
+  };
+  const readSessionTheme = () => {
+    try {
+      const raw = sessionStorage.getItem(THEME_SESSION_KEY);
+      if (raw == null) return null;
+      const record = JSON.parse(raw);
+      if (!record || typeof record !== "object" || !record.key) return null;
+      const key = themeKey();
+      if (!key || record.key !== key) return null;
+      if (record.theme === "none") return { theme: null };
+      return { theme: normalizeTheme(record.theme) };
+    } catch { return null; }
+  };
+
+  const themeState = { theme: null, source: null, titleTimer: 0, titleUntil: 0 };
+  // Тема — конструируемая таблица стилей (adoptedStyleSheets), а не <style> в
+  // <head>: Claude зеркалит <style> из главного окна во все попапы «Open in new
+  // window» (проверено живьём 03.09: тема главного окна появилась во всех
+  // подчинённых). Adopted-таблицы — не DOM-узлы, зеркало их не видит, а в
+  // каскаде они идут после таблиц документа и при равной силе побеждают.
+  const themeSheet = new CSSStyleSheet();
+  const detachThemeSheet = () => {
+    try { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(sheet => sheet !== themeSheet); } catch {}
+  };
+  track(detachThemeSheet);
+  // Сироты от прежней реализации (<style id=…>, в том числе зеркальные копии).
+  for (const orphan of document.querySelectorAll(`#${THEME_STYLE_ID}`)) orphan.remove();
+
+  const removeTheme = source => {
+    detachThemeSheet();
+    try { themeSheet.replaceSync(""); } catch {}
+    themeState.theme = null;
+    themeState.source = source ?? null;
+  };
+  const applyTheme = (theme, source) => {
+    const clean = normalizeTheme(theme);
+    if (!clean) { removeTheme(source); return null; }
+    try { themeSheet.replaceSync(themeCss(clean)); } catch { return null; }
+    try {
+      const sheets = document.adoptedStyleSheets.filter(sheet => sheet !== themeSheet);
+      document.adoptedStyleSheets = [...sheets, themeSheet];
+    } catch { return null; }
+    themeState.theme = clean;
+    themeState.source = source ?? null;
+    return clean;
+  };
+
+  const stopThemeTitleWatch = () => {
+    if (!themeState.titleTimer) return;
+    clearInterval(themeState.titleTimer);
+    themeState.titleTimer = 0;
+  };
+  track(stopThemeTitleWatch);
+  // Порядок восстановления: своя сессия → карта по ключу окна → тема для всех.
+  // Возвращает true, когда ждать больше нечего (ключ окна уже известен).
+  const restoreTheme = () => {
+    if (!themable) return true;
+    const session = readSessionTheme();
+    if (session) {
+      if (session.theme) applyTheme(session.theme, "session"); else removeTheme("session");
+      return true;
+    }
+    const map = readThemeMap();
+    const key = themeKey();
+    // Явный сброс окна («Как у Claude») сильнее темы для всех и переживает перезапуск.
+    if (key && map[key] === "none") { removeTheme("window"); return true; }
+    const own = key ? normalizeTheme(map[key]) : null;
+    if (own) { applyTheme(own, "window"); return true; }
+    const all = normalizeTheme(map[THEME_ALL_KEY]);
+    if (all) applyTheme(all, "all");
+    return key != null;
+  };
+  const watchThemeTitle = () => {
+    stopThemeTitleWatch();
+    themeState.titleUntil = now() + THEME_TITLE_WAIT_MS;
+    themeState.titleTimer = setInterval(() => {
+      if (!state.alive) { stopThemeTitleWatch(); return; }
+      const key = themeKey();
+      if (key) {
+        const entry = readThemeMap()[key];
+        if (entry === "none") removeTheme("window");
+        else { const own = normalizeTheme(entry); if (own) applyTheme(own, "window"); }
+        stopThemeTitleWatch();
+        return;
+      }
+      if (now() >= themeState.titleUntil) stopThemeTitleWatch();
+    }, THEME_TITLE_TICK_MS);
+  };
+
+  const rememberWhenKeyed = theme => {
+    stopThemeTitleWatch();
+    themeState.titleUntil = now() + THEME_TITLE_WAIT_MS;
+    themeState.titleTimer = setInterval(() => {
+      if (!state.alive) { stopThemeTitleWatch(); return; }
+      const key = themeKey();
+      if (key) {
+        const map = readThemeMap();
+        if (theme) map[key] = theme; else if (map[THEME_ALL_KEY]) map[key] = "none"; else delete map[key];
+        writeThemeMap(map);
+        storeSessionTheme(theme);
+        stopThemeTitleWatch();
+        return;
+      }
+      if (now() >= themeState.titleUntil) stopThemeTitleWatch();
+    }, THEME_TITLE_TICK_MS);
+  };
+
+  // Команда меню: {action:"theme", scope:"window"|"all", title, theme|null}.
+  // «Для всех» перекрывает всё: карта окон стирается целиком, остаётся одна
+  // запись "*". «Для окна» адресуется заголовком, как «Обкэшить».
+  const runThemeCommand = detail => {
+    if (!themable) return false;
+    const theme = normalizeTheme(detail?.theme);
+    if (detail?.scope === "all") {
+      writeThemeMap(theme ? { [THEME_ALL_KEY]: theme } : {});
+      storeSessionTheme(theme);
+      if (theme) applyTheme(theme, "all"); else removeTheme("all");
+      return true;
+    }
+    const title = typeof detail?.title === "string" ? detail.title.trim() : "";
+    const mine = title ? (document.title || "").trim() === title : document.hasFocus();
+    if (!mine) return false;
+    const key = themeKey();
+    if (key) {
+      const map = readThemeMap();
+      // Сброс пишем явным маркером только когда есть тема для всех — иначе запись лишняя.
+      if (theme) map[key] = theme; else if (map[THEME_ALL_KEY]) map[key] = "none"; else delete map[key];
+      writeThemeMap(map);
+    }
+    storeSessionTheme(theme);
+    if (theme) applyTheme(theme, "window"); else removeTheme("window");
+    // Ключа ещё нет (about:blank без заголовка): запомнить негде — дописываем, когда появится.
+    if (!key) rememberWhenKeyed(theme);
+    return true;
+  };
+
+  // Осечка темы не должна утащить за собой ручку: раздел стоит выше её
+  // постройки, и без этой обёртки любое падение на неготовой разметке оставило
+  // бы окно вовсе без полоски.
+  try { if (!restoreTheme()) watchThemeTitle(); } catch {}
 
   // ---- 3. Сироты прошлых установок ---------------------------------------
   // Реестра у них могло и не быть (падение до его заполнения), а в окне они уже
@@ -1409,6 +1787,9 @@
     // фокусом, и поля ввода ей не нужно — нужна лента. На чужой странице ленты
     // нет, и команда там тихо ничего не делает.
     if (action === "scroll") { runScroll(); return; }
+    // «Тема» — тоже до проверки поля ввода: красить окно можно и пока composer
+    // ещё не нашёлся, а окно с scope:"all" красится вообще любое.
+    if (action === "theme") { try { runThemeCommand(detail); } catch {} return; }
     if (!state.editor?.isConnected) return;
     // «Свернуть»/«Развернуть» — тоже на все окна (ElvisOS: «убирает поле ввода во
     // всех окнах»; слово Элвиса 03.09 13:30). Только «Обкэшить» адресована окну в фокусе.
@@ -1553,6 +1934,13 @@
       timeRuns: state.timeRuns,
       timeWatched: Boolean(state.timeTarget),
       cashout: readCashout() != null,
+      // Тема окна: что применено, под каким ключом хранится и откуда взялось
+      // (session — своя сессия окна, window — карта по ключу, all — «для всех»).
+      theme: {
+        id: themeState.theme?.id ?? null,
+        key: themeKey(),
+        source: themeState.source,
+      },
     }),
   };
   window.__myclaude = api;

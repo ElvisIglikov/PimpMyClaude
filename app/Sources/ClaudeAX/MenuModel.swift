@@ -88,6 +88,18 @@ enum MenuModel {
         entries.first { $0.command == command }
     }
 
+    // MARK: - темы (WF5)
+
+    /// Два подменю после семи пунктов, за разделителем. Хоткеев у тем нет — только меню.
+    static let windowThemeTitle = "Тема окна"
+    static let allWindowsThemeTitle = "Тема всех окон"
+    /// Последний пункт подменю — снять тему (в команде `"theme":null`).
+    static let themeResetTitle = "Как у Claude"
+    static let themeIcon = "🎨"
+    /// Значения поля `scope` команды `theme` (контракт п. 3 плана WF5).
+    static let themeScopeWindow = "window"
+    static let themeScopeAll = "all"
+
     /// ⌘Q — не пункт меню, а блокировка выхода (claude_noquit.lua).
     static let quitKey = KeySpec(mods: [.command], name: "q")
     static let quitMessage = "⌘Q в Claude заблокирован — выход через меню Claude → Quit"

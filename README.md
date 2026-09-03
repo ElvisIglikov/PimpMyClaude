@@ -68,6 +68,18 @@ cp ~/_ElvisProjects/PimpMyClaude/hammerspoon/claude_minimize_menu.lua ~/.hammers
 (`M.commandChannel = "both"`): `command.json` для лоадера v6 и временно `probe.js` для лоадера v5 (задержка до 2 с).
 Приложение шлёт только `command.json` — probe-канал в него не переносили. Проверено живьём 03.09: Прокрутить доводит все окна до низа.
 
+## Темы окон (`claude-patch/themes.json` + inject.js)
+
+В меню на кнопке «Свернуть» два подменю: «Тема окна ▸» — тема только этому окну, «Тема всех окон ▸» — всем сразу;
+«Как у Claude» — сброс. Девять тем (фиолетовая, синяя, зелёная, оранжевая, Matrix, Dracula, Tokyo Night, серая,
+светлая Arctic). Каталог `claude-patch/themes.json` (6 цветов на тему), CSS из палитры делает inject.js
+(урезанный порт генератора ElvisOS) и вешает конструируемой таблицей `adoptedStyleSheets` — `<style>` в `<head>`
+нельзя: Claude зеркалит его из главного окна во все окна «Open in new window». Окно помнит тему: главное под
+ключом `main`, подчинённые по заголовку (`w:<title>`) в localStorage, плюс sessionStorage на жизнь окна; после
+перезапуска Claude цвета возвращаются. Красятся только страницы claude.ai и about:blank (артефакты и браузер — нет).
+Режим Claude (тёмный/светлый) не переключается — светлая тема поверх тёмного режима выглядит неровно.
+Галка в подменю «Тема окна» у главного окна привязана к заголовку текущего чата и может отставать — сама тема при этом верная. Только в приложении PimpMyClaude.app (Lua-модули тем не знают). Проверено живьём 03.09: четыре окна четырьмя темами.
+
 ## ⌘Q не закрывает Claude (`hammerspoon/claude_noquit.lua`)
 
 Пока окно Claude впереди, ⌘Q перехватывается и показывает подсказку; выход только через меню Claude → Quit.
@@ -82,6 +94,7 @@ cp ~/_ElvisProjects/PimpMyClaude/hammerspoon/claude_minimize_menu.lua ~/.hammers
 3а. ✅ ⌘Q не закрывает Claude (`claude_noquit.lua`, WF3).
 4. ✅ PimpMyClaude.app для команды (Маша, Алла, Денис): установщик, меню и авто-Allow без Hammerspoon,
    подпись Developer ID + нотаризация — WF4, `docs/plan-wf4-2026-09-03.md`; см. раздел «PimpMyClaude.app» выше.
+5. ✅ Темы окон — WF5, `docs/plan-wf5-2026-09-03.md`.
 
 ## Auto-Allow для окон Claude Desktop
 

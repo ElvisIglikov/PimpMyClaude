@@ -1,9 +1,28 @@
 import Foundation
 
+/// Значение поля command.json: строка, вложенный объект (тема) или null (сброс темы).
+/// Объект пишется в том порядке ключей, в каком его собрали: контракт п. 3 плана WF5
+/// перечисляет поля темы как id, name, type, palette — живой файл должен читаться так же.
+enum CommandValue {
+    case string(String)
+    case object([(key: String, value: CommandValue)])
+    case null
+
+    var json: String {
+        switch self {
+        case .string(let value): return CommandChannel.jsonString(value)
+        case .null: return "null"
+        case .object(let fields):
+            let body = fields.map { "\(CommandChannel.jsonString($0.key)):\($0.value.json)" }
+            return "{" + body.joined(separator: ",") + "}"
+        }
+    }
+}
+
 /// Канал команд в страницы Claude: `~/Library/Application Support/MyClaude/command.json`.
 /// Лоадер v6 (patch-claude.mjs) читает файл по `fs.watchFile` раз в 500 мс, отбрасывает
 /// команду с тем же `id`, и рассылает `{id, action, at, …}` событием `myclaude-command`
-/// во все страницы (inject.js:1401–1425). Канал probe.js (лоадер v5) сюда не переносится.
+/// во все страницы (inject.js, `onCommand`). Канал probe.js (лоадер v5) сюда не переносится.
 final class CommandChannel {
     /// Папку не переименовывать: лоадер смотрит именно в MyClaude.
     static let directory = FileManager.default.homeDirectoryForCurrentUser
@@ -52,16 +71,24 @@ final class CommandChannel {
         String(format: "%d-%04d", Int(now * 1000), random)
     }
 
-    /// Тело command.json. Порядок полей — как в Lua: id, action, at, затем дополнительные.
+    /// Тело command.json. Порядок полей — как в Lua: id, action, at, затем дополнительные
+    /// (строковые — по алфавиту).
     static func payload(action: String, extra: [String: String] = [:],
                         id: String = makeID(), at: Date = Date()) -> String {
-        var fields = ["\"id\":\(jsonString(id))",
-                      "\"action\":\(jsonString(action))",
-                      "\"at\":\(jsonString(stamp.string(from: at)))"]
-        for key in extra.keys.sorted() {
-            fields.append("\(jsonString(key)):\(jsonString(extra[key] ?? ""))")
-        }
-        return "{" + fields.joined(separator: ",") + "}"
+        payload(action: action,
+                fields: extra.keys.sorted().map { (key: $0, value: .string(extra[$0] ?? "")) },
+                id: id, at: at)
+    }
+
+    /// То же тело, но поля идут в заданном порядке и могут быть непростыми: тема — вложенный
+    /// объект, сброс темы — null (контракт п. 3 плана WF5).
+    static func payload(action: String, fields: [(key: String, value: CommandValue)],
+                        id: String = makeID(), at: Date = Date()) -> String {
+        var parts = ["\"id\":\(jsonString(id))",
+                     "\"action\":\(jsonString(action))",
+                     "\"at\":\(jsonString(stamp.string(from: at)))"]
+        parts += fields.map { "\(jsonString($0.key)):\($0.value.json)" }
+        return "{" + parts.joined(separator: ",") + "}"
     }
 
     /// Запись через временный файл рядом и `rename(2)`: лоадер опрашивает файл и не должен
@@ -90,7 +117,16 @@ final class CommandChannel {
 
     @discardableResult
     func write(action: String, extra: [String: String] = [:]) -> Bool {
-        let body = CommandChannel.payload(action: action, extra: extra)
+        write(action: action, body: CommandChannel.payload(action: action, extra: extra))
+    }
+
+    /// Команда с полями сложнее строки (тема).
+    @discardableResult
+    func write(action: String, fields: [(key: String, value: CommandValue)]) -> Bool {
+        write(action: action, body: CommandChannel.payload(action: action, fields: fields))
+    }
+
+    private func write(action: String, body: String) -> Bool {
         guard CommandChannel.writeAtomic(CommandChannel.path, body) else { return false }
         lastCommand = "\(action) @ \(CommandChannel.clock.string(from: Date()))"
         return true

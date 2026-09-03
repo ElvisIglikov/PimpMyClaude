@@ -121,18 +121,22 @@ final class MinimizeMenu: NSObject {
     // MARK: - меню
 
     private func show(for window: AXUIElement, at rect: CGRect) {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        for entry in MenuModel.entries {
-            let item = BlockMenuItem(title: entry.menuTitle) { [weak self] in
-                // Пункт срабатывает внутри цикла popUp: откладываем на ход вперёд, чтобы
-                // сначала закрылось меню и вернулся фокус окну Claude.
-                DispatchQueue.main.async { self?.actions.perform(entry.command, on: window) }
-            }
-            item.image = MinimizeMenu.icon(entry.icon)
-            menu.addItem(item)
-            if MenuModel.separatorsAfter.contains(entry.command) { menu.addItem(.separator()) }
-        }
+        // Заголовок окна нужен и команде темы (адресация, как у «Обкэшить»), и галке в подменю.
+        let title = AX.string(window, kAXTitleAttribute) ?? ""
+        let menu = MinimizeMenu.build(
+            themes: actions.themes,
+            windowThemeID: actions.themeStore.windowThemeID(title: title),
+            allThemeID: actions.themeStore.allThemeID,
+            // Пункт срабатывает внутри цикла popUp: откладываем на ход вперёд, чтобы
+            // сначала закрылось меню и вернулся фокус окну Claude.
+            perform: { [weak self] command in
+                DispatchQueue.main.async { self?.actions.perform(command, on: window) }
+            },
+            applyTheme: { [weak self] scope, theme in
+                DispatchQueue.main.async {
+                    self?.actions.applyTheme(scope: scope, theme: theme, window: window)
+                }
+            })
 
         shows += 1
         menuOpen = true
@@ -147,6 +151,55 @@ final class MinimizeMenu: NSObject {
         menuOpen = false
         // Меню закрылось — фокус обратно окну Claude (решение 7 плана).
         app.focus(window: window)
+    }
+
+    /// Меню кнопки: семь пунктов с разделителями, затем — если каталог тем не пуст — разделитель
+    /// и два подменю тем. Собрано отдельно от show(), чтобы проверять его в тестах без AX и popUp.
+    static func build(themes: [Theme], windowThemeID: String?, allThemeID: String?,
+                      perform: @escaping (ClaudeCommand) -> Void,
+                      applyTheme: @escaping (String, Theme?) -> Void) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for entry in MenuModel.entries {
+            let item = BlockMenuItem(title: entry.menuTitle) { perform(entry.command) }
+            item.image = icon(entry.icon)
+            menu.addItem(item)
+            if MenuModel.separatorsAfter.contains(entry.command) { menu.addItem(.separator()) }
+        }
+        // Каталога нет (старый бандл без themes.json) — меню остаётся прежним, семь пунктов.
+        guard !themes.isEmpty else { return menu }
+        menu.addItem(.separator())
+        menu.addItem(themeItem(title: MenuModel.windowThemeTitle, themes: themes, selected: windowThemeID, resetWhenNone: false) {
+            applyTheme(MenuModel.themeScopeWindow, $0)
+        })
+        menu.addItem(themeItem(title: MenuModel.allWindowsThemeTitle, themes: themes, selected: allThemeID) {
+            applyTheme(MenuModel.themeScopeAll, $0)
+        })
+        return menu
+    }
+
+    /// Подменю: темы каталога, разделитель, «Как у Claude» (сброс). Галка — у выбранной темы,
+    /// а если не выбрано ничего, у «Как у Claude».
+    static func themeItem(title: String, themes: [Theme], selected: String?, resetWhenNone: Bool = true,
+                          apply: @escaping (Theme?) -> Void) -> NSMenuItem {
+        let submenu = NSMenu(title: title)
+        submenu.autoenablesItems = false
+        for theme in themes {
+            let item = BlockMenuItem(title: theme.name) { apply(theme) }
+            item.state = theme.id == selected ? .on : .off
+            submenu.addItem(item)
+        }
+        submenu.addItem(.separator())
+        let reset = BlockMenuItem(title: MenuModel.themeResetTitle) { apply(nil) }
+        // У окна память по заголовку неточна (главное окно меняет заголовок с чатом):
+        // без записи галку не ставим никуда, чтобы не врать «Как у Claude».
+        reset.state = (selected == nil && resetWhenNone) ? .on : .off
+        submenu.addItem(reset)
+
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.image = icon(MenuModel.themeIcon)
+        item.submenu = submenu
+        return item
     }
 
     /// Эмодзи → картинка 18×18. Монохромный ▦ берёт цвет метки, цветные эмодзи рисуются как есть.
