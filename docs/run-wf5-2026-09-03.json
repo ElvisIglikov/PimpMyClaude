@@ -1,14 +1,13 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf5-2026-09-03.md",
   "project": "⚪PimpMyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "trelvis": "#5312",
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf5-wave2-wf_19c115a6-dd0.js",
   "run_id": "wf_19c115a6-dd0",
   "next_steps": [
-    "волна 2 идёт: сверка (Opus max)",
-    "гейт: правки по сверке, release.sh 1.1.0, zip команде, слить в main",
-    "Элвис: посмотреть подменю тем и цвета окон"
+    "Элвис: посмотреть темы глазами, подкрутить палитры по вкусу",
+    "раздать ~/Desktop/PimpMyClaude-1.1.0.zip"
   ],
   "log": [
     {
@@ -25,13 +24,22 @@
       "at": "2026-09-03T20:31:21+05:00",
       "who": "прогон",
       "what": "волна 1 (после 529 — resume) готова: A ok (1 medium, 4 low), B ok (1 medium, 3 low) — внесено. Гейт: <style> зеркалится Claude в попапы → тема через adoptedStyleSheets; красим только claude.ai/about:blank; живьём 4 окна 4 темами (probe). Приложение пересобрано с подменю тем, стоит в /Applications. README/TEAM.md, версия 1.1.0. Волна 2 (сверка) запущена"
+    },
+    {
+      "at": "2026-09-03T20:42:26+05:00",
+      "who": "оркестратор",
+      "what": "сверка ok (8 low) — внесено; inject.js wf5-a-5 живьём, релиз 1.1.0 (2) нотаризован, /Applications обновлён, zip на рабочем столе, wf5 слит в main. Финиш"
     }
   ],
   "branch": "wf5 (тег wf5-start на main de97d8f)",
-  "watchdog": "watchdog-pimpmyclaude-wf5-0309",
+  "watchdog": "watchdog-pimpmyclaude-wf5-0309 (снят)",
   "orchestrator": "Fable 5.1 high",
   "wave1": {
     "run_id": "wf_8bb1f4f8-86d",
+    "status": "финиш"
+  },
+  "wave2": {
+    "run_id": "wf_19c115a6-dd0",
     "status": "финиш"
   }
 }
