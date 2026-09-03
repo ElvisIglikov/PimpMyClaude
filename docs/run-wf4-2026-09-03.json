@@ -1,13 +1,13 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf4-2026-09-03.md",
   "project": "⚪PimpMyClaude",
-  "status": "план",
-  "script_path": null,
-  "run_id": null,
+  "status": "идёт",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf4-wave1-wf_d762168e-225.js",
+  "run_id": "wf_d762168e-225",
   "next_steps": [
-    "Элвис: «запускай» (оркестратор на Fable, эффорт ниже high — предупреждён)",
-    "notarytool store-credentials pimpmyclaude",
-    "ветка wf4 + тег, сторож, волна 1: A+B+V-A+V-B"
+    "волна 1 идёт: A, B → V-A (Fable xhigh), V-B (Opus max)",
+    "гейт 1: build/test/bundle, живой запуск без «Поставить», Элвис снимает Lua-модули",
+    "Элвис: notarytool store-credentials pimpmyclaude (до волны 2)"
   ],
   "log": [
     {
@@ -19,8 +19,14 @@
       "at": "2026-09-03T14:31:12+05:00",
       "who": "оркестратор",
       "what": "критик Fable high: 21 правка, 8 критичных — внесены в план; скелет SwiftPM + bundle.sh (Developer ID) собран и закоммичен ecc9e5e; старый сторож watchdog-myclaude-0309 снят; жду «запускай»"
+    },
+    {
+      "at": "2026-09-03T14:37:31+05:00",
+      "who": "оркестратор",
+      "what": "Элвис: «запускай». Ветка wf4, тег wf4-start, сторож поставлен, волна 1 запущена (A+B Opus max, V-A Fable xhigh, V-B Opus max)"
     }
   ],
-  "branch": null,
-  "watchdog": null
+  "branch": "wf4 (тег wf4-start на main f0f233a)",
+  "watchdog": "watchdog-pimpmyclaude-0309",
+  "orchestrator": "Fable 5.1 high"
 }
