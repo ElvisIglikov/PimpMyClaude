@@ -1,0 +1,10 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf6-2026-09-03.md",
+  "project": "⚪PimpMyClaude",
+  "status": "план",
+  "trelvis": "#5313 #5314 #5315 #5316",
+  "script_path": null,
+  "run_id": null,
+  "next_steps": ["критик Opus max (wf_7a1c51ec-16f) → правки → презентация → «запускай»"],
+  "log": [{"at": "2026-09-03T22:10:00+05:00", "who": "оркестратор", "what": "жалоба #5313 разобрана по хранилищу: адресация окон верна, был выбор «Тема всех окон → Фиолетовая» (подменю вплотную). План WF6 написан, критик Opus max запущен"}]
+}
