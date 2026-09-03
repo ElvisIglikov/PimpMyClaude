@@ -23,7 +23,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf3-a3-1";
+  const VERSION = "wf3-a3-2";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1409,11 +1409,13 @@
     // фокусом, и поля ввода ей не нужно — нужна лента. На чужой странице ленты
     // нет, и команда там тихо ничего не делает.
     if (action === "scroll") { runScroll(); return; }
-    if (!document.hasFocus()) return;
     if (!state.editor?.isConnected) return;
-    if (action === "collapse") setStage(STAGE_COLLAPSED);
-    else if (action === "expand") setStage(STAGE_NORMAL);
-    else if (action === "cashout") runCashout();
+    // «Свернуть»/«Развернуть» — тоже на все окна (ElvisOS: «убирает поле ввода во
+    // всех окнах»; слово Элвиса 03.09 13:30). Только «Обкэшить» адресована окну в фокусе.
+    if (action === "collapse") { setStage(STAGE_COLLAPSED); return; }
+    if (action === "expand") { setStage(STAGE_NORMAL); return; }
+    if (!document.hasFocus()) return;
+    if (action === "cashout") runCashout();
     // Неизвестные команды игнорируем молча: их может слать не только наш модуль.
   };
 

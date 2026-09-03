@@ -52,7 +52,7 @@ M.focusDelay = 0.1             -- focus → command, so document.hasFocus() is t
 M.cashoutNewChatDelay = 0.4    -- cashout command → ⌘N
 M.probeLagSeconds = 2.5        -- probe channel only: the loader re-reads probe.js on a 2 s poll + page walk
 M.probeTtlSeconds = 15         -- probe channel only: a stale probe.js must not replay on loader start
-M.minCellWidth = 360           -- «Расставить»: narrower cells drop a column (patch minWindowWidth)
+M.minCellWidth = 340           -- «Расставить»: narrower cells drop a column (Elvis keeps minWindowWidth 300–360)
 M.iconSize = 18                -- px, side of the square an emoji menu icon is drawn into
 M.iconColor = { white = 0.5 }  -- only monochrome glyphs (▦) take it; canvas text is white by
                                -- default, i.e. invisible on a light menu. Mid grey reads on both,
@@ -210,13 +210,12 @@ end
 
 -- Columns for n windows; rows = ceil(n/cols), so this gives 1 | 2 | 2×2 | 3×2 | 4×2 and a square-ish
 -- grid beyond 8. A column is dropped while a cell would be narrower than minCellWidth.
+-- Chats are read by height, so windows go side by side in ONE row (full height) for as
+-- long as each column stays at least minCellWidth wide (слово Элвиса 03.09 13:30: «правильная
+-- четвёрка — четыре столбца во всю высоту, не 2×2»). Only when they no longer fit do rows appear.
 local function gridColumns(n, width)
-  local cols
-  if n <= 1 then cols = 1               -- n = 0 never reaches here, but a 0-column grid divides by 0
-  elseif n <= 4 then cols = 2
-  elseif n <= 6 then cols = 3
-  elseif n <= 8 then cols = 4
-  else cols = math.ceil(math.sqrt(n)) end
+  if n <= 1 then return 1 end           -- n = 0 never reaches here, but a 0-column grid divides by 0
+  local cols = n
   while cols > 1 and width / cols < M.minCellWidth do cols = cols - 1 end
   return cols
 end
