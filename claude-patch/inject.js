@@ -25,7 +25,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf5-a-4";
+  const VERSION = "wf5-a-5";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -269,8 +269,8 @@
   };
 
   // ---- 2а. Темы окна ------------------------------------------------------
-  // Тема — это <style id="myclaude-theme"> с переменными Claude, собранный из
-  // палитры шести цветов. Порт ElvisOS/Resources/claude-theme-manager.mjs
+  // Тема — конструируемая таблица стилей (adoptedStyleSheets) с переменными
+  // Claude, собранная из палитры шести цветов. Порт ElvisOS/Resources/claude-theme-manager.mjs
   // (хелперы normalizeHex/rgb/mix/hslTriple и generateThemeCss), урезанный:
   // без Epitaxy-блока Claude Code, без шкал --cds-gray/--cds-blue, без
   // --tw-prose и скроллбаров. Всё с !important — стили самого Claude авторские
@@ -443,11 +443,23 @@ ${THEME_ROOT_SELECTOR} {
   --fill-control: ${surface2} !important;
   --fill-control-hover: ${mixHex(accent, background, 0.70)} !important;
   --fill-ghost-hover: ${mixHex(accent, background, 0.82)} !important;
+  --df-z0: ${hslTriple(background)} !important;
+  --df-z1: ${hslTriple(surface1)} !important;
+  --df-z2: ${hslTriple(surface2)} !important;
+  --df-z3: ${hslTriple(panel)} !important;
+  --df-z4: ${hslTriple(mixHex(panel, foreground, 0.04))} !important;
+  --df-z5: ${hslTriple(mixHex(panel, foreground, 0.08))} !important;
+  --df-z6: ${hslTriple(mixHex(accent, background, 0.62))} !important;
+  --df-bg-page-hsl: ${hslTriple(background)} !important;
+  --df-bg-page: ${background} !important;
   --df-bg-sidebar: ${sidebar} !important;
   --df-sidebar-bg: ${sidebar} !important;
+  --df-web-sidebar-bg: ${sidebar} !important;
   --df-surface-primary: ${panel} !important;
   --df-hover: ${mixHex(accent, background, 0.82)} !important;
   --df-selected: ${mixHex(accent, background, 0.70)} !important;
+  --df-chip-bg: ${surface2} !important;
+  --df-tray-hairline: ${mixHex(accent, background, 0.62)} !important;
 }
 html, body, #root, .dframe-root, .dframe-content, [class*="dframe-content"] { background: ${background} !important; color: ${foreground} !important; }
 .dframe-sidebar, [class*="dframe-sidebar"], [data-testid*="sidebar"] { background-color: ${sidebar} !important; background-image: none !important; }
@@ -580,6 +592,24 @@ input, textarea, select, [contenteditable="true"] { caret-color: ${accent} !impo
     }, THEME_TITLE_TICK_MS);
   };
 
+  const rememberWhenKeyed = theme => {
+    stopThemeTitleWatch();
+    themeState.titleUntil = now() + THEME_TITLE_WAIT_MS;
+    themeState.titleTimer = setInterval(() => {
+      if (!state.alive) { stopThemeTitleWatch(); return; }
+      const key = themeKey();
+      if (key) {
+        const map = readThemeMap();
+        if (theme) map[key] = theme; else if (map[THEME_ALL_KEY]) map[key] = "none"; else delete map[key];
+        writeThemeMap(map);
+        storeSessionTheme(theme);
+        stopThemeTitleWatch();
+        return;
+      }
+      if (now() >= themeState.titleUntil) stopThemeTitleWatch();
+    }, THEME_TITLE_TICK_MS);
+  };
+
   // Команда меню: {action:"theme", scope:"window"|"all", title, theme|null}.
   // «Для всех» перекрывает всё: карта окон стирается целиком, остаётся одна
   // запись "*". «Для окна» адресуется заголовком, как «Обкэшить».
@@ -604,6 +634,8 @@ input, textarea, select, [contenteditable="true"] { caret-color: ${accent} !impo
     }
     storeSessionTheme(theme);
     if (theme) applyTheme(theme, "window"); else removeTheme("window");
+    // Ключа ещё нет (about:blank без заголовка): запомнить негде — дописываем, когда появится.
+    if (!key) rememberWhenKeyed(theme);
     return true;
   };
 

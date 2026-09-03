@@ -22,7 +22,7 @@ enum CommandValue {
 /// Канал команд в страницы Claude: `~/Library/Application Support/MyClaude/command.json`.
 /// Лоадер v6 (patch-claude.mjs) читает файл по `fs.watchFile` раз в 500 мс, отбрасывает
 /// команду с тем же `id`, и рассылает `{id, action, at, …}` событием `myclaude-command`
-/// во все страницы (inject.js:1401–1425). Канал probe.js (лоадер v5) сюда не переносится.
+/// во все страницы (inject.js, `onCommand`). Канал probe.js (лоадер v5) сюда не переносится.
 final class CommandChannel {
     /// Папку не переименовывать: лоадер смотрит именно в MyClaude.
     static let directory = FileManager.default.homeDirectoryForCurrentUser

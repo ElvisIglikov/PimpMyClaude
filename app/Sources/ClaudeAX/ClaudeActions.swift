@@ -71,27 +71,33 @@ final class ClaudeActions {
     /// Тема одного окна (`scope: "window"`) или всех сразу (`"all"`); `theme: nil` — «Как у Claude»,
     /// сброс. Палитра уходит в страницу целиком: файлов страница не читает (контракт п. 3 плана WF5).
     /// Окно адресуется AX-заголовком, как «Обкэшить»; пустой заголовок страница понимает как
-    /// «окно в фокусе». Фокус здесь не забираем — тема не зависит от `document.hasFocus()`,
-    /// а меню и так возвращает фокус окну, когда закрывается.
+    /// «окно в фокусе» — тогда, как у «Обкэшить», сперва даём окну фокус и ждём focusDelay.
     @discardableResult
     func applyTheme(scope: String, theme: Theme?, window: AXUIElement?) -> Bool {
         let target = window ?? focusedWindow()
         let title = target.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
-        // Без заголовка страница выбирает окно по document.hasFocus() — даём фокус, как «Обкэшить».
-        if title.isEmpty, let target = target { app.focus(window: target); Thread.sleep(forTimeInterval: focusDelay) }
-        let sent = commands.write(action: "theme", fields: [
-            (key: "scope", value: .string(scope)),
-            (key: "title", value: .string(title)),
-            (key: "theme", value: theme?.commandValue ?? .null),
-        ])
-        guard sent else { return false }
-        if scope == MenuModel.themeScopeAll {
-            themeStore.setAllTheme(theme?.id)
-            themeStore.clearWindowThemes()
-        } else {
-            themeStore.setWindowTheme(theme?.id, title: title)
+        let send: () -> Bool = { [weak self] in
+            guard let self = self else { return false }
+            let sent = self.commands.write(action: "theme", fields: [
+                (key: "scope", value: .string(scope)),
+                (key: "title", value: .string(title)),
+                (key: "theme", value: theme?.commandValue ?? .null),
+            ])
+            guard sent else { return false }
+            if scope == MenuModel.themeScopeAll {
+                self.themeStore.setAllTheme(theme?.id)
+                self.themeStore.clearWindowThemes()
+            } else {
+                self.themeStore.setWindowTheme(theme?.id, title: title)
+            }
+            return true
         }
-        return true
+        if title.isEmpty, let target = target {
+            app.focus(window: target)
+            after(focusDelay) { _ = send() }
+            return true
+        }
+        return send()
     }
 
     // MARK: - оконные команды
