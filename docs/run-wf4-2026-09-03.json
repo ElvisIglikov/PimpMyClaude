@@ -2,12 +2,12 @@
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf4-2026-09-03.md",
   "project": "⚪PimpMyClaude",
   "status": "идёт",
-  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf4-wave2-wf_d8093d41-575.js",
-  "run_id": "wf_d8093d41-575",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf4-wave3-wf_aa489eb6-c5e.js",
+  "run_id": "wf_aa489eb6-c5e",
   "next_steps": [
-    "волна 2 идёт: C → V-C; D → V-D",
-    "гейт 1 (Элвис): Accessibility для app/.build/PimpMyClaude.app, снять Lua-модули, посмотреть меню/хоткеи",
-    "гейт 2: bundle + release, «Поставить» рукой Элвиса"
+    "волна 3 идёт: сквозная сверка (Opus max)",
+    "гейт 2 (Элвис): Accessibility для /Applications/PimpMyClaude.app, снять Lua-модули, живая проверка меню/хоткеев/Allow; «Поставить» — не нужно, патч стоит",
+    "раздать dist/PimpMyClaude-1.0.0.zip + docs/TEAM.md; чистый пользователь"
   ],
   "log": [
     {
@@ -29,6 +29,11 @@
       "at": "2026-09-03T15:14:06+05:00",
       "who": "прогон",
       "what": "волна 1 готова: A ok (6 low), B fix-needed (1 high cashout-задержка, 1 medium хоткеи, 4 low) — всё поправлено оркестратором, 15 тестов зелёные, коммит на wf4, app/.build/PimpMyClaude.app собран и запущен у Элвиса. Волна 2 запущена (C Opus max → V-C Opus max; D Opus max → V-D Fable xhigh)"
+    },
+    {
+      "at": "2026-09-03T15:46:46+05:00",
+      "who": "прогон",
+      "what": "волна 2 готова: C ok (6 low), D fix-needed (2 medium TEAM.md, 6 low) — поправлено, версия 1.0.0, коммит+пуш. release.sh: нотаризация Accepted, stapled, spctl accepted. /Applications/PimpMyClaude.app поставлен и запущен, zip на рабочем столе. Волна 3 (сверка) запущена"
     }
   ],
   "branch": "wf4 (тег wf4-start на main f0f233a)",
@@ -37,6 +42,10 @@
   "wave1": {
     "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf4-wave1-wf_d762168e-225.js",
     "run_id": "wf_d762168e-225",
+    "status": "финиш"
+  },
+  "wave2": {
+    "run_id": "wf_d8093d41-575",
     "status": "финиш"
   }
 }
