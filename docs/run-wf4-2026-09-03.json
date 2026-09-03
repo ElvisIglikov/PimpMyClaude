@@ -1,18 +1,26 @@
 {
-  "plan": "docs/plan-wf4-2026-09-03.md",
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf4-2026-09-03.md",
   "project": "⚪PimpMyClaude",
   "status": "план",
   "script_path": null,
   "run_id": null,
   "next_steps": [
-    "новый чат: критик плана Fable high → презентация → «запускай»",
-    "волна 1: A патчер+приложение, B AX-модуль (Opus max)"
+    "Элвис: «запускай» (оркестратор на Fable, эффорт ниже high — предупреждён)",
+    "notarytool store-credentials pimpmyclaude",
+    "ветка wf4 + тег, сторож, волна 1: A+B+V-A+V-B"
   ],
   "log": [
     {
       "at": "2026-09-03T14:13:45+05:00",
       "who": "оркестратор",
       "what": "план WF4 написан в чате MyClaude 02.09 перед закрытием; критик ещё не звался"
+    },
+    {
+      "at": "2026-09-03T14:31:12+05:00",
+      "who": "оркестратор",
+      "what": "критик Fable high: 21 правка, 8 критичных — внесены в план; скелет SwiftPM + bundle.sh (Developer ID) собран и закоммичен ecc9e5e; старый сторож watchdog-myclaude-0309 снят; жду «запускай»"
     }
-  ]
+  ],
+  "branch": null,
+  "watchdog": null
 }
