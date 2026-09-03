@@ -11,8 +11,9 @@
 // высоту, клик — свернуть/вернуть, двойной клик — во всю высоту окна. Плюс
 // команды из приложения (событие window "myclaude-command"): collapse, expand,
 // cashout, scroll, theme, status, workflow. И сокращает время под сообщениями
-// («3 minutes ago» → «3 min ago»). Команда theme красит окно по палитре из
-// claude-patch/themes.json (раздел «2а. Тема и шрифт чата»): тема живёт на ЧАТЕ
+// («3 minutes ago» → «3 min ago»). Команда theme несёт четыре слоя — цвет по
+// палитре из claude-patch/themes.json, шрифт, размер текста сообщений и
+// неоновую рамку окна (раздел «2а. Слои чата»): тема живёт на ЧАТЕ
 // (ключ `chat:<заголовок>`), у главного окна есть ещё и своя — она и остаётся,
 // когда открыт новый чат; всё переживает перезапуск Claude. На нижней кромке
 // рамки поля ввода рисуется полоса прогресса марафона воркфлоу по строке
@@ -30,7 +31,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf9-a-4";
+  const VERSION = "wf12-a-3";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -277,10 +278,12 @@
     mutationSkipped: 0,
   };
 
-  // ---- 2а. Тема и шрифт чата ----------------------------------------------
-  // Два независимых слоя, у каждого своя таблица стилей и своя ячейка в
-  // хранилище: тема (цвета) и шрифт. Команда меняет тот слой, поле которого в
-  // ней есть, — шрифт без темы окно не красит, тема без шрифта его не сбрасывает.
+  // ---- 2а. Слои чата: тема, шрифт, размер, рамка --------------------------
+  // Четыре независимых слоя, у каждого своя ячейка в хранилище: тема (цвета),
+  // шрифт, размер текста сообщений и неоновая рамка окна. У первых трёх своя
+  // таблица стилей, у рамки — свой оверлей. Команда меняет тот слой, поле
+  // которого в ней есть, — шрифт без темы окно не красит, тема без шрифта его не
+  // сбрасывает, размер и рамка не трогают ни того, ни другого.
   //
   // С WF9 тема закреплена за ЧАТОМ, а не за окном: вернулся в разговор — вернулся
   // его цвет, в каком бы окне он ни открылся. У главного окна сверх того есть
@@ -329,6 +332,37 @@
   const FONT_FAMILY_MAX = 60;
   const FONT_STACK_UI = "-apple-system, system-ui, sans-serif";
   const FONT_STACK_MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
+  // Размер текста сообщений (WF12). Границы — по обе стороны от обычных 15 px:
+  // меньше 11 текст не читается, больше 24 в окне помещается пара абзацев.
+  const SIZE_MIN = 11;
+  const SIZE_MAX = 24;
+  // Правило пишется ТОЛЬКО на текст сообщений. Кнопки, сайдбар, поле ввода и
+  // шапка живут своим размером: полезли бы туда — поехала бы вся раскладка окна,
+  // а вместе с ней и замеры ручки. Приметы взяты те же, что уже проверены живьём
+  // в CHAT_STARTED_SELECTOR (раздел 1): .font-claude-response отвечает за ответы
+  // и в claude.ai, и в окне Claude Code, .epitaxy-user-turn — за вопросы в Code.
+  // Точный селектор ответов Code сверяет probe на гейте (план WF12, п. 1).
+  const SIZE_ANSWER_SELECTORS = [
+    ".font-claude-response",
+    ".font-claude-response-body",
+    '[data-testid="assistant-message"] .prose',
+    // Окно Claude Code (probe 04.09): ответ — .prose внутри строки сообщения, у вопроса своя обёртка.
+    '.epitaxy-transcript-typography [class*="message-row"]:not(:has(.epitaxy-user-turn)) .prose',
+  ];
+  const SIZE_QUESTION_SELECTORS = ["[data-user-message-bubble]", ".epitaxy-user-turn"];
+  // Заголовки и код внутри ответа — в em, то есть долей от заданного размера:
+  // так они едут пропорционально сами и не спорят с выбором Элвиса.
+  const SIZE_HEADINGS = [["h1", 1.6], ["h2", 1.35], ["h3", 1.18], ["h4", 1.05]];
+  const SIZE_CODE_SCALE = 0.9;
+  // Неоновая рамка окна (WF12, #5343): оверлей во всё окно, свет внутрь.
+  // Скругление — как у окна macOS; 2 точки линии и то же свечение, что у полосы
+  // прогресса, потому что цвет у них один — акцент темы.
+  const WINDOW_FRAME_ID = "myclaude-window-frame";
+  const WINDOW_FRAME_RADIUS = 10;
+  // Ниже полосы прогресса (2147483645) и её подсказки (2147483646): полоска
+  // спорить с рамкой не должна и идёт поверх (план WF12, п. 4). Меню приложения —
+  // родное меню macOS, оно поверх всего окна и в этот счёт не входит.
+  const WINDOW_FRAME_Z = "2147483644";
 
   // Цветовая арифметика донора один в один: короткая запись #abc и запись с
   // альфой приводятся к шести знакам, остальное падает на запасной цвет.
@@ -644,6 +678,58 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
 `;
   };
 
+  // Размер — третий слой, со своим разбором. Половинки независимы: команда может
+  // нести только «размер ответов», и тогда размер вопросов остаётся прежним
+  // (контракт WF12: поля нет — не менять). Обе половинки — целые точки в
+  // границах SIZE_MIN…SIZE_MAX; мусор равен отсутствию поля, пустой слой — null.
+  const sizePx = value => {
+    const px = Math.round(Number(value));
+    return Number.isFinite(px) && px >= SIZE_MIN && px <= SIZE_MAX ? px : null;
+  };
+  const normalizeSize = value => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const clean = {};
+    const answer = sizePx(value.answer);
+    const question = sizePx(value.question);
+    if (answer != null) clean.answer = answer;
+    if (question != null) clean.question = question;
+    return Object.keys(clean).length ? clean : null;
+  };
+  // Рамка — слой-тумблер: значение у него ровно одно, true. Всё остальное (в том
+  // числе false и "none") доходит сюда как «слоя нет» либо как сброс.
+  const normalizeFrame = value => (value === true ? true : null);
+
+  // Отдельная таблица стилей (см. sizeSheet ниже). Цветов в ней нет ВОВСЕ: размер
+  // и тема — разные слои, и правило размера обязано пережить любую смену темы.
+  const sizeRule = (selectors, suffix, body) =>
+    `${selectors.map(item => (suffix ? `${item} ${suffix}` : item)).join(", ")} { ${body} }`;
+  const sizeCss = size => {
+    const rules = ["/* PimpMyClaude · размер текста сообщений */"];
+    if (size.answer) {
+      rules.push(sizeRule(SIZE_ANSWER_SELECTORS, "",
+        `font-size: ${size.answer}px !important; line-height: 1.5 !important;`));
+      for (const [tag, scale] of SIZE_HEADINGS) {
+        rules.push(sizeRule(SIZE_ANSWER_SELECTORS, tag, `font-size: ${scale}em !important;`));
+      }
+      rules.push(sizeRule(SIZE_ANSWER_SELECTORS, ":is(code, pre, kbd, samp)",
+        `font-size: ${SIZE_CODE_SCALE}em !important;`));
+      // Блок кода — <pre><code>: второй проход em гасим, иначе 0.9 × 0.9.
+      rules.push(sizeRule(SIZE_ANSWER_SELECTORS, ":is(pre, kbd, samp) :is(code, kbd, samp)",
+        "font-size: 1em !important;"));
+    }
+    if (size.question) {
+      rules.push(sizeRule(SIZE_QUESTION_SELECTORS, "",
+        `font-size: ${size.question}px !important; line-height: 1.5 !important;`));
+    }
+    return `${rules.join("\n")}\n`;
+  };
+
+  // Свет рамки — три тени внутрь одним цветом: линия в две точки, широкий ореол
+  // и второй проход по нему, отчего свет плотнее у самой кромки. Приём тот же,
+  // что у полосы прогресса (раздел 2б), и цвет тот же — акцент темы.
+  const frameShadow = accent =>
+    `inset 0 0 0 2px ${accent}, inset 0 0 18px ${accent}, inset 0 0 6px ${accent}`;
+
   // Ключи хранилища (WF9, п. 6): тема живёт на ЧАТЕ, а не на окне. Заголовок
   // окна — это и есть имя чата, поэтому ключ `chat:<заголовок>` одинаково годен
   // и главному окну (заголовок меняется с каждым чатом), и подчинённому («Open
@@ -702,12 +788,16 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       else localStorage.setItem(THEME_MAP_KEY, JSON.stringify(map));
     } catch {}
   };
-  // Слоёв два, и каждый хранится трёхзначно: объект — значение, "none" — явный
-  // сброс («Как у Claude» это тоже выбор, иначе окно на следующем инжекте
+  // Слоёв четыре, и каждый хранится трёхзначно: значение — оно самое, "none" —
+  // явный сброс («Как у Claude» это тоже выбор, иначе окно на следующем инжекте
   // покрасилось бы обратно из карты), поля нет — слоя не касались. Поэтому
-  // запись окна — объект { theme, font }, а не одна тема, как было в WF5.
-  const THEME_LAYERS = ["theme", "font"];
-  const LAYER_NORMALIZE = { theme: normalizeTheme, font: normalizeFont };
+  // запись окна — объект { theme, font, size, frame }, а не одна тема, как было
+  // в WF5. Порядок важен: рамка идёт ПОСЛЕ темы, потому что берёт её акцент, и
+  // на восстановлении цвет к тому времени уже на месте.
+  const THEME_LAYERS = ["theme", "font", "size", "frame"];
+  const LAYER_NORMALIZE = {
+    theme: normalizeTheme, font: normalizeFont, size: normalizeSize, frame: normalizeFrame,
+  };
   // Старый формат WF5 читается обязательно: в живых окнах уже лежат записи, где
   // тема стоит на верхнем уровне, и строки "none". Без этого перевода окна
   // потеряли бы темы на первом же инжекте новой версии.
@@ -788,6 +878,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // сделанный до появления заголовка: дописываем его, когда ключ чата появится.
   const themeState = {
     theme: null, source: null, font: null, fontSource: null, previewing: false,
+    size: null, sizeSource: null, frame: false, frameSource: null,
     chatKey: null, chatTimer: 0, chatObserver: null, pending: null, pendingUntil: 0,
   };
   // Тема — конструируемая таблица стилей (adoptedStyleSheets), а не <style> в
@@ -800,6 +891,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // цвета, и наоборот. Одной таблицей это не выходит — её пришлось бы
   // перегенерировать целиком на каждую половину.
   const fontSheet = new CSSStyleSheet();
+  // Размер — третья таблица по тому же доводу: сменить размер, не тронув ни
+  // цветов, ни шрифта.
+  const sizeSheet = new CSSStyleSheet();
   const detachSheet = sheet => {
     try { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(item => item !== sheet); } catch {}
   };
@@ -809,15 +903,69 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       return true;
     } catch { return false; }
   };
-  track(() => { detachSheet(themeSheet); detachSheet(fontSheet); });
-  // Сироты от прежней реализации (<style id=…>, в том числе зеркальные копии).
+  track(() => { detachSheet(themeSheet); detachSheet(fontSheet); detachSheet(sizeSheet); });
+  // Сироты от прежней реализации (<style id=…>, в том числе зеркальные копии) и
+  // оверлей рамки от упавшей на середине установки.
   for (const orphan of document.querySelectorAll(`#${THEME_STYLE_ID}`)) orphan.remove();
+  for (const orphan of document.querySelectorAll(`#${WINDOW_FRAME_ID}`)) orphan.remove();
+
+  // Акцент окна: у Claude и у наших тем (themeCss выше) --accent-brand хранит не
+  // цвет, а тройку HSL — «251.000 40.000% 54.500%». Подставить её как есть
+  // нельзя, объявление отбросится, поэтому тройку заворачиваем в hsl() сами, а на
+  // всё незнакомое берём фиолетовый донора. Одним цветом живут рамка окна и
+  // полоса прогресса (раздел 2б) — на то он и акцент.
+  const ACCENT_FALLBACK = "#8b5cf6";
+  const accentColor = () => {
+    let raw = "";
+    // В окне Claude Code палитра живёт на .epitaxy-root, а не на html.
+    try {
+      const host = state.composerBlock ?? document.querySelector(".epitaxy-root") ?? document.documentElement;
+      raw = getComputedStyle(host).getPropertyValue("--accent-brand").trim();
+    } catch {}
+    if (!raw) return ACCENT_FALLBACK;
+    if (/^(?:#|rgba?\(|hsla?\(|oklch\(|lab\(|lch\(|color\()/i.test(raw)) return raw;
+    if (/^[\d.]+(?:deg)?\s+[\d.]+%\s+[\d.]+%$/.test(raw)) return `hsl(${raw})`;
+    return ACCENT_FALLBACK;
+  };
+
+  // Рамка — не таблица стилей, а свой узел: правило пришлось бы вешать на body
+  // или :root, а у них уже есть и фон темы, и тени самого Claude. Оверлей ничего
+  // не ловит мышью (pointer-events:none) и ни на что в разметке не влияет.
+  const frameNode = document.createElement("div");
+  frameNode.id = WINDOW_FRAME_ID;
+  frameNode.setAttribute("aria-hidden", "true");
+  for (const [name, value] of Object.entries({
+    position: "fixed", inset: "0px", display: "none", "pointer-events": "none",
+    "border-radius": `${WINDOW_FRAME_RADIUS}px`, "z-index": WINDOW_FRAME_Z,
+  })) frameNode.style.setProperty(name, value);
+  (document.body ?? document.documentElement).appendChild(frameNode);
+  track(() => frameNode.remove());
+  // Цвет у рамки не свой, а темин: сменилась тема — перекрашиваем. Инлайновая
+  // тень хранит уже вычисленный цвет и сама за переменной не поедет.
+  const paintFrame = () => {
+    if (themeState.frame !== true) return;
+    frameNode.style.setProperty("box-shadow", frameShadow(accentColor()));
+  };
+  const removeFrame = source => {
+    themeState.frame = false;
+    themeState.frameSource = source ?? null;
+    frameNode.style.setProperty("display", "none");
+  };
+  const applyFrame = (value, source) => {
+    if (normalizeFrame(value) !== true) { removeFrame(source); return null; }
+    themeState.frame = true;
+    themeState.frameSource = source ?? null;
+    frameNode.style.setProperty("display", "block");
+    paintFrame();
+    return true;
+  };
 
   const removeTheme = source => {
     detachSheet(themeSheet);
     try { themeSheet.replaceSync(""); } catch {}
     themeState.theme = null;
     themeState.source = source ?? null;
+    paintFrame();
   };
   const applyTheme = (theme, source) => {
     const clean = normalizeTheme(theme);
@@ -826,6 +974,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (!adoptSheet(themeSheet)) return null;
     themeState.theme = clean;
     themeState.source = source ?? null;
+    paintFrame();
     return clean;
   };
   // Другой шрифт — другая высота строки, а обычная высота поля закэширована
@@ -852,8 +1001,27 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     refreshAfterFont();
     return clean;
   };
+  // Размер поля ввода и ручки не касается — трогает только текст сообщений, —
+  // поэтому кэш обычной высоты (state.natural), в отличие от шрифта, не сбрасываем.
+  const removeSize = source => {
+    detachSheet(sizeSheet);
+    try { sizeSheet.replaceSync(""); } catch {}
+    themeState.size = null;
+    themeState.sizeSource = source ?? null;
+  };
+  const applySize = (size, source) => {
+    const clean = normalizeSize(size);
+    if (!clean) { removeSize(source); return null; }
+    try { sizeSheet.replaceSync(sizeCss(clean)); } catch { return null; }
+    if (!adoptSheet(sizeSheet)) return null;
+    themeState.size = clean;
+    themeState.sizeSource = source ?? null;
+    return clean;
+  };
   const applyLayer = (layer, value, source) => {
     if (layer === "font") { if (value) applyFont(value, source); else removeFont(source); return; }
+    if (layer === "size") { if (value) applySize(value, source); else removeSize(source); return; }
+    if (layer === "frame") { applyFrame(value, source); return; }
     if (value) applyTheme(value, source); else removeTheme(source);
   };
   const applyLayers = (layers, source) => {
@@ -891,6 +1059,25 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       else if (clear) applyLayer(layer, null, null);
     }
     return themeKey() != null;
+  };
+
+  // То же значение слоя, что взяло бы восстановление, но БЕЗ применения: нужно
+  // размеру, у которого половинки независимы, — команда «размер ответов 16» без
+  // этого стёрла бы выбранный размер вопросов.
+  const storedLayer = layer => {
+    if (!themable) return null;
+    const map = readThemeMap();
+    const chain = [
+      mapEntry(map, chatKey()),
+      readSessionEntry(),
+      isMainWindow() ? mapEntry(map, THEME_MAIN_KEY) : null,
+      themeEntry(map[THEME_ALL_KEY]),
+    ];
+    for (const entry of chain) {
+      const value = entryLayer(entry, layer);
+      if (value !== undefined) return value;
+    }
+    return null;
   };
 
   // Запись по ключу и по слоям. Сброс пишем маркером "none" только когда у ЭТОГО
@@ -1012,8 +1199,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     return title ? (document.title || "").trim() === title : document.hasFocus();
   };
 
-  // Команда меню: {action:"theme", scope:"window"|"all", title, preview, theme|null, font|null}.
-  // Поля слоя нет — слой не трогаем, null — сброс слоя, объект — применить.
+  // Команда меню, порядок полей по контракту WF12: {id, action:"theme", at,
+  // scope:"window"|"all", title, preview, theme|null, font|null,
+  // size:{answer,question}|null, frame:true|null}.
+  // Поля слоя нет — слой не трогаем, null — сброс слоя, значение — применить.
   // «Для всех» перекрывает СВОЙ слой у всех окон и чужой не трогает: «шрифт
   // всем» не снимает тем у окон, «тема всем» не снимает их шрифтов.
   // «Для окна» адресуется заголовком, как «Обкэшить».
@@ -1030,6 +1219,20 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const layers = {};
     for (const layer of THEME_LAYERS) {
       if (layer in detail) layers[layer] = LAYER_NORMALIZE[layer](detail[layer]);
+    }
+    // Размер — единственный слой с половинками: «Размер ответов ▸ 16» приходит
+    // без поля question, и оно обязано остаться прежним. Недостающую половину
+    // дописываем здесь, и дальше слой ходит по коду цельным, как тема и шрифт.
+    // Основа у примерки — то, что сейчас на экране (мышь ведут по подменю и
+    // половинки примеряются одна за другой), у закрепления — хранилище: иначе
+    // выбор «размер вопросов» утащил бы за собой примеренный размер ответов.
+    if (layers.size) {
+      const base = detail.preview === true
+        ? themeState.size
+        : (detail.scope === "all"
+          ? entryLayer(themeEntry(readThemeMap()[THEME_ALL_KEY]), "size")
+          : storedLayer("size"));
+      layers.size = { ...(base ?? {}), ...layers.size };
     }
     // Предпросмотр (мышь ведут по подменю тем и шрифтов): слои из команды идут
     // ТОЛЬКО в таблицы стилей, хранилища они не касаются вовсе — иначе проход
@@ -1095,7 +1298,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Тонкая светящаяся линия на нижней кромке рамки поля ввода: насколько прошёл
   // марафон воркфлоу. Вид взят у «полосы кэша» донора ElvisOS
   // (Resources/claude-chat-cleaner-inject.js): две точки высотой, свечение двумя
-  // тенями, ширина едет плавно.
+  // тенями, заливка едет плавно.
+  //
+  // WF11 (плавный хвост): лента чата виртуальная, при прокрутке в неё попадают
+  // разные строки состояния — число сегментов гуляет. Раньше на каждую смену
+  // числа узлы пересоздавались, и вся полоса заново росла с нуля. Теперь узлы
+  // живут в пуле: меняется только хвост (недостающие проявляются, лишние гаснут),
+  // а заливка уже нарисованных сегментов едет от прежнего значения к новому.
   //
   // WF9 (полоска v2): линия разбита на сегменты — по одному на воркфлоу марафона
   // («WF N из M»), зазор 3 точки. Готовые полные, текущий залит на свои проценты,
@@ -1113,9 +1322,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   //
   // Подсказка — свой div, а не title: у полосы pointer-events:none (иначе она
   // ловила бы клики по полю ввода), а без указателя title не показывается вовсе.
-  // По той же причине наведение ловится общим mousemove по документу, а не
-  // прозрачной накладкой над линией: накладка стояла бы поверх низа поля ввода и
-  // съедала клики по нему.
+  // По той же причине и наведение, и клик ловятся общими слушателями документа,
+  // а не прозрачной накладкой над линией: накладка стояла бы поверх низа поля
+  // ввода и съедала клики по нему.
+  //
+  // WF12 (подсказка по клику): наведение больше ничего не показывает — только
+  // ставит «руку» в ±4 точках от линии. Подсказка открывается кликом по сегменту
+  // и рассказывает про ОДИН воркфлоу, а не про весь марафон разом: раньше она
+  // выскакивала сама, стоило мыши пройти над полем ввода, и закрывала пол-окна
+  // сводкой. Повторный клик по тому же сегменту, Escape и клик мимо — закрывают.
   //
   // Отступление от плана: полоса не absolute внутри блока ввода, а fixed по
   // координатам — как и сама ручка. Довод записан в разделе 4 прямым текстом:
@@ -1126,8 +1341,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const PROGRESS_ID = "myclaude-progress-bar";
   const PROGRESS_TIP_ID = "myclaude-progress-tip";
   // Ширина едет 400 мс: быстрее — дёрганье на каждом ответе, медленнее — полоса
-  // заметно отстаёт от цифры в чате.
+  // заметно отстаёт от цифры в чате. Тем же временем живут проявление и
+  // затухание сегментов и смена цвета состояния — движение у полосы одно.
   const PROGRESS_MOVE_MS = 400;
+  // Погасший сегмент убираем чуть позже конца затухания. Таймером, а не по
+  // transitionend: в свёрнутом окне переходы не идут и событие не придёт вовсе,
+  // а узел с opacity 0 остался бы висеть в разметке до самой смены числа.
+  const PROGRESS_DROP_MS = PROGRESS_MOVE_MS + 120;
   // Перечитывать ленту чаще раза в секунду незачем: строка состояния меняется
   // раз в ответ, а innerText сообщения — это принудительный reflow.
   const PROGRESS_MIN_GAP = 1000;
@@ -1137,7 +1357,6 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // ответ, поэтому дальше десятка забираться незачем, а перечитывать весь
   // длинный разговор раз в секунду — уже заметная работа.
   const PROGRESS_LOOKBACK = 12;
-  const PROGRESS_ACCENT_FALLBACK = "#8b5cf6";
   // Цвет ТЕКУЩЕГО сегмента по состоянию: ждём Элвиса — жёлтый, упало — красный;
   // «идёт» и «готово» берут акцент темы окна (её красит раздел 2а). Готовые и
   // будущие сегменты всегда в акценте: красным метится ровно то место, где
@@ -1149,9 +1368,12 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const PROGRESS_SEG_MAX = 40;
   // Уже трёх точек сегмент не читается: тогда рисуем одну сплошную долю.
   const PROGRESS_SEG_MIN = 6;
-  // Высота линии и высота зоны наведения над ней.
+  // Высота линии и допуск попадания по ней: ±4 точки по вертикали (план WF12,
+  // п. 3). Зона узкая нарочно — внутри неё курсор становится «рукой», а клик
+  // достаётся полосе, а не полю ввода под ней, и промахиваться этим по полю
+  // Элвис не должен.
   const PROGRESS_BAR_HEIGHT = 2;
-  const PROGRESS_HOVER_ZONE = 10;
+  const PROGRESS_HIT_SLACK = 4;
   // Уже этого якорь считается вырожденным: React как раз пересобирает низ окна,
   // и рамка на кадр съезжает в ноль. Тогда полоса садится на запасной якорь.
   const PROGRESS_MIN_WIDTH = 80;
@@ -1296,6 +1518,20 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     }
     return [];
   };
+  // Номер воркфлоу, с которого начинается строка сводки: «3️⃣ …» → 3, «🔟 …» → 10.
+  // Разбираем по цифре, а не по готовому значку: в сводке встречается и запись
+  // без вариационного селектора («3⃣»), и та и другая — один и тот же номер.
+  const statusLineNumber = (line) => {
+    const head = String(line ?? "").match(STATUS_HEAD_RE);
+    if (!head) return null;
+    if (head[1] === "\u{1F51F}") return 10;
+    const digit = head[1].match(/\d/);
+    return digit ? Number(digit[0]) : null;
+  };
+  // Строки сводки ОДНОГО воркфлоу: подсказка теперь про тот сегмент, по которому
+  // кликнули, а не про весь марафон разом.
+  const statusFeedFor = (project, number) =>
+    statusFeedLines(project).filter(line => statusLineNumber(line) === number);
   // Команда снаружи: разбираем сразу, а не при показе подсказки — разбор дешевле
   // раза в минуту, чем на каждое движение мыши.
   const runStatusCommand = (detail) => {
@@ -1316,15 +1552,18 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     statusFeed.projects = next;
     statusFeed.at = Date.now();
     progressState.tipText = "";
-    if (progressState.hovering) { try { progressTipShow(); } catch {} }
+    if (progressState.tipOpen) { try { progressTipShow(); } catch {} }
     return true;
   };
 
   const progressState = {
     info: null, reason: "полоса ещё не считалась", at: 0, runs: 0, timer: 0, pulse: 0,
     // Найденная рамка поля, нарисованные доли сегментов, место линии на экране,
-    // наведение и последний текст подсказки.
+    // наведение (только курсор) и последний текст подсказки.
     frame: null, shell: null, segments: [], box: null, hovering: false, tipText: "", tipDark: null,
+    // Подсказка: какой сегмент открыт кликом и открыта ли она вообще. Наведение
+    // подсказку не показывает — только клик (план WF12, п. 3).
+    tipSegment: null, tipOpen: false,
     // На чём сейчас сидит линия: "рамка" или запасное "строка инструментов".
     anchor: null,
   };
@@ -1346,6 +1585,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     position: "fixed", display: "none", left: "0px", top: "0px", width: "0px",
     height: `${PROGRESS_BAR_HEIGHT}px`, "align-items": "stretch", gap: `${PROGRESS_SEG_GAP}px`,
     "pointer-events": "none", "z-index": "2147483645",
+    // Сама коробка не анимируется НИКОГДА: место и ширину ей задаёт геометрия
+    // окна (resize, ручка, смена якоря), и переход тут означал бы, что полоса
+    // ползёт за краем поля ввода с опозданием. Пишем это прямым объявлением, а
+    // не молчанием: страница вправе объявить переход на всё подряд.
+    transition: "none",
   })) progressBar.style.setProperty(name, value);
   (document.body ?? document.documentElement).appendChild(progressBar);
   track(() => progressBar.remove());
@@ -1362,22 +1606,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   (document.body ?? document.documentElement).appendChild(progressTip);
   track(() => progressTip.remove());
 
-  // --accent-brand и у Claude, и у наших тем (раздел 2а) хранит не цвет, а
-  // тройку HSL: «251.000 40.000% 54.500%». Подставить её в background как есть
-  // нельзя — объявление отбросится и полоса станет невидимой, поэтому тройку
-  // заворачиваем в hsl() сами, а на всё незнакомое берём фиолетовый донора.
-  const progressAccent = () => {
-    let raw = "";
-    // В окне Claude Code палитра живёт на .epitaxy-root, а не на html.
-    try {
-      const host = state.composerBlock ?? document.querySelector(".epitaxy-root") ?? document.documentElement;
-      raw = getComputedStyle(host).getPropertyValue("--accent-brand").trim();
-    } catch {}
-    if (!raw) return PROGRESS_ACCENT_FALLBACK;
-    if (/^(?:#|rgba?\(|hsla?\(|oklch\(|lab\(|lch\(|color\()/i.test(raw)) return raw;
-    if (/^[\d.]+(?:deg)?\s+[\d.]+%\s+[\d.]+%$/.test(raw)) return `hsl(${raw})`;
-    return PROGRESS_ACCENT_FALLBACK;
-  };
+  // Цвет полосы — тот же акцент окна, что у неоновой рамки, и функция на двоих
+  // одна (accentColor, раздел 2а). Раньше она жила здесь, но рамка красится ещё
+  // на восстановлении слоёв — то есть до этого раздела.
+  const progressAccent = accentColor;
   // Тёмное окно или светлое: наши темы пишут color-scheme прямо на :root, а без
   // темы решает системная настройка.
   const progressDark = () => {
@@ -1474,41 +1706,147 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Узлы сегментов: у каждого свой контур (track) и своя заливка (fill). Контур
   // отдельным узлом, а не прозрачностью самого сегмента, — иначе вместе с ним
   // выцвела бы и заливка текущего воркфлоу.
+  //
+  // Доля сегмента — flex-basis в процентах, а не flex:1 1 0. Довод в том, какие
+  // смены обязаны ехать плавно, а какие мгновенно: процент не меняется от того,
+  // что окно стало шире (переход не запускается — полоса перестраивается в тот
+  // же кадр), зато при смене числа сегментов проценты другие, и браузер сам
+  // проводит их переходом. Зазоры при этом съедает flex-shrink: сумма долей
+  // всегда ровно 100 %, лишнее ужимается поровну.
+  const PROGRESS_CELL_TRANS = `flex-basis ${PROGRESS_MOVE_MS}ms ease, ` +
+    `margin-left ${PROGRESS_MOVE_MS}ms ease, opacity ${PROGRESS_MOVE_MS}ms ease`;
+  const PROGRESS_FILL_TRANS =
+    `width ${PROGRESS_MOVE_MS}ms linear, background ${PROGRESS_MOVE_MS}ms ease, box-shadow ${PROGRESS_MOVE_MS}ms ease`;
+  const PROGRESS_TRACK_TRANS = `box-shadow ${PROGRESS_MOVE_MS}ms ease`;
+  // Живые сегменты слева направо и те, что сейчас гаснут (они ещё в разметке).
   const progressCells = [];
-  const progressBuild = (count) => {
+  const progressLeaving = [];
+
+  const progressDrop = (item) => {
+    if (item.timer) { clearTimeout(item.timer); item.timer = 0; }
+    const index = progressLeaving.indexOf(item);
+    if (index >= 0) progressLeaving.splice(index, 1);
+    item.cell.remove();
+  };
+  // Лишний сегмент не выдёргиваем из разметки на месте: гасим прозрачностью и
+  // убираем, когда затухание кончилось. Полоса при этом спрятана — гасить
+  // нечего, узел уходит сразу.
+  //
+  // Заодно гаснущий отдаёт своё место: доля едет в ноль, а отрицательное поле
+  // слева гасит его зазор (гаснущие всегда в хвосте, зазор перед ними есть
+  // всегда). Иначе оставшиеся сегменты сидели бы ужатыми все затухание и
+  // прыгнули бы вширь в тот миг, когда узел исчез из разметки.
+  const progressLeave = (item, instant) => {
+    if (instant) { progressDrop(item); return; }
+    progressLeaving.push(item);
+    for (const [name, value] of Object.entries({
+      opacity: "0", "flex-basis": "0%", "margin-left": `-${PROGRESS_SEG_GAP}px`,
+    })) item.cell.style.setProperty(name, value);
+    item.timer = setTimeout(() => { item.timer = 0; progressDrop(item); }, PROGRESS_DROP_MS);
+  };
+  track(() => { for (const item of progressLeaving.splice(0)) if (item.timer) clearTimeout(item.timer); });
+
+  const progressCell = () => {
+    const cell = document.createElement("div");
+    for (const [name, value] of Object.entries({
+      position: "relative", "flex-grow": "0", "flex-shrink": "1", "flex-basis": "100%",
+      "min-width": "0", "margin-left": "0px", height: "100%", "border-radius": "999px",
+      // Рождается прозрачным и без переходов: доли и цвета ему впишет тот же
+      // проход progressApply, и вписать их надо мгновенно — иначе новый сегмент
+      // поехал бы от нуля, то есть ровно то, от чего уходим.
+      opacity: "0", transition: "none",
+    })) cell.style.setProperty(name, value);
+    const track = document.createElement("div");
+    for (const [name, value] of Object.entries({
+      position: "absolute", left: "0", top: "0", right: "0", bottom: "0",
+      "border-radius": "999px", opacity: "0.25", transition: "none",
+    })) track.style.setProperty(name, value);
+    const fill = document.createElement("div");
+    for (const [name, value] of Object.entries({
+      position: "absolute", left: "0", top: "0", bottom: "0", width: "0%",
+      "border-radius": "999px", transition: "none",
+    })) fill.style.setProperty(name, value);
+    cell.appendChild(track);
+    cell.appendChild(fill);
+    return { cell, track, fill, timer: 0, born: true };
+  };
+
+  // Пул: число сегментов гуляет при каждой прокрутке ленты, и пересоздавать их
+  // нельзя — новый узел не помнит, на сколько был залит прежний. Меняется
+  // только хвост.
+  const progressBuild = (count, instant) => {
     if (progressCells.length === count) return;
-    for (const item of progressCells) item.cell.remove();
-    progressCells.length = 0;
-    for (let index = 0; index < count; index += 1) {
-      const cell = document.createElement("div");
-      for (const [name, value] of Object.entries({
-        position: "relative", flex: "1 1 0", "min-width": "0", height: "100%", "border-radius": "999px",
-      })) cell.style.setProperty(name, value);
-      const track = document.createElement("div");
-      for (const [name, value] of Object.entries({
-        position: "absolute", left: "0", top: "0", right: "0", bottom: "0",
-        "border-radius": "999px", opacity: "0.25",
-      })) track.style.setProperty(name, value);
-      const fill = document.createElement("div");
-      for (const [name, value] of Object.entries({
-        position: "absolute", left: "0", top: "0", bottom: "0", width: "0%",
-        "border-radius": "999px", transition: `width ${PROGRESS_MOVE_MS}ms linear`,
-      })) fill.style.setProperty(name, value);
-      cell.appendChild(track);
-      cell.appendChild(fill);
-      progressBar.appendChild(cell);
-      progressCells.push({ cell, track, fill });
+    if (progressCells.length > count) {
+      for (const item of progressCells.splice(count)) progressLeave(item, instant);
+      return;
+    }
+    while (progressCells.length < count) {
+      // Ещё не убранный сегмент возвращаем на место, а не рожаем новый:
+      // гаснущие стоят в разметке ПОСЛЕ живых, и новый узел встал бы за ними.
+      const back = progressLeaving.shift();
+      if (back) {
+        if (back.timer) { clearTimeout(back.timer); back.timer = 0; }
+        // Долю ему впишет тот же проход, а прозрачность и поле возвращаем здесь.
+        back.cell.style.setProperty("opacity", "1");
+        back.cell.style.setProperty("margin-left", "0px");
+        progressCells.push(back);
+        continue;
+      }
+      const item = progressCell();
+      progressBar.appendChild(item.cell);
+      progressCells.push(item);
     }
   };
 
   const progressTipHide = () => {
     if (progressTip.style.display !== "none") progressTip.style.setProperty("display", "none");
   };
+  // Сегмент под точкой x. Считаем арифметикой по коробке полосы, а не по
+  // прямоугольникам узлов: доли едут переходом (WF11), и на середине движения
+  // геометрия узлов врёт. Доли равны, зазор один и тот же, поэтому шаг —
+  // (ширина + зазор) / число сегментов.
+  const progressSegmentAt = (x) => {
+    const box = progressState.box;
+    const count = progressState.segments.length;
+    if (!box || count < 1) return null;
+    const width = box.right - box.left;
+    if (width <= 0) return null;
+    const step = (width + PROGRESS_SEG_GAP) / count;
+    return Math.min(count - 1, Math.max(0, Math.floor((x - box.left) / step)));
+  };
+  // Состояние ОДНОГО воркфлоу словом: до текущего — готов, после — запланирован,
+  // сам текущий — по значку строки состояния. ✅ у всего марафона закрывает всё.
+  const PROGRESS_WORDS = { done: "готов", run: "идёт", wait: "ждёт", fail: "упал" };
+  const progressWord = (info, number) => {
+    if (info.state === "done" || number < info.wf) return "готов";
+    if (number > info.wf) return "запланирован";
+    return PROGRESS_WORDS[info.state] ?? "идёт";
+  };
+  // Номер воркфлоу по сегменту: обычно это его порядок, а в слитой полосе
+  // (узкое окно, сегмент один на весь марафон) — текущий воркфлоу.
+  const progressNumberAt = (index) => {
+    const info = progressState.info;
+    if (!info) return null;
+    const count = progressState.segments.length || 1;
+    if (count === 1 && info.of > 1) return info.wf;
+    return Math.min(count, Math.max(1, index + 1));
+  };
   const progressTipShow = () => {
     const info = progressState.info;
-    if (!info || !progressState.box || progressBar.style.display === "none") { progressTipHide(); return; }
-    const head = `Воркфлоу ${info.wf} из ${info.of}` + (info.pct == null ? "" : ` · ${info.pct} %`);
-    const text = [head, ...statusFeedLines(info.project)].join("\n");
+    const segment = progressState.tipSegment;
+    if (!progressState.tipOpen || segment == null || !info ||
+        !progressState.box || progressBar.style.display === "none") { progressTipHide(); return; }
+    const count = progressState.segments.length || 1;
+    const index = Math.min(count - 1, Math.max(0, segment));
+    const number = progressNumberAt(index);
+    const word = progressWord(info, number);
+    // Сводки по этому воркфлоу нет — подсказка вся и есть одна строка «Воркфлоу N
+    // · состояние» (план WF12, п. 3: «для сегментов без сводки»). Есть — сверху
+    // заголовок со счётом марафона, под ним строки ТОЛЬКО этого номера.
+    const lines = statusFeedFor(info.project, number);
+    const text = lines.length
+      ? [`Воркфлоу ${number} из ${info.of} · ${word}`, ...lines].join("\n")
+      : `Воркфлоу ${number} · ${word}`;
     if (progressState.tipText !== text) {
       progressState.tipText = text;
       // Только textContent: сводка приходит снаружи, и разметки в ней быть не должно.
@@ -1525,19 +1863,38 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     }
     progressTip.style.setProperty("display", "block");
     // Место считаем уже по показанной подсказке: до показа высоты у неё нет.
+    // Стоит она над своим сегментом, а не над левым краем полосы: подсказка
+    // теперь про один воркфлоу, и глазу видно, про какой именно.
     const rect = progressTip.getBoundingClientRect();
     const width = rect.width || 0;
     const height = rect.height || 0;
-    const left = Math.max(6, Math.min(innerWidth - width - 6, progressState.box.left));
+    const step = (progressState.box.right - progressState.box.left + PROGRESS_SEG_GAP) / count;
+    const anchor = progressState.box.left + step * index;
+    const left = Math.max(6, Math.min(innerWidth - width - 6, anchor));
     const top = Math.max(6, progressState.box.top - height - 8);
     progressTip.style.setProperty("left", `${Math.round(left)}px`);
     progressTip.style.setProperty("top", `${Math.round(top)}px`);
+  };
+  const progressTipClose = () => {
+    progressState.tipOpen = false;
+    progressState.tipSegment = null;
+    progressTipHide();
+  };
+  // Клик по полосе: по тому же сегменту — закрыть, по другому — переключить.
+  const progressTipToggle = (segment) => {
+    if (segment == null) { progressTipClose(); return; }
+    if (progressState.tipOpen && progressState.tipSegment === segment) { progressTipClose(); return; }
+    progressState.tipSegment = segment;
+    progressState.tipOpen = true;
+    progressTipShow();
   };
 
   const progressHide = () => {
     progressState.box = null;
     progressState.anchor = null;
-    progressTipHide();
+    // Полосы нет — не о чем и подсказке: держать её открытой над пустым местом
+    // (меню накрыло линию, окно уехало) не за что.
+    progressTipClose();
     if (progressBar.style.display !== "none") progressBar.style.setProperty("display", "none");
   };
 
@@ -1582,17 +1939,32 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     progressState.anchor = onFrame ? "рамка" : "строка инструментов";
     const shares = progressShares(info, width);
     progressState.segments = shares;
-    progressBuild(shares.length);
+    // Полоса сейчас спрятана — значит это её появление: ни первый показ при
+    // открытии окна, ни возврат из-под закрывшегося меню анимировать нечего,
+    // всё пишется сразу набело.
+    const instant = progressBar.style.display !== "flex";
+    progressBuild(shares.length, instant);
     const accent = progressAccent();
     const hot = PROGRESS_PAINT[info.state] ?? accent;
     // Слитая в одну полоса — это и есть текущий воркфлоу целиком.
     const merged = shares.length === 1 && info.of > 1;
     const current = merged ? 0 : Math.min(shares.length - 1, Math.max(0, info.wf - 1));
+    // Доли считаем от сотни: сумма ровно 100 %, зазоры съедает flex-shrink.
+    const basis = `${Math.round(10000 / shares.length) / 100}%`;
+    // Узлы, которым этот проход пишется без переходов: свежерождённые и все
+    // подряд на появлении полосы. Переходы им вернём одним махом ниже.
+    const quiet = [];
     for (let index = 0; index < shares.length; index += 1) {
       const item = progressCells[index];
       if (!item) continue;
+      if (instant || item.born) {
+        for (const node of [item.cell, item.track, item.fill]) node.style.setProperty("transition", "none");
+        quiet.push(item);
+      }
       const share = shares[index];
       const paint = index === current ? hot : accent;
+      item.cell.style.setProperty("flex-basis", basis);
+      if (instant) item.cell.style.setProperty("opacity", "1");
       item.fill.style.setProperty("width", `${share}%`);
       item.fill.style.setProperty("background", paint);
       // Свечение двумя тенями — приём донора: широкий мягкий ореол и второй
@@ -1601,6 +1973,21 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       item.fill.style.setProperty("box-shadow", share > 0 ? `0 0 18px ${paint},0 0 6px ${paint}` : "none");
       // Контур в одну точку — «сюда марафон ещё не дошёл».
       item.track.style.setProperty("box-shadow", `inset 0 0 0 1px ${accent}`);
+    }
+    if (quiet.length > 0) {
+      // Принудительная раскладка одна на весь проход: без неё браузер сведёт обе
+      // записи стиля в один пересчёт, увидит только «переходы включены» и всё-таки
+      // проиграет движение от старых значений к новым.
+      try { progressBar.getBoundingClientRect(); } catch {}
+      for (const item of quiet) {
+        item.born = false;
+        item.cell.style.setProperty("transition", PROGRESS_CELL_TRANS);
+        item.track.style.setProperty("transition", PROGRESS_TRACK_TRANS);
+        item.fill.style.setProperty("transition", PROGRESS_FILL_TRANS);
+        // Хвост проявляется: узел уже нужной ширины и с готовой заливкой, ему
+        // осталось только всплыть. На появлении полосы он всплыл выше, разом.
+        item.cell.style.setProperty("opacity", "1");
+      }
     }
     progressBar.style.setProperty("left", `${left}px`);
     progressBar.style.setProperty("top", `${top}px`);
@@ -1611,29 +1998,72 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (progressBar.title !== title) progressBar.title = title;
     progressBar.style.setProperty("display", "flex");
     progressState.box = { left, right: left + width, top };
-    if (progressState.hovering) progressTipShow();
+    if (progressState.tipOpen) progressTipShow();
   };
   // Раскладку ручки полоса не имеет права уронить: её зовут из чужого кода.
   const placeProgress = () => { try { progressApply(); } catch {} };
 
-  // Наведение: зона в десять точек над линией и сама линия. Ловим общим
-  // mousemove, а не накладкой, — накладка стояла бы поверх низа поля ввода.
-  const onProgressMove = (event) => {
+  // Попадание по линии: ±4 точки по вертикали и своя ширина по горизонтали.
+  const progressHit = (x, y) => {
     const box = progressState.box;
-    const inside = box != null &&
-      event.clientX >= box.left && event.clientX <= box.right &&
-      event.clientY >= box.top - PROGRESS_HOVER_ZONE && event.clientY <= box.top + PROGRESS_BAR_HEIGHT + 1;
+    if (!box || progressBar.style.display === "none") return false;
+    if (y < box.top - PROGRESS_HIT_SLACK || y > box.top + PROGRESS_BAR_HEIGHT + PROGRESS_HIT_SLACK) return false;
+    if (x < box.left || x > box.right) return false;
+    // Ручка сильнее полосы. У свёрнутого поля она стоит ровно над строкой
+    // модели (раздел 9, placeCollapsedHandle) — там же, где линия прогресса, —
+    // и кликом по ней поле возвращают. Не уступи мы здесь, вернуть поле стало бы
+    // нечем: наш обработчик глушит клик на захвате, до самой ручки.
+    try {
+      if (handle.style.display !== "none") {
+        const rect = handle.getBoundingClientRect();
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return false;
+      }
+    } catch {}
+    return true;
+  };
+  // Курсор — единственное, что даёт наведение (план WF12, п. 3): подсказка
+  // открывается кликом. Полоса ничего не ловит мышью (pointer-events:none), и
+  // своего курсора у неё быть не может, поэтому «руку» ставим корню документа и
+  // снимаем ровно её же — чужой курсор (перетаскивание ручки) не трогаем.
+  const progressCursor = (hand) => {
+    try {
+      const root = document.documentElement;
+      if (hand) { if (root.style.cursor !== "pointer") root.style.cursor = "pointer"; }
+      else if (root.style.cursor === "pointer") root.style.cursor = "";
+    } catch {}
+  };
+  track(() => progressCursor(false));
+  const onProgressMove = (event) => {
+    const inside = !state.dragging && progressHit(event.clientX, event.clientY);
     if (inside === progressState.hovering) return;
     progressState.hovering = inside;
-    if (inside) { try { progressTipShow(); } catch {} } else progressTipHide();
+    progressCursor(inside);
   };
   on(document, "mousemove", onProgressMove, { passive: true, capture: true });
-  // Указатель ушёл из окна — движений больше не будет, и подсказка осталась бы
-  // висеть. То же на потере фокуса окном.
+  // Клик по полосе. Ловим на ЗАХВАТЕ и только внутри линии: там событие наше
+  // целиком (preventDefault + stopPropagation), и полю ввода под ней оно не
+  // достаётся. Мимо линии — не трогаем событие вовсе, только закрываем подсказку.
+  const onProgressDown = (event) => {
+    if (!progressHit(event.clientX, event.clientY)) { progressTipClose(); return; }
+    event.preventDefault();
+    event.stopPropagation();
+    try { progressTipToggle(progressSegmentAt(event.clientX)); } catch {}
+  };
+  on(document, "pointerdown", onProgressDown, { capture: true });
+  // Escape закрывает подсказку. Слушатель свой, а не ветка в разделе 16: там
+  // Escape ГЛОТАЕТСЯ насовсем, и подсказка обязана закрыться раньше. Этот
+  // слушатель встаёт первым (раздел 2б идёт по файлу выше) и потому успевает.
+  const onProgressKey = (event) => {
+    if (event.key === "Escape" && progressState.tipOpen) progressTipClose();
+  };
+  on(window, "keydown", onProgressKey, { capture: true });
+  // Указатель ушёл из окна — движений больше не будет, и «рука» осталась бы
+  // висеть. То же на потере фокуса окном. Подсказку это не закрывает: её
+  // открыли кликом, и родное меню приложения как раз отнимает фокус.
   const onProgressLeave = () => {
     if (!progressState.hovering) return;
     progressState.hovering = false;
-    progressTipHide();
+    progressCursor(false);
   };
   on(document, "mouseleave", onProgressLeave, { passive: true });
   on(window, "blur", onProgressLeave, { passive: true });
@@ -3093,6 +3523,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         // На чём сидит линия: "рамка" или запасное "строка инструментов".
         anchor: progressState.anchor,
         reason: progressState.reason,
+        // Подсказка: какой сегмент открыт кликом (с нуля) и открыта ли она.
+        tip: { segment: progressState.tipSegment, open: progressState.tipOpen },
       },
       // Сводка проектов из команды status: имя проекта, взятое из строки
       // состояния этого чата, и строки воркфлоу, которые уйдут в подсказку.
@@ -3124,6 +3556,14 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         mono: themeState.font?.mono ?? false,
         source: themeState.fontSource,
       },
+      // Размер текста сообщений: половинки независимы, любой может не быть.
+      size: {
+        answer: themeState.size?.answer ?? null,
+        question: themeState.size?.question ?? null,
+        source: themeState.sizeSource,
+      },
+      // Неоновая рамка окна: включена ли и откуда взялась.
+      frame: { on: themeState.frame === true, source: themeState.frameSource },
       // true — в окне сейчас предпросмотр (мышь в подменю), и хранилище про эти
       // цвета ничего не знает: см. runThemeCommand.
       preview: themeState.previewing,

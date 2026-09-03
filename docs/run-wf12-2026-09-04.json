@@ -1,0 +1,33 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf12-2026-09-04.md",
+  "project": "⚪PimpMyClaude",
+  "status": "идёт",
+  "trelvis": "#5341 #5342",
+  "branch": "wf10",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf12-a-wf_34a52824-61b.js",
+  "run_id": "wf_34a52824-61b",
+  "next_steps": [
+    "батч A идёт (inject.js освободился после WF11)",
+    "батч B (Swift) — после фикс-батча WF10",
+    "гейт, релиз 1.3.0"
+  ],
+  "log": [
+    {
+      "at": "2026-09-04T11:15:00+05:00",
+      "who": "оркестратор",
+      "what": "план WF12; ждёт освобождения inject.js (WF11) и Swift-меню (WF10)"
+    },
+    {
+      "at": "2026-09-04T03:05:57+05:00",
+      "who": "оркестратор",
+      "what": "батч A (Opus max) + verify запущены"
+    },
+    {
+      "at": "2026-09-04T03:29:56+05:00",
+      "who": "оркестратор",
+      "what": "батч B (Swift) запущен параллельно A"
+    }
+  ],
+  "watchdog": "watchdog-pimpmyclaude-wf10-0409 (общий)",
+  "runB": "wf_34ea1608-477"
+}

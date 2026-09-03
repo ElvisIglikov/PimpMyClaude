@@ -135,6 +135,10 @@ final class MinimizeMenu: NSObject {
         config.allThemeID = actions.themeStore.allThemeID
         config.windowFontID = actions.themeStore.windowFontID(title: title)
         config.allFontID = actions.themeStore.allFontID
+        config.windowSize = actions.themeStore.windowSize(title: title)
+        config.allSize = actions.themeStore.allSize
+        config.windowFrame = actions.themeStore.windowFrame(title: title)
+        config.allFrame = actions.themeStore.allFrame
         // Была ли примерка и закрепили ли её выбором — оба флага живут до конца popUp
         // (замыкания меню срабатывают внутри его цикла).
         var previewed = false
@@ -146,10 +150,11 @@ final class MinimizeMenu: NSObject {
         config.perform = { [weak self] command in
             DispatchQueue.main.async { self?.actions.perform(command, on: window) }
         }
-        config.apply = { [weak self] scope, theme, font in
+        config.apply = { [weak self] scope, theme, font, size, frame in
             committed = true
             DispatchQueue.main.async {
-                self?.actions.applyTheme(scope: scope, theme: theme, font: font, window: window)
+                self?.actions.applyTheme(scope: scope, theme: theme, font: font, size: size,
+                                         frame: frame, window: window)
             }
         }
         config.applyMyTheme = { [weak self] scope, my in
@@ -170,11 +175,31 @@ final class MinimizeMenu: NSObject {
             guard let self = self, self.actions.previewFont(font, window: window) else { return }
             previewed = true
         }
+        config.previewSize = { [weak self] size in
+            guard let self = self, self.actions.previewSize(size, window: window) else { return }
+            previewed = true
+        }
+        config.previewFrame = { [weak self] in
+            guard let self = self, self.actions.previewFrame(window: window) else { return }
+            previewed = true
+        }
         config.saveMyTheme = { [weak self] in
             DispatchQueue.main.async { self?.saveMyTheme(window: window) }
         }
         config.deleteMyTheme = { [weak self] my in
             DispatchQueue.main.async { self?.actions.myThemes.delete(id: my.id) }
+        }
+        // Автопокраска адресуется всем окнам на экране, а не окну под курсором; примерку она
+        // не закрепляет (`committed` не трогаем) — после popUp окну вернут сохранённое, а следом
+        // придёт своя тема из очереди канала.
+        config.autoPaint = { [weak self] preset in
+            DispatchQueue.main.async { self?.actions.autoPaint(preset: preset) }
+        }
+        config.autoPaintAgain = { [weak self] in
+            DispatchQueue.main.async { self?.actions.autoPaintAgain() }
+        }
+        config.autoPaintReset = { [weak self] in
+            DispatchQueue.main.async { self?.actions.autoPaintReset(window: window) }
         }
         let menu = MinimizeMenu.build(config: config)
 
@@ -198,18 +223,20 @@ final class MinimizeMenu: NSObject {
     }
 
     /// «Сохранить как мою тему…»: имя спрашиваем модально, пару берём из последней команды
-    /// этого приложения. Тему ни разу не выбирали — сохранять нечего, показываем алерт.
+    /// этого приложения — а у автопокрашенного окна из его же автотемы (план WF10 п. 6),
+    /// иначе оно предложило бы «Радуга · 137°» от соседнего окна.
+    /// Тему ни разу не выбирали — сохранять нечего, показываем алерт.
     /// После диалога фокус возвращается окну Claude, как после самого меню.
     private func saveMyTheme(window: AXUIElement) {
         // Пока висит диалог, тик наведения не должен всплывать меню поверх него.
         menuOpen = true
         defer { menuOpen = false; app.focus(window: window) }
-        guard let theme = actions.lastAppliedTheme else {
+        guard let theme = actions.themeToSave(window: window) else {
             MinimizeMenu.warn(MenuModel.myThemeEmptyAlert)
             return
         }
         guard let name = MinimizeMenu.askThemeName(default: theme.name) else { return }
-        if actions.saveMyTheme(name: name) == nil {
+        if actions.saveMyTheme(name: name, window: window) == nil {
             MinimizeMenu.warn("Не удалось записать my-themes.json в Application Support/MyClaude")
         }
     }
@@ -226,17 +253,32 @@ final class MinimizeMenu: NSObject {
         var allThemeID: String?
         var windowFontID: String?
         var allFontID: String?
+        /// Галки в «Размер ответов ▸» и «Размер вопросов ▸» (план WF12 п. 2).
+        var windowSize: Size?
+        var allSize: Size?
+        /// Состояние тумблера «✨ Неоновая рамка» (план WF12 п. 4).
+        var windowFrame = false
+        var allFrame = false
         var perform: (ClaudeCommand) -> Void = { _ in }
-        /// scope, слой темы, слой шрифта — одна команда на оба слоя (контракт п. 5).
-        var apply: (String, Layer<Theme>, Layer<Font>) -> Void = { _, _, _ in }
+        /// scope и четыре слоя — одна команда на все (контракт п. 1 плана WF12);
+        /// пункт меню трогает ровно свой слой, остальные уходят `.keep`.
+        var apply: (String, Layer<Theme>, Layer<Font>, Layer<Size>, Layer<Bool>) -> Void = { _, _, _, _, _ in }
         var applyMyTheme: (String, MyTheme) -> Void = { _, _ in }
         /// Наведение на пункт списка окна: примерить слой, ничего не запоминая (план WF8 п. 2).
         /// `nil` — примерка сброса слоя («Как у Claude» / «Системный»).
         var previewTheme: (Theme?) -> Void = { _ in }
         var previewMyTheme: (MyTheme) -> Void = { _ in }
         var previewFont: (Font?) -> Void = { _ in }
+        var previewSize: (Size?) -> Void = { _ in }
+        /// У тумблера рамки примерка одна — включённая рамка (план WF12 п. 4).
+        var previewFrame: () -> Void = {}
         var saveMyTheme: () -> Void = {}
         var deleteMyTheme: (MyTheme) -> Void = { _ in }
+        /// «🌈 Автопокраска» (план WF10): набор красит все окна на экране, окно под курсором
+        /// ему не нужно — поэтому те же три замыкания подходят и меню-бару приложения.
+        var autoPaint: (AutoPaintPreset) -> Void = { _ in }
+        var autoPaintAgain: () -> Void = {}
+        var autoPaintReset: () -> Void = {}
     }
 
     /// Меню кнопки: семь пунктов с разделителями, затем — если каталог тем не пуст — разделитель
@@ -254,18 +296,41 @@ final class MinimizeMenu: NSObject {
             menu.addItem(item)
             if MenuModel.separatorsAfter.contains(entry.command) { menu.addItem(.separator()) }
         }
-        // Каталога нет (старый бандл без themes.json) — меню остаётся прежним, семь пунктов.
-        guard !config.themes.isEmpty || !config.fonts.isEmpty else { return menu }
+        // Каталога нет (старый бандл без themes.json) — подменю «Тема» и «Шрифт» не появляются,
+        // но «Автопокраска» палитры считает сама и живёт всегда (план WF10 п. 1).
         menu.addItem(.separator())
         if !config.themes.isEmpty { menu.addItem(themeItem(config)) }
         if !config.fonts.isEmpty { menu.addItem(fontItem(config)) }
+        menu.addItem(autoPaintItem(config))
         return menu
     }
 
-    /// «🎨 Тема ▸»: список окна, вложенное «Всем окнам ▸» и свои темы.
+    /// «🌈 Автопокраска ▸»: наборы, разделитель, «🎲 Случайно», «🔁 Ещё раз» и сброс всем окнам
+    /// (план WF10 п. 1). Предпросмотра тут нет: набор красит все окна разом, примерять нечего.
+    static func autoPaintItem(_ config: MenuConfig) -> NSMenuItem {
+        let submenu = NSMenu(title: MenuModel.autoPaintTitle)
+        submenu.autoenablesItems = false
+        for preset in AutoPaint.presets {
+            let item = BlockMenuItem(title: preset.title) { config.autoPaint(preset) }
+            item.image = icon(preset.icon)
+            submenu.addItem(item)
+        }
+        submenu.addItem(.separator())
+        let random = BlockMenuItem(title: AutoPaint.random.title) { config.autoPaint(AutoPaint.random) }
+        random.image = icon(AutoPaint.random.icon)
+        submenu.addItem(random)
+        let again = BlockMenuItem(title: MenuModel.autoPaintAgainTitle) { config.autoPaintAgain() }
+        again.image = icon(MenuModel.autoPaintAgainIcon)
+        submenu.addItem(again)
+        submenu.addItem(BlockMenuItem(title: MenuModel.autoPaintResetTitle) { config.autoPaintReset() })
+        return submenuItem(title: MenuModel.autoPaintTitle, icon: MenuModel.autoPaintIcon, submenu: submenu)
+    }
+
+    /// «🎨 Тема ▸»: список окна, тумблер рамки, вложенное «Всем окнам ▸» и свои темы.
     static func themeItem(_ config: MenuConfig) -> NSMenuItem {
         let submenu = themeList(config, scope: MenuModel.themeScopeWindow)
         submenu.addItem(.separator())
+        submenu.addItem(frameItem(config, scope: MenuModel.themeScopeWindow))
         submenu.addItem(submenuItem(title: MenuModel.allWindowsTitle,
                                     submenu: themeList(config, scope: MenuModel.themeScopeAll)))
         submenu.addItem(BlockMenuItem(title: MenuModel.saveMyThemeTitle) { config.saveMyTheme() })
@@ -310,7 +375,9 @@ final class MinimizeMenu: NSObject {
         where !themes.isEmpty {
             submenu.addItem(header(title))
             for theme in themes {
-                let item = BlockMenuItem(title: theme.name) { config.apply(scope, .set(theme), .keep) }
+                let item = BlockMenuItem(title: theme.name) {
+                    config.apply(scope, .set(theme), .keep, .keep, .keep)
+                }
                 item.preview = all ? nil : { config.previewTheme(theme) }
                 item.image = swatch(palette: theme.palette)
                 item.state = theme.id == selected ? .on : .off
@@ -319,22 +386,81 @@ final class MinimizeMenu: NSObject {
         }
 
         submenu.addItem(.separator())
-        // Сбрасываем только свой слой: шрифт окна тема «Как у Claude» не трогает.
-        let reset = BlockMenuItem(title: MenuModel.themeResetTitle) { config.apply(scope, .reset, .keep) }
+        // Сбрасываем только свой слой: шрифт, размер и рамку окна тема «Как у Claude» не трогает.
+        let reset = BlockMenuItem(title: MenuModel.themeResetTitle) {
+            config.apply(scope, .reset, .keep, .keep, .keep)
+        }
         reset.preview = all ? nil : { config.previewTheme(nil) }
         // У окна память по заголовку неточна (главное окно меняет заголовок с чатом):
         // без записи галку не ставим никуда, чтобы не врать «Как у Claude».
         reset.state = (all && selected == nil) ? .on : .off
         submenu.addItem(reset)
+        // Тумблер рамки — и в списке «всем окнам» тоже, последним пунктом (план WF12 п. 4).
+        if all { submenu.addItem(frameItem(config, scope: scope)) }
         return submenu
     }
 
-    /// «🔤 Шрифт ▸»: список окна и вложенное «Всем окнам ▸».
+    /// Тумблер «✨ Неоновая рамка»: галка — включена, клик переключает (включённую снимаем
+    /// сбросом слоя, `"frame":null`), наведение примеряет включённую (план WF12 п. 4).
+    static func frameItem(_ config: MenuConfig, scope: String) -> NSMenuItem {
+        let all = scope == MenuModel.themeScopeAll
+        let on = all ? config.allFrame : config.windowFrame
+        let item = BlockMenuItem(title: MenuModel.frameTitle) {
+            config.apply(scope, .keep, .keep, .keep, on ? .reset : .set(true))
+        }
+        item.image = icon(MenuModel.frameIcon)
+        item.state = on ? .on : .off
+        // Примерка — только у окна: зажигать рамку на всех окнах по наведению шумно, как и цвет.
+        item.preview = all ? nil : { config.previewFrame() }
+        return item
+    }
+
+    /// «🔤 Шрифт ▸»: список окна, вложенное «Всем окнам ▸», а за разделителем — размеры
+    /// текста сообщений (план WF12 п. 2).
     static func fontItem(_ config: MenuConfig) -> NSMenuItem {
         let submenu = fontList(config, scope: MenuModel.themeScopeWindow)
         submenu.addItem(submenuItem(title: MenuModel.allWindowsTitle,
                                     submenu: fontList(config, scope: MenuModel.themeScopeAll)))
+        submenu.addItem(.separator())
+        for half in Size.Half.allCases { submenu.addItem(sizeItem(config, half: half)) }
         return submenuItem(title: MenuModel.fontTitle, icon: MenuModel.fontIcon, submenu: submenu)
+    }
+
+    /// «Размер ответов ▸» / «Размер вопросов ▸»: список окна и вложенное «Всем окнам ▸».
+    static func sizeItem(_ config: MenuConfig, half: Size.Half) -> NSMenuItem {
+        let submenu = sizeList(config, half: half, scope: MenuModel.themeScopeWindow)
+        submenu.addItem(submenuItem(title: MenuModel.allWindowsTitle,
+                                    submenu: sizeList(config, half: half,
+                                                      scope: MenuModel.themeScopeAll)))
+        return submenuItem(title: MenuModel.sizeTitle(half), submenu: submenu)
+    }
+
+    /// Кегли из Size.steps, разделитель и «Как у Claude» (сброс слоя целиком: перефилдового
+    /// null контракт не знает, поэтому он снимает и вторую половину).
+    static func sizeList(_ config: MenuConfig, half: Size.Half, scope: String) -> NSMenu {
+        let all = scope == MenuModel.themeScopeAll
+        let selected = (all ? config.allSize : config.windowSize)?.value(half)
+        let submenu = NSMenu(title: all ? MenuModel.allWindowsTitle : MenuModel.sizeTitle(half))
+        submenu.autoenablesItems = false
+        if !all { submenu.delegate = PreviewMenuDelegate.shared }
+        if all { submenu.addItem(header(MenuModel.allWindowsHeader)) }
+
+        for px in Size.steps {
+            let size = Size.one(half, px)
+            let item = BlockMenuItem(title: String(px)) { config.apply(scope, .keep, .keep, .set(size), .keep) }
+            item.preview = all ? nil : { config.previewSize(size) }
+            item.state = px == selected ? .on : .off
+            submenu.addItem(item)
+        }
+
+        submenu.addItem(.separator())
+        let reset = BlockMenuItem(title: MenuModel.sizeResetTitle) {
+            config.apply(scope, .keep, .keep, .reset, .keep)
+        }
+        reset.preview = all ? nil : { config.previewSize(nil) }
+        reset.state = (all && selected == nil) ? .on : .off
+        submenu.addItem(reset)
+        return submenu
     }
 
     /// Обычные, моноширинные, «Системный (как у Claude)». Каждый пункт нарисован своим
@@ -353,7 +479,9 @@ final class MinimizeMenu: NSObject {
         }) where !fonts.isEmpty {
             submenu.addItem(header(title))
             for font in fonts {
-                let item = BlockMenuItem(title: font.displayName) { config.apply(scope, .keep, .set(font)) }
+                let item = BlockMenuItem(title: font.displayName) {
+                    config.apply(scope, .keep, .set(font), .keep, .keep)
+                }
                 item.preview = all ? nil : { config.previewFont(font) }
                 item.attributedTitle = NSAttributedString(string: font.displayName, attributes: [
                     .font: NSFont(name: font.family, size: 13) ?? NSFont.systemFont(ofSize: 13),
@@ -364,7 +492,9 @@ final class MinimizeMenu: NSObject {
         }
 
         submenu.addItem(.separator())
-        let reset = BlockMenuItem(title: MenuModel.fontResetTitle) { config.apply(scope, .keep, .reset) }
+        let reset = BlockMenuItem(title: MenuModel.fontResetTitle) {
+            config.apply(scope, .keep, .reset, .keep, .keep)
+        }
         reset.preview = all ? nil : { config.previewFont(nil) }
         reset.state = (all && selected == nil) ? .on : .off
         submenu.addItem(reset)

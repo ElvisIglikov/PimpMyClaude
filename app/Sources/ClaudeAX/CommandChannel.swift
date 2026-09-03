@@ -1,12 +1,15 @@
 import Foundation
 
-/// Значение поля command.json: строка, булево (`font.mono`), вложенный объект (тема, шрифт)
-/// или null (сброс слоя). Объект пишется в том порядке ключей, в каком его собрали: контракт
-/// п. 5 плана WF6 перечисляет поля темы как id, name, type, palette — живой файл должен
-/// читаться так же.
+/// Значение поля command.json: строка, булево (`font.mono`, `frame`), целое (`size.answer`),
+/// вложенный объект (тема, шрифт, размер) или null (сброс слоя). Объект пишется в том порядке
+/// ключей, в каком его собрали: контракт п. 5 плана WF6 перечисляет поля темы как
+/// id, name, type, palette — живой файл должен читаться так же.
 enum CommandValue {
     case string(String)
     case bool(Bool)
+    /// Кегль в пикселях (контракт п. 1 плана WF12): число, а не строка — страница
+    /// проверяет его `Number.isFinite` и границами 11…24.
+    case number(Int)
     case object([(key: String, value: CommandValue)])
     /// Список объектов — `projects` в команде `status` (контракт п. 2 плана WF9).
     case array([CommandValue])
@@ -16,6 +19,7 @@ enum CommandValue {
         switch self {
         case .string(let value): return CommandChannel.jsonString(value)
         case .bool(let value): return value ? "true" : "false"
+        case .number(let value): return String(value)
         case .null: return "null"
         case .array(let items):
             return "[" + items.map { $0.json }.joined(separator: ",") + "]"
@@ -144,9 +148,9 @@ final class CommandChannel {
                 id: id, at: at)
     }
 
-    /// То же тело, но поля идут в заданном порядке и могут быть непростыми: тема и шрифт —
-    /// вложенные объекты, сброс слоя — null, отсутствие поля — «слой не трогать»
-    /// (контракт п. 5 плана WF6: id, action, at, scope, title, theme, font).
+    /// То же тело, но поля идут в заданном порядке и могут быть непростыми: тема, шрифт и
+    /// размер — вложенные объекты, сброс слоя — null, отсутствие поля — «слой не трогать»
+    /// (контракт п. 1 плана WF12: id, action, at, scope, title, preview, theme, font, size, frame).
     static func payload(action: String, fields: [(key: String, value: CommandValue)],
                         id: String = makeID(), at: Date = Date()) -> String {
         var parts = ["\"id\":\(jsonString(id))",
