@@ -13,10 +13,16 @@ final class ClaudeActions {
 
     private let app: ClaudeApp
     private let commands: CommandChannel
+    /// Каталог тем из бандла и последний выбор — для подменю тем в меню кнопки «Свернуть».
+    let themes: [Theme]
+    let themeStore: ThemeStore
 
-    init(app: ClaudeApp, commands: CommandChannel) {
+    init(app: ClaudeApp, commands: CommandChannel,
+         themes: [Theme] = ThemeCatalog.bundled, themeStore: ThemeStore = ThemeStore()) {
         self.app = app
         self.commands = commands
+        self.themes = themes
+        self.themeStore = themeStore
     }
 
     var lastCommand: String { commands.lastCommand }
@@ -58,6 +64,34 @@ final class ClaudeActions {
             self.commands.write(action: "cashout", extra: ["title": title])
             self.after(self.cashoutNewChatDelay) { self.newChat(window) }
         }
+    }
+
+    // MARK: - темы
+
+    /// Тема одного окна (`scope: "window"`) или всех сразу (`"all"`); `theme: nil` — «Как у Claude»,
+    /// сброс. Палитра уходит в страницу целиком: файлов страница не читает (контракт п. 3 плана WF5).
+    /// Окно адресуется AX-заголовком, как «Обкэшить»; пустой заголовок страница понимает как
+    /// «окно в фокусе». Фокус здесь не забираем — тема не зависит от `document.hasFocus()`,
+    /// а меню и так возвращает фокус окну, когда закрывается.
+    @discardableResult
+    func applyTheme(scope: String, theme: Theme?, window: AXUIElement?) -> Bool {
+        let target = window ?? focusedWindow()
+        let title = target.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
+        // Без заголовка страница выбирает окно по document.hasFocus() — даём фокус, как «Обкэшить».
+        if title.isEmpty, let target = target { app.focus(window: target); Thread.sleep(forTimeInterval: focusDelay) }
+        let sent = commands.write(action: "theme", fields: [
+            (key: "scope", value: .string(scope)),
+            (key: "title", value: .string(title)),
+            (key: "theme", value: theme?.commandValue ?? .null),
+        ])
+        guard sent else { return false }
+        if scope == MenuModel.themeScopeAll {
+            themeStore.setAllTheme(theme?.id)
+            themeStore.clearWindowThemes()
+        } else {
+            themeStore.setWindowTheme(theme?.id, title: title)
+        }
+        return true
     }
 
     // MARK: - оконные команды

@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "themes": [
+    {
+      "id": "violet",
+      "name": "Фиолетовая",
+      "type": "dark",
+      "palette": { "accent": "#b57bff", "background": "#130d1f", "foreground": "#ece2fb", "sidebar": "#0d0817", "panel": "#1c1430", "muted": "#a795c4" }
+    },
+    {
+      "id": "blue",
+      "name": "Синяя",
+      "type": "dark",
+      "palette": { "accent": "#5b9bff", "background": "#0b1220", "foreground": "#dfe8fb", "sidebar": "#070d18", "panel": "#131d31", "muted": "#92a6c6" }
+    },
+    {
+      "id": "green",
+      "name": "Зелёная",
+      "type": "dark",
+      "palette": { "accent": "#46d18b", "background": "#0a1410", "foreground": "#dcf3e6", "sidebar": "#061009", "panel": "#112119", "muted": "#8ab8a1" }
+    },
+    {
+      "id": "orange",
+      "name": "Оранжевая",
+      "type": "dark",
+      "palette": { "accent": "#ff9147", "background": "#17100a", "foreground": "#f7e6d8", "sidebar": "#100b06", "panel": "#241a11", "muted": "#c2a289" }
+    },
+    {
+      "id": "matrix",
+      "name": "Matrix",
+      "type": "dark",
+      "palette": { "accent": "#1eff5a", "background": "#0d120d", "foreground": "#b8ffca", "sidebar": "#0d120d", "panel": "#141c15", "muted": "#9bffb8" }
+    },
+    {
+      "id": "dracula",
+      "name": "Dracula",
+      "type": "dark",
+      "palette": { "accent": "#bd93f9", "background": "#282a36", "foreground": "#f8f8f2", "sidebar": "#21222c", "panel": "#343746", "muted": "#6272a4" }
+    },
+    {
+      "id": "tokyo",
+      "name": "Tokyo Night",
+      "type": "dark",
+      "palette": { "accent": "#7aa2f7", "background": "#1a1b26", "foreground": "#a9b1d6", "sidebar": "#16161e", "panel": "#1f2335", "muted": "#787c99" }
+    },
+    {
+      "id": "gray",
+      "name": "Серая",
+      "type": "dark",
+      "palette": { "accent": "#a8b3c4", "background": "#131518", "foreground": "#e6e8ec", "sidebar": "#0e1013", "panel": "#1c1f24", "muted": "#9096a0" }
+    },
+    {
+      "id": "arctic",
+      "name": "Светлая Arctic",
+      "type": "light",
+      "palette": { "accent": "#0066ff", "background": "#f3f8ff", "foreground": "#07152a", "sidebar": "#e3efff", "panel": "#ffffff", "muted": "#4d6580" }
+    }
+  ]
+}

@@ -1,5 +1,15 @@
+import AppKit
 import XCTest
 @testable import ClaudeAX
+
+/// Хранилище-заглушка: тесты не должны писать в живые настройки приложения.
+private final class MemoryDefaults: ThemeDefaults {
+    var values: [String: Any] = [:]
+    func string(forKey key: String) -> String? { values[key] as? String }
+    func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
+    func set(_ value: Any?, forKey key: String) { values[key] = value }
+    func removeObject(forKey key: String) { values.removeValue(forKey: key) }
+}
 
 /// Только чистая логика: раскладка «Расставить», клавиши меню и формат command.json.
 /// Живой AX (окна Claude, авто-Allow, popUp) проверяется руками на гейте.
@@ -112,5 +122,148 @@ final class ClaudeAXTests: XCTestCase {
         // Лоадер отбрасывает команду с прежним id, поэтому две подряд обязаны отличаться.
         let ids = Set((0..<200).map { _ in CommandChannel.makeID() })
         XCTAssertGreaterThan(ids.count, 150)
+    }
+
+    // MARK: - темы
+
+    /// Мини-каталог формата themes.json: две годные темы и две кривые (без id, без палитры).
+    private static let miniCatalog = """
+    {"version":1,"themes":[
+      {"id":"violet","name":"Фиолетовая","type":"dark","palette":{"accent":"#a78bfa",\
+    "background":"#1b1626","foreground":"#ece9f5","sidebar":"#151021","panel":"#241d33","muted":"#8b81a6"}},
+      {"id":"arctic","name":"Арктика","type":"light","palette":{"accent":"#2563eb",\
+    "background":"#f7f9fc","foreground":"#101828","sidebar":"#eef2f8","panel":"#ffffff","muted":"#667085"}},
+      {"id":"","name":"Без id","type":"dark","palette":{"accent":"#000000"}},
+      {"id":"broken","name":"Без палитры","type":"dark"}
+    ]}
+    """
+
+    private func catalog() -> [Theme] { ThemeCatalog.parse(Data(ClaudeAXTests.miniCatalog.utf8)) }
+
+    func testCatalogParsesThemesAndSkipsBroken() {
+        let themes = catalog()
+        XCTAssertEqual(themes.map { $0.id }, ["violet", "arctic"])
+        XCTAssertEqual(themes[0].name, "Фиолетовая")
+        XCTAssertEqual(themes[0].palette["background"], "#1b1626")
+        XCTAssertEqual(themes[1].type, "light")
+        XCTAssertTrue(ThemeCatalog.parse(Data("не json".utf8)).isEmpty)
+        XCTAssertTrue(ThemeCatalog.parse(Data("{\"version\":1}".utf8)).isEmpty)
+        // Нет файла — пустой каталог, а не падение.
+        XCTAssertTrue(ThemeCatalog.load(directory: URL(fileURLWithPath: "/nope/\(UUID().uuidString)")).isEmpty)
+    }
+
+    func testCatalogLoadsFileFromResourcesDirectory() throws {
+        // Так же приложение читает themes.json из Contents/Resources (его кладёт tools/bundle.sh).
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(ClaudeAXTests.miniCatalog.utf8).write(to: dir.appendingPathComponent(ThemeCatalog.fileName))
+        XCTAssertEqual(ThemeCatalog.load(directory: dir).map { $0.id }, ["violet", "arctic"])
+    }
+
+    func testThemePayloadMatchesContract() throws {
+        let at = Date(timeIntervalSince1970: 1_756_900_000) // 2025-09-03T11:46:40Z
+        let body = CommandChannel.payload(action: "theme", fields: [
+            (key: "scope", value: .string(MenuModel.themeScopeWindow)),
+            (key: "title", value: .string("Vkusnoff")),
+            (key: "theme", value: catalog()[0].commandValue),
+        ], id: "1756900000123-0042", at: at)
+
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(json["action"] as? String, "theme")
+        XCTAssertEqual(json["scope"] as? String, "window")
+        XCTAssertEqual(json["title"] as? String, "Vkusnoff")
+        let theme = try XCTUnwrap(json["theme"] as? [String: Any])
+        XCTAssertEqual(theme["id"] as? String, "violet")
+        XCTAssertEqual(theme["type"] as? String, "dark")
+        XCTAssertEqual((theme["palette"] as? [String: String])?["background"], "#1b1626")
+
+        // Побайтно как в контракте п. 3 плана WF5: порядок полей id, action, at, scope, title, theme.
+        let expected = "{\"id\":\"1756900000123-0042\",\"action\":\"theme\",\"at\":\"2025-09-03T11:46:40Z\","
+            + "\"scope\":\"window\",\"title\":\"Vkusnoff\",\"theme\":{\"id\":\"violet\","
+            + "\"name\":\"Фиолетовая\",\"type\":\"dark\",\"palette\":{\"accent\":\"#a78bfa\","
+            + "\"background\":\"#1b1626\",\"foreground\":\"#ece9f5\",\"sidebar\":\"#151021\","
+            + "\"panel\":\"#241d33\",\"muted\":\"#8b81a6\"}}}"
+        XCTAssertEqual(body, expected)
+    }
+
+    func testThemeResetPayloadCarriesNull() throws {
+        let body = CommandChannel.payload(action: "theme", fields: [
+            (key: "scope", value: .string(MenuModel.themeScopeAll)),
+            (key: "title", value: .string("")),
+            (key: "theme", value: .null),
+        ], id: "1-0001", at: Date(timeIntervalSince1970: 0))
+        XCTAssertTrue(body.hasSuffix("\"scope\":\"all\",\"title\":\"\",\"theme\":null}"), body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertTrue(json["theme"] is NSNull)
+        // Старые команды не поехали: extra по-прежнему пишет строки по алфавиту.
+        XCTAssertEqual(CommandChannel.payload(action: "scroll", extra: [:], id: "1-0001",
+                                              at: Date(timeIntervalSince1970: 0)),
+                       "{\"id\":\"1-0001\",\"action\":\"scroll\",\"at\":\"1970-01-01T00:00:00Z\"}")
+    }
+
+    func testMenuHasTwoThemeSubmenus() throws {
+        let themes = catalog()
+        var applied: [(scope: String, theme: String?)] = []
+        let menu = MinimizeMenu.build(themes: themes, windowThemeID: "arctic", allThemeID: nil,
+                                      perform: { _ in },
+                                      applyTheme: { applied.append((scope: $0, theme: $1?.id)) })
+        // Семь пунктов и два подменю; разделителей три — после «Новый чат», «Развернуть» и перед темами.
+        XCTAssertEqual(menu.items.filter { !$0.isSeparatorItem }.count, MenuModel.entries.count + 2)
+        XCTAssertEqual(menu.items.filter { $0.isSeparatorItem }.count, 3)
+        let submenus = menu.items.filter { $0.hasSubmenu }
+        XCTAssertEqual(submenus.map { $0.title }, ["Тема окна", "Тема всех окон"])
+        XCTAssertTrue(menu.items[MenuModel.entries.count + 2].isSeparatorItem)
+
+        let windowItems = try XCTUnwrap(submenus.first?.submenu).items
+        XCTAssertEqual(windowItems.filter { !$0.isSeparatorItem }.map { $0.title },
+                       ["Фиолетовая", "Арктика", "Как у Claude"]) // N тем + сброс
+        XCTAssertEqual(windowItems[0].state, .off)
+        XCTAssertEqual(windowItems[1].state, .on) // галка у выбранной arctic
+        let allItems = try XCTUnwrap(submenus.last?.submenu).items
+        XCTAssertEqual(allItems.last?.state, .on) // ничего не выбрано → галка у «Как у Claude»
+
+        click(windowItems[0])
+        click(try XCTUnwrap(allItems.last))
+        XCTAssertEqual(applied.map { $0.scope }, ["window", "all"])
+        XCTAssertEqual(applied.map { $0.theme }, ["violet", nil])
+
+        // Каталога нет — меню прежнее, из семи пунктов.
+        let plain = MinimizeMenu.build(themes: [], windowThemeID: nil, allThemeID: nil,
+                                       perform: { _ in }, applyTheme: { _, _ in })
+        XCTAssertTrue(plain.items.allSatisfy { !$0.hasSubmenu })
+    }
+
+    func testThemeStoreRemembersChoicePerWindow() {
+        let defaults = MemoryDefaults()
+        let store = ThemeStore(defaults: defaults)
+        XCTAssertNil(store.windowThemeID(title: "Vkusnoff"))
+        store.setWindowTheme("orange", title: "Vkusnoff")
+        store.setWindowTheme("blue", title: "Trelvis")
+        store.setAllTheme("matrix")
+        XCTAssertEqual(store.windowThemeID(title: "Vkusnoff"), "orange")
+        XCTAssertEqual(store.allThemeID, "matrix")
+        XCTAssertEqual(defaults.values[ThemeStore.byWindowKey] as? [String: String],
+                       ["Vkusnoff": "orange", "Trelvis": "blue"])
+        store.setWindowTheme(nil, title: "Vkusnoff") // «Как у Claude»
+        XCTAssertNil(store.windowThemeID(title: "Vkusnoff"))
+        XCTAssertEqual(store.windowThemeID(title: "Trelvis"), "blue")
+        store.setAllTheme(nil)
+        XCTAssertNil(store.allThemeID)
+        // «Тема всех окон» стирает карту окон — как runThemeCommand в inject.js.
+        store.clearWindowThemes()
+        XCTAssertNil(store.windowThemeID(title: "Trelvis"))
+        // Окно без заголовка запоминать нечем: страница адресует его как «в фокусе».
+        store.setWindowTheme("blue", title: "")
+        XCTAssertNil(store.windowThemeID(title: ""))
+    }
+
+    /// Нажатие на пункт меню без popUp: BlockMenuItem держит замыкание на себе.
+    private func click(_ item: NSMenuItem) {
+        guard let action = item.action, let target = item.target as? NSObject else {
+            return XCTFail("у пункта «\(item.title)» нет действия")
+        }
+        target.perform(action)
     }
 }
