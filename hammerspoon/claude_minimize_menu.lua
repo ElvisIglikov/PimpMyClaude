@@ -236,6 +236,14 @@ local function arrange()
   end
 
   local f = screen:frame()                        -- usable area: menu bar and dock already excluded
+  -- Keep the order the windows already have on screen (left→right, then top→bottom), so a window
+  -- that is roughly in place stays in place instead of swapping with a neighbour (слово Элвиса
+  -- 03.09 13:50: «где окно стоит нормально, там пусть и стоит»).
+  table.sort(wins, function(p, q)
+    local fp, fq = p:frame(), q:frame()
+    if math.abs(fp.y - fq.y) > 60 then return fp.y < fq.y end
+    return fp.x < fq.x
+  end)
   local cols = gridColumns(#wins, f.w)
   local rows = math.ceil(#wins / cols)
   for i, w in ipairs(wins) do
