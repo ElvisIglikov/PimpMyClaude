@@ -30,7 +30,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf9-a-2";
+  const VERSION = "wf9-a-3";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -976,12 +976,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (!state.alive || !themable) return;
     const key = chatKey();
     if (key === themeState.chatKey) return;
+    // Пока идёт предпросмотр, на экране намеренно не то, что в хранилище: ключ не
+    // запоминаем, чтобы смена чата не «съелась» и применилась после конца примерки.
+    if (themeState.previewing) return;
     themeState.chatKey = key;
     // Сначала дописываем несохранённый выбор: иначе восстановление затрёт на
     // экране только что выбранную тему.
     flushPendingLayers();
-    // Пока идёт предпросмотр, на экране намеренно не то, что в хранилище.
-    if (themeState.previewing) return;
     try { applyChatEntry(); } catch {}
   };
   const watchChatTitle = () => {

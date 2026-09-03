@@ -141,8 +141,9 @@ final class MinimizeMenu: NSObject {
         var committed = false
         // Пункт срабатывает внутри цикла popUp: откладываем на ход вперёд, чтобы
         // сначала закрылось меню и вернулся фокус окну Claude.
+        // Обычная команда примерку НЕ закрепляет: после popUp уйдёт «конец примерки», а сама
+        // команда — следом через очередь CommandChannel (600 мс), ничего не теряется.
         config.perform = { [weak self] command in
-            committed = true
             DispatchQueue.main.async { self?.actions.perform(command, on: window) }
         }
         config.apply = { [weak self] scope, theme, font in
