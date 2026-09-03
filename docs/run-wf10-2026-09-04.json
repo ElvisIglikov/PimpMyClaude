@@ -1,7 +1,7 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf10-2026-09-04.md",
   "project": "⚪PimpMyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "trelvis": "#5330",
   "branch": "wf10 (тег wf10-start)",
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf10-fix-wf_277dee3a-363.js",
@@ -24,12 +24,21 @@
       "at": "2026-09-04T03:03:07+05:00",
       "who": "прогон",
       "what": "батч B готов (43 теста), критик 17/4, verify fix-needed (3 medium: галки, акцент по кругу, одинаковые заголовки; 5 low). Фикс-батч запущен"
+    },
+    {
+      "at": "2026-09-04T03:29:56+05:00",
+      "who": "прогон",
+      "what": "фикс ok, verify ok (2 low → батч B WF12). Коммит, приложение подменено — «🌈 Автопокраска» у Элвиса. Релиз 1.3.0 — вместе с WF12"
     }
   ],
   "watchdog": "watchdog-pimpmyclaude-wf10-0409",
   "orchestrator": "Fable 5.1 high",
   "wave1": {
     "run_id": "wf_84891987-c78",
+    "status": "финиш"
+  },
+  "fix": {
+    "run_id": "wf_277dee3a-363",
     "status": "финиш"
   }
 }
