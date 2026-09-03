@@ -23,7 +23,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf3-a3-2";
+  const VERSION = "wf3-a3-3";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1414,8 +1414,14 @@
     // всех окнах»; слово Элвиса 03.09 13:30). Только «Обкэшить» адресована окну в фокусе.
     if (action === "collapse") { setStage(STAGE_COLLAPSED); return; }
     if (action === "expand") { setStage(STAGE_NORMAL); return; }
-    if (!document.hasFocus()) return;
-    if (action === "cashout") runCashout();
+    // «Обкэшить» адресована одному окну. Окно «Open in new window» (about:blank) может
+    // не считать себя в фокусе, поэтому сверяем заголовок окна, который присылает
+    // Hammerspoon; фокус — запасной критерий, когда заголовка нет.
+    if (action === "cashout") {
+      const title = typeof detail?.title === "string" ? detail.title.trim() : "";
+      const mine = title ? (document.title || "").trim() === title : document.hasFocus();
+      if (mine) runCashout();
+    }
     // Неизвестные команды игнорируем молча: их может слать не только наш модуль.
   };
 
@@ -1429,6 +1435,18 @@
   on(window, "resize", scheduleLayout);
   on(window, "scroll", onScrolled, true);
   on(window, "myclaude-command", onCommand);
+  // Escape не должен останавливать выполнение (слово Элвиса 03.09 14:00: F1/F2 рядом,
+  // «постоянно боюсь нажать Escape»). Глотаем Escape на захвате, но только когда на
+  // странице нет открытого диалога/меню/списка — там Escape нужен, чтобы их закрыть.
+  const ESC_OVERLAY_SELECTOR = '[role="dialog"],[role="menu"],[role="listbox"],[role="alertdialog"],[data-state="open"],[cmdk-root]';
+  const onKeyDown = (event) => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (document.querySelector(ESC_OVERLAY_SELECTOR)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    state.escapesBlocked = (state.escapesBlocked || 0) + 1;
+  };
+  on(window, "keydown", onKeyDown, { capture: true });
 
   const observer = new MutationObserver(onMutated);
   observer.observe(document.documentElement, { childList: true, subtree: true });

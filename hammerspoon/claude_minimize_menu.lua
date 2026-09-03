@@ -156,10 +156,19 @@ end
 -- {"id","action","at"} → command.json (loader v6) and/or probe.js (loader v5, see the header).
 -- The probe file carries the same JSON inside a dispatch call plus the id as a trailing comment,
 -- so two commands in the same second still change the file the loader stamps by mtime+size.
-local function writeCommand(action)
+local function jsonString(str)
+  return '"' .. tostring(str):gsub('[%c"\\]', function(c)
+    if c == '"' then return '\\"' elseif c == "\\" then return "\\\\" end
+    return string.format("\\u%04x", c:byte())
+  end) .. '"'
+end
+
+-- extra: optional table of extra string fields (e.g. title of the target window for cashout).
+local function writeCommand(action, extra)
   local id = string.format("%d-%04d", math.floor(now() * 1000), math.random(0, 9999))
-  local json = string.format('{"id":"%s","action":"%s","at":"%s"}',
-    id, action, os.date("!%Y-%m-%dT%H:%M:%SZ"))
+  local fields = { string.format('"id":"%s","action":"%s","at":"%s"', id, action, os.date("!%Y-%m-%dT%H:%M:%SZ")) }
+  for k, v in pairs(extra or {}) do fields[#fields + 1] = string.format('"%s":%s', k, jsonString(v)) end
+  local json = "{" .. table.concat(fields, ",") .. "}"
 
   local done = {}
   if M.commandChannel == "both" or M.commandChannel == "json" then
@@ -198,7 +207,9 @@ local function cashout(w)
   if not w then return end
   w:focus()
   hs.timer.doAfter(M.focusDelay, function()
-    writeCommand("cashout")
+    -- title lets the page tell "is this me?" even when an about:blank child window does not
+    -- consider itself focused (seen 03.09: cashout ran in the main window instead).
+    writeCommand("cashout", { title = w:title() or "" })
     -- the page stashes the answer, then a fresh chat picks the stash up. Through probe.js the
     -- command waits for the loader's next poll, so ⌘N has to wait for that too — otherwise the
     -- new chat is already open by the time the old one gets told to stash anything.
