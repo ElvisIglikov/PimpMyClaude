@@ -1,12 +1,12 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf7-2026-09-03.md",
   "project": "⚪PimpMyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "trelvis": "#5318",
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf7-wave1-wf_4ea56628-41e.js",
   "run_id": "wf_4ea56628-41e",
   "next_steps": [
-    "после волны 1 WF6: батч A inject.js (Opus max) + verify"
+    "README строка про полосу — волна 2 WF6; релиз 1.2.0 общий"
   ],
   "log": [
     {
@@ -18,6 +18,11 @@
       "at": "2026-09-03T22:35:05+05:00",
       "who": "оркестратор",
       "what": "inject.js освободился после WF6 волны 1 — батч A (Opus max) + verify запущены"
+    },
+    {
+      "at": "2026-09-03T23:16:06+05:00",
+      "who": "прогон",
+      "what": "батч A ok, verify ok (1 medium — селектор ответов не находил, 4 low) — внесено + запасной разбор текста окна. Живьём 4 окна: 80/57/100/37 %. Коммит на wf6. Финиш"
     }
   ],
   "branch": "wf6 (совместно с WF6)",
