@@ -1,11 +1,27 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf9-2026-09-04.md",
   "project": "⚪PimpMyClaude",
-  "status": "план",
+  "status": "идёт",
   "trelvis": "#5324 #5325 #5326 #5327 #5328 #5329",
   "branch": "wf6",
-  "script_path": null,
-  "run_id": null,
-  "next_steps": ["критик Opus max wf_cb79b9cd-d25 → правки → волна 1 (Элвис сказал «запускай» заранее)"],
-  "log": [{"at": "2026-09-04T01:45:00+05:00", "who": "оркестратор", "what": "шесть пожеланий Элвиса → план WF9 + комплект workflow-kit (KICKOFF.md, WORKFLOW.md); критик Opus max запущен"}]
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf9-wave1-wf_c25db97f-56d.js",
+  "run_id": "wf_c25db97f-56d",
+  "next_steps": [
+    "волна 1 идёт: A inject.js, B Swift → V-A, V-B",
+    "критик wf_cb79b9cd-d25 ещё пишет — находки применить на гейте",
+    "гейт, волна 2: сверка WF6–9, релиз 1.2.0, main"
+  ],
+  "log": [
+    {
+      "at": "2026-09-04T01:45:00+05:00",
+      "who": "оркестратор",
+      "what": "шесть пожеланий Элвиса → план WF9 + комплект workflow-kit (KICKOFF.md, WORKFLOW.md); критик Opus max запущен"
+    },
+    {
+      "at": "2026-09-03T23:46:42+05:00",
+      "who": "оркестратор",
+      "what": "Элвис: «запускай воркфлоу» — волна 1 запущена, не дожидаясь критика (его находки — на гейт)"
+    }
+  ],
+  "watchdog": "watchdog-pimpmyclaude-wf6-0309 (общий)"
 }
