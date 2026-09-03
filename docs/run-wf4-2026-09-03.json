@@ -1,13 +1,13 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf4-2026-09-03.md",
   "project": "⚪PimpMyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf4-wave3-wf_aa489eb6-c5e.js",
   "run_id": "wf_aa489eb6-c5e",
   "next_steps": [
-    "волна 3 идёт: сквозная сверка (Opus max)",
-    "гейт 2 (Элвис): Accessibility для /Applications/PimpMyClaude.app, снять Lua-модули, живая проверка меню/хоткеев/Allow; «Поставить» — не нужно, патч стоит",
-    "раздать dist/PimpMyClaude-1.0.0.zip + docs/TEAM.md; чистый пользователь"
+    "Элвис: живьём «Снять» → «Поставить» на своём Маке (закроет Claude), меню/хоткеи/Allow/⌘Q",
+    "раздать ~/Desktop/PimpMyClaude-1.0.0.zip + инструкцию; отзыв первого установившего",
+    "после обновления Claude: проверить Squirrel/ShipIt и дописать TEAM.md"
   ],
   "log": [
     {
@@ -34,10 +34,15 @@
       "at": "2026-09-03T15:46:46+05:00",
       "who": "прогон",
       "what": "волна 2 готова: C ok (6 low), D fix-needed (2 medium TEAM.md, 6 low) — поправлено, версия 1.0.0, коммит+пуш. release.sh: нотаризация Accepted, stapled, spctl accepted. /Applications/PimpMyClaude.app поставлен и запущен, zip на рабочем столе. Волна 3 (сверка) запущена"
+    },
+    {
+      "at": "2026-09-03T16:01:01+05:00",
+      "who": "оркестратор",
+      "what": "волна 3: сверка ok, 2 medium + 5 low внесены; кросс-проверка Swift-патча старым mjs — лоадер v6, хэш совпадает. Релиз 1.0.0 пересобран и нотаризован, поставлен в /Applications, zip и инструкция на рабочем столе. wf4 слит в main, запушен. Финиш; живой гейт — за Элвисом"
     }
   ],
   "branch": "wf4 (тег wf4-start на main f0f233a)",
-  "watchdog": "watchdog-pimpmyclaude-0309",
+  "watchdog": "watchdog-pimpmyclaude-0309 (снят)",
   "orchestrator": "Fable 5.1 high",
   "wave1": {
     "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf4-wave1-wf_d762168e-225.js",
@@ -46,6 +51,10 @@
   },
   "wave2": {
     "run_id": "wf_d8093d41-575",
+    "status": "финиш"
+  },
+  "wave3": {
+    "run_id": "wf_aa489eb6-c5e",
     "status": "финиш"
   }
 }
