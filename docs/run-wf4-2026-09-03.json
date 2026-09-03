@@ -1,13 +1,13 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf4-2026-09-03.md",
   "project": "⚪PimpMyClaude",
-  "status": "план",
-  "script_path": null,
-  "run_id": null,
+  "status": "идёт",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf4-wave3-wf_aa489eb6-c5e.js",
+  "run_id": "wf_aa489eb6-c5e",
   "next_steps": [
-    "Элвис: «запускай» (оркестратор на Fable, эффорт ниже high — предупреждён)",
-    "notarytool store-credentials pimpmyclaude",
-    "ветка wf4 + тег, сторож, волна 1: A+B+V-A+V-B"
+    "волна 3 идёт: сквозная сверка (Opus max)",
+    "гейт 2 (Элвис): Accessibility для /Applications/PimpMyClaude.app, снять Lua-модули, живая проверка меню/хоткеев/Allow; «Поставить» — не нужно, патч стоит",
+    "раздать dist/PimpMyClaude-1.0.0.zip + docs/TEAM.md; чистый пользователь"
   ],
   "log": [
     {
@@ -19,8 +19,33 @@
       "at": "2026-09-03T14:31:12+05:00",
       "who": "оркестратор",
       "what": "критик Fable high: 21 правка, 8 критичных — внесены в план; скелет SwiftPM + bundle.sh (Developer ID) собран и закоммичен ecc9e5e; старый сторож watchdog-myclaude-0309 снят; жду «запускай»"
+    },
+    {
+      "at": "2026-09-03T14:37:31+05:00",
+      "who": "оркестратор",
+      "what": "Элвис: «запускай». Ветка wf4, тег wf4-start, сторож поставлен, волна 1 запущена (A+B Opus max, V-A Fable xhigh, V-B Opus max)"
+    },
+    {
+      "at": "2026-09-03T15:14:06+05:00",
+      "who": "прогон",
+      "what": "волна 1 готова: A ok (6 low), B fix-needed (1 high cashout-задержка, 1 medium хоткеи, 4 low) — всё поправлено оркестратором, 15 тестов зелёные, коммит на wf4, app/.build/PimpMyClaude.app собран и запущен у Элвиса. Волна 2 запущена (C Opus max → V-C Opus max; D Opus max → V-D Fable xhigh)"
+    },
+    {
+      "at": "2026-09-03T15:46:46+05:00",
+      "who": "прогон",
+      "what": "волна 2 готова: C ok (6 low), D fix-needed (2 medium TEAM.md, 6 low) — поправлено, версия 1.0.0, коммит+пуш. release.sh: нотаризация Accepted, stapled, spctl accepted. /Applications/PimpMyClaude.app поставлен и запущен, zip на рабочем столе. Волна 3 (сверка) запущена"
     }
   ],
-  "branch": null,
-  "watchdog": null
+  "branch": "wf4 (тег wf4-start на main f0f233a)",
+  "watchdog": "watchdog-pimpmyclaude-0309",
+  "orchestrator": "Fable 5.1 high",
+  "wave1": {
+    "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf4-wave1-wf_d762168e-225.js",
+    "run_id": "wf_d762168e-225",
+    "status": "финиш"
+  },
+  "wave2": {
+    "run_id": "wf_d8093d41-575",
+    "status": "финиш"
+  }
 }

@@ -16,13 +16,4 @@ public protocol ClaudeAXControlling: AnyObject {
     func send(_ command: ClaudeCommand)
 }
 
-/// Заглушка скелета. Батч B заменяет реализацию.
-public final class ClaudeAXController: ClaudeAXControlling {
-    public init() {}
-    public func start() {}
-    public func stop() {}
-    public var autoAllowEnabled = true
-    public var minimizeMenuEnabled = true
-    public var blockQuitEnabled = true
-    public func send(_ command: ClaudeCommand) {}
-}
+// Реализация — ClaudeAXController.swift.
