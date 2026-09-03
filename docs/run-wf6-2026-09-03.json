@@ -6,9 +6,8 @@
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf6-wave1-wf_7d67b6f2-c1d.js",
   "run_id": "wf_7d67b6f2-c1d",
   "next_steps": [
-    "волна 1 идёт: A (24 темы, шрифт в inject.js), B (Swift меню/шрифты/мои темы) → V-A, V-B",
-    "гейт: inject.js живьём, старый формат, два слоя, bundle",
-    "волна 2: сверка, релиз 1.2.0, README/TEAM.md"
+    "Элвис смотрит темы/шрифты/мои темы в меню",
+    "волна 2: сверка, README/TEAM.md, релиз 1.2.0 вместе с WF7"
   ],
   "log": [
     {
@@ -25,6 +24,11 @@
       "at": "2026-09-03T22:02:54+05:00",
       "who": "оркестратор",
       "what": "Элвис: «побольше тем для девчат, шрифтов побольше с моно, начинай». План дополнен (24 темы, 30+ шрифтов), ветка wf6, сторож, волна 1 запущена (A+B Opus max, V-A/V-B Opus max)"
+    },
+    {
+      "at": "2026-09-03T22:35:05+05:00",
+      "who": "прогон",
+      "what": "волна 1 готова: A fix-needed (1 medium алиасы шрифта, 3 low), B ok (5 low) — внесено. Гейт живьём: старые темы окон пережили новый формат, шрифт окна/всем работает, темы не задеты. Приложение пересобрано и стоит в /Applications. Коммит на wf6"
     }
   ],
   "critic": {
@@ -34,5 +38,9 @@
   },
   "branch": "wf6 (тег wf6-start)",
   "watchdog": "watchdog-pimpmyclaude-wf6-0309",
-  "orchestrator": "Fable 5.1 high"
+  "orchestrator": "Fable 5.1 high",
+  "wave1": {
+    "run_id": "wf_7d67b6f2-c1d",
+    "status": "финиш"
+  }
 }
