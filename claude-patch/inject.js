@@ -30,7 +30,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf9-a-3";
+  const VERSION = "wf9-a-4";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1565,8 +1565,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       progressHide();
       return;
     }
-    const left = Math.round(rect.left);
-    const width = Math.round(rect.width);
+    // Отступ от краёв — по скруглению рамки (как у ручки), иначе сегменты вылезают
+    // за скругления (слово Элвиса 04.09 04:10).
+    const inset = onFrame ? handleInset(progressState.frame ?? state.shell) : 0;
+    const left = Math.round(rect.left + inset);
+    const width = Math.round(rect.width - inset * 2);
     // Полоса сидит верхом на кромке: половина линии выше низа рамки, половина
     // ниже. На запасном якоре кромка — верх строки инструментов.
     const top = Math.round(onFrame ? rect.bottom : rect.top) - 1;
