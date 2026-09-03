@@ -149,6 +149,68 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.appendingPathExtension("tmp").path))
     }
 
+    /// Тест гонки (критик п. 1 плана WF9): лоадер читает command.json раз в 500 мс, поэтому
+    /// две записи подряд потеряли бы первую. Часы и таймер подставлены, живой ~/Library не трогаем.
+    func testQueueKeepsSixHundredMillisecondsBetweenWrites() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        let file = dir.appendingPathComponent("command.json")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let start = Date(timeIntervalSince1970: 1_756_900_000)
+        var now = start
+        var timers: [(at: Date, block: () -> Void)] = []
+        let channel = CommandChannel(path: file, now: { now },
+                                     schedule: { delay, block in
+                                         timers.append((now.addingTimeInterval(delay), block))
+                                     })
+        func action() throws -> String {
+            let json = try JSONSerialization.jsonObject(with: try Data(contentsOf: file))
+            return try XCTUnwrap((json as? [String: Any])?["action"] as? String)
+        }
+        /// Прокрутить часы до ближайшего таймера и выполнить его — как сделал бы главный поток.
+        func tick() throws {
+            let timer = try XCTUnwrap(timers.first, "таймер не поставлен")
+            timers.removeFirst()
+            now = max(now, timer.at)
+            timer.block()
+        }
+
+        // Две команды меню за 100 мс: первая на диске сразу, вторая ждёт своей очереди.
+        XCTAssertTrue(channel.write(action: "collapse"))
+        XCTAssertEqual(try action(), "collapse")
+        now = now.addingTimeInterval(0.1)
+        XCTAssertTrue(channel.write(action: "expand"))
+        XCTAssertEqual(try action(), "collapse", "вторая запись затёрла первую")
+        try tick()
+        XCTAssertEqual(try action(), "expand")
+        XCTAssertGreaterThanOrEqual(now.timeIntervalSince(start), CommandChannel.minInterval)
+
+        // Сводка — низший приоритет: ждёт очереди и пропадает, когда пришла команда меню.
+        var statusWritten: Bool?
+        let expandAt = now
+        channel.write(action: "status", fields: [], completion: { statusWritten = $0 })
+        XCTAssertEqual(try action(), "expand")
+        XCTAssertNil(statusWritten)
+        channel.write(action: "scroll")
+        XCTAssertEqual(statusWritten, false, "сводку не вытеснила команда меню")
+
+        // Предпросмотр — вне очереди, пишется сразу; после него «Прокрутить» ждёт те же 600 мс.
+        now = now.addingTimeInterval(0.1)
+        let previewAt = now
+        XCTAssertTrue(channel.write(action: "theme",
+                                    fields: [(key: "preview", value: .bool(true))],
+                                    priority: .preview))
+        XCTAssertEqual(try action(), "theme")
+        try tick()
+        XCTAssertEqual(try action(), "theme", "«Прокрутить» затёрла примерку раньше срока")
+        try tick()
+        XCTAssertEqual(try action(), "scroll")
+        XCTAssertGreaterThanOrEqual(now.timeIntervalSince(previewAt), CommandChannel.minInterval)
+        XCTAssertGreaterThanOrEqual(now.timeIntervalSince(expandAt), CommandChannel.minInterval)
+        XCTAssertEqual(channel.lastCommand.hasPrefix("scroll @"), true, channel.lastCommand)
+    }
+
     func testIDsDifferWithinTheSameMillisecond() {
         // Лоадер отбрасывает команду с прежним id, поэтому две подряд обязаны отличаться.
         let ids = Set((0..<200).map { _ in CommandChannel.makeID() })
@@ -684,6 +746,24 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(StatusFeed.digest(projects), StatusFeed.digest(projects))
         XCTAssertNotEqual(StatusFeed.digest(projects),
                           StatusFeed.digest([projects[0], StatusProject(name: "SkilZZZ", text: "!")]))
+
+        // Общий потолок 32 КБ (критик п. 6): проекты кладутся по порядку, хвост отбрасывается.
+        let heavy = { (name: String) in
+            StatusProject(name: name, text: String(repeating: "строка сводки\n", count: 500))
+        }
+        let many = (1...9).map { heavy("Проект \($0)") }
+        let capped = StatusFeed.cap(many)
+        XCTAssertLessThanOrEqual(StatusFeed.payloadSize(capped), StatusFeed.totalLimit)
+        XCTAssertGreaterThan(capped.count, 0)
+        XCTAssertLessThan(capped.count, many.count)
+        XCTAssertEqual(capped.map { $0.name }, many.prefix(capped.count).map { $0.name })
+        // Влезают все — не трогаем ни байта.
+        XCTAssertEqual(StatusFeed.cap(projects), projects)
+        // Не влез даже первый — режем ему текст, но проект остаётся.
+        let alone = StatusFeed.cap([heavy("Один")], limit: 500)
+        XCTAssertEqual(alone.count, 1)
+        XCTAssertLessThanOrEqual(StatusFeed.payloadSize(alone), 500)
+        XCTAssertTrue(heavy("Один").text.hasPrefix(alone[0].text))
     }
 
     func testStatusScanReadsProjectSummaries() throws {

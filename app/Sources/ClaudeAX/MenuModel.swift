@@ -148,6 +148,9 @@ enum MenuModel {
     static let myThemeSaveButton = "Сохранить"
     static let myThemeCancelButton = "Отмена"
     static let myThemeEmptyAlert = "Сначала выбери тему — её и запомню вместе со шрифтом."
+    /// Клик по «🚀 Workflow» на сборке без комплекта (критик п. 3 фикс-батча WF9): молчать
+    /// нельзя — со стороны пункт выглядит сломанным.
+    static let workflowKitMissingAlert = "В сборке нет комплекта workflow-kit — поставь свежий PimpMyClaude.app"
     static let themeIcon = "🎨"
     static let fontIcon = "🔤"
     /// Значения поля `scope` команды `theme` (контракт п. 5 плана WF6).

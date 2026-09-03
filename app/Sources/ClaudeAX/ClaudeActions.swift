@@ -118,7 +118,11 @@ final class ClaudeActions {
     /// страница понимает его как «окно в фокусе».
     private func workflow(_ window: AXUIElement?) {
         WorkflowKit.install()
-        guard let text = WorkflowKit.kickoff() else { return }
+        guard let text = WorkflowKit.kickoff() else {
+            // Комплекта нет вовсе (старый бандл) — говорим об этом, а не проглатываем клик.
+            onWarning?(MenuModel.workflowKitMissingAlert)
+            return
+        }
         guard let window = window else {
             commands.write(action: "workflow", fields: ClaudeActions.workflowFields(title: "", text: text))
             return
@@ -262,7 +266,8 @@ final class ClaudeActions {
         guard !title.isEmpty else { return false }
         let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: title,
                                                preview: preview, theme: theme, font: font)
-        return commands.write(action: "theme", fields: fields)
+        // Примерка идёт мимо очереди канала: мышь скользит по списку, ждать 600 мс нечего.
+        return commands.write(action: "theme", fields: fields, priority: .preview)
     }
 
     // MARK: - оконные команды
@@ -305,6 +310,10 @@ final class ClaudeActions {
 
     /// Окна переехали: кэш прямоугольников кнопки «Свернуть» протух.
     var onWindowsMoved: (() -> Void)?
+
+    /// Короткая плашка на экран (HUD) — ставит ClaudeAXController. Пока единственный повод:
+    /// в сборке нет комплекта workflow-kit.
+    var onWarning: ((String) -> Void)?
 
     private func after(_ delay: TimeInterval, _ block: @escaping () -> Void) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)

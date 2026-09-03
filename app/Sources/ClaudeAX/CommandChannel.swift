@@ -30,6 +30,11 @@ enum CommandValue {
 /// Лоадер v6 (patch-claude.mjs) читает файл по `fs.watchFile` раз в 500 мс, отбрасывает
 /// команду с тем же `id`, и рассылает `{id, action, at, …}` событием `myclaude-command`
 /// во все страницы (inject.js, `onCommand`). Канал probe.js (лоадер v5) сюда не переносится.
+///
+/// Файл один, писатель тоже один — с очередью (критик п. 1 плана WF9): опрос раз в 500 мс
+/// значит, что две записи подряд теряют первую. Отсюда зазор `minInterval` между записями,
+/// FIFO для команд меню и отдельный слот низшего приоритета для сводки проектов.
+/// Всё живёт на главной очереди — как и все, кто сюда пишет (меню, хоткеи, StatusFeed).
 final class CommandChannel {
     /// Папку не переименовывать: лоадер смотрит именно в MyClaude.
     static let directory = FileManager.default.homeDirectoryForCurrentUser
@@ -37,16 +42,57 @@ final class CommandChannel {
     static let path = directory.appendingPathComponent("command.json")
     /// Сводка проектов (StatusFeed) — единственная команда, которую пишет не Элвис.
     static let statusAction = "status"
+    /// Минимальный зазор между записями: лоадер успевает увидеть каждую (опрос — 500 мс).
+    static let minInterval: TimeInterval = 0.6
+
+    /// Куда команду ставить (критик п. 1 плана WF9).
+    enum Priority {
+        /// Команда меню или хоткея: очередь FIFO, не чаще одной записи в `minInterval`.
+        case normal
+        /// Предпросмотр темы: вне очереди, пишется сразу — мышь идёт по подменю, ждать
+        /// нечего, а потерянная примерка безвредна. Не-preview команда после него всё
+        /// равно ждёт `minInterval`.
+        case preview
+        /// Сводка проектов: пишет её не Элвис, поэтому она уступает всем — ждёт, пока
+        /// очередь опустеет, и отбрасывается, если за это время пришла любая другая
+        /// команда (StatusFeed попробует снова на следующем тике, через 60 с).
+        case status
+    }
+
+    /// Команда в очереди. Тело собирается в момент записи: `id` и `at` должны быть тем
+    /// временем, когда файл действительно поменялся, а не когда команду поставили в очередь.
+    private struct Item {
+        let action: String
+        let body: () -> String
+        let completion: ((Bool) -> Void)?
+    }
 
     private(set) var lastCommand = "(none)"
-    /// Когда в последний раз писали НЕ сводку. Лоадер опрашивает файл раз в 500 мс и берёт
-    /// последнюю команду, поэтому сводка, посланная сразу после «Обкэшить», затёрла бы её
-    /// (решение 2 плана WF9: в течение 2 с после любой другой команды status не шлём).
-    private(set) var lastOtherCommandAt: Date?
 
-    /// Сколько прошло с последней команды меню; команд ещё не было — «бесконечно давно».
-    var secondsSinceOtherCommand: TimeInterval {
-        lastOtherCommandAt.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
+    private let url: URL
+    private let now: () -> Date
+    private let schedule: (TimeInterval, @escaping () -> Void) -> Void
+
+    private var queue: [Item] = []
+    private var pendingStatus: Item?
+    private var lastWriteAt: Date?
+    private var waiting = false
+
+    /// Часы и таймер подставляются в тестах (тест гонки), путь — чтобы не трогать живой
+    /// `~/Library`; в приложении всё по умолчанию.
+    init(path: URL = CommandChannel.path,
+         now: @escaping () -> Date = Date.init,
+         schedule: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, block in
+             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
+         }) {
+        self.url = path
+        self.now = now
+        self.schedule = schedule
+    }
+
+    /// Сколько прошло с последней записи; записей ещё не было — «бесконечно давно».
+    private var secondsSinceWrite: TimeInterval {
+        lastWriteAt.map { now().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
     }
 
     private static let stamp: DateFormatter = {
@@ -134,22 +180,81 @@ final class CommandChannel {
         return moved
     }
 
+    /// Возвращает, принята ли команда: `true` — записана или стоит в очереди. Что она дошла
+    /// до диска, знает только `completion` (у сводки он же сообщает, что её вытеснили).
     @discardableResult
     func write(action: String, extra: [String: String] = [:]) -> Bool {
-        write(action: action, body: CommandChannel.payload(action: action, extra: extra))
+        enqueue(action: action, priority: .normal, completion: nil) {
+            CommandChannel.payload(action: action, extra: extra)
+        }
     }
 
-    /// Команда с полями сложнее строки (тема).
+    /// Команда с полями сложнее строки (тема, сводка, workflow).
     @discardableResult
-    func write(action: String, fields: [(key: String, value: CommandValue)]) -> Bool {
-        write(action: action, body: CommandChannel.payload(action: action, fields: fields))
+    func write(action: String, fields: [(key: String, value: CommandValue)],
+               priority: Priority = .normal, completion: ((Bool) -> Void)? = nil) -> Bool {
+        enqueue(action: action, priority: priority, completion: completion) {
+            CommandChannel.payload(action: action, fields: fields)
+        }
     }
 
-    private func write(action: String, body: String) -> Bool {
-        guard CommandChannel.writeAtomic(CommandChannel.path, body) else { return false }
-        let now = Date()
-        lastCommand = "\(action) @ \(CommandChannel.clock.string(from: now))"
-        if action != CommandChannel.statusAction { lastOtherCommandAt = now }
+    @discardableResult
+    private func enqueue(action: String, priority: Priority, completion: ((Bool) -> Void)?,
+                         body: @escaping () -> String) -> Bool {
+        let item = Item(action: action, body: body, completion: completion)
+        // Приоритет сводки не зависит от того, кто её шлёт: она всегда последняя в очереди.
+        switch action == CommandChannel.statusAction ? .status : priority {
+        case .preview:
+            return deliver(item)
+        case .normal:
+            dropStatus()
+            queue.append(item)
+        case .status:
+            dropStatus()
+            pendingStatus = item
+        }
+        flush()
+        return true
+    }
+
+    /// Очередная команда — когда с прошлой записи прошло `minInterval`. Сводка идёт только
+    /// на пустой очереди.
+    private func flush() {
+        guard !waiting, let item = queue.first ?? pendingStatus else { return }
+        let wait = CommandChannel.minInterval - secondsSinceWrite
+        guard wait <= 0 else {
+            waiting = true
+            schedule(wait) { [weak self] in
+                self?.waiting = false
+                self?.flush()
+            }
+            return
+        }
+        if queue.isEmpty { pendingStatus = nil } else { queue.removeFirst() }
+        deliver(item)
+        flush()
+    }
+
+    /// Сводку вытеснила команда меню — она не поедет вовсе; StatusFeed узнаёт об этом
+    /// из completion и не считает её посланной.
+    private func dropStatus() {
+        guard let status = pendingStatus else { return }
+        pendingStatus = nil
+        status.completion?(false)
+    }
+
+    /// Собственно запись. Зазор отсчитывается и от предпросмотра: команда меню сразу после
+    /// примерки затёрла бы её раньше, чем лоадер прочитает файл.
+    @discardableResult
+    private func deliver(_ item: Item) -> Bool {
+        let at = now()
+        guard CommandChannel.writeAtomic(url, item.body()) else {
+            item.completion?(false)
+            return false
+        }
+        lastWriteAt = at
+        lastCommand = "\(item.action) @ \(CommandChannel.clock.string(from: at))"
+        item.completion?(true)
         return true
     }
 }

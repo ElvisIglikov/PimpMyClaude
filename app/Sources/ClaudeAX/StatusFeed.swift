@@ -13,14 +13,16 @@ struct StatusProject: Equatable {
 /// `{"id","action":"status","at","scope":"all","projects":[{"name","text"}]}`.
 ///
 /// Сводка — единственная команда, которую пишет не Элвис, поэтому она обязана уступать дорогу
-/// меню: лоадер опрашивает command.json раз в 500 мс и берёт последнюю команду.
+/// меню. Очередь `CommandChannel` (приоритет `.status`) делает это сама: сводка ждёт, пока
+/// очередь опустеет, и пропадает, если пришла команда меню, — тогда хэш не запоминается
+/// и она уедет на следующем тике.
 final class StatusFeed {
     /// Опрос файлов.
     static let interval: TimeInterval = 60
-    /// Тишина после любой другой команды, пока сводку слать нельзя.
-    static let quietSeconds: TimeInterval = 2
     /// Не больше 6 КБ сырого markdown на проект.
     static let limit = 6 * 1024
+    /// Общий потолок команды — 32 КБ на все проекты вместе (критик п. 6 плана WF9).
+    static let totalLimit = 32 * 1024
     static let configFileName = "claude.json"
     static let configKey = "projectsRoot"
     static let defaultProjectsRoot = "~/_ElvisProjects"
@@ -32,9 +34,7 @@ final class StatusFeed {
     private var timer: Timer?
     /// Хэш последней посланной сводки: без изменений содержимого команда не повторяется.
     private var sentDigest: String?
-    private var sentAt: Date?
     private var scanning = false
-    private var retry: DispatchWorkItem?
 
     private(set) var sentCount = 0
     private(set) var projectCount = 0
@@ -56,8 +56,6 @@ final class StatusFeed {
     func stop() {
         timer?.invalidate()
         timer = nil
-        retry?.cancel()
-        retry = nil
     }
 
     var isRunning: Bool { timer != nil }
@@ -72,7 +70,7 @@ final class StatusFeed {
               isDirectory.boolValue else { return }
         scanning = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let projects = StatusFeed.scan(root: root)
+            let projects = StatusFeed.cap(StatusFeed.scan(root: root))
             DispatchQueue.main.async { self?.publish(projects) }
         }
     }
@@ -83,34 +81,14 @@ final class StatusFeed {
         guard !projects.isEmpty else { return }
         let digest = StatusFeed.digest(projects)
         guard digest != sentDigest else { return }
-        // Команду меню сводка перебивать не имеет права — ждём, пока пройдут две секунды.
-        let quiet = StatusFeed.quietSeconds - commands.secondsSinceOtherCommand
-        if quiet > 0 { return schedule(after: quiet) }
-        let at = Date()
-        guard commands.write(action: CommandChannel.statusAction,
-                             fields: StatusFeed.fields(projects)) else { return }
-        sentDigest = digest
-        sentAt = at
-        sentCount += 1
-        // Обратный случай: команда меню, посланная сразу после сводки, затрёт её в файле
-        // раньше, чем лоадер успеет прочитать. Проверяем через ту же паузу и шлём заново.
-        schedule(after: StatusFeed.quietSeconds)
-    }
-
-    private func schedule(after delay: TimeInterval) {
-        retry?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.recheck() }
-        retry = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
-    }
-
-    /// Сводку затёрли — забываем хэш и шлём её ещё раз.
-    private func recheck() {
-        retry = nil
-        if let sentAt = sentAt, let other = commands.lastOtherCommandAt, other > sentAt {
-            sentDigest = nil
+        // Очередь канала сама пропустит вперёд команды меню. Вытеснили сводку — хэш не
+        // запоминаем, и та же сводка уедет на следующем тике (через 60 с).
+        commands.write(action: CommandChannel.statusAction,
+                       fields: StatusFeed.fields(projects)) { [weak self] written in
+            guard written else { return }
+            self?.sentDigest = digest
+            self?.sentCount += 1
         }
-        refresh()
     }
 
     // MARK: - чистая часть (её же гоняют тесты)
@@ -141,6 +119,35 @@ final class StatusFeed {
             projects.append(StatusProject(name: name, text: slice(text)))
         }
         return projects
+    }
+
+    /// Общий потолок команды (критик п. 6 плана WF9): проекты кладутся по порядку, пока
+    /// команда целиком влезает в 32 КБ; хвост отбрасывается — полсводки в подсказке ни к чему.
+    /// Не влез даже первый проект (сводка-гигант у одного проекта) — режем его текст.
+    static func cap(_ projects: [StatusProject], limit: Int = totalLimit) -> [StatusProject] {
+        var kept: [StatusProject] = []
+        for project in projects {
+            guard payloadSize(kept + [project]) <= limit else { break }
+            kept.append(project)
+        }
+        guard kept.isEmpty, let first = projects.first else { return kept }
+        var text = first.text
+        while !text.isEmpty {
+            let size = payloadSize([StatusProject(name: first.name, text: text)])
+            guard size > limit else { break }
+            // Экранирование раздувает текст (перевод строки — шесть байт), поэтому режем
+            // не на разницу, а долей и повторяем; каждый проход строго короче предыдущего.
+            let budget = min(text.utf8.count - 1, Int(Double(text.utf8.count * limit) / Double(size)))
+            text = prefix(text, bytes: max(0, budget))
+        }
+        return text.isEmpty ? [] : [StatusProject(name: first.name, text: text)]
+    }
+
+    /// Размер команды с этими проектами в байтах; id и at — постоянной длины.
+    static func payloadSize(_ projects: [StatusProject]) -> Int {
+        CommandChannel.payload(action: CommandChannel.statusAction, fields: fields(projects),
+                               id: "0000000000000-0000", at: Date(timeIntervalSince1970: 0))
+            .utf8.count
     }
 
     /// Поля команды после id, action, at: scope, projects (контракт п. 2 плана WF9).

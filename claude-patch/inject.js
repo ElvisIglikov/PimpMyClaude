@@ -30,7 +30,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf9-a-1";
+  const VERSION = "wf9-a-2";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -649,9 +649,12 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // и главному окну (заголовок меняется с каждым чатом), и подчинённому («Open
   // in new window», заголовок постоянный). Сверх того у главного окна есть
   // ключ `main` — «тема этого окна вообще»: чат без своей записи (новый чат,
-  // окно после «Обкэшить») цвет не меняет, он берётся из `main`.
+  // окно после «Обкэшить») цвет не меняет: на смене заголовка окно применяет
+  // только запись нового чата, а нет её — не трогает ничего.
   // `w:<заголовок>` — записи подчинённых окон до WF9; читаются как `chat:` и при
-  // первой же записи переносятся (контракт WF9).
+  // первой же записи переносятся (контракт WF9). Ключ СЕССИИ, в отличие от
+  // ключей карты, всегда оконный (`main`/`w:<заголовок>`): сессия обязана
+  // пережить смену чата в окне (см. sessionKey).
   // Красим только окна Claude: claude.ai (главное) и about:blank («Open in new
   // window»). Артефакты, браузерная панель (data:) и file: — не наши.
   const themable = /^(https:\/\/claude\.ai\/|about:blank)/.test(location.href);
@@ -659,14 +662,32 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const THEME_CHAT_PREFIX = "chat:";
   const THEME_LEGACY_PREFIX = "w:";
   const isMainWindow = () => themable && location.href.includes("claude.ai");
+  // Заголовки-заглушки. Пока у разговора нет имени, окно зовётся «Claude» или
+  // «New chat», и такой заголовок носят РАЗНЫЕ чаты во всех окнах разом. Ключа
+  // чата у заглушки нет вовсе — ни на чтение, ни на запись: иначе выбор темы в
+  // безымянном чате красил бы каждый новый чат в каждом окне (разбор критика,
+  // п. 3). Тема такого окна живёт в `main` и в сессии.
+  const THEME_TITLE_STUBS = new Set(["claude", "new chat", "новый чат"]);
+  const windowTitle = () => (document.title || "").trim();
   // Заголовка ещё нет (about:blank сразу после открытия) — ключа чата нет, ждём
   // его (см. watchChatTitle).
   const chatKey = () => {
     if (!themable) return null;
-    const title = (document.title || "").trim();
-    return title ? `${THEME_CHAT_PREFIX}${title}` : null;
+    const title = windowTitle();
+    if (!title || THEME_TITLE_STUBS.has(title.toLowerCase())) return null;
+    return `${THEME_CHAT_PREFIX}${title}`;
   };
-  // Ключ сессии окна: чат, а у главного окна без заголовка — хотя бы `main`.
+  // Ключ СЕССИИ — по окну, а не по чату: главное окно `main`, подчинённое
+  // `w:<заголовок>` (его заголовок при жизни окна не меняется). Сессия обязана
+  // пережить смену чата: с ключом чата этот слой умирал бы на каждом ⌘N, а
+  // заведён он ровно ради «пока окно живо, оно того цвета, что выбрали».
+  const sessionKey = () => {
+    if (!themable) return null;
+    if (isMainWindow()) return THEME_MAIN_KEY;
+    const title = windowTitle();
+    return title ? `${THEME_LEGACY_PREFIX}${title}` : null;
+  };
+  // Ключ ХРАНИЛИЩА окна: чат, а у главного окна без имени чата — `main`.
   const themeKey = () => chatKey() ?? (isMainWindow() ? THEME_MAIN_KEY : null);
   const readThemeMap = () => {
     try {
@@ -721,16 +742,17 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     return legacy != null && map[legacy] !== undefined ? themeEntry(map[legacy]) : null;
   };
 
-  // Годится ли сессия этому окну. Ключ в ней свой (см. ниже), но форматов уже
-  // три: нынешний `chat:<заголовок>`, старый `w:<заголовок>` подчинённого окна и
-  // старый `main` главного. Два последних принимаем, чтобы окна Элвиса не
-  // моргнули чужим цветом на первом инжекте новой версии: `main` — только в
-  // главном окне и только пока в нём не выбрали тему заново (первый же выбор
-  // перепишет сессию на ключ чата).
+  // Годится ли сессия этому окну. Свой ключ у неё оконный (`main`/`w:<заголовок>`),
+  // но в живых окнах лежат записи и от wf9-a-1, где ключом был чат. Принимаем и
+  // их — пока окно в том же разговоре, — чтобы окна Элвиса не моргнули чужим
+  // цветом на первом инжекте новой версии. Перекрыть запись чата такая сессия
+  // больше не может: она стоит В ПОРЯДКЕ восстановления ниже (см. restoreTheme).
   const sameSessionKey = (stored) => {
     if (typeof stored !== "string" || stored === "") return false;
-    const key = themeKey();
-    if (key && (stored === key || stored === legacyKey(key))) return true;
+    const key = sessionKey();
+    if (key && stored === key) return true;
+    const chat = chatKey();
+    if (chat && stored === chat) return true;
     return stored === THEME_MAIN_KEY && isMainWindow();
   };
   // Запись привязана к ключу окна: окно «Open in new window» — попап, и по
@@ -751,7 +773,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const storeSessionLayers = layers => {
     try {
       // Слой, которого команда не касалась, остаётся в записи как был.
-      const record = { key: themeKey(), ...(readSessionEntry() ?? {}) };
+      const record = { key: sessionKey(), ...(readSessionEntry() ?? {}) };
       for (const layer of THEME_LAYERS) {
         if (layer in layers) record[layer] = layers[layer] ?? "none";
       }
@@ -838,14 +860,16 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     for (const layer of THEME_LAYERS) if (layer in layers) applyLayer(layer, layers[layer], source);
   };
 
-  // Порядок восстановления у КАЖДОГО слоя свой: своя сессия → запись чата
-  // (`chat:<заголовок>`) → у главного окна запись окна (`main`) → запись «для
-  // всех». Тема у окна своя, а шрифт общий — законная пара, поэтому слои и
-  // разведены. Явный сброс («none») сильнее следующего уровня и переживает
-  // перезапуск. Возвращает true, когда ждать больше нечего (ключ уже известен).
-  // clear=true — «конец предпросмотра» и «сменился чат»: слой, которого в
-  // хранилище нет, надо не оставить как есть (на экране сейчас чужие цвета), а
-  // снять.
+  // Порядок восстановления у КАЖДОГО слоя свой: запись чата (`chat:<заголовок>`)
+  // → своя сессия окна → у главного окна запись окна (`main`) → запись «для
+  // всех». Чат стоит ПЕРВЫМ нарочно: сессия у окна одна на все разговоры, и
+  // стоя выше она перекрывала бы цвет чата, в который окно только что вернулось
+  // (разбор критика, п. 2). Тема у окна своя, а шрифт общий — законная пара,
+  // поэтому слои и разведены. Явный сброс («none») сильнее следующего уровня и
+  // переживает перезапуск. Возвращает true, когда ждать больше нечего (ключ уже
+  // известен). clear=true — «конец предпросмотра»: слой, которого в хранилище
+  // нет, надо не оставить как есть (на экране сейчас примеренные цвета), а
+  // снять. Смена чата сюда не ходит — у неё свой путь, applyChatEntry.
   const restoreTheme = (clear, onlyLayers) => {
     if (!themable) return true;
     const session = readSessionEntry();
@@ -856,10 +880,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const own = isMainWindow() ? mapEntry(map, THEME_MAIN_KEY) : null;
     const all = themeEntry(map[THEME_ALL_KEY]);
     for (const layer of (onlyLayers ?? THEME_LAYERS)) {
-      const fromSession = entryLayer(session, layer);
-      if (fromSession !== undefined) { applyLayer(layer, fromSession, "session"); continue; }
       const fromChat = entryLayer(chat, layer);
       if (fromChat !== undefined) { applyLayer(layer, fromChat, "chat"); continue; }
+      const fromSession = entryLayer(session, layer);
+      if (fromSession !== undefined) { applyLayer(layer, fromSession, "session"); continue; }
       const fromWindow = entryLayer(own, layer);
       if (fromWindow !== undefined) { applyLayer(layer, fromWindow, "window"); continue; }
       const fromAll = entryLayer(all, layer);
@@ -890,7 +914,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
 
   // Куда пишется выбор «тема этого окна»: запись чата — её увидит любое окно с
   // этим разговором, — и у главного окна ещё и `main`, чтобы окно «в целом»
-  // помнило цвет и не теряло его на новом чате.
+  // помнило цвет и не теряло его на новом чате. У безымянного чата ключа нет
+  // (chatKey отдаёт null на заголовках-заглушках), и выбор ложится только в
+  // `main` да в сессию — иначе он достался бы всем безымянным чатам разом.
   const writeKeys = () => {
     const keys = [];
     const chat = chatKey();
@@ -908,8 +934,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     storeSessionLayers(layers);
   };
   // Выбор сделан до того, как у окна появился заголовок (about:blank сразу после
-  // открытия): записываем, когда ключ чата появится, но не дольше десяти секунд —
-  // дальше это уже не «тот самый выбор».
+  // открытия) или пока чат ещё безымянный: записываем, когда ключ чата появится,
+  // но не дольше десяти секунд — дальше это уже не «тот самый выбор». Заголовок-
+  // заглушка ключом не считается, и ждать под ней нечего — она не запись чата.
   const flushPendingLayers = () => {
     const layers = themeState.pending;
     if (!layers) return;
@@ -929,10 +956,22 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   track(stopChatWatch);
   // Смена чата в главном окне — это смена document.title, больше ничего: страница
   // не перезагружается, инжект заново не приходит. Поэтому за заголовком следим
-  // всё время жизни окна и на каждую смену перечитываем хранилище. У нового чата
-  // записи `chat:` нет — тема остаётся от `main`/«для всех», то есть «Новый чат»
-  // и «Обкэшить» цвет не меняют. В подчинённом окне тот же сторож ловит момент,
-  // когда заголовок наконец появился.
+  // всё время жизни окна и на каждую смену перечитываем хранилище. В подчинённом
+  // окне тот же сторож ловит момент, когда заголовок наконец появился.
+  //
+  // Применяем ТОЛЬКО то, что записано у нового чата, и только те слои, которые в
+  // записи есть. Записи нет — на экране не трогаем ничего: ⌘N и «Обкэшить»
+  // открывают чат без записи, и окно обязано остаться того же цвета (слово
+  // Элвиса; разбор критика, п. 3). Полное восстановление тут не годится — оно
+  // перекрасило бы окно из `main`/«для всех» на каждом новом чате.
+  const applyChatEntry = () => {
+    const entry = mapEntry(readThemeMap(), chatKey());
+    if (!entry) return;
+    for (const layer of THEME_LAYERS) {
+      const value = entryLayer(entry, layer);
+      if (value !== undefined) applyLayer(layer, value, "chat");
+    }
+  };
   const syncChatTheme = () => {
     if (!state.alive || !themable) return;
     const key = chatKey();
@@ -943,7 +982,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     flushPendingLayers();
     // Пока идёт предпросмотр, на экране намеренно не то, что в хранилище.
     if (themeState.previewing) return;
-    try { restoreTheme(true); } catch {}
+    try { applyChatEntry(); } catch {}
   };
   const watchChatTitle = () => {
     stopChatWatch();
@@ -1112,6 +1151,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Высота линии и высота зоны наведения над ней.
   const PROGRESS_BAR_HEIGHT = 2;
   const PROGRESS_HOVER_ZONE = 10;
+  // Уже этого якорь считается вырожденным: React как раз пересобирает низ окна,
+  // и рамка на кадр съезжает в ноль. Тогда полоса садится на запасной якорь.
+  const PROGRESS_MIN_WIDTH = 80;
 
   // >>> разбор строки состояния (кусок вырезает скретч-тест по этим маркерам)
   // Значки состояния из шаблона строки. Порядок — старшинство: 🛑 сильнее ✋,
@@ -1192,6 +1234,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // состояния этого чата.
   const STATUS_MAX_PROJECTS = 24;
   const STATUS_MAX_TEXT = 8000;
+  // Общий потолок на команду со стороны страницы: приложение своё режет само, но
+  // верить ему на слово нельзя — разбор сводки идёт в главном потоке окна.
+  const STATUS_MAX_TOTAL = 32 * 1024;
   const STATUS_MAX_LINES = 12;
   const STATUS_LINE_MAX = 120;
   // Блок воркфлоу в сводке начинается с номера-клавиши: «1️⃣ Workflow ✅ готово».
@@ -1256,10 +1301,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const list = Array.isArray(detail?.projects) ? detail.projects : null;
     if (!list) return false;
     const next = new Map();
+    let budget = STATUS_MAX_TOTAL;
     for (const item of list.slice(0, STATUS_MAX_PROJECTS)) {
       const name = typeof item?.name === "string" ? item.name.trim().slice(0, 80) : "";
       const text = typeof item?.text === "string" ? item.text.slice(0, STATUS_MAX_TEXT) : "";
       if (!name || !text) continue;
+      // Потолок выбран — остальные проекты отбрасываем целиком: половина сводки
+      // в подсказке хуже, чем её отсутствие.
+      budget -= name.length + text.length;
+      if (budget < 0) break;
       next.set(name, statusLines(text));
     }
     statusFeed.projects = next;
@@ -1274,6 +1324,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // Найденная рамка поля, нарисованные доли сегментов, место линии на экране,
     // наведение и последний текст подсказки.
     frame: null, shell: null, segments: [], box: null, hovering: false, tipText: "", tipDark: null,
+    // На чём сейчас сидит линия: "рамка" или запасное "строка инструментов".
+    anchor: null,
   };
 
   // Полосу и подсказку сносим по id, как ручку и стили: упавшая на середине
@@ -1483,6 +1535,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
 
   const progressHide = () => {
     progressState.box = null;
+    progressState.anchor = null;
     progressTipHide();
     if (progressBar.style.display !== "none") progressBar.style.setProperty("display", "none");
   };
@@ -1492,26 +1545,37 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const progressApply = () => {
     const block = state.composerBlock?.isConnected ? state.composerBlock : null;
     if (!block) { progressState.reason = "нет блока композера"; progressHide(); return; }
+    // Якорь основной — нижняя кромка рамки поля. Запасной — верх строки
+    // инструментов (там полоса и стояла до WF9): рамки может не оказаться вовсе
+    // (чужая разметка, Claude Code) или она вырождается на кадр, пока React
+    // пересобирает низ окна. Лучше на пару точек ниже, чем пропасть.
     const frame = progressFrame(block);
-    if (!frame) { progressState.reason = "нет рамки поля"; progressHide(); return; }
+    const frameRect = frame?.isConnected ? frame.getBoundingClientRect() : null;
+    const onFrame = frameRect != null && frameRect.width >= PROGRESS_MIN_WIDTH;
+    const rowRect = onFrame || !state.modelRow?.isConnected
+      ? null
+      : state.modelRow.getBoundingClientRect();
+    const rect = onFrame ? frameRect : rowRect;
+    if (!rect) { progressState.reason = "нет рамки поля"; progressHide(); return; }
     const info = progressState.info;
     if (!info) { progressState.reason = "нет строки состояния"; progressHide(); return; }
-    const rect = frame.getBoundingClientRect();
-    if (rect.width < 80 || rect.bottom <= 0 || rect.top >= innerHeight) {
+    if (rect.width < PROGRESS_MIN_WIDTH || rect.bottom <= 0 || rect.top >= innerHeight) {
       progressState.reason = "рамка поля вне окна";
       progressHide();
       return;
     }
     const left = Math.round(rect.left);
     const width = Math.round(rect.width);
-    // Полоса сидит верхом на кромке: половина линии выше низа рамки, половина ниже.
-    const top = Math.round(rect.bottom) - 1;
+    // Полоса сидит верхом на кромке: половина линии выше низа рамки, половина
+    // ниже. На запасном якоре кромка — верх строки инструментов.
+    const top = Math.round(onFrame ? rect.bottom : rect.top) - 1;
     if (progressCovered(top, left, left + width)) {
       progressState.reason = "полосу закрыло меню";
       progressHide();
       return;
     }
     progressState.reason = null;
+    progressState.anchor = onFrame ? "рамка" : "строка инструментов";
     const shares = progressShares(info, width);
     progressState.segments = shares;
     progressBuild(shares.length);
@@ -2538,10 +2602,14 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       selection.addRange(range);
     } catch {}
   };
-  // Приметный кусок вставки: по нему видно, что текст ДЕЙСТВИТЕЛЬНО попал в
-  // поле. Проверять «поле не пусто» мало — при непустом черновике это правда и
-  // до вставки.
+  // Приметный кусок вставки: по нему видно, что в поле попал ИМЕННО наш текст.
+  // Нужен он только при вставке ПЕРЕД черновиком — там поле непусто и до
+  // вставки, и «поле не пусто» ничего не доказывает. В пустое поле критерий
+  // прежний: поле стало непустым. Требовать примету и там нельзя — ProseMirror
+  // переписывает вставленное по-своему (списки, кавычки, разметка), примета не
+  // находится, и второй путь клал бы текст ВТОРОЙ раз: так дублился «Обкэшить».
   const insertProbe = (text) => String(text).replace(/\s+/g, " ").trim().slice(0, 40);
+  const insertLength = (editor) => rawText(editor).replace(/\s+/g, " ").length;
   const insertLanded = (editor, probe, before) => {
     const after = rawText(editor).replace(/\s+/g, " ");
     return after.length > before && (probe === "" || after.includes(probe));
@@ -2551,12 +2619,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // разных сборках бывает и так), досылаем то же самое событием paste с
   // DataTransfer. Отправку не трогаем ни в одном из путей: Enter не шлём.
   const insertIntoEditor = (editor, text, atStart) => {
-    const probe = insertProbe(text);
-    const before = rawText(editor).replace(/\s+/g, " ").length;
+    const probe = atStart ? insertProbe(text) : "";
+    const before = insertLength(editor);
     try { editor.focus(); } catch {}
     if (atStart) caretToStart(editor);
     try { document.execCommand("insertText", false, text); } catch {}
     if (insertLanded(editor, probe, before)) return true;
+    // Поле выросло, а примета не нашлась: текст всё-таки лёг, просто редактор
+    // переписал его. Второй путь поверх — это ровно дубль, поэтому его нет.
+    if (insertLength(editor) > before) return true;
     // ProseMirror не принял execCommand — досылаем то же самое событием paste.
     try { editor.focus(); } catch {}
     if (atStart) caretToStart(editor);
@@ -2631,6 +2702,14 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // Свёрнутое поле сначала возвращаем: вставлять в невидимое поле — значит
     // потерять текст из виду.
     if (state.stage === STAGE_COLLAPSED) setStage(STAGE_NORMAL);
+    // Повторный клик (Элвис нажал дважды или команда доехала второй раз): первая
+    // строка запуска уже стоит в поле — второй копии там делать нечего.
+    const head = text.split("\n").find(line => line.trim() !== "")?.trim() ?? "";
+    if (head && rawText(editor).replace(/\s+/g, " ").includes(head.replace(/\s+/g, " "))) {
+      state.workflowRuns += 1;
+      state.workflowResult = "уже вставлено";
+      return true;
+    }
     const draft = editorText(editor) !== "";
     const ok = insertIntoEditor(editor, draft ? `${text}\n\n` : text, draft);
     state.workflowRuns += 1;
@@ -3007,6 +3086,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         total: progressState.info?.total ?? null,
         state: progressState.info?.state ?? null,
         segments: progressState.segments.slice(),
+        // На чём сидит линия: "рамка" или запасное "строка инструментов".
+        anchor: progressState.anchor,
         reason: progressState.reason,
       },
       // Сводка проектов из команды status: имя проекта, взятое из строки
@@ -3021,8 +3102,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       // Кнопка «Workflow»: вставок и чем кончилась последняя.
       workflow: { runs: state.workflowRuns, result: state.workflowResult },
       // Ключ чата, под которым окно хранит тему (раздел 2а): у главного окна он
-      // меняется вместе с разговором.
+      // меняется вместе с разговором, а у безымянного чата его нет вовсе.
       chatKey: chatKey(),
+      // Ключ сессии — по ОКНУ: `main` у главного, `w:<заголовок>` у подчинённого.
+      sessionKey: sessionKey(),
       // Тема и шрифт окна: что применено, под каким ключом хранится и откуда
       // взялось (session — своя сессия окна, window — карта по ключу, all —
       // запись «для всех»). У слоёв источники независимы.
