@@ -31,7 +31,10 @@
 - проверка · 2 агента · Opus max
 
 4️⃣ Workflow ⬜ запланирован
-- MyClaude.app для команды: установщик и меню без Hammerspoon, подпись Developer ID
-- проверка · 🔴 **Fable max**
+- PimpMyClaude.app для команды: установщик и меню без Hammerspoon, подпись Developer ID
+- план: docs/plan-wf4-2026-09-03.md, ждёт критика и «запускай» в новом чате
+- кодинг · Opus max
+- проверка · Fable xhigh, Opus max
 
 Сейчас: ничего не идёт.
+Ждёт Элвиса: открыть новый чат в папке PimpMyClaude и сказать «читай docs/plan-wf4-2026-09-03.md, зови критика».
