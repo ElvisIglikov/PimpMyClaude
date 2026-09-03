@@ -25,7 +25,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf5-a-5";
+  const VERSION = "wf5-a-6";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -465,6 +465,67 @@ html, body, #root, .dframe-root, .dframe-content, [class*="dframe-content"] { ba
 .dframe-sidebar, [class*="dframe-sidebar"], [data-testid*="sidebar"] { background-color: ${sidebar} !important; background-image: none !important; }
 ::selection { color: ${background} !important; background: ${accent} !important; }
 input, textarea, select, [contenteditable="true"] { caret-color: ${accent} !important; }
+${epitaxyCss({ type: theme.type, background, foreground, accent, panel, muted })}`;
+  };
+
+  // Окна Claude Code (Epitaxy) держат свою палитру на .epitaxy-root: серая шкала
+  // --_gray-*, альфа-шкала --t*, ступени --z*, поверхности поля ввода
+  // (--surface-prompt-*, --prompt-*). Без этого блока поле ввода и панели Code
+  // остаются серыми при любой теме. Порт epitaxyThemeCss из ElvisOS, без шрифтов.
+  const EPITAXY_GRAY_LEVELS = [0, 10, 30, 60, 90, 100, 150, 300, 450, 500, 600, 650, 700, 750, 800, 830, 860, 890, 900];
+  const EPITAXY_T_ALPHA = {
+    light: [0, 0.04, 0.06, 0.1, 0.16, 0.25, 0.5, 0.8, 0.9, 1],
+    dark: [0, 0.04, 0.08, 0.12, 0.16, 0.25, 0.48, 0.7, 0.8, 1],
+  };
+  const epitaxyCss = ({ type, background, foreground, accent, panel, muted }) => {
+    const light = type === "light";
+    const lightEnd = light ? background : foreground;
+    const darkEnd = light ? foreground : background;
+    const grayScale = EPITAXY_GRAY_LEVELS
+      .map(level => `  --_gray-${level}: ${hslTriple(mixHex(lightEnd, darkEnd, level / 900))} !important;`).join("\n");
+    const ink = hslTriple(foreground);
+    const tScale = EPITAXY_T_ALPHA[light ? "light" : "dark"]
+      .map((alpha, index) => `  --t${index}: hsl(${ink} / ${alpha}) !important;`).join("\n");
+    const zColors = [
+      background, mixHex(background, panel, 0.55), panel, mixHex(panel, foreground, 0.04),
+      mixHex(panel, foreground, 0.08), mixHex(panel, foreground, 0.13), mixHex(foreground, background, light ? 0.45 : 0.3),
+    ];
+    const zScale = zColors.map((color, index) => `  --z${index}: ${color} !important;`).join("\n");
+    const promptBorder = mixHex(accent, background, 0.55);
+    const promptFocusBorder = mixHex(accent, background, 0.32);
+    return `/* Claude Code · Epitaxy */
+.epitaxy-root, [data-mode="dark"] .epitaxy-root, [data-mode="light"] .epitaxy-root {
+${grayScale}
+${tScale}
+${zScale}
+  --_brand-clay: ${hslTriple(accent)} !important;
+  --accent: ${accent} !important;
+  --accent-hover: ${mixHex(accent, foreground, 0.14)} !important;
+  --accent-brand: ${accent} !important;
+  --accent-20-brightness: ${mixHex(accent, background, 0.72)} !important;
+  --surface-primary: ${background} !important;
+  --surface-primary-elevated: ${background}f0 !important;
+  --surface-hud: ${background}f2 !important;
+  --surface-panel: ${panel} !important;
+  --surface-panel-elevated: ${mixHex(panel, foreground, 0.04)} !important;
+  --surface-popover: ${mixHex(panel, foreground, 0.03)} !important;
+  --surface-popover-elevated: ${mixHex(panel, foreground, 0.06)} !important;
+  --surface-toast: ${mixHex(panel, foreground, 0.08)} !important;
+  --surface-prompt-blur: ${panel} !important;
+  --surface-prompt-focus-hover: ${mixHex(panel, foreground, 0.05)} !important;
+  --prompt-compact-bg: ${panel} !important;
+  --prompt-compact-bg-focus: ${mixHex(panel, foreground, 0.05)} !important;
+  --prompt-blur-inner-color: ${promptBorder} !important;
+  --prompt-blur-outer-color: ${promptBorder} !important;
+  --prompt-focus-inner-color: ${promptFocusBorder} !important;
+  --prompt-focus-outer-color: ${promptFocusBorder} !important;
+  --fill-primary-hover: ${mixHex(foreground, background, 0.12)} !important;
+  --text-muted: hsl(${hslTriple(muted)} / 0.62) !important;
+  --ui-tooltip-fill: ${mixHex(panel, foreground, 0.08)} !important;
+  --ui-tooltip-text: ${foreground} !important;
+}
+.epitaxy-root ::placeholder { color: ${muted} !important; -webkit-text-fill-color: ${muted} !important; opacity: 0.78 !important; }
+.epitaxy-root [data-theme="claude"] { --accent-brand: ${hslTriple(accent)} !important; }
 `;
   };
 
