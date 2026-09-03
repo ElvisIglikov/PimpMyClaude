@@ -167,10 +167,12 @@ final class ClaudeAXTests: XCTestCase {
 
     private func themeBody(theme: Layer<Theme>, font: Layer<Font>,
                            scope: String = MenuModel.themeScopeWindow, title: String = "Vkusnoff",
+                           preview: Bool? = nil,
                            id: String = "1756900000123-0042",
                            at: TimeInterval = 1_756_900_000) -> String {
         CommandChannel.payload(action: "theme",
                                fields: ClaudeActions.themeFields(scope: scope, title: title,
+                                                                 preview: preview,
                                                                  theme: theme, font: font),
                                id: id, at: Date(timeIntervalSince1970: at))
     }
@@ -232,6 +234,36 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(CommandChannel.payload(action: "scroll", extra: [:], id: "1-0001",
                                               at: Date(timeIntervalSince1970: 0)),
                        "{\"id\":\"1-0001\",\"action\":\"scroll\",\"at\":\"1970-01-01T00:00:00Z\"}")
+    }
+
+    func testPreviewPayloadMatchesContract() throws {
+        // Побайтно, контракт п. 1 плана WF8: preview стоит между title и слоями,
+        // в примерке слой ровно один, «конец предпросмотра» — без слоёв вовсе.
+        let head = "{\"id\":\"1756900000123-0042\",\"action\":\"theme\",\"at\":\"2025-09-03T11:46:40Z\","
+            + "\"scope\":\"window\",\"title\":\"Vkusnoff\""
+        let violet = catalog()[0]
+
+        // 1. Примерка темы — тело закрепляющей команды плюс "preview":true перед слоем.
+        let preview = themeBody(theme: .set(violet), font: .keep, preview: true)
+        XCTAssertEqual(preview, themeBody(theme: .set(violet), font: .keep)
+            .replacingOccurrences(of: head, with: head + ",\"preview\":true"))
+        XCTAssertTrue(preview.hasPrefix(head + ",\"preview\":true,\"theme\":{\"id\":\"violet\","), preview)
+
+        // 2. Примерка сброса шрифта («Системный») — слой уходит как null.
+        XCTAssertEqual(themeBody(theme: .keep, font: .reset, preview: true),
+                       head + ",\"preview\":true,\"font\":null}")
+
+        // 3. Конец предпросмотра — preview: false и ни одного слоя.
+        let end = themeBody(theme: .keep, font: .keep, preview: false)
+        XCTAssertEqual(end, head + ",\"preview\":false}")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(end.utf8)) as? [String: Any])
+        XCTAssertEqual(json["preview"] as? Bool, false)
+        XCTAssertEqual(json["scope"] as? String, "window")
+        XCTAssertNil(json["theme"])
+        XCTAssertNil(json["font"])
+
+        // Закрепляющая команда поля preview не носит вовсе.
+        XCTAssertFalse(themeBody(theme: .set(violet), font: .keep).contains("\"preview\""))
     }
 
     func testCommandValueWritesBooleans() {
@@ -361,6 +393,49 @@ final class ClaudeAXTests: XCTestCase {
 
         // Каталога нет — меню прежнее, из семи пунктов.
         XCTAssertTrue(MinimizeMenu.build(config: MinimizeMenu.MenuConfig()).items.allSatisfy { !$0.hasSubmenu })
+    }
+
+    func testHoverPreviewsThemeAndFont() throws {
+        // План WF8 п. 2: наведение примеряет слой — и только в списке окна.
+        var previews: [String] = []
+        var applied = 0
+        var config = menuConfig()
+        config.previewTheme = { previews.append("тема:" + ($0?.id ?? "—")) }
+        config.previewFont = { previews.append("шрифт:" + ($0?.id ?? "—")) }
+        config.previewMyTheme = { previews.append("тема:" + $0.id) }
+        config.apply = { _, _, _ in applied += 1 }
+        config.applyMyTheme = { _, _ in applied += 1 }
+        let menu = MinimizeMenu.build(config: config)
+        let theme = try XCTUnwrap(menu.items.first { $0.title == MenuModel.themeTitle }?.submenu)
+        let font = try XCTUnwrap(menu.items.first { $0.title == MenuModel.fontTitle }?.submenu)
+        let themeAll = try XCTUnwrap(theme.items.first { $0.title == MenuModel.allWindowsTitle }?.submenu)
+
+        // Делегат стоит на списках окна и не стоит на «Всем окнам ▸».
+        XCTAssertTrue(theme.delegate === PreviewMenuDelegate.shared)
+        XCTAssertTrue(font.delegate === PreviewMenuDelegate.shared)
+        XCTAssertNil(themeAll.delegate)
+
+        highlight(theme, theme.items.first { $0.title == "Фиолетовая" })
+        highlight(theme, theme.items.first { $0.title == "Моя тёплая" })
+        highlight(theme, theme.items.first { $0.title == MenuModel.themeResetTitle })
+        highlight(font, font.items.first { $0.title == "SF Mono" })
+        highlight(font, font.items.first { $0.title == MenuModel.fontResetTitle })
+        XCTAssertEqual(previews, ["тема:violet", "тема:user-1756900000000", "тема:—",
+                                  "шрифт:sf-mono", "шрифт:—"])
+
+        // Заголовок секции, разделитель, «Всем окнам ▸», «Сохранить…», пустое наведение
+        // и пункты внутри «Всем окнам» примерок не делают.
+        previews = []
+        highlight(theme, theme.items.first { $0.title == MenuModel.darkThemesHeader })
+        highlight(theme, theme.items.first { $0.isSeparatorItem })
+        highlight(theme, theme.items.first { $0.title == MenuModel.allWindowsTitle })
+        highlight(theme, theme.items.first { $0.title == MenuModel.saveMyThemeTitle })
+        highlight(theme, theme.items.first { $0.title == MenuModel.deleteMyThemeTitle })
+        highlight(theme, nil)
+        for item in themeAll.items { PreviewMenuDelegate.shared.menu(themeAll, willHighlight: item) }
+        XCTAssertEqual(previews, [])
+        // И ничего не закрепляют.
+        XCTAssertEqual(applied, 0)
     }
 
     func testThemeStoreRemembersChoicePerWindow() {
@@ -501,6 +576,14 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(list.count, MyThemesStore.limit)
         XCTAssertEqual(list.first?.id, "user-5")
         XCTAssertEqual(list.last?.id, "user-24")
+    }
+
+    /// Наведение на пункт без popUp: так его зовёт AppKit — через делегата подменю.
+    private func highlight(_ menu: NSMenu, _ item: NSMenuItem?) {
+        guard let delegate = menu.delegate else {
+            return XCTFail("у подменю «\(menu.title)» нет делегата")
+        }
+        delegate.menu?(menu, willHighlight: item)
     }
 
     /// Нажатие на пункт меню без popUp: BlockMenuItem держит замыкание на себе.

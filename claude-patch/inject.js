@@ -26,7 +26,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf7-a-3";
+  const VERSION = "wf8-a-2";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -704,7 +704,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     } catch {}
   };
 
-  const themeState = { theme: null, source: null, font: null, fontSource: null, titleTimer: 0, titleUntil: 0 };
+  // previewing — окно сейчас показывает предпросмотр (мышь ведут по подменю), и
+  // в хранилище лежит не то, что на экране: см. runThemeCommand.
+  const themeState = { theme: null, source: null, font: null, fontSource: null, previewing: false, titleTimer: 0, titleUntil: 0 };
   // Тема — конструируемая таблица стилей (adoptedStyleSheets), а не <style> в
   // <head>: Claude зеркалит <style> из главного окна во все попапы «Open in new
   // window» (проверено живьём 03.09: тема главного окна появилась во всех
@@ -785,21 +787,24 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // окна → запись «для всех». Тема у окна своя, а шрифт общий — законная пара,
   // поэтому слои и разведены. Явный сброс («none») сильнее записи «для всех» и
   // переживает перезапуск. Возвращает true, когда ждать больше нечего (ключ окна
-  // уже известен).
-  const restoreTheme = () => {
+  // уже известен). clear=true — «конец предпросмотра»: слой, которого в
+  // хранилище нет, надо не оставить как есть (на экране сейчас предпросмотр), а
+  // снять — до наведения мышью этого слоя в окне тоже не было.
+  const restoreTheme = (clear, onlyLayers) => {
     if (!themable) return true;
     const session = readSessionEntry();
     const map = readThemeMap();
     const key = themeKey();
     const own = key ? themeEntry(map[key]) : null;
     const all = themeEntry(map[THEME_ALL_KEY]);
-    for (const layer of THEME_LAYERS) {
+    for (const layer of (onlyLayers ?? THEME_LAYERS)) {
       const fromSession = entryLayer(session, layer);
       if (fromSession !== undefined) { applyLayer(layer, fromSession, "session"); continue; }
       const fromWindow = entryLayer(own, layer);
       if (fromWindow !== undefined) { applyLayer(layer, fromWindow, "window"); continue; }
       const fromAll = entryLayer(all, layer);
       if (fromAll !== undefined) applyLayer(layer, fromAll, "all");
+      else if (clear) applyLayer(layer, null, null);
     }
     return key != null;
   };
@@ -856,16 +861,49 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     }, THEME_TITLE_TICK_MS);
   };
 
-  // Команда меню: {action:"theme", scope:"window"|"all", title, theme|null, font|null}.
+  // Окно адресуют заголовком, как в «Обкэшить»; заголовка нет — берёт окно под
+  // фокусом. Подчинённое окно (about:blank) себя в фокусе может и не считать.
+  const addressed = detail => {
+    const title = typeof detail.title === "string" ? detail.title.trim() : "";
+    return title ? (document.title || "").trim() === title : document.hasFocus();
+  };
+
+  // Команда меню: {action:"theme", scope:"window"|"all", title, preview, theme|null, font|null}.
   // Поля слоя нет — слой не трогаем, null — сброс слоя, объект — применить.
   // «Для всех» перекрывает СВОЙ слой у всех окон и чужой не трогает: «шрифт
   // всем» не снимает тем у окон, «тема всем» не снимает их шрифтов.
   // «Для окна» адресуется заголовком, как «Обкэшить».
+  // Примерка была, а закрепили не все слои: остальные — назад из хранилища.
+  const endPreviewExcept = committedLayers => {
+    if (!themeState.previewing) return;
+    themeState.previewing = false;
+    const rest = THEME_LAYERS.filter(layer => !committedLayers.includes(layer));
+    if (rest.length) restoreTheme(true, rest);
+  };
+
   const runThemeCommand = detail => {
     if (!themable || !detail || typeof detail !== "object") return false;
     const layers = {};
     for (const layer of THEME_LAYERS) {
       if (layer in detail) layers[layer] = LAYER_NORMALIZE[layer](detail[layer]);
+    }
+    // Предпросмотр (мышь ведут по подменю тем и шрифтов): слои из команды идут
+    // ТОЛЬКО в таблицы стилей, хранилища они не касаются вовсе — иначе проход
+    // по списку записал бы в карту каждую тему, мимо которой проехала мышь.
+    // Предпросмотр всегда адресован одному окну, scope тут не при чём.
+    if (detail.preview === true) {
+      if (Object.keys(layers).length === 0 || !addressed(detail)) return false;
+      applyLayers(layers, "preview");
+      themeState.previewing = true;
+      return true;
+    }
+    // Конец предпросмотра: меню закрылось, ничего не выбрав. Оба слоя
+    // возвращаем из хранилища, а слой, записи о котором нигде нет, снимаем.
+    if (detail.preview === false && Object.keys(layers).length === 0) {
+      if (!addressed(detail)) return false;
+      restoreTheme(true);
+      themeState.previewing = false;
+      return true;
     }
     if (Object.keys(layers).length === 0) return false;
     if (detail.scope === "all") {
@@ -885,12 +923,14 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       if (Object.keys(all).length) next[THEME_ALL_KEY] = all;
       writeThemeMap(next);
       storeSessionLayers(layers);
+      // Закрепление гасит предпросмотр: слой, которого в команде нет, возвращаем из
+      // хранилища (примерили тему, закрепили шрифт — тема не должна зависнуть).
+      endPreviewExcept(Object.keys(layers));
       applyLayers(layers, "all");
       return true;
     }
-    const title = typeof detail.title === "string" ? detail.title.trim() : "";
-    const mine = title ? (document.title || "").trim() === title : document.hasFocus();
-    if (!mine) return false;
+    if (!addressed(detail)) return false;
+    endPreviewExcept(Object.keys(layers));
     const key = themeKey();
     if (key) {
       const map = readThemeMap();
@@ -2325,6 +2365,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // «Тема» — тоже до проверки поля ввода: красить окно можно и пока composer
     // ещё не нашёлся, а окно с scope:"all" красится вообще любое.
     if (action === "theme") { try { runThemeCommand(detail); } catch {} return; }
+    // Любая другая команда из меню закрывает примерку: меню ушло, выбора темы не было.
+    if (themeState.previewing) { try { restoreTheme(true); themeState.previewing = false; } catch {} }
     if (!state.editor?.isConnected) return;
     // «Свернуть»/«Развернуть» — тоже на все окна (ElvisOS: «убирает поле ввода во
     // всех окнах»; слово Элвиса 03.09 13:30). Только «Обкэшить» адресована окну в фокусе.
@@ -2496,6 +2538,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         mono: themeState.font?.mono ?? false,
         source: themeState.fontSource,
       },
+      // true — в окне сейчас предпросмотр (мышь в подменю), и хранилище про эти
+      // цвета ничего не знает: см. runThemeCommand.
+      preview: themeState.previewing,
       // Сырая запись карты по ключу окна — на гейте видно, что там лежит на
       // самом деле (в том числе запись старого формата).
       raw: (() => { const key = themeKey(); return key ? readThemeMap()[key] ?? null : null; })(),

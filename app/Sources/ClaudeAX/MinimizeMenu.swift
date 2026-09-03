@@ -132,18 +132,39 @@ final class MinimizeMenu: NSObject {
         config.allThemeID = actions.themeStore.allThemeID
         config.windowFontID = actions.themeStore.windowFontID(title: title)
         config.allFontID = actions.themeStore.allFontID
+        // Была ли примерка и закрепили ли её выбором — оба флага живут до конца popUp
+        // (замыкания меню срабатывают внутри его цикла).
+        var previewed = false
+        var committed = false
         // Пункт срабатывает внутри цикла popUp: откладываем на ход вперёд, чтобы
         // сначала закрылось меню и вернулся фокус окну Claude.
         config.perform = { [weak self] command in
+            committed = true
             DispatchQueue.main.async { self?.actions.perform(command, on: window) }
         }
         config.apply = { [weak self] scope, theme, font in
+            committed = true
             DispatchQueue.main.async {
                 self?.actions.applyTheme(scope: scope, theme: theme, font: font, window: window)
             }
         }
         config.applyMyTheme = { [weak self] scope, my in
+            committed = true
             DispatchQueue.main.async { self?.actions.apply(myTheme: my, scope: scope, window: window) }
+        }
+        // Примерка уходит в страницу сразу, без отсрочки: пока Элвис ведёт мышью, окно должно
+        // перекрашиваться под курсором. Хранилища примерка не касается — ни на странице, ни здесь.
+        config.previewTheme = { [weak self] theme in
+            guard let self = self, self.actions.previewTheme(theme, window: window) else { return }
+            previewed = true
+        }
+        config.previewMyTheme = { [weak self] my in
+            guard let self = self, self.actions.preview(myTheme: my, window: window) else { return }
+            previewed = true
+        }
+        config.previewFont = { [weak self] font in
+            guard let self = self, self.actions.previewFont(font, window: window) else { return }
+            previewed = true
         }
         config.saveMyTheme = { [weak self] in
             DispatchQueue.main.async { self?.saveMyTheme(window: window) }
@@ -163,6 +184,11 @@ final class MinimizeMenu: NSObject {
         let origin = Screens.flip(point: CGPoint(x: rect.minX, y: rect.maxY + 2))
         menu.popUp(positioning: nil, at: origin, in: nil)
         menuOpen = false
+        // Ушли из меню, ничего не выбрав, — вернуть окну сохранённое. Синхронно, сразу после
+        // popUp: замыкания выбора отложены на ход вперёд, и «конец предпросмотра», посланный
+        // после них, перекрыл бы закрепление — лоадер читает command.json раз в 500 мс и
+        // берёт последнюю команду.
+        if previewed && !committed { actions.endPreview(window: window) }
         // Меню закрылось — фокус обратно окну Claude (решение 7 плана).
         app.focus(window: window)
     }
@@ -200,6 +226,11 @@ final class MinimizeMenu: NSObject {
         /// scope, слой темы, слой шрифта — одна команда на оба слоя (контракт п. 5).
         var apply: (String, Layer<Theme>, Layer<Font>) -> Void = { _, _, _ in }
         var applyMyTheme: (String, MyTheme) -> Void = { _, _ in }
+        /// Наведение на пункт списка окна: примерить слой, ничего не запоминая (план WF8 п. 2).
+        /// `nil` — примерка сброса слоя («Как у Claude» / «Системный»).
+        var previewTheme: (Theme?) -> Void = { _ in }
+        var previewMyTheme: (MyTheme) -> Void = { _ in }
+        var previewFont: (Font?) -> Void = { _ in }
         var saveMyTheme: () -> Void = {}
         var deleteMyTheme: (MyTheme) -> Void = { _ in }
     }
@@ -248,12 +279,17 @@ final class MinimizeMenu: NSObject {
         let selected = all ? config.allThemeID : config.windowThemeID
         let submenu = NSMenu(title: all ? MenuModel.allWindowsTitle : MenuModel.themeTitle)
         submenu.autoenablesItems = false
+        // Предпросмотр по наведению — только в списке окна: красить все окна на наведении
+        // шумно (план WF8 п. 2), поэтому у «Всем окнам ▸» ни делегата, ни примерок у пунктов.
+        if !all { submenu.delegate = PreviewMenuDelegate.shared }
         if all { submenu.addItem(header(MenuModel.allWindowsHeader)) }
 
         if !config.myThemes.isEmpty {
             submenu.addItem(header(MenuModel.myThemesHeader))
             for my in config.myThemes {
                 let item = BlockMenuItem(title: my.name) { config.applyMyTheme(scope, my) }
+                // Примеряем только тему своей темы: в команде предпросмотра один слой.
+                item.preview = all ? nil : { config.previewMyTheme(my) }
                 item.image = swatch(palette: my.palette)
                 item.state = my.id == selected ? .on : .off
                 submenu.addItem(item)
@@ -267,6 +303,7 @@ final class MinimizeMenu: NSObject {
             submenu.addItem(header(title))
             for theme in themes {
                 let item = BlockMenuItem(title: theme.name) { config.apply(scope, .set(theme), .keep) }
+                item.preview = all ? nil : { config.previewTheme(theme) }
                 item.image = swatch(palette: theme.palette)
                 item.state = theme.id == selected ? .on : .off
                 submenu.addItem(item)
@@ -276,6 +313,7 @@ final class MinimizeMenu: NSObject {
         submenu.addItem(.separator())
         // Сбрасываем только свой слой: шрифт окна тема «Как у Claude» не трогает.
         let reset = BlockMenuItem(title: MenuModel.themeResetTitle) { config.apply(scope, .reset, .keep) }
+        reset.preview = all ? nil : { config.previewTheme(nil) }
         // У окна память по заголовку неточна (главное окно меняет заголовок с чатом):
         // без записи галку не ставим никуда, чтобы не врать «Как у Claude».
         reset.state = (all && selected == nil) ? .on : .off
@@ -298,6 +336,7 @@ final class MinimizeMenu: NSObject {
         let selected = all ? config.allFontID : config.windowFontID
         let submenu = NSMenu(title: all ? MenuModel.allWindowsTitle : MenuModel.fontTitle)
         submenu.autoenablesItems = false
+        if !all { submenu.delegate = PreviewMenuDelegate.shared }
         if all { submenu.addItem(header(MenuModel.allWindowsHeader)) }
 
         for (title, fonts) in [(MenuModel.regularFontsHeader, config.fonts.filter { !$0.mono }),
@@ -306,6 +345,7 @@ final class MinimizeMenu: NSObject {
             submenu.addItem(header(title))
             for font in fonts {
                 let item = BlockMenuItem(title: font.displayName) { config.apply(scope, .keep, .set(font)) }
+                item.preview = all ? nil : { config.previewFont(font) }
                 item.attributedTitle = NSAttributedString(string: font.displayName, attributes: [
                     .font: NSFont(name: font.family, size: 13) ?? NSFont.systemFont(ofSize: 13),
                 ])
@@ -316,6 +356,7 @@ final class MinimizeMenu: NSObject {
 
         submenu.addItem(.separator())
         let reset = BlockMenuItem(title: MenuModel.fontResetTitle) { config.apply(scope, .keep, .reset) }
+        reset.preview = all ? nil : { config.previewFont(nil) }
         reset.state = (all && selected == nil) ? .on : .off
         submenu.addItem(reset)
         return submenu
@@ -409,8 +450,24 @@ final class MinimizeMenu: NSObject {
     }
 }
 
+/// Наведение на пункт подменю тем и шрифтов — предпросмотр (план WF8 п. 2): окно красится
+/// сразу, ничего не запоминая. Что примерять, знает сам пункт (`BlockMenuItem.preview`),
+/// поэтому делегат без состояния и один на все меню — заодно снимается вопрос времени жизни:
+/// `NSMenu.delegate` — слабая ссылка. Заголовки секций, разделители и пункты с подменю
+/// примерок не имеют: наведение на них предпросмотр не трогает.
+final class PreviewMenuDelegate: NSObject, NSMenuDelegate {
+    static let shared = PreviewMenuDelegate()
+
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        (item as? BlockMenuItem)?.preview?()
+    }
+}
+
 /// NSMenuItem с замыканием: цели-селекторы здесь только мешают.
 final class BlockMenuItem: NSMenuItem {
+    /// Что примерить при наведении (план WF8 п. 2); nil — пункт предпросмотра не делает.
+    var preview: (() -> Void)?
+
     private let handler: () -> Void
 
     init(title: String, handler: @escaping () -> Void) {

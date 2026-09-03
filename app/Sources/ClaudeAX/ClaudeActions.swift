@@ -137,14 +137,18 @@ final class ClaudeActions {
         return send()
     }
 
-    /// Поля команды после id, action, at: scope, title, затем слои — тема, потом шрифт.
+    /// Поля команды после id, action, at: scope, title, preview, затем слои — тема, потом шрифт.
     /// Слоя `.keep` в JSON нет вовсе, `.reset` уходит как `null` (контракт п. 5 плана WF6).
-    static func themeFields(scope: String, title: String, theme: Layer<Theme>,
+    /// `preview` — только у предпросмотра (контракт п. 1 плана WF8): у закрепляющей команды
+    /// поля нет вовсе, `true` — примерить слой не запоминая, `false` без слоёв — конец примерки.
+    static func themeFields(scope: String, title: String, preview: Bool? = nil,
+                            theme: Layer<Theme>,
                             font: Layer<Font>) -> [(key: String, value: CommandValue)] {
         var fields: [(key: String, value: CommandValue)] = [
             (key: "scope", value: .string(scope)),
             (key: "title", value: .string(title)),
         ]
+        if let preview = preview { fields.append((key: "preview", value: .bool(preview))) }
         if let value = theme.commandValue({ $0.commandValue }) { fields.append((key: "theme", value: value)) }
         if let value = font.commandValue({ $0.commandValue }) { fields.append((key: "font", value: value)) }
         return fields
@@ -184,6 +188,50 @@ final class ClaudeActions {
         }
         if !theme.isKeep { lastAppliedTheme = theme.value }
         if !font.isKeep { lastAppliedFont = font.value }
+    }
+
+    // MARK: - предпросмотр (план WF8)
+
+    /// Мышь ведут по подменю: окно красится сразу, но ничего не запоминает — ни страница
+    /// (`preview: true`), ни это приложение (`themeStore`/`lastApplied…` не трогаем).
+    /// `nil` — примерка сброса слоя («Как у Claude»). В команде ровно один слой.
+    @discardableResult
+    func previewTheme(_ theme: Theme?, window: AXUIElement?) -> Bool {
+        sendPreview(true, theme: theme.map { Layer.set($0) } ?? .reset, font: .keep, window: window)
+    }
+
+    /// Своя тема примеряется парой, как и закрепляется: цвет + шрифт (без шрифта — только цвет).
+    @discardableResult
+    func preview(myTheme: MyTheme, window: AXUIElement?) -> Bool {
+        sendPreview(true, theme: .set(myTheme.theme), font: myTheme.font.map { Layer.set($0) } ?? .keep, window: window)
+    }
+
+    /// То же для шрифта; `nil` — «Системный (как у Claude)».
+    @discardableResult
+    func previewFont(_ font: Font?, window: AXUIElement?) -> Bool {
+        sendPreview(true, theme: .keep, font: font.map { Layer.set($0) } ?? .reset, window: window)
+    }
+
+    /// Конец предпросмотра: `preview: false` без слоёв — страница возвращает окну то, что
+    /// лежит у неё в хранилище. Шлётся, когда меню закрылось без выбора.
+    @discardableResult
+    func endPreview(window: AXUIElement?) -> Bool {
+        sendPreview(false, theme: .keep, font: .keep, window: window)
+    }
+
+    /// Предпросмотр всегда адресован одному окну (`scope: "window"`), фокуса не просит:
+    /// пока открыто меню, окно Claude всё равно не впереди, а `focus()` закрыл бы само меню —
+    /// страница узнаёт окно по заголовку, как в «Обкэшить».
+    private func sendPreview(_ preview: Bool, theme: Layer<Theme>, font: Layer<Font>,
+                             window: AXUIElement?) -> Bool {
+        let target = window ?? focusedWindow()
+        let title = target.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
+        // Без заголовка примерка не адресуется (фокуса у окна Claude нет, пока открыто меню),
+        // а «конец примерки» мог бы снять живую тему у окна без ключа — не шлём ничего.
+        guard !title.isEmpty else { return false }
+        let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: title,
+                                               preview: preview, theme: theme, font: font)
+        return commands.write(action: "theme", fields: fields)
     }
 
     // MARK: - оконные команды
