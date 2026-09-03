@@ -38,7 +38,7 @@
 ```bash
 cp ~/_ElvisProjects/MyClaude/hammerspoon/claude_minimize_menu.lua ~/.hammerspoon/ && echo 'pcall(function() require("claude_minimize_menu") end)' >> ~/.hammerspoon/init.lua && hs -c 'hs.reload()'
 ```
-У пунктов иконки (💰 💬 ⬇️ ⬆️ ▦ 👀 ⏬). Команды идут двумя каналами: `command.json` (лоадер v6) и временно
+У пунктов иконки (💰 💬 ⬇️ ⬆️ ▦ 👀 ⏬) и горячие клавиши, работают только когда окно Claude впереди: Обкэшить ⌘⇧N · Новый чат ⌘N (штатная) · Свернуть ⌘⌥↓ · Развернуть ⌘⌥↑ · Расставить ⌘⌥A · Показать ⌘⌥S · Прокрутить ⌘⌥D. Подсказки видны в самом меню; поменять — таблица `M.hotkeys` в начале файла. Команды идут двумя каналами: `command.json` (лоадер v6) и временно
 `probe.js` (лоадер v5, задержка до 2 с). Проверено живьём 03.09: Прокрутить доводит все окна до низа.
 
 ## ⌘Q не закрывает Claude (`hammerspoon/claude_noquit.lua`)

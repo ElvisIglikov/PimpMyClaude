@@ -299,19 +299,88 @@ local function icon(emoji)
   return icons[emoji] or nil
 end
 
+-- Hotkeys (слово Элвиса 03.09 13:40: «быстрые клавиши для профиков, и чтобы в меню было видно
+-- какую букву жать»). Active only while Claude is frontmost (application watcher, no event taps).
+-- ⌘N is Claude's own «Новый чат» and is not rebound. ⌘⇧N for «Обкэшить» — as in ElvisOS.
+M.hotkeys = {
+  cashout  = { mods = { "cmd", "shift" }, key = "n",    hint = "⌘⇧N" },
+  collapse = { mods = { "cmd", "alt" },   key = "down", hint = "⌘⌥↓" },
+  expand   = { mods = { "cmd", "alt" },   key = "up",   hint = "⌘⌥↑" },
+  arrange  = { mods = { "cmd", "alt" },   key = "a",    hint = "⌘⌥A" },
+  showAll  = { mods = { "cmd", "alt" },   key = "s",    hint = "⌘⌥S" },
+  scroll   = { mods = { "cmd", "alt" },   key = "d",    hint = "⌘⌥D" },
+}
+
+local function hint(name) return M.hotkeys[name] and ("   " .. M.hotkeys[name].hint) or "" end
+
 local function menuItems(w)
   return {
-    { title = "Обкэшить",   image = icon("💰"), fn = function() cashout(w) end },
-    { title = "Новый чат",  image = icon("💬"), fn = function() newChat(w) end },
+    { title = "Обкэшить" .. hint("cashout"),    image = icon("💰"), fn = function() cashout(w) end },
+    { title = "Новый чат   ⌘N",                 image = icon("💬"), fn = function() newChat(w) end },
     { title = "-" },
-    { title = "Свернуть",   image = icon("⬇️"), fn = function() stageAction(w, "collapse") end },
-    { title = "Развернуть", image = icon("⬆️"), fn = function() stageAction(w, "expand") end },
+    { title = "Свернуть" .. hint("collapse"),   image = icon("⬇️"), fn = function() stageAction(w, "collapse") end },
+    { title = "Развернуть" .. hint("expand"),   image = icon("⬆️"), fn = function() stageAction(w, "expand") end },
     { title = "-" },
-    { title = "Расставить", image = icon("▦"),  fn = function() arrange() end },
-    { title = "Показать",   image = icon("👀"), fn = function() showAll(w) end },
+    { title = "Расставить" .. hint("arrange"),  image = icon("▦"),  fn = function() arrange() end },
+    { title = "Показать" .. hint("showAll"),    image = icon("👀"), fn = function() showAll(w) end },
     -- scroll goes to every window, so no focus() first
-    { title = "Прокрутить", image = icon("⏬"), fn = function() writeCommand("scroll") end },
+    { title = "Прокрутить" .. hint("scroll"),   image = icon("⏬"), fn = function() writeCommand("scroll") end },
   }
+end
+
+-- The window a hotkey acts on: Claude's focused window (hotkeys fire only when Claude is frontmost).
+local function focusedClaudeWindow()
+  local a = claudeApp()
+  return a and a:focusedWindow() or nil
+end
+
+local hotkeyObjects, appWatcher, hotkeysArmed = {}, nil, false
+
+local function hotkeyAction(name)
+  if name == "cashout" then return function() cashout(focusedClaudeWindow()) end end
+  if name == "collapse" then return function() stageAction(focusedClaudeWindow(), "collapse") end end
+  if name == "expand" then return function() stageAction(focusedClaudeWindow(), "expand") end end
+  if name == "arrange" then return arrange end
+  if name == "showAll" then return function() showAll(focusedClaudeWindow()) end end
+  if name == "scroll" then return function() writeCommand("scroll") end end
+end
+
+local function armHotkeys(on)
+  on = on and true or false
+  if on == hotkeysArmed then return end
+  hotkeysArmed = on
+  for _, hk in pairs(hotkeyObjects) do
+    if on then hk:enable() else hk:disable() end
+  end
+end
+
+local function startHotkeys()
+  for name, spec in pairs(M.hotkeys) do
+    if not hotkeyObjects[name] then
+      local action = hotkeyAction(name)
+      if action then
+        hotkeyObjects[name] = hs.hotkey.new(spec.mods, spec.key, action)
+      end
+    end
+  end
+  if not appWatcher then
+    appWatcher = hs.application.watcher.new(function(appName, event)
+      if event == hs.application.watcher.activated then
+        armHotkeys(appName == M.appName)
+      elseif event == hs.application.watcher.deactivated and appName == M.appName then
+        armHotkeys(false)
+      end
+    end)
+    appWatcher:start()
+  end
+  local front = hs.application.frontmostApplication()
+  armHotkeys(front ~= nil and front:name() == M.appName)
+end
+
+local function stopHotkeys()
+  armHotkeys(false)
+  for name, hk in pairs(hotkeyObjects) do hk:delete(); hotkeyObjects[name] = nil end
+  if appWatcher then appWatcher:stop(); appWatcher = nil end
 end
 
 local function showMenu(w, rect)
@@ -382,13 +451,15 @@ function M.start()
     local ok, err = pcall(tick)
     if not ok then log("error: %s", tostring(err)) end
   end)
-  log("started (%.3fs poll, no event taps)", M.interval)
+  startHotkeys()
+  log("started (%.3fs poll, no event taps, hotkeys while Claude is frontmost)", M.interval)
   return M
 end
 
 function M.stop()
   if timer then timer:stop(); timer = nil end
   if popup then popup:delete(); popup = nil end
+  stopHotkeys()
   windows, windowsAt, buttons = {}, 0, {}
   icons = {}                                      -- so iconSize/iconColor changes take effect on restart
   hoverId, hoverSince, suppressed, menuOpen = nil, 0, false, false
