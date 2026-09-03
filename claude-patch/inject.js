@@ -31,7 +31,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf12-a-2";
+  const VERSION = "wf12-a-3";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -346,6 +346,8 @@
     ".font-claude-response",
     ".font-claude-response-body",
     '[data-testid="assistant-message"] .prose',
+    // Окно Claude Code (probe 04.09): ответ — .prose внутри строки сообщения, у вопроса своя обёртка.
+    '.epitaxy-transcript-typography [class*="message-row"]:not(:has(.epitaxy-user-turn)) .prose',
   ];
   const SIZE_QUESTION_SELECTORS = ["[data-user-message-bubble]", ".epitaxy-user-turn"];
   // Заголовки и код внутри ответа — в em, то есть долей от заданного размера:
