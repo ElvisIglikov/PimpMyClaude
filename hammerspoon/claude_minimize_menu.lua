@@ -88,6 +88,13 @@ local function claudeWindows()
   if now() - windowsAt < M.windowCacheSeconds then return windows end
   local a = claudeApp()
   windows = a and a:visibleWindows() or {}
+  -- Claude restarted (patch, ⌘Q): the cached hs.application may still say isRunning() for
+  -- a dead pid and return no windows. Seen live 03.09 13:25 — «windows=0» while four were
+  -- open. Drop the cache so the next tick re-resolves the app by name.
+  if a and #windows == 0 then
+    local fresh = hs.application.get(M.appName)
+    if fresh and fresh:pid() ~= a:pid() then app = nil; buttons = {} end
+  end
   windowsAt = now()
   return windows
 end
