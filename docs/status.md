@@ -1,4 +1,4 @@
-# ⚪MyClaude
+# ⚪PimpMyClaude
 обновлено 13:55
 
 3 воркфлоу

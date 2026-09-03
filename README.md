@@ -1,4 +1,6 @@
-# MyClaude
+# PimpMyClaude
+
+Прокачка Claude Desktop, как «Pimp My Ride», только для окон Claude. Бывший MyClaude (переименован 03.09.2026). GitHub: `ElvisIglikov/PimpMyClaude`.
 
 ## Узкие окна Claude и узкие поля по бокам (патч Claude Desktop)
 
