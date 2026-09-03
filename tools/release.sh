@@ -36,7 +36,7 @@ json_field() {
 
 echo "▶ PimpMyClaude $VERSION ($BUILD) → релиз"
 mkdir -p "$DIST"
-rm -f "$UPLOAD_ZIP" "$FINAL_ZIP" "$SUBMIT_JSON"
+rm -f "$UPLOAD_ZIP" "$FINAL_ZIP" "$SUBMIT_JSON" "$DIST"/PimpMyClaude-*.zip  # старые релизы не копим: отдать не тот zip — одна опечатка
 
 # 1. Сборка и подпись Developer ID (bundle.sh сам сносит старый $APP).
 echo "▶ 1/6 сборка и подпись"

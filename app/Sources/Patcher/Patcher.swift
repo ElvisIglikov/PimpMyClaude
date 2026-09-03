@@ -369,13 +369,15 @@ public struct ClaudePatcher {
     func waitForWritable(timeout: TimeInterval = 60, progress: (String) -> Void) throws {
         let probe = appURL.appendingPathComponent("Contents/Resources/.pimpmyclaude-write-test")
         var announced = false
-        let deadline = Date().addingTimeInterval(timeout)
+        let started = Date()
+        let deadline = started.addingTimeInterval(timeout)
         while true {
             let errno = writeProbe(probe)
             if errno == 0 { return }
-            // EACCES — не права TCC, а владелец/режим файла: промпт не всплывёт, ждать нечего.
-            if errno == EACCES {
-                throw PatchError.needsAppManagement(appPath: appURL.path, admin: false)
+            // EACCES обычно означает чужого владельца (промпта не будет), но на новых macOS отказ
+            // «Управления приложениями» тоже может прийти как EACCES — даём промпту 10 с, потом сдаёмся.
+            if errno == EACCES, Date().timeIntervalSince(started) > 10 {
+                throw PatchError.needsAppManagement(appPath: appURL.path, admin: currentUserIsAdmin())
             }
             if !announced {
                 announced = true

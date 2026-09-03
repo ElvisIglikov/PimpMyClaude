@@ -43,7 +43,7 @@
 ## Ручка над полем ввода (`claude-patch/inject.js`)
 
 Живой скрипт, лоадер v6 выполняет его в каждой странице Claude и перечитывает при изменении файла
-(копия лежит в `~/Library/Application Support/MyClaude/inject.js`). Поведение как в ElvisOS:
+(копия лежит в `~/Library/Application Support/MyClaude/inject.js`; «Поставить» в PimpMyClaude.app перезаписывает её копией из бандла — править только `claude-patch/inject.js` и пересобирать). Поведение как в ElvisOS:
 - Узкая (96 px) едва заметная полоска по центру над полем ввода, ярче при наведении. Тянуть вверх/вниз — высота поля.
 - Одинарный клик: поле схлопывается в полоску и обратно (из растянутого — тоже схлопывается).
 - Двойной клик: растянуть до потолка окна; ещё раз двойной — обычная высота.
@@ -78,9 +78,9 @@ cp ~/_ElvisProjects/PimpMyClaude/hammerspoon/claude_minimize_menu.lua ~/.hammers
 
 1. ✅ Ручка, свернуть/развернуть (WF1, `docs/plan-wf1-2026-09-03.md`).
 2. ✅ Меню семь пунктов (WF1 + WF2, `docs/plan-wf2-2026-09-03.md`); «3 min ago» — WF2/A2.
-3. Сторож обновлений — отложен по слову Элвиса.
+3. ✅ Сторож обновлений — в приложении (значок «!» и уведомление «Поставить снова», WF4).
 3а. ✅ ⌘Q не закрывает Claude (`claude_noquit.lua`, WF3).
-4. 🔄 PimpMyClaude.app для команды (Маша, Алла, Денис): установщик, меню и авто-Allow без Hammerspoon,
+4. ✅ PimpMyClaude.app для команды (Маша, Алла, Денис): установщик, меню и авто-Allow без Hammerspoon,
    подпись Developer ID + нотаризация — WF4, `docs/plan-wf4-2026-09-03.md`; см. раздел «PimpMyClaude.app» выше.
 
 ## Auto-Allow для окон Claude Desktop

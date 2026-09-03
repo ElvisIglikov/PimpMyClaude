@@ -50,7 +50,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(appActivated(_:)),
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshState() }
+        let poll = Timer(timeInterval: 60, repeats: true) { [weak self] _ in self?.refreshState() }
+        RunLoop.main.add(poll, forMode: .common)
+        pollTimer = poll
+    }
+
+    /// Повторный запуск из Finder/Launchpad: окна в доке нет, покажем окно настройки — иначе
+    /// человеку кажется, что приложение не запускается.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows { showSetup() }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -248,6 +257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
     }
 
     @objc private func showStatus() {
+        guard !busy else { return }
         guard let url = chosenClaude(askIfSeveral: true) else { report(PatchError.claudeNotFound); return }
         let window = OperationWindow(title: "Статус")
         window.show()
