@@ -140,12 +140,11 @@ final class MinimizeMenu: NSObject {
 
         shows += 1
         menuOpen = true
-        // popUp требует активного приложения, иначе меню не получает событий.
-        if #available(macOS 14.0, *) {
-            NSApp.activate()
-        } else {
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        // popUp требует активного приложения, иначе меню не получает событий и закрывается
+        // при первом же движении мыши (03.09: подменю тем «схлопывалось»). Кооперативный
+        // activate() на macOS 14+ без yield со стороны Claude приложение не активирует —
+        // нужен именно ignoringOtherApps, как делает Hammerspoon перед popupMenu.
+        NSApp.activate(ignoringOtherApps: true)
         let origin = Screens.flip(point: CGPoint(x: rect.minX, y: rect.maxY + 2))
         menu.popUp(positioning: nil, at: origin, in: nil)
         menuOpen = false
