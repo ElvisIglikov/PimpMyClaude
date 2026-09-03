@@ -137,9 +137,24 @@ enum MenuModel {
         }
     }
 
-    /// Сброс слоя: в команде `"theme":null` / `"font":null`, второй слой не трогаем.
+    /// Сброс слоя: в команде `"theme":null` / `"font":null`, остальные слои не трогаем.
     static let themeResetTitle = "Как у Claude"
     static let fontResetTitle = "Системный (как у Claude)"
+    /// Размер текста сообщений (план WF12 п. 2) — два подменю в конце «🔤 Шрифт ▸».
+    static let answerSizeTitle = "Размер ответов"
+    static let questionSizeTitle = "Размер вопросов"
+    /// Сброс слоя размера: `"size":null` снимает ОБЕ половины — перефилдового null
+    /// в контракте нет, и «Как у Claude» в любом из двух подменю значит одно и то же.
+    static let sizeResetTitle = "Как у Claude"
+
+    static func sizeTitle(_ half: Size.Half) -> String {
+        half == .answer ? answerSizeTitle : questionSizeTitle
+    }
+
+    /// Тумблер «✨ Неоновая рамка» в конце «🎨 Тема ▸» и в его «Всем окнам ▸» (план WF12 п. 4):
+    /// галка — рамка включена, клик переключает, наведение примеряет включённую.
+    static let frameTitle = "Неоновая рамка"
+    static let frameIcon = "✨"
     /// Свои темы (план п. 4).
     static let saveMyThemeTitle = "Сохранить как мою тему…"
     static let deleteMyThemeTitle = "Удалить мою тему"
@@ -171,21 +186,23 @@ enum MenuModel {
     /// (без заголовка страница не понимает, какому окну адресована тема).
     static let autoPaintNoWindowsAlert = "Не нашёл окон Claude с заголовком — красить нечего"
 
-    /// Заголовки-заглушки: у окна с таким именем чата нет, и тема ляжет на ключ, общий для
-    /// всех таких окон, — они покрасятся одинаково. Про это HUD и предупреждает.
-    static let unnamedChatTitles = ["claude", "new chat"]
-
-    static func isUnnamedChat(_ title: String) -> Bool {
-        let text = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return text.isEmpty || unnamedChatTitles.contains(text)
-    }
-
     /// HUD перед покраской: окна красятся по одному раз в 600 мс, и без строки это выглядит
     /// как зависшее меню. Окон на экране больше, чем цветов, — сразу говорим почему.
-    static func autoPaintStart(windows: Int, unnamed: Int) -> String {
-        let count = "\(windows) \(windowsWord(windows))"
-        guard unnamed > 0 else { return "Крашу \(count)…" }
-        return "Крашу \(count); \(unnamed) без имени чата — одним цветом"
+    /// `shared` — сколько окон осталось без своего цвета: их заголовок (имя чата) уже занят
+    /// соседним окном, а тема живёт на чате. `skipped` — окна без AX-заголовка: их не красим
+    /// вовсе, страница не поняла бы, кому адресована тема.
+    static func autoPaintStart(windows: Int, shared: Int = 0, skipped: Int = 0) -> String {
+        let count = "Крашу \(windows) \(windowsWord(windows))"
+        var tails: [String] = []
+        if shared > 0 { tails.append("\(shared) без имени чата — одним цветом") }
+        if skipped > 0 { tails.append("\(skipped) без заголовка — \(skippedWord(skipped))") }
+        guard !tails.isEmpty else { return count + "…" }
+        return count + "; " + tails.joined(separator: "; ")
+    }
+
+    /// «1 окно пропущено», «2 окна пропущены».
+    static func skippedWord(_ count: Int) -> String {
+        abs(count) % 10 == 1 && abs(count) % 100 != 11 ? "пропущено" : "пропущены"
     }
 
     /// «1 окно», «2 окна», «5 окон».

@@ -31,6 +31,64 @@ enum FontCategory: String, CaseIterable {
     case serif, sans, hand, mono
 }
 
+/// Кегль текста сообщений — третий слой темы (контракт п. 1 плана WF12):
+/// `"size":{"answer":15,"question":14}` в пикселях. Половинки независимы: половины, которой
+/// в команде нет, страница не трогает (`runThemeCommand` доклеивает её из хранилища).
+/// Сброс — только слоем целиком (`"size":null`): перефилдового null контракт не знает,
+/// поэтому «Как у Claude» в любом из двух подменю снимает обе половины.
+struct Size: Equatable {
+    /// Ответы Claude и свои вопросы; nil — половину не трогаем.
+    let answer: Int?
+    let question: Int?
+
+    /// Границы контракта (SIZE_MIN…SIZE_MAX в inject.js): мельче 11 не прочесть,
+    /// крупнее 24 — уже не текст, а плакат.
+    static let minPx = 11
+    static let maxPx = 24
+    /// Что предлагает меню (план WF12 п. 2).
+    static let steps = [12, 13, 14, 15, 16, 18, 20]
+    /// Ключи половин — и в команде, и в UserDefaults.
+    static let answerKey = "answer"
+    static let questionKey = "question"
+
+    init(answer: Int? = nil, question: Int? = nil) {
+        self.answer = answer.map(Size.clamp)
+        self.question = question.map(Size.clamp)
+    }
+
+    static func clamp(_ px: Int) -> Int { min(max(px, minPx), maxPx) }
+
+    /// Ни одной половины: слать нечего — страница поняла бы пустой объект как «сброс».
+    var isEmpty: Bool { answer == nil && question == nil }
+
+    /// Слой поверх запомненного: половина, которой в команде нет, остаётся прежней —
+    /// ровно так же слой склеивает страница.
+    func merging(_ other: Size) -> Size {
+        Size(answer: other.answer ?? answer, question: other.question ?? question)
+    }
+
+    /// Слой как вложенный объект command.json: только заданные половины, ответы первыми.
+    var commandValue: CommandValue {
+        var fields: [(key: String, value: CommandValue)] = []
+        if let answer = answer { fields.append((key: Size.answerKey, value: .number(answer))) }
+        if let question = question { fields.append((key: Size.questionKey, value: .number(question))) }
+        return .object(fields)
+    }
+
+    /// Половина слоя: у каждой своё подменю («Размер ответов ▸», «Размер вопросов ▸»),
+    /// свои галки и своя примерка.
+    enum Half: CaseIterable {
+        case answer, question
+    }
+
+    /// Слой из одной половины — пункт меню трогает ровно её.
+    static func one(_ half: Half, _ px: Int) -> Size {
+        half == .answer ? Size(answer: px) : Size(question: px)
+    }
+
+    func value(_ half: Half) -> Int? { half == .answer ? answer : question }
+}
+
 /// Каталог шрифтов: белые списки по категориям (решение 7 плана WF9), отфильтрованные по факту
 /// установки (`NSFontManager.shared.availableFontFamilies`) и по кириллице (в семействе есть «Ж»).
 /// «Системный» отдельным пунктом каталога нет: это сброс слоя (`"font":null`).

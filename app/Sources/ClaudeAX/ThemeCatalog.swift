@@ -83,15 +83,19 @@ enum ThemeCatalog {
 protocol ThemeDefaults: AnyObject {
     func string(forKey key: String) -> String?
     func dictionary(forKey key: String) -> [String: Any]?
+    /// Слой рамки — булев, и «записи нет» надо отличать от «выключена»: `bool(forKey:)`
+    /// у UserDefaults вернул бы false в обоих случаях.
+    func object(forKey key: String) -> Any?
     func set(_ value: Any?, forKey key: String)
     func removeObject(forKey key: String)
 }
 
 extension UserDefaults: ThemeDefaults {}
 
-/// Что выбрано в подменю «Тема» и «Шрифт» — только для галки в меню; красит страница.
-/// Слои независимы, у каждого своя пара ключей: `themeByWindow`/`themeAll` и
-/// `fontByWindow`/`fontAll` (карта [заголовок окна: id] и id «для всех окон»).
+/// Что выбрано в подменю «Тема», «Шрифт», «Размер…» и в тумблере рамки — только для галки
+/// в меню; красит страница. Слои независимы, у каждого своя пара ключей:
+/// `themeByWindow`/`themeAll`, `fontByWindow`/`fontAll`, `sizeByWindow`/`sizeAll`,
+/// `frameByWindow`/`frameAll` (карта [заголовок окна: значение] и значение «для всех окон»).
 ///
 /// Страница хранит тему главного окна под ключом «main» (его заголовок меняется вместе с чатом),
 /// а Swift знает про окно только AX-заголовок — значит, у главного окна галка может разойтись
@@ -101,13 +105,24 @@ final class ThemeStore {
     static let allKey = "themeAll"
     static let fontByWindowKey = "fontByWindow"
     static let fontAllKey = "fontAll"
+    /// Размер — слой с двумя половинами, поэтому в defaults он лежит словарём
+    /// `{заголовок: {answer, question}}`, а «всем окнам» — просто `{answer, question}`.
+    static let sizeByWindowKey = "sizeByWindow"
+    static let sizeAllKey = "sizeAll"
+    /// Рамка — тумблер: в карте только включённые окна, выключенное просто выпадает.
+    static let frameByWindowKey = "frameByWindow"
+    static let frameAllKey = "frameAll"
 
     private let defaults: ThemeDefaults
 
     init(defaults: ThemeDefaults = UserDefaults.standard) { self.defaults = defaults }
 
+    /// Карта «заголовок окна → значение слоя»: у темы и шрифта это id, у размера — словарь
+    /// половин, у рамки — булево.
+    private func rawMap(_ key: String) -> [String: Any] { defaults.dictionary(forKey: key) ?? [:] }
+
     private func map(_ key: String) -> [String: String] {
-        (defaults.dictionary(forKey: key) ?? [:]).compactMapValues { $0 as? String }
+        rawMap(key).compactMapValues { $0 as? String }
     }
 
     /// Окно без заголовка адресуется страницей как «то, что в фокусе» — запоминать его нечем.
@@ -115,10 +130,14 @@ final class ThemeStore {
         title.isEmpty ? nil : map(key)[title]
     }
 
-    private func setWindow(_ id: String?, title: String, key: String) {
+    private func windowValue(_ key: String, title: String) -> Any? {
+        title.isEmpty ? nil : rawMap(key)[title]
+    }
+
+    private func setWindow(_ value: Any?, title: String, key: String) {
         guard !title.isEmpty else { return }
-        var values = map(key)
-        if let id = id { values[title] = id } else { values.removeValue(forKey: title) }
+        var values = rawMap(key)
+        if let value = value { values[title] = value } else { values.removeValue(forKey: title) }
         if values.isEmpty {
             defaults.removeObject(forKey: key)
         } else {
@@ -156,7 +175,66 @@ final class ThemeStore {
     /// тема всем окнам не трогает их шрифты и наоборот. Галки обязаны это повторить.
     func clearWindowThemes() { defaults.removeObject(forKey: ThemeStore.byWindowKey) }
     func clearWindowFonts() { defaults.removeObject(forKey: ThemeStore.fontByWindowKey) }
+    func clearWindowSizes() { defaults.removeObject(forKey: ThemeStore.sizeByWindowKey) }
+    func clearWindowFrames() { defaults.removeObject(forKey: ThemeStore.frameByWindowKey) }
 
     func setAllTheme(_ id: String?) { setAll(id, key: ThemeStore.allKey) }
     func setAllFont(_ id: String?) { setAll(id, key: ThemeStore.fontAllKey) }
+
+    // MARK: - размер и рамка (план WF12)
+
+    /// Кегль из записи defaults; половины без годного числа выпадают, пустая запись — nil.
+    static func size(_ raw: Any?) -> Size? {
+        guard let values = raw as? [String: Any] else { return nil }
+        func px(_ key: String) -> Int? {
+            (values[key] as? NSNumber)?.intValue ?? values[key] as? Int
+        }
+        let size = Size(answer: px(Size.answerKey), question: px(Size.questionKey))
+        return size.isEmpty ? nil : size
+    }
+
+    private static func values(_ size: Size) -> [String: Int] {
+        var out: [String: Int] = [:]
+        if let answer = size.answer { out[Size.answerKey] = answer }
+        if let question = size.question { out[Size.questionKey] = question }
+        return out
+    }
+
+    func windowSize(title: String) -> Size? {
+        ThemeStore.size(windowValue(ThemeStore.sizeByWindowKey, title: title))
+    }
+
+    var allSize: Size? { ThemeStore.size(defaults.dictionary(forKey: ThemeStore.sizeAllKey)) }
+
+    /// nil — записи о размере больше нет («Как у Claude» снимает слой целиком).
+    func setWindowSize(_ size: Size?, title: String) {
+        setWindow(size.map { ThemeStore.values($0) }, title: title, key: ThemeStore.sizeByWindowKey)
+    }
+
+    func setAllSize(_ size: Size?) {
+        if let size = size {
+            defaults.set(ThemeStore.values(size), forKey: ThemeStore.sizeAllKey)
+        } else {
+            defaults.removeObject(forKey: ThemeStore.sizeAllKey)
+        }
+    }
+
+    /// Рамка: записи нет — выключена (это же и состояние окна по умолчанию).
+    func windowFrame(title: String) -> Bool {
+        (windowValue(ThemeStore.frameByWindowKey, title: title) as? Bool) ?? false
+    }
+
+    var allFrame: Bool { (defaults.object(forKey: ThemeStore.frameAllKey) as? Bool) ?? false }
+
+    func setWindowFrame(_ on: Bool, title: String) {
+        setWindow(on ? true : nil, title: title, key: ThemeStore.frameByWindowKey)
+    }
+
+    func setAllFrame(_ on: Bool) {
+        if on {
+            defaults.set(true, forKey: ThemeStore.frameAllKey)
+        } else {
+            defaults.removeObject(forKey: ThemeStore.frameAllKey)
+        }
+    }
 }

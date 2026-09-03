@@ -1,7 +1,8 @@
 import AppKit
 import ApplicationServices
 
-/// Слой команды «тема»: тема и шрифт живут отдельно (контракт п. 5 плана WF6).
+/// Слой команды «тема»: тема, шрифт, размер и рамка живут отдельно (контракт п. 5 плана WF6,
+/// п. 1 плана WF12).
 /// `keep` — поля в команде нет (страница слой не трогает), `reset` — `null` (сброс слоя),
 /// `set` — объект слоя.
 enum Layer<Value> {
@@ -60,6 +61,11 @@ final class ClaudeActions {
     /// бы цвет соседнего. Окно, покрашенное набором, отдаёт свой цвет.
     private(set) var autoPaintedThemes: [String: Theme] = [:]
     private(set) var lastAppliedFont: Font?
+    /// Размер копится по половинам: «Размер ответов ▸ 16», потом «Размер вопросов ▸ 14» —
+    /// в «мою тему» обязаны попасть обе (страница слой склеивает так же).
+    private(set) var lastAppliedSize: Size?
+    /// Тумблер рамки: nil — в этот запуск её не трогали.
+    private(set) var lastAppliedFrame: Bool?
 
     init(app: ClaudeApp, commands: CommandChannel,
          themes: [Theme] = ThemeCatalog.bundled, fonts: [Font] = FontCatalog.available,
@@ -152,24 +158,27 @@ final class ClaudeActions {
 
     // MARK: - темы и шрифты
 
-    /// Тема одного окна (`scope: "window"`) или всех сразу (`"all"`), слоями: тема и шрифт
-    /// независимы. `.keep` — поля в команде нет, слой не трогаем; `.reset` — `null`, «Как у Claude»;
-    /// `.set` — объект слоя. Палитра уходит в страницу целиком: файлов страница не читает
-    /// (контракт п. 5 плана WF6, порядок полей id, action, at, scope, title, theme, font).
+    /// Тема одного окна (`scope: "window"`) или всех сразу (`"all"`), слоями: тема, шрифт,
+    /// размер и рамка независимы. `.keep` — поля в команде нет, слой не трогаем; `.reset` —
+    /// `null`, «Как у Claude»; `.set` — значение слоя. Палитра уходит в страницу целиком:
+    /// файлов страница не читает (контракт п. 1 плана WF12, порядок полей
+    /// id, action, at, scope, title, preview, theme, font, size, frame).
     /// Окно адресуется AX-заголовком, как «Обкэшить»; пустой заголовок страница понимает как
     /// «окно в фокусе» — тогда, как у «Обкэшить», сперва даём окну фокус и ждём focusDelay.
     @discardableResult
     func applyTheme(scope: String, theme: Layer<Theme> = .keep, font: Layer<Font> = .keep,
+                    size: Layer<Size> = .keep, frame: Layer<Bool> = .keep,
                     window: AXUIElement?) -> Bool {
-        // Оба слоя «не трогать» — команде нечего делать.
-        guard !theme.isKeep || !font.isKeep else { return false }
+        // Все слои «не трогать» — команде нечего делать.
+        guard !theme.isKeep || !font.isKeep || !size.isKeep || !frame.isKeep else { return false }
         let target = window ?? focusedWindow()
         let title = target.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
         let send: () -> Bool = { [weak self] in
             guard let self = self else { return false }
-            let fields = ClaudeActions.themeFields(scope: scope, title: title, theme: theme, font: font)
+            let fields = ClaudeActions.themeFields(scope: scope, title: title, theme: theme,
+                                                   font: font, size: size, frame: frame)
             guard self.commands.write(action: "theme", fields: fields) else { return false }
-            self.remember(scope: scope, title: title, theme: theme, font: font)
+            self.remember(scope: scope, title: title, theme: theme, font: font, size: size, frame: frame)
             return true
         }
         if title.isEmpty, let target = target {
@@ -180,13 +189,15 @@ final class ClaudeActions {
         return send()
     }
 
-    /// Поля команды после id, action, at: scope, title, preview, затем слои — тема, потом шрифт.
-    /// Слоя `.keep` в JSON нет вовсе, `.reset` уходит как `null` (контракт п. 5 плана WF6).
-    /// `preview` — только у предпросмотра (контракт п. 1 плана WF8): у закрепляющей команды
-    /// поля нет вовсе, `true` — примерить слой не запоминая, `false` без слоёв — конец примерки.
+    /// Поля команды после id, action, at: scope, title, preview, затем слои — тема, шрифт,
+    /// размер, рамка. Слоя `.keep` в JSON нет вовсе, `.reset` уходит как `null`
+    /// (контракт п. 1 плана WF12). `preview` — только у предпросмотра (контракт п. 1 плана WF8):
+    /// у закрепляющей команды поля нет вовсе, `true` — примерить слой не запоминая,
+    /// `false` без слоёв — конец примерки.
     static func themeFields(scope: String, title: String, preview: Bool? = nil,
-                            theme: Layer<Theme>,
-                            font: Layer<Font>) -> [(key: String, value: CommandValue)] {
+                            theme: Layer<Theme>, font: Layer<Font>,
+                            size: Layer<Size> = .keep,
+                            frame: Layer<Bool> = .keep) -> [(key: String, value: CommandValue)] {
         var fields: [(key: String, value: CommandValue)] = [
             (key: "scope", value: .string(scope)),
             (key: "title", value: .string(title)),
@@ -194,24 +205,30 @@ final class ClaudeActions {
         if let preview = preview { fields.append((key: "preview", value: .bool(preview))) }
         if let value = theme.commandValue({ $0.commandValue }) { fields.append((key: "theme", value: value)) }
         if let value = font.commandValue({ $0.commandValue }) { fields.append((key: "font", value: value)) }
+        // Пустой размер — не слой, а «не трогать»: страница читает {} как сброс.
+        if case .set(let value) = size, value.isEmpty {} else if let value = size.commandValue({ $0.commandValue }) { fields.append((key: "size", value: value)) }
+        if let value = frame.commandValue({ .bool($0) }) { fields.append((key: "frame", value: value)) }
         return fields
     }
 
-    /// Своя тема — одна команда с обоими слоями; без шрифта пара сбрасывает слой шрифта,
-    /// чтобы применилось ровно то, что сохраняли.
+    /// Своя тема — одна команда со всеми сохранёнными слоями.
     @discardableResult
     func apply(myTheme: MyTheme, scope: String, window: AXUIElement?) -> Bool {
-        // Своя тема без шрифта шрифт не трогает: из «Всем окнам» иначе снялись бы шрифты всех окон.
+        // Слоя, которого в паре нет, своя тема не трогает: из «Всем окнам» иначе снялись бы
+        // шрифты (размеры, рамки) всех окон.
         applyTheme(scope: scope, theme: .set(myTheme.theme),
-                   font: myTheme.font.map { Layer.set($0) } ?? .keep, window: window)
+                   font: myTheme.font.map { Layer.set($0) } ?? .keep,
+                   size: myTheme.size.map { Layer.set($0) } ?? .keep,
+                   frame: myTheme.frame ? .set(true) : .keep, window: window)
     }
 
-    /// «Сохранить как мою тему…»: пара из темы этого окна и последнего шрифта.
+    /// «Сохранить как мою тему…»: набор из темы этого окна и последних шрифта, размера и рамки.
     /// Тема ни разу не выбиралась — сохранять нечего (меню покажет алерт).
     @discardableResult
     func saveMyTheme(name: String, window: AXUIElement? = nil) -> [MyTheme]? {
         guard let theme = themeToSave(window: window) else { return nil }
-        return myThemes.add(name: name, theme: theme, font: lastAppliedFont)
+        return myThemes.add(name: name, theme: theme, font: lastAppliedFont, size: lastAppliedSize,
+                            frame: lastAppliedFrame == true)
     }
 
     /// Что предложит «Сохранить как мою тему…» (и каким именем): у автопокрашенного окна — его
@@ -223,7 +240,10 @@ final class ClaudeActions {
     }
 
     /// Галки в меню и «последнее применённое» — по слоям: слой `.keep` остаётся как был.
-    private func remember(scope: String, title: String, theme: Layer<Theme>, font: Layer<Font>) {
+    /// Размер приходит половинами, поэтому кладётся поверх запомненного — как его склеивает
+    /// страница; `.reset` («Как у Claude») снимает слой целиком, обе половины сразу.
+    private func remember(scope: String, title: String, theme: Layer<Theme>, font: Layer<Font>,
+                          size: Layer<Size>, frame: Layer<Bool>) {
         if scope == MenuModel.themeScopeAll {
             if !theme.isKeep {
                 themeStore.setAllTheme(theme.value?.id)
@@ -235,15 +255,30 @@ final class ClaudeActions {
                 themeStore.setAllFont(font.value?.id)
                 themeStore.clearWindowFonts()
             }
+            if !size.isKeep {
+                themeStore.setAllSize(size.value.map { (themeStore.allSize ?? Size()).merging($0) })
+                themeStore.clearWindowSizes()
+            }
+            if !frame.isKeep {
+                themeStore.setAllFrame(frame.value == true)
+                themeStore.clearWindowFrames()
+            }
         } else {
             if !theme.isKeep {
                 themeStore.setWindowTheme(theme.value?.id, title: title)
                 autoPaintedThemes[title] = nil // цвет окна выбрали руками — автотема устарела
             }
             if !font.isKeep { themeStore.setWindowFont(font.value?.id, title: title) }
+            if !size.isKeep {
+                let base = themeStore.windowSize(title: title) ?? Size()
+                themeStore.setWindowSize(size.value.map { base.merging($0) }, title: title)
+            }
+            if !frame.isKeep { themeStore.setWindowFrame(frame.value == true, title: title) }
         }
         if !theme.isKeep { lastAppliedTheme = theme.value }
         if !font.isKeep { lastAppliedFont = font.value }
+        if !size.isKeep { lastAppliedSize = size.value.map { (lastAppliedSize ?? Size()).merging($0) } }
+        if !frame.isKeep { lastAppliedFrame = frame.value == true }
     }
 
     // MARK: - предпросмотр (план WF8)
@@ -256,16 +291,35 @@ final class ClaudeActions {
         sendPreview(true, theme: theme.map { Layer.set($0) } ?? .reset, font: .keep, window: window)
     }
 
-    /// Своя тема примеряется парой, как и закрепляется: цвет + шрифт (без шрифта — только цвет).
+    /// Своя тема примеряется набором, как и закрепляется: цвет + шрифт + размер + рамка
+    /// (чего в паре нет, того примерка не трогает).
     @discardableResult
     func preview(myTheme: MyTheme, window: AXUIElement?) -> Bool {
-        sendPreview(true, theme: .set(myTheme.theme), font: myTheme.font.map { Layer.set($0) } ?? .keep, window: window)
+        sendPreview(true, theme: .set(myTheme.theme), font: myTheme.font.map { Layer.set($0) } ?? .keep,
+                    size: myTheme.size.map { Layer.set($0) } ?? .keep,
+                    frame: myTheme.frame ? .set(true) : .keep, window: window)
     }
 
     /// То же для шрифта; `nil` — «Системный (как у Claude)».
     @discardableResult
     func previewFont(_ font: Font?, window: AXUIElement?) -> Bool {
         sendPreview(true, theme: .keep, font: font.map { Layer.set($0) } ?? .reset, window: window)
+    }
+
+    /// То же для размера: в команде одна половина слоя, вторую страница доклеивает сама
+    /// из того, что сейчас на экране. `nil` — примерка «Как у Claude», то есть сброса
+    /// всего слоя (обеих половин: перефилдового сброса контракт не знает).
+    @discardableResult
+    func previewSize(_ size: Size?, window: AXUIElement?) -> Bool {
+        sendPreview(true, theme: .keep, font: .keep, size: size.map { Layer.set($0) } ?? .reset,
+                    window: window)
+    }
+
+    /// Наведение на тумблер рамки примеряет её ВКЛЮЧЁННОЙ, чем бы она сейчас ни была:
+    /// пункт показывает, как это выглядит (план WF12 п. 4).
+    @discardableResult
+    func previewFrame(window: AXUIElement?) -> Bool {
+        sendPreview(true, theme: .keep, font: .keep, frame: .set(true), window: window)
     }
 
     /// Конец предпросмотра: `preview: false` без слоёв — страница возвращает окну то, что
@@ -279,6 +333,7 @@ final class ClaudeActions {
     /// пока открыто меню, окно Claude всё равно не впереди, а `focus()` закрыл бы само меню —
     /// страница узнаёт окно по заголовку, как в «Обкэшить».
     private func sendPreview(_ preview: Bool, theme: Layer<Theme>, font: Layer<Font>,
+                             size: Layer<Size> = .keep, frame: Layer<Bool> = .keep,
                              window: AXUIElement?) -> Bool {
         let target = window ?? focusedWindow()
         let title = target.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
@@ -286,7 +341,8 @@ final class ClaudeActions {
         // а «конец примерки» мог бы снять живую тему у окна без ключа — не шлём ничего.
         guard !title.isEmpty else { return false }
         let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: title,
-                                               preview: preview, theme: theme, font: font)
+                                               preview: preview, theme: theme, font: font,
+                                               size: size, frame: frame)
         // Примерка идёт мимо очереди канала: мышь скользит по списку, ждать 600 мс нечего.
         return commands.write(action: "theme", fields: fields, priority: .preview)
     }
@@ -332,7 +388,9 @@ final class ClaudeActions {
             return 0
         }
         // Окна красятся по одному раз в 600 мс — молча это выглядит как зависшее меню.
-        onWarning?(MenuModel.autoPaintStart(windows: windows.onScreen, unnamed: windows.unnamed))
+        // В счёт «Крашу N» идут только окна, которым цвет достанется (без пропущенных).
+        onWarning?(MenuModel.autoPaintStart(windows: windows.onScreen - windows.skipped, shared: windows.shared,
+                                            skipped: windows.skipped))
         // Режим у набора свой; у «Случайно» — тот же, что в прошлый раз («Ещё раз» повторяет
         // набор целиком), а на первый раз — по памяти окон. После покраски галки сняты, и
         // сама память уже пуста — потому режим и ложится в AutoPaintStore.
@@ -355,26 +413,30 @@ final class ClaudeActions {
     }
 
     /// Окна Claude на экране для покраски: заголовки слева направо, затем сверху вниз (порядок
-    /// тот же, что у «Расставить»), и счётчики для HUD. Окно без AX-заголовка пропускаем:
+    /// тот же, что у «Расставить»), и счётчики для HUD. Окно без AX-заголовка пропускаем совсем:
     /// страница узнаёт окно только по нему, а пустой заголовок значит «окно в фокусе» —
     /// покрасились бы все в один цвет. Одинаковые заголовки схлопываются по той же причине:
-    /// тема живёт на чате, и двум окнам одного чата достанется один цвет — про это HUD и говорит.
-    private func paintableWindows() -> (titles: [String], onScreen: Int, unnamed: Int) {
-        guard let pid = app.pid else { return ([], 0, 0) }
+    /// тема живёт на чате, и двум окнам одного чата достанется один цвет.
+    /// Счётчики считаются по факту (хвост WF10): `shared` — окна, которым своего цвета не
+    /// досталось (окна − уникальные заголовки − пропущенные), `skipped` — окна без заголовка.
+    private func paintableWindows() -> (titles: [String], onScreen: Int, shared: Int, skipped: Int) {
+        guard let pid = app.pid else { return ([], 0, 0, 0) }
         let windows = ClaudeApp.onScreenFrames(pid: pid)
-        guard !windows.isEmpty else { return ([], 0, 0) }
+        guard !windows.isEmpty else { return ([], 0, 0, 0) }
         var seen = Set<String>()
         var titles: [String] = []
-        var unnamed = 0
+        var skipped = 0
         for index in ArrangeLayout.order(of: windows.map { $0.frame }) {
             let title = app.window(matching: windows[index].frame)
                 .flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
-            if MenuModel.isUnnamedChat(title) { unnamed += 1 }
-            guard !title.isEmpty, seen.insert(title).inserted else { continue }
+            guard !title.isEmpty else {
+                skipped += 1
+                continue
+            }
+            guard seen.insert(title).inserted else { continue }
             titles.append(title)
         }
-        // Про «одним цветом» говорим, только когда своего цвета кому-то и правда не досталось.
-        return (titles, windows.count, titles.count < windows.count ? unnamed : 0)
+        return (titles, windows.count, windows.count - titles.count - skipped, skipped)
     }
 
     /// «🎲 Случайно» красит в тон окнам: светлые сейчас или тёмные. Знаем мы об этом только по
