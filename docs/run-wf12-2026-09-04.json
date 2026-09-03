@@ -1,7 +1,7 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf12-2026-09-04.md",
   "project": "⚪PimpMyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "trelvis": "#5341 #5342",
   "branch": "wf10",
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf12-a-wf_34a52824-61b.js",
@@ -26,8 +26,13 @@
       "at": "2026-09-04T03:29:56+05:00",
       "who": "оркестратор",
       "what": "батч B (Swift) запущен параллельно A"
+    },
+    {
+      "at": "2026-09-04T03:55:57+05:00",
+      "who": "оркестратор",
+      "what": "A fix-needed (1 medium code em → внесено; селектор ответов Claude Code добавлен по probe), B ok (4 low → 2 внесены). Живьём: размер 18/12 px, рамка, подсказка. Релиз 1.3.0 (7) нотаризован, wf10 слит в main c94845d. Финиш"
     }
   ],
-  "watchdog": "watchdog-pimpmyclaude-wf10-0409 (общий)",
+  "watchdog": "watchdog-pimpmyclaude-wf10-0409 (снят)",
   "runB": "wf_34ea1608-477"
 }
