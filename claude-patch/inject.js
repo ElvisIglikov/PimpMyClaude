@@ -25,7 +25,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf5-a-2";
+  const VERSION = "wf5-a-4";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -460,7 +460,11 @@ input, textarea, select, [contenteditable="true"] { caret-color: ${accent} !impo
   // хранит тему под постоянным `main`; подчинённые окна привязаны к одному
   // разговору, и их заголовок как раз постоянен — он и есть ключ. Заголовка
   // ещё нет — ключа нет, ждём (см. watchThemeTitle).
+  // Красим только окна Claude: claude.ai (главное) и about:blank («Open in new
+  // window»). Артефакты, браузерная панель (data:) и file: — не наши.
+  const themable = /^(https:\/\/claude\.ai\/|about:blank)/.test(location.href);
   const themeKey = () => {
+    if (!themable) return null;
     if (location.href.includes("claude.ai")) return "main";
     const title = (document.title || "").trim();
     return title ? `w:${title}` : null;
@@ -502,28 +506,33 @@ input, textarea, select, [contenteditable="true"] { caret-color: ${accent} !impo
   };
 
   const themeState = { theme: null, source: null, titleTimer: 0, titleUntil: 0 };
-  const themeNode = document.createElement("style");
-  themeNode.id = THEME_STYLE_ID;
-  track(() => { try { themeNode.remove(); } catch {} });
+  // Тема — конструируемая таблица стилей (adoptedStyleSheets), а не <style> в
+  // <head>: Claude зеркалит <style> из главного окна во все попапы «Open in new
+  // window» (проверено живьём 03.09: тема главного окна появилась во всех
+  // подчинённых). Adopted-таблицы — не DOM-узлы, зеркало их не видит, а в
+  // каскаде они идут после таблиц документа и при равной силе побеждают.
+  const themeSheet = new CSSStyleSheet();
+  const detachThemeSheet = () => {
+    try { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(sheet => sheet !== themeSheet); } catch {}
+  };
+  track(detachThemeSheet);
+  // Сироты от прежней реализации (<style id=…>, в том числе зеркальные копии).
+  for (const orphan of document.querySelectorAll(`#${THEME_STYLE_ID}`)) orphan.remove();
 
   const removeTheme = source => {
-    try { themeNode.remove(); } catch {}
-    themeNode.textContent = "";
+    detachThemeSheet();
+    try { themeSheet.replaceSync(""); } catch {}
     themeState.theme = null;
     themeState.source = source ?? null;
   };
-  // Применение: свой <style> последним в <head>, чтобы при равной силе правил
-  // побеждала тема. Повторное применение только меняет текст узла — новых
-  // узлов в голове не копится. Сироту от упавшего инжекта сносим тут же.
   const applyTheme = (theme, source) => {
     const clean = normalizeTheme(theme);
     if (!clean) { removeTheme(source); return null; }
-    for (const orphan of document.querySelectorAll(`#${THEME_STYLE_ID}`)) {
-      if (orphan !== themeNode) orphan.remove();
-    }
-    themeNode.textContent = themeCss(clean);
-    const head = document.head ?? document.documentElement;
-    if (themeNode.parentNode !== head || head.lastElementChild !== themeNode) head.appendChild(themeNode);
+    try { themeSheet.replaceSync(themeCss(clean)); } catch { return null; }
+    try {
+      const sheets = document.adoptedStyleSheets.filter(sheet => sheet !== themeSheet);
+      document.adoptedStyleSheets = [...sheets, themeSheet];
+    } catch { return null; }
     themeState.theme = clean;
     themeState.source = source ?? null;
     return clean;
@@ -538,6 +547,7 @@ input, textarea, select, [contenteditable="true"] { caret-color: ${accent} !impo
   // Порядок восстановления: своя сессия → карта по ключу окна → тема для всех.
   // Возвращает true, когда ждать больше нечего (ключ окна уже известен).
   const restoreTheme = () => {
+    if (!themable) return true;
     const session = readSessionTheme();
     if (session) {
       if (session.theme) applyTheme(session.theme, "session"); else removeTheme("session");
@@ -574,6 +584,7 @@ input, textarea, select, [contenteditable="true"] { caret-color: ${accent} !impo
   // «Для всех» перекрывает всё: карта окон стирается целиком, остаётся одна
   // запись "*". «Для окна» адресуется заголовком, как «Обкэшить».
   const runThemeCommand = detail => {
+    if (!themable) return false;
     const theme = normalizeTheme(detail?.theme);
     if (detail?.scope === "all") {
       writeThemeMap(theme ? { [THEME_ALL_KEY]: theme } : {});
