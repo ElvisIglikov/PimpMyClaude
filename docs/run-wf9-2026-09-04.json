@@ -4,12 +4,11 @@
   "status": "идёт",
   "trelvis": "#5324 #5325 #5326 #5327 #5328 #5329",
   "branch": "wf6",
-  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf9-fix-wf_53a8c7b2-30b.js",
-  "run_id": "wf_53a8c7b2-30b",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf9-wave2-wf_0af32fb1-6e4.js",
+  "run_id": "wf_0af32fb1-6e4",
   "next_steps": [
-    "фикс-батч A2/B2 идёт (по критику 43/8 и verify волны 1)",
-    "гейт живьём, bundle → swap 2 с",
-    "волна 2: сверка WF6–9, TEAM.md, релиз 1.2.0, main"
+    "волна 2: сверка WF6–9 + README/TEAM.md (идёт)",
+    "релиз 1.2.0, zip, слить wf6 в main, снять сторож"
   ],
   "log": [
     {
@@ -26,11 +25,20 @@
       "at": "2026-09-04T00:27:09+05:00",
       "who": "прогон",
       "what": "волна 1: A fix-needed (2 medium, 3 low), B ok (4 low); критик 43/8. Контрольный коммит, запущен фикс-батч A2+B2 (Opus max) + verify"
+    },
+    {
+      "at": "2026-09-04T00:52:19+05:00",
+      "who": "прогон",
+      "what": "фикс-батч A2 ok (3 low), B2 ok (2 low). Гейт живьём: полоска на кромке с сегментами во всех окнах, сводка Vkusnoff разобрана в подсказку, приложение подменено за 2 с (Workflow, клавиши, категории, темы по кругу). Волна 2 запущена"
     }
   ],
   "watchdog": "watchdog-pimpmyclaude-wf6-0309 (общий)",
   "wave1": {
     "run_id": "wf_c25db97f-56d",
+    "status": "финиш"
+  },
+  "fix": {
+    "run_id": "wf_53a8c7b2-30b",
     "status": "финиш"
   }
 }
