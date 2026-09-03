@@ -1,0 +1,10 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf5-2026-09-03.md",
+  "project": "⚪PimpMyClaude",
+  "status": "план",
+  "trelvis": "#5312",
+  "script_path": null,
+  "run_id": null,
+  "next_steps": ["Элвис: «запускай»", "ветка wf5 + тег, сторож, волна 1: A inject.js + B Swift (Opus max), V-A/V-B Opus max"],
+  "log": [{"at": "2026-09-03T17:40:00+05:00", "who": "оркестратор", "what": "разведка ElvisOS (Explore), план WF5, критик недоступен (API 529 ×3) — разнёс сам, 10 правок; жду «запускай»"}]
+}
