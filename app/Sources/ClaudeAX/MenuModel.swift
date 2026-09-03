@@ -88,15 +88,36 @@ enum MenuModel {
         entries.first { $0.command == command }
     }
 
-    // MARK: - темы (WF5)
+    // MARK: - темы и шрифты (WF5, переложено в WF6)
 
-    /// Два подменю после семи пунктов, за разделителем. Хоткеев у тем нет — только меню.
-    static let windowThemeTitle = "Тема окна"
-    static let allWindowsThemeTitle = "Тема всех окон"
-    /// Последний пункт подменю — снять тему (в команде `"theme":null`).
+    /// Два подменю после семи пунктов, за разделителем. Хоткеев у них нет — только меню.
+    /// «Тема окна»/«Тема всех окон» из WF5 схлопнуты в одно «Тема» с вложенным «Всем окнам ▸»:
+    /// подменю стояли вплотную и при скольжении мыши вниз одно подменялось другим (жалоба #5313).
+    static let themeTitle = "Тема"
+    static let fontTitle = "Шрифт"
+    /// Вложенное подменю «всем окнам» и его disabled-заголовок — чтобы не спутать с окном.
+    static let allWindowsTitle = "Всем окнам"
+    static let allWindowsHeader = "ВСЕМ ОКНАМ"
+    /// Disabled-заголовки секций.
+    static let myThemesHeader = "МОИ ТЕМЫ"
+    static let darkThemesHeader = "ТЁМНЫЕ"
+    static let lightThemesHeader = "СВЕТЛЫЕ"
+    static let regularFontsHeader = "ОБЫЧНЫЕ"
+    static let monoFontsHeader = "МОНОШИРИННЫЕ"
+    /// Сброс слоя: в команде `"theme":null` / `"font":null`, второй слой не трогаем.
     static let themeResetTitle = "Как у Claude"
+    static let fontResetTitle = "Системный (как у Claude)"
+    /// Свои темы (план п. 4).
+    static let saveMyThemeTitle = "Сохранить как мою тему…"
+    static let deleteMyThemeTitle = "Удалить мою тему"
+    static let myThemeNamePrompt = "Имя своей темы"
+    static let myThemeNameHint = "Тема и шрифт запомнятся парой — применить их можно будет одним пунктом."
+    static let myThemeSaveButton = "Сохранить"
+    static let myThemeCancelButton = "Отмена"
+    static let myThemeEmptyAlert = "Сначала выбери тему — её и запомню вместе со шрифтом."
     static let themeIcon = "🎨"
-    /// Значения поля `scope` команды `theme` (контракт п. 3 плана WF5).
+    static let fontIcon = "🔤"
+    /// Значения поля `scope` команды `theme` (контракт п. 5 плана WF6).
     static let themeScopeWindow = "window"
     static let themeScopeAll = "all"
 

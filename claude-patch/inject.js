@@ -25,7 +25,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf5-a-7";
+  const VERSION = "wf6-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -268,7 +268,11 @@
     mutationSkipped: 0,
   };
 
-  // ---- 2а. Темы окна ------------------------------------------------------
+  // ---- 2а. Тема и шрифт окна ----------------------------------------------
+  // Два независимых слоя, у каждого своя таблица стилей и своя ячейка в
+  // хранилище: тема (цвета) и шрифт. Команда меняет тот слой, поле которого в
+  // ней есть, — шрифт без темы окно не красит, тема без шрифта его не сбрасывает.
+  //
   // Тема — конструируемая таблица стилей (adoptedStyleSheets) с переменными
   // Claude, собранная из палитры шести цветов. Порт ElvisOS/Resources/claude-theme-manager.mjs
   // (хелперы normalizeHex/rgb/mix/hslTriple и generateThemeCss), урезанный:
@@ -282,11 +286,11 @@
   // чужими цветами. Ручку, «Обкэшить» и прокрутку модуль не трогает — у него
   // свой узел и свои ключи хранилища myclaude-theme-*.
   const THEME_STYLE_ID = "myclaude-theme";
-  // Тема этого окна на время его жизни: sessionStorage у каждого окна свой и
-  // переживает навигацию внутри окна (как высота поля выше).
+  // Тема и шрифт этого окна на время его жизни: sessionStorage у каждого окна
+  // свой и переживает навигацию внутри окна (как высота поля выше).
   const THEME_SESSION_KEY = "myclaude-theme-v1";
-  // Карта на перезапуск Claude: { main: тема главного окна, "<заголовок>": тема
-  // подчинённого окна, "*": тема для всех }. localStorage у окон общий.
+  // Карта на перезапуск Claude: { main: запись главного окна, "w:<заголовок>":
+  // запись подчинённого окна, "*": запись для всех }. localStorage у окон общий.
   const THEME_MAP_KEY = "myclaude-themes-v1";
   const THEME_ALL_KEY = "*";
   // Подчинённое окно («Open in new window») живёт на about:blank и получает
@@ -300,6 +304,11 @@
     dark: { accent: "#60a5fa", background: "#0b1020", foreground: "#e5edff", sidebar: "#070b16", panel: "#121a30", muted: "#91a0bf" },
     light: { accent: "#2563eb", background: "#ffffff", foreground: "#111827", sidebar: "#f3f4f6", panel: "#ffffff", muted: "#64748b" },
   };
+  // Шрифт приходит голым именем семейства («SF Mono»), стек дописываем здесь:
+  // так меню шлёт одно слово, а страница отвечает за то, чем это слово подпереть.
+  const FONT_FAMILY_MAX = 60;
+  const FONT_STACK_UI = "-apple-system, system-ui, sans-serif";
+  const FONT_STACK_MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
   // Цветовая арифметика донора один в один: короткая запись #abc и запись с
   // альфой приводятся к шести знакам, остальное падает на запасной цвет.
@@ -572,6 +581,49 @@ ${zScale}
 `;
   };
 
+  // Шрифт — свой слой, со своим разбором. Имя семейства попадает в CSS внутрь
+  // кавычек, поэтому белый список жёстче темы: только буквы, цифры, пробел и
+  // дефис — ни кавычки, ни точки с запятой, ни звёздочки в имени не будет.
+  const normalizeFont = value => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    if (typeof value.family !== "string") return null;
+    const family = value.family
+      .replace(/[^A-Za-z0-9 -]/g, " ").replace(/\s+/g, " ").trim().slice(0, FONT_FAMILY_MAX).trim();
+    if (!family) return null;
+    return { id: themeText(value.id, family), family, mono: value.mono === true };
+  };
+
+  // Отдельная таблица стилей (см. fontSheet ниже): шрифт без темы окно не
+  // красит, тема без шрифта его не сбрасывает.
+  const fontCss = font => {
+    const stack = `"${font.family}", ${font.mono ? FONT_STACK_MONO : FONT_STACK_UI}`;
+    // mono:true — тем же шрифтом и код; mono:false — моно-переменные не трогаем,
+    // иначе пропорциональный шрифт уехал бы в блоки кода и таблицы.
+    const monoVariables = font.mono ? `
+  --font-mono: var(--claude-themes-ui-font) !important;
+  --cds-font-mono: var(--claude-themes-ui-font) !important;
+  --family-monospace: var(--claude-themes-ui-font) !important;` : "";
+    const monoRule = font.mono
+      ? "\ncode, pre, kbd, samp { font-family: var(--claude-themes-ui-font) !important; }"
+      : "";
+    return `/* PimpMyClaude · шрифт ${font.family} */
+${THEME_ROOT_SELECTOR} {
+  --claude-themes-ui-font: ${stack} !important;
+  --font-sans: var(--claude-themes-ui-font) !important;
+  --font-serif: var(--claude-themes-ui-font) !important;
+  --font-system: var(--claude-themes-ui-font) !important;
+  --cds-font-sans: var(--claude-themes-ui-font) !important;
+  --cds-font-system: var(--claude-themes-ui-font) !important;
+  --cds-font-voice: var(--claude-themes-ui-font) !important;
+  --default-font-family: var(--claude-themes-ui-font) !important;
+  --family-ui: var(--claude-themes-ui-font) !important;
+  --font-ui: var(--claude-themes-ui-font) !important;
+  --font-claude-response: var(--claude-themes-ui-font) !important;${monoVariables}
+}
+body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td, th, .font-claude-response-body, .font-claude-response-title, .font-claude-response, [data-user-message-bubble] { font-family: var(--claude-themes-ui-font) !important; }${monoRule}
+`;
+  };
+
   // Ключ окна. Заголовок главного окна меняется на каждом чате, поэтому оно
   // хранит тему под постоянным `main`; подчинённые окна привязаны к одному
   // разговору, и их заголовок как раз постоянен — он и есть ключ. Заголовка
@@ -598,45 +650,85 @@ ${zScale}
       else localStorage.setItem(THEME_MAP_KEY, JSON.stringify(map));
     } catch {}
   };
-  // «Как у Claude» — это тоже выбор, а не отсутствие выбора: пишем "none",
-  // иначе окно на следующем инжекте покрасилось бы обратно из карты.
+  // Слоёв два, и каждый хранится трёхзначно: объект — значение, "none" — явный
+  // сброс («Как у Claude» это тоже выбор, иначе окно на следующем инжекте
+  // покрасилось бы обратно из карты), поля нет — слоя не касались. Поэтому
+  // запись окна — объект { theme, font }, а не одна тема, как было в WF5.
+  const THEME_LAYERS = ["theme", "font"];
+  const LAYER_NORMALIZE = { theme: normalizeTheme, font: normalizeFont };
+  // Старый формат WF5 читается обязательно: в живых окнах уже лежат записи, где
+  // тема стоит на верхнем уровне, и строки "none". Без этого перевода окна
+  // потеряли бы темы на первом же инжекте новой версии.
+  const themeEntry = value => {
+    if (value === "none") return { theme: "none" };
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    if (value.palette) return { theme: value };
+    const entry = {};
+    for (const layer of THEME_LAYERS) if (layer in value) entry[layer] = value[layer];
+    return entry;
+  };
+  // Слой записи: undefined — слоя нет (не трогаем), null — сброс, объект —
+  // значение. Мусор в слое равен его отсутствию: пусть решает следующий уровень.
+  const entryLayer = (entry, layer) => {
+    if (!entry || !(layer in entry)) return undefined;
+    const raw = entry[layer];
+    if (raw === "none" || raw == null) return null;
+    return LAYER_NORMALIZE[layer](raw) ?? undefined;
+  };
+
   // Запись привязана к ключу окна: окно «Open in new window» — попап, и по
   // спецификации HTML оно стартует с КОПИЕЙ sessionStorage главного окна.
   // Без ключа подчинённое окно красилось бы темой главного.
-  const storeSessionTheme = theme => {
-    try {
-      sessionStorage.setItem(THEME_SESSION_KEY, JSON.stringify({ key: themeKey(), theme: theme ?? "none" }));
-    } catch {}
-  };
-  const readSessionTheme = () => {
+  const readSessionEntry = () => {
     try {
       const raw = sessionStorage.getItem(THEME_SESSION_KEY);
       if (raw == null) return null;
       const record = JSON.parse(raw);
-      if (!record || typeof record !== "object" || !record.key) return null;
+      if (!record || typeof record !== "object" || Array.isArray(record) || !record.key) return null;
       const key = themeKey();
       if (!key || record.key !== key) return null;
-      if (record.theme === "none") return { theme: null };
-      return { theme: normalizeTheme(record.theme) };
+      // Сессия старого формата — { key, theme }: слоя font в ней нет, и шрифта
+      // у окна тоже нет. Именно это и значит «поля нет».
+      return themeEntry(record);
     } catch { return null; }
   };
+  const storeSessionLayers = layers => {
+    try {
+      // Слой, которого команда не касалась, остаётся в записи как был.
+      const record = { key: themeKey(), ...(readSessionEntry() ?? {}) };
+      for (const layer of THEME_LAYERS) {
+        if (layer in layers) record[layer] = layers[layer] ?? "none";
+      }
+      sessionStorage.setItem(THEME_SESSION_KEY, JSON.stringify(record));
+    } catch {}
+  };
 
-  const themeState = { theme: null, source: null, titleTimer: 0, titleUntil: 0 };
+  const themeState = { theme: null, source: null, font: null, fontSource: null, titleTimer: 0, titleUntil: 0 };
   // Тема — конструируемая таблица стилей (adoptedStyleSheets), а не <style> в
   // <head>: Claude зеркалит <style> из главного окна во все попапы «Open in new
   // window» (проверено живьём 03.09: тема главного окна появилась во всех
   // подчинённых). Adopted-таблицы — не DOM-узлы, зеркало их не видит, а в
   // каскаде они идут после таблиц документа и при равной силе побеждают.
   const themeSheet = new CSSStyleSheet();
-  const detachThemeSheet = () => {
-    try { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(sheet => sheet !== themeSheet); } catch {}
+  // Шрифт — вторая таблица, независимая от первой: сменить шрифт, не тронув
+  // цвета, и наоборот. Одной таблицей это не выходит — её пришлось бы
+  // перегенерировать целиком на каждую половину.
+  const fontSheet = new CSSStyleSheet();
+  const detachSheet = sheet => {
+    try { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(item => item !== sheet); } catch {}
   };
-  track(detachThemeSheet);
+  const adoptSheet = sheet => {
+    try {
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets.filter(item => item !== sheet), sheet];
+      return true;
+    } catch { return false; }
+  };
+  track(() => { detachSheet(themeSheet); detachSheet(fontSheet); });
   // Сироты от прежней реализации (<style id=…>, в том числе зеркальные копии).
   for (const orphan of document.querySelectorAll(`#${THEME_STYLE_ID}`)) orphan.remove();
 
   const removeTheme = source => {
-    detachThemeSheet();
+    detachSheet(themeSheet);
     try { themeSheet.replaceSync(""); } catch {}
     themeState.theme = null;
     themeState.source = source ?? null;
@@ -645,13 +737,41 @@ ${zScale}
     const clean = normalizeTheme(theme);
     if (!clean) { removeTheme(source); return null; }
     try { themeSheet.replaceSync(themeCss(clean)); } catch { return null; }
-    try {
-      const sheets = document.adoptedStyleSheets.filter(sheet => sheet !== themeSheet);
-      document.adoptedStyleSheets = [...sheets, themeSheet];
-    } catch { return null; }
+    if (!adoptSheet(themeSheet)) return null;
     themeState.theme = clean;
     themeState.source = source ?? null;
     return clean;
+  };
+  // Другой шрифт — другая высота строки, а обычная высота поля закэширована
+  // (state.natural, раздел 9). Без сброса кэша ручка осталась бы стоять по
+  // старому замеру, а поле — прежней высоты.
+  const refreshAfterFont = () => {
+    state.natural = null;
+    try { scheduleLayout(); } catch {}
+  };
+  const removeFont = source => {
+    detachSheet(fontSheet);
+    try { fontSheet.replaceSync(""); } catch {}
+    themeState.font = null;
+    themeState.fontSource = source ?? null;
+    refreshAfterFont();
+  };
+  const applyFont = (font, source) => {
+    const clean = normalizeFont(font);
+    if (!clean) { removeFont(source); return null; }
+    try { fontSheet.replaceSync(fontCss(clean)); } catch { return null; }
+    if (!adoptSheet(fontSheet)) return null;
+    themeState.font = clean;
+    themeState.fontSource = source ?? null;
+    refreshAfterFont();
+    return clean;
+  };
+  const applyLayer = (layer, value, source) => {
+    if (layer === "font") { if (value) applyFont(value, source); else removeFont(source); return; }
+    if (value) applyTheme(value, source); else removeTheme(source);
+  };
+  const applyLayers = (layers, source) => {
+    for (const layer of THEME_LAYERS) if (layer in layers) applyLayer(layer, layers[layer], source);
   };
 
   const stopThemeTitleWatch = () => {
@@ -660,25 +780,30 @@ ${zScale}
     themeState.titleTimer = 0;
   };
   track(stopThemeTitleWatch);
-  // Порядок восстановления: своя сессия → карта по ключу окна → тема для всех.
-  // Возвращает true, когда ждать больше нечего (ключ окна уже известен).
+  // Порядок восстановления у КАЖДОГО слоя свой: своя сессия → карта по ключу
+  // окна → запись «для всех». Тема у окна своя, а шрифт общий — законная пара,
+  // поэтому слои и разведены. Явный сброс («none») сильнее записи «для всех» и
+  // переживает перезапуск. Возвращает true, когда ждать больше нечего (ключ окна
+  // уже известен).
   const restoreTheme = () => {
     if (!themable) return true;
-    const session = readSessionTheme();
-    if (session) {
-      if (session.theme) applyTheme(session.theme, "session"); else removeTheme("session");
-      return true;
-    }
+    const session = readSessionEntry();
     const map = readThemeMap();
     const key = themeKey();
-    // Явный сброс окна («Как у Claude») сильнее темы для всех и переживает перезапуск.
-    if (key && map[key] === "none") { removeTheme("window"); return true; }
-    const own = key ? normalizeTheme(map[key]) : null;
-    if (own) { applyTheme(own, "window"); return true; }
-    const all = normalizeTheme(map[THEME_ALL_KEY]);
-    if (all) applyTheme(all, "all");
+    const own = key ? themeEntry(map[key]) : null;
+    const all = themeEntry(map[THEME_ALL_KEY]);
+    for (const layer of THEME_LAYERS) {
+      const fromSession = entryLayer(session, layer);
+      if (fromSession !== undefined) { applyLayer(layer, fromSession, "session"); continue; }
+      const fromWindow = entryLayer(own, layer);
+      if (fromWindow !== undefined) { applyLayer(layer, fromWindow, "window"); continue; }
+      const fromAll = entryLayer(all, layer);
+      if (fromAll !== undefined) applyLayer(layer, fromAll, "all");
+    }
     return key != null;
   };
+  // Заголовок появился — своя запись окна перекрывает то, что уже наложила
+  // запись «для всех»; слой, которого в записи окна нет, остаётся общим.
   const watchThemeTitle = () => {
     stopThemeTitleWatch();
     themeState.titleUntil = now() + THEME_TITLE_WAIT_MS;
@@ -686,9 +811,11 @@ ${zScale}
       if (!state.alive) { stopThemeTitleWatch(); return; }
       const key = themeKey();
       if (key) {
-        const entry = readThemeMap()[key];
-        if (entry === "none") removeTheme("window");
-        else { const own = normalizeTheme(entry); if (own) applyTheme(own, "window"); }
+        const own = themeEntry(readThemeMap()[key]);
+        for (const layer of THEME_LAYERS) {
+          const value = entryLayer(own, layer);
+          if (value !== undefined) applyLayer(layer, value, "window");
+        }
         stopThemeTitleWatch();
         return;
       }
@@ -696,7 +823,21 @@ ${zScale}
     }, THEME_TITLE_TICK_MS);
   };
 
-  const rememberWhenKeyed = theme => {
+  // Запись окна по слоям. Сброс пишем маркером "none" только когда у ЭТОГО слоя
+  // есть запись «для всех» — иначе запись лишняя. Пустая запись не хранится.
+  const setMapLayers = (map, key, layers) => {
+    const entry = themeEntry(map[key]);
+    const all = themeEntry(map[THEME_ALL_KEY]);
+    for (const layer of THEME_LAYERS) {
+      if (!(layer in layers)) continue;
+      if (layers[layer]) entry[layer] = layers[layer];
+      else if (entryLayer(all, layer)) entry[layer] = "none";
+      else delete entry[layer];
+    }
+    if (Object.keys(entry).length) map[key] = entry; else delete map[key];
+  };
+
+  const rememberWhenKeyed = layers => {
     stopThemeTitleWatch();
     themeState.titleUntil = now() + THEME_TITLE_WAIT_MS;
     themeState.titleTimer = setInterval(() => {
@@ -704,9 +845,9 @@ ${zScale}
       const key = themeKey();
       if (key) {
         const map = readThemeMap();
-        if (theme) map[key] = theme; else if (map[THEME_ALL_KEY]) map[key] = "none"; else delete map[key];
+        setMapLayers(map, key, layers);
         writeThemeMap(map);
-        storeSessionTheme(theme);
+        storeSessionLayers(layers);
         stopThemeTitleWatch();
         return;
       }
@@ -714,32 +855,51 @@ ${zScale}
     }, THEME_TITLE_TICK_MS);
   };
 
-  // Команда меню: {action:"theme", scope:"window"|"all", title, theme|null}.
-  // «Для всех» перекрывает всё: карта окон стирается целиком, остаётся одна
-  // запись "*". «Для окна» адресуется заголовком, как «Обкэшить».
+  // Команда меню: {action:"theme", scope:"window"|"all", title, theme|null, font|null}.
+  // Поля слоя нет — слой не трогаем, null — сброс слоя, объект — применить.
+  // «Для всех» перекрывает СВОЙ слой у всех окон и чужой не трогает: «шрифт
+  // всем» не снимает тем у окон, «тема всем» не снимает их шрифтов.
+  // «Для окна» адресуется заголовком, как «Обкэшить».
   const runThemeCommand = detail => {
-    if (!themable) return false;
-    const theme = normalizeTheme(detail?.theme);
-    if (detail?.scope === "all") {
-      writeThemeMap(theme ? { [THEME_ALL_KEY]: theme } : {});
-      storeSessionTheme(theme);
-      if (theme) applyTheme(theme, "all"); else removeTheme("all");
+    if (!themable || !detail || typeof detail !== "object") return false;
+    const layers = {};
+    for (const layer of THEME_LAYERS) {
+      if (layer in detail) layers[layer] = LAYER_NORMALIZE[layer](detail[layer]);
+    }
+    if (Object.keys(layers).length === 0) return false;
+    if (detail.scope === "all") {
+      const map = readThemeMap();
+      const next = {};
+      for (const [entryKey, value] of Object.entries(map)) {
+        if (entryKey === THEME_ALL_KEY) continue;
+        const entry = themeEntry(value);
+        // Свой слой у окна снимаем — теперь его задаёт общая запись.
+        for (const layer of Object.keys(layers)) delete entry[layer];
+        if (Object.keys(entry).length) next[entryKey] = entry;
+      }
+      const all = themeEntry(map[THEME_ALL_KEY]);
+      for (const [layer, value] of Object.entries(layers)) {
+        if (value) all[layer] = value; else delete all[layer];
+      }
+      if (Object.keys(all).length) next[THEME_ALL_KEY] = all;
+      writeThemeMap(next);
+      storeSessionLayers(layers);
+      applyLayers(layers, "all");
       return true;
     }
-    const title = typeof detail?.title === "string" ? detail.title.trim() : "";
+    const title = typeof detail.title === "string" ? detail.title.trim() : "";
     const mine = title ? (document.title || "").trim() === title : document.hasFocus();
     if (!mine) return false;
     const key = themeKey();
     if (key) {
       const map = readThemeMap();
-      // Сброс пишем явным маркером только когда есть тема для всех — иначе запись лишняя.
-      if (theme) map[key] = theme; else if (map[THEME_ALL_KEY]) map[key] = "none"; else delete map[key];
+      setMapLayers(map, key, layers);
       writeThemeMap(map);
     }
-    storeSessionTheme(theme);
-    if (theme) applyTheme(theme, "window"); else removeTheme("window");
+    storeSessionLayers(layers);
+    applyLayers(layers, "window");
     // Ключа ещё нет (about:blank без заголовка): запомнить негде — дописываем, когда появится.
-    if (!key) rememberWhenKeyed(theme);
+    if (!key) rememberWhenKeyed(layers);
     return true;
   };
 
@@ -2038,13 +2198,23 @@ ${zScale}
       timeRuns: state.timeRuns,
       timeWatched: Boolean(state.timeTarget),
       cashout: readCashout() != null,
-      // Тема окна: что применено, под каким ключом хранится и откуда взялось
-      // (session — своя сессия окна, window — карта по ключу, all — «для всех»).
+      // Тема и шрифт окна: что применено, под каким ключом хранится и откуда
+      // взялось (session — своя сессия окна, window — карта по ключу, all —
+      // запись «для всех»). У слоёв источники независимы.
       theme: {
         id: themeState.theme?.id ?? null,
         key: themeKey(),
         source: themeState.source,
       },
+      font: {
+        id: themeState.font?.id ?? null,
+        family: themeState.font?.family ?? null,
+        mono: themeState.font?.mono ?? false,
+        source: themeState.fontSource,
+      },
+      // Сырая запись карты по ключу окна — на гейте видно, что там лежит на
+      // самом деле (в том числе запись старого формата).
+      raw: (() => { const key = themeKey(); return key ? readThemeMap()[key] ?? null : null; })(),
     }),
   };
   window.__myclaude = api;

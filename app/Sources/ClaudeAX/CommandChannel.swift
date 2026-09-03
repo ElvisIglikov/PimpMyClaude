@@ -1,16 +1,19 @@
 import Foundation
 
-/// Значение поля command.json: строка, вложенный объект (тема) или null (сброс темы).
-/// Объект пишется в том порядке ключей, в каком его собрали: контракт п. 3 плана WF5
-/// перечисляет поля темы как id, name, type, palette — живой файл должен читаться так же.
+/// Значение поля command.json: строка, булево (`font.mono`), вложенный объект (тема, шрифт)
+/// или null (сброс слоя). Объект пишется в том порядке ключей, в каком его собрали: контракт
+/// п. 5 плана WF6 перечисляет поля темы как id, name, type, palette — живой файл должен
+/// читаться так же.
 enum CommandValue {
     case string(String)
+    case bool(Bool)
     case object([(key: String, value: CommandValue)])
     case null
 
     var json: String {
         switch self {
         case .string(let value): return CommandChannel.jsonString(value)
+        case .bool(let value): return value ? "true" : "false"
         case .null: return "null"
         case .object(let fields):
             let body = fields.map { "\(CommandChannel.jsonString($0.key)):\($0.value.json)" }
@@ -80,8 +83,9 @@ final class CommandChannel {
                 id: id, at: at)
     }
 
-    /// То же тело, но поля идут в заданном порядке и могут быть непростыми: тема — вложенный
-    /// объект, сброс темы — null (контракт п. 3 плана WF5).
+    /// То же тело, но поля идут в заданном порядке и могут быть непростыми: тема и шрифт —
+    /// вложенные объекты, сброс слоя — null, отсутствие поля — «слой не трогать»
+    /// (контракт п. 5 плана WF6: id, action, at, scope, title, theme, font).
     static func payload(action: String, fields: [(key: String, value: CommandValue)],
                         id: String = makeID(), at: Date = Date()) -> String {
         var parts = ["\"id\":\(jsonString(id))",
