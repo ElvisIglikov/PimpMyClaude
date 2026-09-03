@@ -2,12 +2,12 @@
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf4-2026-09-03.md",
   "project": "⚪PimpMyClaude",
   "status": "идёт",
-  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf4-wave1-wf_d762168e-225.js",
-  "run_id": "wf_d762168e-225",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf4-wave2-wf_d8093d41-575.js",
+  "run_id": "wf_d8093d41-575",
   "next_steps": [
-    "волна 1 идёт: A, B → V-A (Fable xhigh), V-B (Opus max)",
-    "гейт 1: build/test/bundle, живой запуск без «Поставить», Элвис снимает Lua-модули",
-    "Элвис: notarytool store-credentials pimpmyclaude (до волны 2)"
+    "волна 2 идёт: C → V-C; D → V-D",
+    "гейт 1 (Элвис): Accessibility для app/.build/PimpMyClaude.app, снять Lua-модули, посмотреть меню/хоткеи",
+    "гейт 2: bundle + release, «Поставить» рукой Элвиса"
   ],
   "log": [
     {
@@ -24,9 +24,19 @@
       "at": "2026-09-03T14:37:31+05:00",
       "who": "оркестратор",
       "what": "Элвис: «запускай». Ветка wf4, тег wf4-start, сторож поставлен, волна 1 запущена (A+B Opus max, V-A Fable xhigh, V-B Opus max)"
+    },
+    {
+      "at": "2026-09-03T15:14:06+05:00",
+      "who": "прогон",
+      "what": "волна 1 готова: A ok (6 low), B fix-needed (1 high cashout-задержка, 1 medium хоткеи, 4 low) — всё поправлено оркестратором, 15 тестов зелёные, коммит на wf4, app/.build/PimpMyClaude.app собран и запущен у Элвиса. Волна 2 запущена (C Opus max → V-C Opus max; D Opus max → V-D Fable xhigh)"
     }
   ],
   "branch": "wf4 (тег wf4-start на main f0f233a)",
   "watchdog": "watchdog-pimpmyclaude-0309",
-  "orchestrator": "Fable 5.1 high"
+  "orchestrator": "Fable 5.1 high",
+  "wave1": {
+    "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/0057e07b-2bd1-482b-83b0-156d72ee0e0b/workflows/scripts/pimpmyclaude-wf4-wave1-wf_d762168e-225.js",
+    "run_id": "wf_d762168e-225",
+    "status": "финиш"
+  }
 }
