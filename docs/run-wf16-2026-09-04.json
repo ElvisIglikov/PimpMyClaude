@@ -1,0 +1,35 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf16-2026-09-04.md",
+  "project": "⚪PimpMyClaude",
+  "status": "финиш",
+  "trelvis": "#5380",
+  "branch": "wf16",
+  "tag": "wf16-start",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/6d67f948-9b23-45b0-9fef-b332a622ff3f/workflows/scripts/pimpmyclaude-wf16-wf_06bccddf-5a5.js",
+  "run_id": "wf_06bccddf-5a5",
+  "orchestrator": "Fable 5.1 high; все агенты Opus max",
+  "decision": "вариант А, обе ступени (a + b через стор папки)",
+  "next_steps": [
+    "волна: A-js ∥ A-swift → D → V",
+    "гейт: probe П3 (rename), живой клик «Новое окно ▸ в проекте …», bundle → swap",
+    "коммит, слияние в main; далее WF17 (релиз) — по плану WF21 перенести в конец? решить на гейте"
+  ],
+  "log": [
+    {
+      "at": "2026-09-04T21:55:00+05:00",
+      "who": "оркестратор",
+      "what": "разведка П1/П2 снята (стор папки Zt), ветка wf16 от main после WF15, запуск волны"
+    },
+    {
+      "at": "2026-09-05T00:55:00+05:00",
+      "who": "оркестратор",
+      "what": "волна отбита пятичасовым лимитом (сброс 00:50); рабочее дерево чистое, resume по run_id"
+    },
+    {
+      "at": "2026-09-05T01:30:00+05:00",
+      "who": "оркестратор",
+      "what": "A-js, A-swift, D, V ok; правки verify 1 и 5 внесены на гейте; находка 3 (список папок только из сессий, без ~/.claude.json — осознанно: чужие папки не доверены) и 4 (подсказка — короткий путь) приняты; 74 теста; inject.js живьём, бандл подменён. Живьём: ⌥⌘N, нажатый на popout-окне, адресуется этому попапу и не срабатывает (главное окно только уходит на /epitaxy) — хвост в WF19: new-window всегда адресовать главному окну по match. Пункт «в проекте» живьём не кликали (ночь). Финиш"
+    }
+  ],
+  "watchdog": "watchdog-pimpmyclaude-0409"
+}

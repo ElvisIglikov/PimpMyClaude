@@ -40,6 +40,9 @@ final class MinimizeMenu: NSObject {
     /// Цвет проекта (план WF15): подменю «🗂 Проект ▸» и его пункты. nil — приложение собрано
     /// без покраски по проекту, тогда пункта в меню нет вовсе.
     var project: ProjectPaint?
+    /// Недавние папки для «🪟 Новое окно ▸» (план WF16): их даёт `ProjectIndex` — единственный
+    /// источник правды «папка ↔ сессия». Пусто — в подменю остаётся один пункт «Здесь же».
+    var recentProjects: () -> [Project] = { [] }
 
     /// Открыто ли меню (или его модальный диалог): пока открыто, фоновая покраска по проекту
     /// молчит — не-preview команда сбила бы примерку темы мышью (критик В1 плана WF15).
@@ -177,6 +180,12 @@ final class MinimizeMenu: NSObject {
         config.perform = { [weak self] command in
             DispatchQueue.main.async { self?.actions.perform(command, on: window) }
         }
+        // «🪟 Новое окно ▸ <проект>» (план WF16): список папок читаем на каждый показ — чаты
+        // Claude Code заводятся и закрываются, пока меню не открыто.
+        config.projects = recentProjects()
+        config.newWindowInProject = { [weak self] project in
+            DispatchQueue.main.async { self?.actions.newWindow(in: project, on: window) }
+        }
         config.apply = { [weak self] scope, theme, font, size, frame in
             committed = true
             DispatchQueue.main.async {
@@ -312,6 +321,12 @@ final class MinimizeMenu: NSObject {
         /// без сведений о проекте, и пункта «🗂 Проект ▸» в нём нет; живьём состояние есть
         /// всегда — папку не узнали, значит пункт погашен («Проект: не определён»).
         var project: ProjectMenuState?
+        /// Недавние папки в «🪟 Новое окно ▸» (план WF16, ступень b). Пусто — подменю остаётся
+        /// с одним пунктом «Здесь же», раздела «НЕДАВНИЕ ПРОЕКТЫ» нет вовсе: пункт, молча
+        /// открывающий окно не в той папке, хуже отсутствия пункта.
+        var projects: [Project] = []
+        /// Клик по папке: новый чат в ней, имя чата — имя проекта, цвет — сразу проектный.
+        var newWindowInProject: (Project) -> Void = { _ in }
         /// Тумблер «Красить чаты по проекту» — приходит уже перевёрнутым.
         var projectPaint: (Bool) -> Void = { _ in }
         var projectApply: () -> Void = {}
@@ -352,7 +367,9 @@ final class MinimizeMenu: NSObject {
         // Пункты из moreCommands на верхний уровень не рисуются, но из `MenuModel.entries`
         // не выпадают: по нему регистрируются Carbon-хоткеи (блокер Б1 критика).
         for entry in MenuModel.entries where !MenuModel.moreCommands.contains(entry.command) {
-            menu.addItem(commandItem(entry, config))
+            // «🪟 Новое окно» — единственный пункт верхнего уровня с подменю (план WF16).
+            menu.addItem(entry.command == .newWindow ? newWindowItem(entry, config)
+                                                     : commandItem(entry, config))
             if MenuModel.separatorsAfter.contains(entry.command) { menu.addItem(.separator()) }
         }
         addSeparator(menu)
@@ -370,6 +387,39 @@ final class MinimizeMenu: NSObject {
         item.image = icon(entry.icon)
         item.keyEquivalent = entry.key?.keyEquivalent ?? ""
         item.keyEquivalentModifierMask = entry.key?.modifierMask ?? []
+        return item
+    }
+
+    /// «🪟 Новое окно ▸» — вариант А макета WF16: первым пунктом привычное «Здесь же
+    /// (последняя папка)» с клавишей ⌥⌘N, ниже — «НЕДАВНИЕ ПРОЕКТЫ» и папки, где Claude уже
+    /// работал (в новой папке он поднял бы своё окно доверия, и цепочка встала бы).
+    /// Имя пункта — имя папки, полный путь — подсказкой при наведении.
+    ///
+    /// Клавиша живёт на пункте «Здесь же», а НЕ на родителе: у пункта с подменю AppKit
+    /// `keyEquivalent` не отрабатывает — нарисовал бы и не сработал (критик В2). Сам хоткей
+    /// ⌥⌘N от этого меню не зависит вовсе: его регистрирует `refreshHotkeys` по `MenuModel.entries`,
+    /// откуда `.newWindow` не выпадает.
+    /// Список пуст (папок не знаем, ступень b не состоялась) — подменю из одного пункта:
+    /// внешне всё как в WF13.
+    static func newWindowItem(_ entry: MenuEntry, _ config: MenuConfig) -> NSMenuItem {
+        let here = commandItem(entry, config)
+        here.title = MenuModel.newWindowHereTitle
+        let submenu = NSMenu(title: entry.menuTitle)
+        submenu.autoenablesItems = false
+        submenu.addItem(here)
+        if !config.projects.isEmpty {
+            submenu.addItem(.separator())
+            submenu.addItem(header(MenuModel.recentProjectsHeader))
+            for project in config.projects {
+                let item = BlockMenuItem(title: project.name) { config.newWindowInProject(project) }
+                item.image = icon(MenuModel.projectFolderIcon)
+                item.toolTip = ProjectPaint.short(path: project.folder)
+                submenu.addItem(item)
+            }
+        }
+        let item = submenuItem(title: entry.menuTitle, icon: entry.icon, submenu: submenu)
+        item.keyEquivalent = ""
+        item.keyEquivalentModifierMask = []
         return item
     }
 

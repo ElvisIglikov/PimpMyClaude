@@ -61,6 +61,9 @@ final class ProjectIndex {
     static let titleStubs: Set<String> = ["claude", "new chat", "новый чат"]
     /// Чаще, чем раз в 2 с, каталог обходить незачем: status.json лоадер пишет с тем же шагом.
     static let reloadInterval: TimeInterval = 2
+    /// Потолок номера в имени чата («PimpMyClaude 2», план WF16 решение 4): дальше считать
+    /// уникальность бессмысленно.
+    static let chatNameLimit = 99
 
     /// Страница чата в диагностике лоадера.
     struct Page: Equatable {
@@ -167,10 +170,36 @@ final class ProjectIndex {
     }
 
     /// Последние папки — «новое окно в папке» (WF16) берёт список отсюда, своего сканера
-    /// сессий не заводит (критик В6 плана WF15).
+    /// сессий не заводит (критик В6 плана WF15, критик Б2 плана WF16).
+    /// Папки, которой больше нет на диске, в списке быть не должно: пункт меню молча открыл бы
+    /// чат в несуществующем каталоге (решение 2 плана WF16).
     func recentProjects(limit: Int) -> [Project] {
         guard limit > 0 else { return [] }
-        return Array(projects().prefix(limit))
+        var out: [Project] = []
+        for project in projects() where ProjectIndex.isDirectory(project.folder, fileManager) {
+            out.append(project)
+            if out.count == limit { break }
+        }
+        return out
+    }
+
+    /// Уникальное имя чата для «🪟 Новое окно ▸ <проект>»: имя проекта, а занято — «Имя 2»,
+    /// «Имя 3»… Считает приложение по ВСЕМ заголовкам индекса, а не страница по хвосту сайдбара
+    /// (критик В4 плана WF16): два чата с одним заголовком делят ключ темы `chat:<заголовок>`
+    /// и путают адресацию `cashout`/`workflow` по заголовку.
+    /// Архивные считаются занятыми тоже — их заголовки из индекса никуда не делись.
+    /// Кончились номера — отдаём имя как есть: уникальность и так не абсолютная (чат
+    /// переименуют руками в Claude, и совпадение вернётся — открытый риск плана).
+    func uniqueChatName(_ base: String, limit: Int = ProjectIndex.chatNameLimit) -> String {
+        let clean = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return "" }
+        reloadIfNeeded()
+        let taken = Set(loaded.map { $0.title })
+        guard taken.contains(clean) else { return clean }
+        for number in 2...max(2, limit) where !taken.contains("\(clean) \(number)") {
+            return "\(clean) \(number)"
+        }
+        return clean
     }
 
     /// Главное окно по диагностике лоадера. Страница claude.ai одна — она и есть главное окно;
@@ -253,6 +282,13 @@ final class ProjectIndex {
             }
         }
         return files.sorted { $0.path < $1.path }
+    }
+
+    /// Папка на месте? Чужие пути живут в чужих файлах: каталог могли переименовать или снести.
+    static func isDirectory(_ url: URL, _ fileManager: FileManager = .default) -> Bool {
+        var isDirectory: ObjCBool = false
+        return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
     }
 
     /// Отпечаток файла для кэша: время правки и размер.

@@ -50,6 +50,9 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
 - `new-window` (WF13): `{…,"scope":"window","title","x":<число>,"y":<число>,"text":"Привет"}` — главное окно: ⌘N (жмёт Swift),
   первое сообщение, чат выносится popout-окном (стор claude.ai `openPopout`, ищется поведенчески через `import()`
   чанков modulepreload), главное окно возвращается на прежний чат по строке сайдбара; `status().newWindow`.
+- WF16: `new-window` получил поля `folder` (абсолютный путь, "" — не трогать), `name` (имя чата) и слои `theme/font/size/frame`
+  как у команды `theme` (порядок: scope,title,x,y,text,folder,name,[theme],[font],[size],[frame]); папка ставится через стор
+  Claude (`setLocalSelectedFolder`+`setTrustedSelectedFolder`, поиск поведенчески), имя — через DOM-меню строки с деградацией.
 - `popout-window` (WF13): `{…,"scope":"window","title","x","y"}` — вынести текущий чат главного окна в отдельное окно.
 - Адресация окна (WF15): у любой команды с `scope:"window"` необязательное поле `match` — путь страницы
   (`/epitaxy/local_<id>`); есть строка → страница сверяет `location.pathname`, поля нет — по `title`/фокусу, как раньше.
@@ -69,7 +72,7 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
 
 ## Сборка, гейт, релиз
 
-- `cd app && swift build && swift test` (71 тест). JS: `node --check claude-patch/inject.js` + скретч-тесты в
+- `cd app && swift build && swift test` (74 теста). JS: `node --check claude-patch/inject.js` + скретч-тесты в
   scratchpad сессии (`theme-store-test.mjs`, `theme-css-test.mjs`, `progress-test.mjs`, `progress-dom-test.mjs`,
   `workflow-insert-test.mjs`) — они не в репозитории; новый чат их не найдёт, при необходимости просить агента написать.
 - `tools/bundle.sh release` → `app/.build/PimpMyClaude.app` (Developer ID). **Подмена без простоя:** сначала bundle,
@@ -143,6 +146,6 @@ WF1–3 (03.09) ручка/меню/⌘Q в Hammerspoon → WF4 PimpMyClaude.app
 
 ## Кто чем владеет при параллельных батчах (правило одного писателя)
 
-`claude-patch/inject.js` — всегда ОДИН агент на волну (3600 строк, разделы 2а темы, 2б полоска, 12 «Обкэшить»,
+`claude-patch/inject.js` — всегда ОДИН агент на волну (4400 строк, разделы 2а темы, 2б полоска, 12 «Обкэшить»,
 12а Workflow, 16 подписки). Swift — второй агент; `themes.json`, `bundle.sh` — у Swift-батча. Контракт команды
 фиксируется в плане до старта, менять — только на гейте.
