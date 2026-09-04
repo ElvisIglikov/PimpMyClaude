@@ -35,10 +35,10 @@ enum LiveStyle {
     static let minSidePadding = 0
     static let maxSidePadding = 24
 
-    /// Радиус углов окна macOS: у Tahoe (26) ≈ 17 pt, у 13–15 — 10–11 pt. Замер по альфа-каналу
+    /// Радиус углов окна macOS: у Tahoe (26) ≈ 17 pt по кругу, но угол — сквиркл, ровно сидит 15, у 13–15 — 10–11 pt. Замер по альфа-каналу
     /// скриншота окна Элвиса (macOS 26.5). Рамка `#myclaude-window-frame` рисуется инлайн-стилем
     /// с радиусом 10 — отсюда «углы обрезаются неровно» (задача #5359).
-    static let modernFrameRadius = 17
+    static let modernFrameRadius = 15
     static let legacyFrameRadius = 10
     static let modernMacOSVersion = 26
     /// Годные значения необязательного ключа `frameRadius`: мусор игнорируем.

@@ -1626,7 +1626,7 @@ final class ClaudeAXTests: XCTestCase {
     /// Блок контракта побайтно — тем же текстом он лежит в репозиторном claude-patch/claude.css.
     private static let expectedBlock = """
     /* PimpMyClaude:auto */
-    #myclaude-window-frame{border-radius:17px !important}
+    #myclaude-window-frame{border-radius:15px !important}
     :root{--chat-gutter:5px !important;--chat-gutter-start:5px !important;--chat-gutter-end:5px !important}
     [class*="--chat-column-gutter-start"]{--chat-column-gutter-start:5px !important;--chat-column-gutter-end:5px !important}
     [class*="ps-[var(--chat-gutter"],[class*="pe-[var(--chat-gutter"],.epitaxy-transcript-width,.epitaxy-composer-width{padding-inline-start:5px !important;padding-inline-end:5px !important;padding-left:5px !important;padding-right:5px !important}
@@ -1635,15 +1635,15 @@ final class ClaudeAXTests: XCTestCase {
     """
 
     func testLiveStyleBlockMatchesContract() throws {
-        XCTAssertEqual(LiveStyle.block(padding: 5, radius: 17), ClaudeAXTests.expectedBlock)
+        XCTAssertEqual(LiveStyle.block(padding: 5, radius: 15), ClaudeAXTests.expectedBlock)
         // Радиус — по версии macOS: у Tahoe (26+) угол ≈ 17 pt, у 13–15 — 10.
-        XCTAssertEqual(LiveStyle.frameRadius(majorVersion: 26), 17)
+        XCTAssertEqual(LiveStyle.frameRadius(majorVersion: 26), 15)
         XCTAssertEqual(LiveStyle.frameRadius(majorVersion: 15), 10)
         // Необязательный ключ frameRadius в claude.json перебивает порог; мусор — нет.
         XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":12}", majorVersion: 26), 12)
-        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":999}", majorVersion: 26), 17)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":999}", majorVersion: 26), 15)
         XCTAssertEqual(LiveStyle.frameRadius(config: "не json", majorVersion: 15), 10)
-        XCTAssertEqual(LiveStyle.frameRadius(config: nil, majorVersion: 26), 17)
+        XCTAssertEqual(LiveStyle.frameRadius(config: nil, majorVersion: 26), 15)
         // Ползунок зажат в 0…24, умолчание — 5 (решение Элвиса, вопрос 4 макета).
         XCTAssertEqual(LiveStyle.clamp(-5), 0)
         XCTAssertEqual(LiveStyle.clamp(40), 24)
@@ -1665,7 +1665,7 @@ final class ClaudeAXTests: XCTestCase {
     }
 
     func testLiveStyleBlockKeepsForeignRules() throws {
-        let block = LiveStyle.block(padding: 5, radius: 17)
+        let block = LiveStyle.block(padding: 5, radius: 15)
         let old = LiveStyle.block(padding: 16, radius: 10)
         let mine = "/* Элвис */\n.a{color:red}\n"
 
@@ -1741,7 +1741,7 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertFalse(LiveStyle.writeConfig(sidePadding: 8, directory: dir))
         XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), "{сломано")
         XCTAssertTrue(LiveStyle.writeBlock(padding: 8, directory: dir, majorVersion: 26))
-        XCTAssertTrue(try String(contentsOf: css, encoding: .utf8).contains("border-radius:17px"))
+        XCTAssertTrue(try String(contentsOf: css, encoding: .utf8).contains("border-radius:15px"))
         XCTAssertTrue(try String(contentsOf: css, encoding: .utf8).contains("--chat-gutter:8px"))
 
         // Файла claude.json нет — создаём из умолчаний, ничего не теряя.
