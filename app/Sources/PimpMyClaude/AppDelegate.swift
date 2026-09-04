@@ -37,6 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         buildStatusItem()
         applySettingsToAX()
         ax.start()
+        // Радиус рамки и поля по бокам живут блоком в claude.css — восстанавливаем его на
+        // запуске (план WF14, решение 1: три точки записи, это первая).
+        ax.refreshLiveStyle()
         Notifier.registerCategory(delegate: self)
         configureLoginItemOnFirstRun()
         refreshState()
@@ -81,10 +84,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         menu.addItem(withTitle: "Поставить…", action: #selector(install), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Снять…", action: #selector(uninstall), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Статус…", action: #selector(showStatus), keyEquivalent: "").target = self
-        menu.addItem(.separator())
-        // Дубль подменю с жёлтой кнопки (план WF10 п. 1): красит все окна Claude на экране,
-        // окно под курсором для этого не нужно.
-        menu.addItem(ax.autoPaintMenuItem())
+        // Автопокраска из меню-бара снята (решение Элвиса 04.09 19:30, задача #5362):
+        // она живёт только в «🎨 Оформление ▸ → 🖥 Всем окнам ▸ → 🌈 Раскрасить по кругу ▸».
         menu.addItem(.separator())
         for toggle in [autoAllowItem, minimizeMenuItem, blockQuitItem, loginItem] {
             toggle.target = self
@@ -387,6 +388,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
 
     private func operationFinished() {
         busy = false
+        // «Поставить» и «Снять» копируют claude.css из бандла ЦЕЛИКОМ (Patcher.installLiveFiles) —
+        // блок с радиусом рамки и полями надо вернуть на место (план WF14, решение 1).
+        ax.refreshLiveStyle()
         refreshState()
     }
 

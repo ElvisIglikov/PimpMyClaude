@@ -139,6 +139,15 @@ final class MinimizeMenu: NSObject {
         config.allSize = actions.themeStore.allSize
         config.windowFrame = actions.themeStore.windowFrame(title: title)
         config.allFrame = actions.themeStore.allFrame
+        // Два случая, где памяти о цвете окна верить нельзя (критик В1 плана WF14).
+        config.windowTitled = !title.isEmpty
+        config.windowAutoPainted = actions.autoPaintedTheme(title: title) != nil
+        // Поля по бокам: значение читаем из claude.json на каждый показ — его правит и сам
+        // Элвис, и лоадер берёт его оттуда же (критик В7).
+        config.sidePadding = LiveStyle.currentSidePadding()
+        // Ползунок пишет claude.css и claude.json, а не command.json: очередь канала и примерку
+        // тем он не трогает, отсюда отклик до ~1 с (лоадер опрашивает файлы раз в секунду).
+        config.setSidePadding = { LiveStyle.apply(sidePadding: $0) }
         // Была ли примерка и закрепили ли её выбором — оба флага живут до конца popUp
         // (замыкания меню срабатывают внутри его цикла).
         var previewed = false
@@ -226,6 +235,8 @@ final class MinimizeMenu: NSObject {
     /// этого приложения — а у автопокрашенного окна из его же автотемы (план WF10 п. 6),
     /// иначе оно предложило бы «Радуга · 137°» от соседнего окна.
     /// Тему ни разу не выбирали — сохранять нечего, показываем алерт.
+    /// Имя занято своей темой — второй вопрос «Перезаписать?» (критик В2 плана WF14): иначе
+    /// «Фиолетовая → Сохранить» на втором окне молча затрёт сохранённую раньше «Фиолетовую».
     /// После диалога фокус возвращается окну Claude, как после самого меню.
     private func saveMyTheme(window: AXUIElement) {
         // Пока висит диалог, тик наведения не должен всплывать меню поверх него.
@@ -236,6 +247,8 @@ final class MinimizeMenu: NSObject {
             return
         }
         guard let name = MinimizeMenu.askThemeName(default: theme.name) else { return }
+        if let existing = MyThemesStore.matching(name: name, in: actions.myThemes.load()),
+           !MinimizeMenu.confirmOverwrite(name: existing.name) { return }
         if actions.saveMyTheme(name: name, window: window) == nil {
             MinimizeMenu.warn("Не удалось записать my-themes.json в Application Support/MyClaude")
         }
@@ -259,6 +272,18 @@ final class MinimizeMenu: NSObject {
         /// Состояние тумблера «✨ Неоновая рамка» (план WF12 п. 4).
         var windowFrame = false
         var allFrame = false
+        /// Есть ли у окна AX-заголовок: без него память по заголовку пуста ВСЕГДА
+        /// (`windowThemeID(title:"")` — nil), и галка «Как у Claude» врала бы (критик В1).
+        var windowTitled = true
+        /// Окно покрашено автопокраской: цвет на нём есть, а записи в ThemeStore нет
+        /// («автопокраска не ставит галки и стирает старые») — галка соврала бы и здесь.
+        var windowAutoPainted = false
+        /// Поля по бокам (задача #5360): текущее значение ползунка из claude.json и обработчик.
+        var sidePadding = LiveStyle.defaultSidePadding
+        var setSidePadding: (Int) -> Void = { _ in }
+
+        /// Можно ли верить памяти приложения об этом окне — от этого зависит галка «Как у Claude».
+        var windowMemoryTrusted: Bool { windowTitled && !windowAutoPainted }
         var perform: (ClaudeCommand) -> Void = { _ in }
         /// scope и четыре слоя — одна команда на все (контракт п. 1 плана WF12);
         /// пункт меню трогает ровно свой слой, остальные уходят `.keep`.
@@ -274,39 +299,133 @@ final class MinimizeMenu: NSObject {
         var previewFrame: () -> Void = {}
         var saveMyTheme: () -> Void = {}
         var deleteMyTheme: (MyTheme) -> Void = { _ in }
-        /// «🌈 Автопокраска» (план WF10): набор красит все окна на экране, окно под курсором
-        /// ему не нужно — поэтому те же три замыкания подходят и меню-бару приложения.
+        /// «🌈 Раскрасить по кругу» (план WF10, переименовано в WF14): набор красит все окна
+        /// на экране — окно под курсором ему не нужно.
         var autoPaint: (AutoPaintPreset) -> Void = { _ in }
         var autoPaintAgain: () -> Void = {}
         var autoPaintReset: () -> Void = {}
     }
 
-    /// Меню кнопки: семь пунктов с разделителями, затем — если каталог тем не пуст — разделитель
-    /// и подменю «Тема ▸» и «Шрифт ▸». Собрано отдельно от show(), чтобы проверять его в тестах.
+    /// Меню кнопки — вариант А плана WF14: короткий верхний уровень (Workflow, оконная тройка,
+    /// Развернуть/Свернуть), всё оформление в одном «🎨 Оформление ▸», редкие команды —
+    /// в «⋯ Ещё ▸». Собрано отдельно от show(), чтобы проверять его в тестах.
     static func build(config: MenuConfig) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        for entry in MenuModel.entries {
-            let item = BlockMenuItem(title: entry.menuTitle) { config.perform(entry.command) }
-            item.image = icon(entry.icon)
-            // Клавишу справа серым AppKit рисует сам — в заголовке её больше нет (решение 4 WF9).
-            // Маску ставим и пустую: по умолчанию у NSMenuItem она ⌘, а у «Workflow» клавиши нет.
-            item.keyEquivalent = entry.key?.keyEquivalent ?? ""
-            item.keyEquivalentModifierMask = entry.key?.modifierMask ?? []
-            menu.addItem(item)
+        // Пункты из moreCommands на верхний уровень не рисуются, но из `MenuModel.entries`
+        // не выпадают: по нему регистрируются Carbon-хоткеи (блокер Б1 критика).
+        for entry in MenuModel.entries where !MenuModel.moreCommands.contains(entry.command) {
+            menu.addItem(commandItem(entry, config))
             if MenuModel.separatorsAfter.contains(entry.command) { menu.addItem(.separator()) }
         }
-        // Каталога нет (старый бандл без themes.json) — подменю «Тема» и «Шрифт» не появляются,
-        // но «Автопокраска» палитры считает сама и живёт всегда (план WF10 п. 1).
-        menu.addItem(.separator())
-        if !config.themes.isEmpty { menu.addItem(themeItem(config)) }
-        if !config.fonts.isEmpty { menu.addItem(fontItem(config)) }
-        menu.addItem(autoPaintItem(config))
+        addSeparator(menu)
+        menu.addItem(appearanceItem(config))
+        addSeparator(menu)
+        menu.addItem(moreItem(config))
         return menu
     }
 
-    /// «🌈 Автопокраска ▸»: наборы, разделитель, «🎲 Случайно», «🔁 Ещё раз» и сброс всем окнам
-    /// (план WF10 п. 1). Предпросмотра тут нет: набор красит все окна разом, примерять нечего.
+    /// Пункт-команда: иконка картинкой, клавиша — в keyEquivalent (её справа серым AppKit
+    /// рисует сам, решение 4 плана WF9). Маску ставим и пустую: по умолчанию у NSMenuItem
+    /// она ⌘, а у «Workflow» клавиши нет.
+    static func commandItem(_ entry: MenuEntry, _ config: MenuConfig) -> NSMenuItem {
+        let item = BlockMenuItem(title: entry.menuTitle) { config.perform(entry.command) }
+        item.image = icon(entry.icon)
+        item.keyEquivalent = entry.key?.keyEquivalent ?? ""
+        item.keyEquivalentModifierMask = entry.key?.modifierMask ?? []
+        return item
+    }
+
+    /// Два разделителя подряд AppKit рисует двумя линиями — ставим только там, где его ещё нет
+    /// (и никогда первым пунктом).
+    static func addSeparator(_ menu: NSMenu) {
+        guard let last = menu.items.last, !last.isSeparatorItem else { return }
+        menu.addItem(.separator())
+    }
+
+    /// «⋯ Ещё ▸» — редкое: Обкэшить, Расставить, Показать, Прокрутить (решение Элвиса 04.09:
+    /// «давай все скроем»). Прячем только с глаз: ⇧⌘N, ⌥⌘A, ⌥⌘S и ⌥⌘D работают как раньше.
+    static func moreItem(_ config: MenuConfig) -> NSMenuItem {
+        let submenu = NSMenu(title: MenuModel.moreTitle)
+        submenu.autoenablesItems = false
+        for entry in MenuModel.entries where MenuModel.moreCommands.contains(entry.command) {
+            submenu.addItem(commandItem(entry, config))
+        }
+        return submenuItem(title: MenuModel.moreTitle, icon: MenuModel.moreIcon, submenu: submenu)
+    }
+
+    /// «🎨 Оформление ▸» — всё про вид ЭТОГО окна: свои темы сверху с галкой, цвет, шрифт,
+    /// два размера, рамка и ползунок полей, за разделителем «🖥 Всем окнам ▸», за вторым —
+    /// сохранение/удаление своей темы и «🧹 Всё как у Claude».
+    /// Каталога нет (старый бандл без themes.json) — «Цвет ▸» и «Шрифт ▸» не появляются,
+    /// остальное оформление на месте (критик В10).
+    static func appearanceItem(_ config: MenuConfig) -> NSMenuItem {
+        let window = MenuModel.themeScopeWindow
+        let submenu = NSMenu(title: MenuModel.appearanceTitle)
+        submenu.autoenablesItems = false
+        // Свои темы переехали сюда — значит, и предпросмотр по наведению нужен на этом уровне.
+        submenu.delegate = PreviewMenuDelegate.shared
+
+        if !config.myThemes.isEmpty {
+            submenu.addItem(header(MenuModel.myThemesHeader))
+            for my in config.myThemes { submenu.addItem(myThemeItem(config, my, scope: window)) }
+            submenu.addItem(.separator())
+        }
+        if !config.themes.isEmpty { submenu.addItem(colorItem(config, scope: window)) }
+        if !config.fonts.isEmpty { submenu.addItem(fontItem(config, scope: window)) }
+        for half in Size.Half.allCases {
+            submenu.addItem(sizeItem(config, half: half, scope: window))
+        }
+        submenu.addItem(frameItem(config, scope: window))
+        submenu.addItem(sidePaddingItem(config))
+        submenu.addItem(.separator())
+        submenu.addItem(allWindowsItem(config))
+        submenu.addItem(.separator())
+        let save = BlockMenuItem(title: MenuModel.saveMyThemeTitle) { config.saveMyTheme() }
+        save.image = icon(MenuModel.saveMyThemeIcon)
+        submenu.addItem(save)
+        if !config.myThemes.isEmpty {
+            let deletes = NSMenu(title: MenuModel.deleteMyThemeTitle)
+            deletes.autoenablesItems = false
+            for my in config.myThemes {
+                deletes.addItem(BlockMenuItem(title: my.name) { config.deleteMyTheme(my) })
+            }
+            submenu.addItem(submenuItem(title: MenuModel.deleteMyThemeTitle,
+                                        icon: MenuModel.deleteMyThemeIcon, submenu: deletes))
+        }
+        // Сброс всех четырёх слоёв разом, без подтверждения (мелочь М10 критика).
+        let reset = BlockMenuItem(title: MenuModel.resetAllTitle) {
+            config.apply(window, .reset, .reset, .reset, .reset)
+        }
+        reset.image = icon(MenuModel.resetAllIcon)
+        submenu.addItem(reset)
+        return submenuItem(title: MenuModel.appearanceTitle, icon: MenuModel.appearanceIcon,
+                           submenu: submenu)
+    }
+
+    /// «🖥 Всем окнам ▸» — то же самое, но сразу всем. Заголовок «ВСЕМ ОКНАМ» ровно один,
+    /// первым пунктом (критик В4): вложенные списки своих шапок больше не рисуют.
+    /// Предпросмотра по наведению внутри нет — красить все окна на наведении шумно (план WF8).
+    static func allWindowsItem(_ config: MenuConfig) -> NSMenuItem {
+        let all = MenuModel.themeScopeAll
+        let submenu = NSMenu(title: MenuModel.allWindowsTitle)
+        submenu.autoenablesItems = false
+        submenu.addItem(header(MenuModel.allWindowsHeader))
+        // МОИ ТЕМЫ остаются и здесь: свою тему можно применить сразу всем окнам (блокер Б2).
+        if !config.themes.isEmpty {
+            submenu.addItem(colorItem(config, scope: all, includeMyThemes: true))
+        }
+        if !config.fonts.isEmpty { submenu.addItem(fontItem(config, scope: all)) }
+        for half in Size.Half.allCases { submenu.addItem(sizeItem(config, half: half, scope: all)) }
+        submenu.addItem(frameItem(config, scope: all))
+        submenu.addItem(.separator())
+        submenu.addItem(autoPaintItem(config))
+        return submenuItem(title: MenuModel.allWindowsTitle, icon: MenuModel.allWindowsIcon,
+                           submenu: submenu)
+    }
+
+    /// «🌈 Раскрасить по кругу ▸»: наборы, разделитель, «🎲 Случайно», «🔁 Ещё раз» и сброс всем
+    /// окнам (план WF10 п. 1). Предпросмотра тут нет: набор красит все окна разом, примерять нечего.
     static func autoPaintItem(_ config: MenuConfig) -> NSMenuItem {
         let submenu = NSMenu(title: MenuModel.autoPaintTitle)
         submenu.autoenablesItems = false
@@ -326,53 +445,47 @@ final class MinimizeMenu: NSObject {
         return submenuItem(title: MenuModel.autoPaintTitle, icon: MenuModel.autoPaintIcon, submenu: submenu)
     }
 
-    /// «🎨 Тема ▸»: список окна, тумблер рамки, вложенное «Всем окнам ▸» и свои темы.
-    static func themeItem(_ config: MenuConfig) -> NSMenuItem {
-        let submenu = themeList(config, scope: MenuModel.themeScopeWindow)
-        submenu.addItem(.separator())
-        submenu.addItem(frameItem(config, scope: MenuModel.themeScopeWindow))
-        submenu.addItem(submenuItem(title: MenuModel.allWindowsTitle,
-                                    submenu: themeList(config, scope: MenuModel.themeScopeAll)))
-        submenu.addItem(BlockMenuItem(title: MenuModel.saveMyThemeTitle) { config.saveMyTheme() })
-        if !config.myThemes.isEmpty {
-            let deletes = NSMenu(title: MenuModel.deleteMyThemeTitle)
-            deletes.autoenablesItems = false
-            for my in config.myThemes {
-                deletes.addItem(BlockMenuItem(title: my.name) { config.deleteMyTheme(my) })
-            }
-            submenu.addItem(submenuItem(title: MenuModel.deleteMyThemeTitle, submenu: deletes))
-        }
-        return submenuItem(title: MenuModel.themeTitle, icon: MenuModel.themeIcon, submenu: submenu)
+    /// «🎨 Цвет ▸» — один список (решение Элвиса 04.09, вопрос 3 макета).
+    static func colorItem(_ config: MenuConfig, scope: String,
+                          includeMyThemes: Bool = false) -> NSMenuItem {
+        submenuItem(title: MenuModel.colorTitle, icon: MenuModel.themeIcon,
+                    submenu: themeList(config, scope: scope, includeMyThemes: includeMyThemes))
     }
 
-    /// Список тем одного адресата: свои темы, тёмные, светлые, «Как у Claude».
-    /// У «всем окнам» сверху disabled-заголовок — иначе список не отличить от списка окна.
-    static func themeList(_ config: MenuConfig, scope: String) -> NSMenu {
+    /// Список цветов одного адресата: «Как у Claude» первым, разделитель, ТЁМНЫЕ, разделитель,
+    /// СВЕТЛЫЕ — секции отделены полоской так же, как «МОИ ТЕМЫ» (прямой вопрос Элвиса
+    /// «почему мои темы отделены полоской, а светлые от тёмных нет»).
+    /// `includeMyThemes` — секция МОИ ТЕМЫ сверху: у окна она уехала на уровень «Оформление ▸»,
+    /// у «Всем окнам ▸» осталась здесь, иначе свою тему нельзя было бы дать всем окнам (блокер Б2).
+    static func themeList(_ config: MenuConfig, scope: String,
+                          includeMyThemes: Bool = false) -> NSMenu {
         let all = scope == MenuModel.themeScopeAll
         let selected = all ? config.allThemeID : config.windowThemeID
-        let submenu = NSMenu(title: all ? MenuModel.allWindowsTitle : MenuModel.themeTitle)
+        let submenu = NSMenu(title: MenuModel.colorTitle)
         submenu.autoenablesItems = false
         // Предпросмотр по наведению — только в списке окна: красить все окна на наведении
         // шумно (план WF8 п. 2), поэтому у «Всем окнам ▸» ни делегата, ни примерок у пунктов.
         if !all { submenu.delegate = PreviewMenuDelegate.shared }
-        if all { submenu.addItem(header(MenuModel.allWindowsHeader)) }
 
-        if !config.myThemes.isEmpty {
+        if includeMyThemes, !config.myThemes.isEmpty {
             submenu.addItem(header(MenuModel.myThemesHeader))
-            for my in config.myThemes {
-                let item = BlockMenuItem(title: my.name) { config.applyMyTheme(scope, my) }
-                // Примеряем только тему своей темы: в команде предпросмотра один слой.
-                item.preview = all ? nil : { config.previewMyTheme(my) }
-                item.image = swatch(palette: my.palette)
-                item.state = my.id == selected ? .on : .off
-                submenu.addItem(item)
-            }
+            for my in config.myThemes { submenu.addItem(myThemeItem(config, my, scope: scope)) }
             submenu.addItem(.separator())
         }
+
+        // Сбрасываем только свой слой: шрифт, размер и рамку окна тема «Как у Claude» не трогает.
+        let reset = BlockMenuItem(title: MenuModel.themeResetTitle) {
+            config.apply(scope, .reset, .keep, .keep, .keep)
+        }
+        reset.preview = all ? nil : { config.previewTheme(nil) }
+        reset.state = resetState(config, all: all, windowEmpty: config.windowThemeID == nil,
+                                 allEmpty: config.allThemeID == nil)
+        submenu.addItem(reset)
 
         for (title, themes) in [(MenuModel.darkThemesHeader, config.themes.filter { !$0.isLight }),
                                 (MenuModel.lightThemesHeader, config.themes.filter { $0.isLight })]
         where !themes.isEmpty {
+            addSeparator(submenu)
             submenu.addItem(header(title))
             for theme in themes {
                 let item = BlockMenuItem(title: theme.name) {
@@ -384,24 +497,39 @@ final class MinimizeMenu: NSObject {
                 submenu.addItem(item)
             }
         }
-
-        submenu.addItem(.separator())
-        // Сбрасываем только свой слой: шрифт, размер и рамку окна тема «Как у Claude» не трогает.
-        let reset = BlockMenuItem(title: MenuModel.themeResetTitle) {
-            config.apply(scope, .reset, .keep, .keep, .keep)
-        }
-        reset.preview = all ? nil : { config.previewTheme(nil) }
-        // У окна память по заголовку неточна (главное окно меняет заголовок с чатом):
-        // без записи галку не ставим никуда, чтобы не врать «Как у Claude».
-        reset.state = (all && selected == nil) ? .on : .off
-        submenu.addItem(reset)
-        // Тумблер рамки — и в списке «всем окнам» тоже, последним пунктом (план WF12 п. 4).
-        if all { submenu.addItem(frameItem(config, scope: scope)) }
         return submenu
     }
 
-    /// Тумблер «✨ Неоновая рамка»: галка — включена, клик переключает (включённую снимаем
-    /// сбросом слоя, `"frame":null`), наведение примеряет включённую (план WF12 п. 4).
+    /// Пункт своей темы: кружок палитры, галка по id, применение и примерка целым набором.
+    static func myThemeItem(_ config: MenuConfig, _ my: MyTheme, scope: String) -> NSMenuItem {
+        let all = scope == MenuModel.themeScopeAll
+        let item = BlockMenuItem(title: my.name) { config.applyMyTheme(scope, my) }
+        // Примеряем набор своей темы; у «всем окнам» примерки нет.
+        item.preview = all ? nil : { config.previewMyTheme(my) }
+        item.image = swatch(palette: my.palette)
+        item.state = my.id == (all ? config.allThemeID : config.windowThemeID) ? .on : .off
+        return item
+    }
+
+    /// Галка у «Как у Claude» / «Системный (как у Claude)» (задача #5363): у «всем окнам» —
+    /// когда записи нет; у окна — когда нет ни своей записи, ни записи «всем окнам» (окно
+    /// наследует её, и тогда галка стоит внутри «Всем окнам ▸», а у окна пусто).
+    ///
+    /// Правило отменяет намеренное решение WF6 «не ставить галку у окна никогда», поэтому два
+    /// случая, где память соврала бы, закрыты явно (критик В1): окно без AX-заголовка (память
+    /// по заголовку там пуста всегда) и окно после автопокраски (оно цветное, а ThemeStore пуст).
+    /// Главное окно, меняющее заголовок вместе с чатом, иначе не решается — про это строка
+    /// в README и TEAM.md.
+    static func resetState(_ config: MenuConfig, all: Bool, windowEmpty: Bool,
+                           allEmpty: Bool) -> NSControl.StateValue {
+        if all { return allEmpty ? .on : .off }
+        return config.windowMemoryTrusted && windowEmpty && allEmpty ? .on : .off
+    }
+
+    /// Тумблер «✨ Неоновая рамка» в «🎨 Оформление ▸» и в его «🖥 Всем окнам ▸»: галка —
+    /// включена, клик переключает (включённую снимаем сбросом слоя, `"frame":null`), наведение
+    /// примеряет включённую (план WF12 п. 4). Менять правило галки тут нечего: «выключена»
+    /// и есть «как у Claude» (критик В3).
     static func frameItem(_ config: MenuConfig, scope: String) -> NSMenuItem {
         let all = scope == MenuModel.themeScopeAll
         let on = all ? config.allFrame : config.windowFrame
@@ -415,35 +543,38 @@ final class MinimizeMenu: NSObject {
         return item
     }
 
-    /// «🔤 Шрифт ▸»: список окна, вложенное «Всем окнам ▸», а за разделителем — размеры
-    /// текста сообщений (план WF12 п. 2).
-    static func fontItem(_ config: MenuConfig) -> NSMenuItem {
-        let submenu = fontList(config, scope: MenuModel.themeScopeWindow)
-        submenu.addItem(submenuItem(title: MenuModel.allWindowsTitle,
-                                    submenu: fontList(config, scope: MenuModel.themeScopeAll)))
-        submenu.addItem(.separator())
-        for half in Size.Half.allCases { submenu.addItem(sizeItem(config, half: half)) }
-        return submenuItem(title: MenuModel.fontTitle, icon: MenuModel.fontIcon, submenu: submenu)
+    /// «🔤 Шрифт ▸» — список одного адресата (у окна и внутри «Всем окнам ▸» он один и тот же).
+    static func fontItem(_ config: MenuConfig, scope: String) -> NSMenuItem {
+        submenuItem(title: MenuModel.fontTitle, icon: MenuModel.fontIcon,
+                    submenu: fontList(config, scope: scope))
     }
 
-    /// «Размер ответов ▸» / «Размер вопросов ▸»: список окна и вложенное «Всем окнам ▸».
-    static func sizeItem(_ config: MenuConfig, half: Size.Half) -> NSMenuItem {
-        let submenu = sizeList(config, half: half, scope: MenuModel.themeScopeWindow)
-        submenu.addItem(submenuItem(title: MenuModel.allWindowsTitle,
-                                    submenu: sizeList(config, half: half,
-                                                      scope: MenuModel.themeScopeAll)))
-        return submenuItem(title: MenuModel.sizeTitle(half), submenu: submenu)
+    /// «🔠 Размер ответов ▸» / «🔠 Размер вопросов ▸» — тоже по адресату.
+    static func sizeItem(_ config: MenuConfig, half: Size.Half, scope: String) -> NSMenuItem {
+        submenuItem(title: MenuModel.sizeTitle(half), icon: MenuModel.sizeIcon,
+                    submenu: sizeList(config, half: half, scope: scope))
     }
 
-    /// Кегли из Size.steps, разделитель и «Как у Claude» (сброс слоя целиком: перефилдового
-    /// null контракт не знает, поэтому он снимает и вторую половину).
+    /// «Как у Claude» первым (сброс слоя целиком: перефилдового null контракт не знает,
+    /// поэтому он снимает и вторую половину), разделитель и кегли из Size.steps.
     static func sizeList(_ config: MenuConfig, half: Size.Half, scope: String) -> NSMenu {
         let all = scope == MenuModel.themeScopeAll
         let selected = (all ? config.allSize : config.windowSize)?.value(half)
-        let submenu = NSMenu(title: all ? MenuModel.allWindowsTitle : MenuModel.sizeTitle(half))
+        let submenu = NSMenu(title: MenuModel.sizeTitle(half))
         submenu.autoenablesItems = false
         if !all { submenu.delegate = PreviewMenuDelegate.shared }
-        if all { submenu.addItem(header(MenuModel.allWindowsHeader)) }
+
+        let reset = BlockMenuItem(title: MenuModel.sizeResetTitle) {
+            config.apply(scope, .keep, .keep, .reset, .keep)
+        }
+        reset.preview = all ? nil : { config.previewSize(nil) }
+        // Сравниваем не слой, а свою ПОЛОВИНУ (критик В3): у окна с answer:16, question:nil
+        // в «Размер вопросов ▸» галка «Как у Claude» обязана встать — эта половина пуста.
+        reset.state = resetState(config, all: all,
+                                 windowEmpty: config.windowSize?.value(half) == nil,
+                                 allEmpty: config.allSize?.value(half) == nil)
+        submenu.addItem(reset)
+        submenu.addItem(.separator())
 
         for px in Size.steps {
             let size = Size.one(half, px)
@@ -452,31 +583,31 @@ final class MinimizeMenu: NSObject {
             item.state = px == selected ? .on : .off
             submenu.addItem(item)
         }
-
-        submenu.addItem(.separator())
-        let reset = BlockMenuItem(title: MenuModel.sizeResetTitle) {
-            config.apply(scope, .keep, .keep, .reset, .keep)
-        }
-        reset.preview = all ? nil : { config.previewSize(nil) }
-        reset.state = (all && selected == nil) ? .on : .off
-        submenu.addItem(reset)
         return submenu
     }
 
-    /// Обычные, моноширинные, «Системный (как у Claude)». Каждый пункт нарисован своим
-    /// шрифтом — чтобы видеть, как он выглядит, до применения.
+    /// «Системный (как у Claude)» первым, дальше четыре секции по категориям. Каждый пункт
+    /// нарисован своим шрифтом — чтобы видеть, как он выглядит, до применения.
     static func fontList(_ config: MenuConfig, scope: String) -> NSMenu {
         let all = scope == MenuModel.themeScopeAll
         let selected = all ? config.allFontID : config.windowFontID
-        let submenu = NSMenu(title: all ? MenuModel.allWindowsTitle : MenuModel.fontTitle)
+        let submenu = NSMenu(title: MenuModel.fontTitle)
         submenu.autoenablesItems = false
         if !all { submenu.delegate = PreviewMenuDelegate.shared }
-        if all { submenu.addItem(header(MenuModel.allWindowsHeader)) }
+
+        let reset = BlockMenuItem(title: MenuModel.fontResetTitle) {
+            config.apply(scope, .keep, .reset, .keep, .keep)
+        }
+        reset.preview = all ? nil : { config.previewFont(nil) }
+        reset.state = resetState(config, all: all, windowEmpty: config.windowFontID == nil,
+                                 allEmpty: config.allFontID == nil)
+        submenu.addItem(reset)
 
         // Четыре секции по категориям (решение 7 плана WF9), в порядке FontCategory.
         for (title, fonts) in FontCategory.allCases.map({ category in
             (MenuModel.fontsHeader(category), config.fonts.filter { $0.category == category })
         }) where !fonts.isEmpty {
+            addSeparator(submenu)
             submenu.addItem(header(title))
             for font in fonts {
                 let item = BlockMenuItem(title: font.displayName) {
@@ -490,15 +621,21 @@ final class MinimizeMenu: NSObject {
                 submenu.addItem(item)
             }
         }
-
-        submenu.addItem(.separator())
-        let reset = BlockMenuItem(title: MenuModel.fontResetTitle) {
-            config.apply(scope, .keep, .reset, .keep, .keep)
-        }
-        reset.preview = all ? nil : { config.previewFont(nil) }
-        reset.state = (all && selected == nil) ? .on : .off
-        submenu.addItem(reset)
         return submenu
+    }
+
+    /// «↔️ Поля по бокам» — пункт-ползунок: своя вьюха фиксированного размера, слайдер 0…24
+    /// без делений (25 засечек на дорожке ~90 px дают гребёнку) и число моноширинными цифрами.
+    /// Тащится мышью прямо в открытом меню, кнопки «применить» нет; подсветки строки у
+    /// view-пункта не бывает — это нормально (критик В6).
+    ///
+    /// Не заработает на macOS 26 (висит вне строки, не тащится) — запасной вариант описан
+    /// в решении 3 плана: подменю со значениями 0 · 2 · 5 · 8 · 12 · 16 · 24 и галкой на текущем.
+    static func sidePaddingItem(_ config: MenuConfig) -> NSMenuItem {
+        let item = NSMenuItem(title: MenuModel.sidePaddingTitle, action: nil, keyEquivalent: "")
+        item.view = SidePaddingView(padding: LiveStyle.clamp(config.sidePadding),
+                                    onChange: config.setSidePadding)
+        return item
     }
 
     /// Disabled-заголовок секции (меню с autoenablesItems = false, иначе AppKit включит его сам).
@@ -564,6 +701,17 @@ final class MinimizeMenu: NSObject {
         return name.isEmpty ? nil : name
     }
 
+    /// «Перезаписать «X»?» — второй вопрос перед перезаписью своей темы (критик В2).
+    /// Отмена значит «ничего не писать»: имя занято, а плодить дубли мы больше не умеем.
+    static func confirmOverwrite(name: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = MenuModel.myThemeOverwritePrompt(name)
+        alert.addButton(withTitle: MenuModel.myThemeOverwriteButton)
+        alert.addButton(withTitle: MenuModel.myThemeCancelButton)
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     static func warn(_ text: String) {
         let alert = NSAlert()
         alert.messageText = text
@@ -599,6 +747,73 @@ final class PreviewMenuDelegate: NSObject, NSMenuDelegate {
 
     func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
         (item as? BlockMenuItem)?.preview?()
+    }
+}
+
+/// Строка-ползунок «↔️ Поля по бокам» внутри открытого меню (задача #5360): заголовок,
+/// `NSSlider` 0…24 и число моноширинными цифрами. `NSMenuItem.view` события мыши получает сам,
+/// поэтому ползунок тащится прямо в меню, и кнопки «применить» нет.
+///
+/// Дебаунс — только `DispatchQueue.main.asyncAfter`: меню крутится в
+/// `NSEventTrackingRunLoopMode`, и `Timer.scheduledTimer` в режиме `.default` во время трекинга
+/// просто не сработает (критик В6). Главная очередь в tracking-режиме обслуживается.
+final class SidePaddingView: NSView {
+    /// Пауза перед записью файлов: пока Элвис ведёт ползунок, писать на каждый пиксель незачем.
+    static let debounce: TimeInterval = 0.15
+    static let width: CGFloat = 260
+    static let height: CGFloat = 26
+
+    let slider = NSSlider()
+
+    private let value = NSTextField(labelWithString: "")
+    private let onChange: (Int) -> Void
+    private var pending: Int?
+    private var scheduled = false
+
+    init(padding: Int, onChange: @escaping (Int) -> Void) {
+        self.onChange = onChange
+        super.init(frame: NSRect(x: 0, y: 0, width: SidePaddingView.width, height: SidePaddingView.height))
+
+        let title = NSTextField(labelWithString: MenuModel.sidePaddingIcon + " " + MenuModel.sidePaddingTitle)
+        title.font = NSFont.menuFont(ofSize: 0)
+        title.textColor = .labelColor
+        title.frame = NSRect(x: 21, y: 5, width: 122, height: 16)
+        addSubview(title)
+
+        // Делений не рисуем: 25 засечек на дорожке ~90 px дают гребёнку; округляем в обработчике.
+        slider.minValue = Double(LiveStyle.minSidePadding)
+        slider.maxValue = Double(LiveStyle.maxSidePadding)
+        slider.doubleValue = Double(LiveStyle.clamp(padding))
+        slider.isContinuous = true
+        slider.controlSize = .small
+        slider.target = self
+        slider.action = #selector(dragged(_:))
+        slider.frame = NSRect(x: 145, y: 4, width: 86, height: 18)
+        addSubview(slider)
+
+        value.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        value.textColor = .secondaryLabelColor
+        value.alignment = .right
+        value.stringValue = String(LiveStyle.clamp(padding))
+        value.frame = NSRect(x: 233, y: 5, width: 20, height: 16)
+        addSubview(value)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) не используется") }
+
+    @objc private func dragged(_ sender: NSSlider) {
+        let padding = LiveStyle.clamp(Int(sender.doubleValue.rounded()))
+        value.stringValue = String(padding)
+        pending = padding
+        guard !scheduled else { return }
+        scheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + SidePaddingView.debounce) { [weak self] in
+            guard let self = self else { return }
+            self.scheduled = false
+            guard let padding = self.pending else { return }
+            self.pending = nil
+            self.onChange(padding)
+        }
     }
 }
 

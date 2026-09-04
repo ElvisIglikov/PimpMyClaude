@@ -19,7 +19,11 @@ public enum Patcher {
     public static let workflowDirName = "workflow"
 
     /// Значения по умолчанию для claude.json (настройки 👾 Элвиса из ElvisOS).
-    public static let configDefaults: [String: Int] = ["minWindowWidth": 360, "sidePadding": 16]
+    /// `sidePadding: 5` — решение Элвиса 04.09 (вопрос 4 макета WF14). Та же цифра лежит
+    /// в `LiveStyle.defaultSidePadding` (таргет ClaudeAX его не видит), `claude-patch/claude.json`
+    /// и `DEFAULTS` в `patch-claude.mjs`. На существующих установках это ничего не меняет:
+    /// `ensureConfig` готовый файл не перезаписывает.
+    public static let configDefaults: [String: Int] = ["minWindowWidth": 360, "sidePadding": 5]
 
     public static var defaultSupportDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser

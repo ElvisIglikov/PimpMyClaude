@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>WF23 — Правила проекта в чат</title>
+<style>
+  :root{
+    --bg:#17171a; --panel:#202024; --panel-2:#26262b; --line:#34343b;
+    --ink:#ececf1; --dim:#9b9ba6; --dim2:#6f6f7b;
+    --accent:#6e8bff; --accent-soft:rgba(110,139,255,.16);
+    --ok:#4bd07f; --warn:#ffc46b; --bad:#ff7b72;
+    --menu:rgba(46,46,52,.98); --hl:#3c6df0;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:34px 28px 60px; background:var(--bg); color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1120px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px;letter-spacing:-.2px}
+  h2{font-size:15px;margin:34px 0 12px;color:var(--ink);letter-spacing:.02em;text-transform:uppercase;font-weight:600}
+  h2 span{color:var(--dim2);font-weight:400;text-transform:none;letter-spacing:0}
+  .sub{color:var(--dim);margin:0 0 6px}
+  .note{color:var(--dim2);font-size:12.5px;margin:6px 0 0}
+  .rec{color:var(--ok);font-weight:600}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;align-items:start}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 14px 16px}
+  .card.pick{border-color:rgba(75,208,127,.55);box-shadow:0 0 0 1px rgba(75,208,127,.18)}
+  .card h3{margin:0 0 2px;font-size:13.5px;font-weight:600}
+  .card p{margin:6px 0 0;color:var(--dim);font-size:12.5px}
+  .plus{color:var(--ok)} .minus{color:var(--warn)}
+
+  /* меню в стиле macOS */
+  .menu{
+    width:280px;background:var(--menu);border:1px solid rgba(255,255,255,.09);
+    border-radius:10px;padding:5px 0;margin:12px 0 4px;
+    box-shadow:0 14px 40px rgba(0,0,0,.55);font-size:13px;
+  }
+  .menu{max-width:100%}
+  .menu.wide{width:300px}
+  .mi{display:flex;align-items:center;gap:8px;padding:4px 12px 4px 12px;white-space:nowrap;color:var(--ink)}
+  .mi .ico{width:17px;text-align:center;flex:none}
+  .mi .t{flex:1;overflow:hidden;text-overflow:ellipsis}
+  .mi .k{color:var(--dim2);font-size:12px;margin-left:10px}
+  .mi .arrow{color:var(--dim);font-size:11px}
+  .mi.sel{background:var(--hl);color:#fff;border-radius:5px;margin:0 5px;padding-left:7px}
+  .mi.sel .k,.mi.sel .arrow{color:rgba(255,255,255,.75)}
+  .mi.head{color:var(--dim2);font-size:11px;letter-spacing:.06em;padding-top:7px;padding-bottom:2px;text-transform:uppercase}
+  .mi.faded{color:var(--dim2)}
+  .sep{height:1px;background:rgba(255,255,255,.10);margin:5px 10px}
+  .sub-menu{margin-left:18px;margin-top:-2px;width:270px}
+  .flow{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+  .tag{display:inline-block;font-size:11px;color:var(--dim2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;margin-left:6px}
+
+  pre{
+    margin:10px 0 0;background:#141417;border:1px solid var(--line);border-radius:10px;
+    padding:12px 13px;color:#d5d5de;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
+    white-space:pre-wrap;overflow:auto;max-height:340px
+  }
+  pre b{color:var(--accent);font-weight:600}
+  pre i{color:var(--warn);font-style:normal}
+  .before pre{opacity:.72}
+
+  table{border-collapse:collapse;width:100%;margin-top:10px;font-size:12.5px}
+  th,td{border-bottom:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+  th{color:var(--dim2);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+  td code{background:#141417;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11.5px}
+
+  .q{background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-top:12px}
+  .q b{display:block;margin-bottom:5px;font-size:13.5px}
+  .q .opt{color:var(--dim);font-size:12.5px;margin:3px 0 0}
+  .q .opt.first{color:var(--ink)}
+  footer{margin-top:34px;color:var(--dim2);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>WF23 — «Правила проекта в чат»</h1>
+  <p class="sub">Кнопка «🚀 Workflow» подставляет кикофф <b>своего</b> проекта · «💤 /skilzzz» одной кнопкой ·
+  правила в комплекте — свежие. Задача 🟣Trelvis #5387. Ниже — варианты, выбери и ответь на вопросы внизу.</p>
+
+  <h2>1. Меню <span>— куда встают два действия</span></h2>
+  <div class="cols">
+
+    <div class="card pick">
+      <h3>Вариант А <span class="rec">(рекомендую)</span></h3>
+      <p>«🚀 Workflow» становится подменю. Верхний уровень не растёт ни на пункт — важно после уборки WF14.</p>
+      <div class="menu">
+        <div class="mi sel"><span class="ico">🚀</span><span class="t">Workflow</span><span class="arrow">▸</span></div>
+        <div class="mi"><span class="ico">💬</span><span class="t">Новый чат</span><span class="k">⌘N</span></div>
+        <div class="mi"><span class="ico">🪟</span><span class="t">Новое окно</span><span class="k">⌥⌘N</span></div>
+        <div class="mi"><span class="ico">🪟</span><span class="t">В отдельное окно</span></div>
+        <div class="sep"></div>
+        <div class="mi"><span class="ico">⬆️</span><span class="t">Развернуть</span><span class="k">⌥⌘↑</span></div>
+        <div class="mi"><span class="ico">⬇️</span><span class="t">Свернуть</span><span class="k">⌥⌘↓</span></div>
+        <div class="sep"></div>
+        <div class="mi"><span class="ico">🎨</span><span class="t">Оформление</span><span class="arrow">▸</span></div>
+      </div>
+      <div class="menu sub-menu">
+        <div class="mi"><span class="ico">🚀</span><span class="t">Кикофф: PimpMyClaude</span></div>
+        <div class="mi"><span class="ico">💤</span><span class="t">/skilzzz</span></div>
+        <div class="sep"></div>
+        <div class="mi head"><span class="ico"></span><span class="t">Другой проект — новым окном</span></div>
+        <div class="mi faded"><span class="ico">📁</span><span class="t">Dictatorik</span></div>
+        <div class="mi faded"><span class="ico">📁</span><span class="t">TrelvisCom</span></div>
+      </div>
+      <p class="plus">+ имя проекта видно ДО клика, полный путь — в подсказке.</p>
+      <p class="minus">− у пункта с подменю нет клика: привычное действие переехало первым пунктом внутрь.</p>
+      <p class="note">Нижний блок бледный, потому что <b>рекомендую его вообще не делать</b> (вопрос 5): кикофф
+      «в это окно» ушёл бы в папку текущего окна, а не выбранного проекта — при авто-Allow это правки в чужом
+      репозитории. Оставляем — каждый пункт открывает <b>новое окно в той папке</b>, как «🪟 Новое окно ▸».
+      Пункт «💤 /skilzzz» виден только там, где скилл есть, — то есть у тебя, не у команды.</p>
+    </div>
+
+    <div class="card">
+      <h3>Вариант Б</h3>
+      <p>Всё как сейчас, «💤 /skilzzz» — отдельным пунктом верхнего уровня.</p>
+      <div class="menu">
+        <div class="mi"><span class="ico">🚀</span><span class="t">Workflow</span></div>
+        <div class="mi sel"><span class="ico">💤</span><span class="t">/skilzzz</span></div>
+        <div class="mi"><span class="ico">💬</span><span class="t">Новый чат</span><span class="k">⌘N</span></div>
+        <div class="mi"><span class="ico">🪟</span><span class="t">Новое окно</span><span class="k">⌥⌘N</span></div>
+        <div class="mi"><span class="ico">🪟</span><span class="t">В отдельное окно</span></div>
+        <div class="sep"></div>
+        <div class="mi faded"><span class="ico">⬆️</span><span class="t">Развернуть</span><span class="k">⌥⌘↑</span></div>
+        <div class="mi faded"><span class="ico">⬇️</span><span class="t">Свернуть</span><span class="k">⌥⌘↓</span></div>
+      </div>
+      <p class="plus">+ обе кнопки — в один клик, ничего не переучивать.</p>
+      <p class="minus">− верхний уровень снова растёт; списка других папок нет.</p>
+    </div>
+
+    <div class="card">
+      <h3>Вариант В</h3>
+      <p>Верхний уровень не трогаем вовсе, «/skilzzz» уезжает в «⋯ Ещё ▸».</p>
+      <div class="menu">
+        <div class="mi"><span class="ico">🚀</span><span class="t">Workflow</span></div>
+        <div class="mi faded"><span class="ico">💬</span><span class="t">Новый чат</span><span class="k">⌘N</span></div>
+        <div class="sep"></div>
+        <div class="mi sel"><span class="ico">⋯</span><span class="t">Ещё</span><span class="arrow">▸</span></div>
+      </div>
+      <div class="menu sub-menu" style="width:230px">
+        <div class="mi"><span class="ico">💤</span><span class="t">/skilzzz</span></div>
+        <div class="sep"></div>
+        <div class="mi faded"><span class="ico">💰</span><span class="t">Обкэшить</span><span class="k">⇧⌘N</span></div>
+        <div class="mi faded"><span class="ico">▦</span><span class="t">Расставить</span><span class="k">⌥⌘A</span></div>
+        <div class="mi faded"><span class="ico">👀</span><span class="t">Показать</span><span class="k">⌥⌘S</span></div>
+      </div>
+      <p class="plus">+ меню не меняется.</p>
+      <p class="minus">− до частой кнопки два шага, и это «редкое» по смыслу «Ещё».</p>
+    </div>
+
+  </div>
+
+  <h2>2. Текст кикоффа <span>— было и стало</span></h2>
+  <div class="cols">
+    <div class="card before">
+      <h3>Сейчас — один на все проекты</h3>
+      <p>Врёт сразу в трёх местах: план всегда «wf1», сводка всегда в <code>docs/</code>, правила пересказаны копией от 03.09.</p>
+<pre>Работаем по подходу Элвиса — «марафон воркфлоу».
+Правила лежат в файле ~/Library/Application
+Support/MyClaude/workflow/WORKFLOW.md — прочитай
+его целиком и следуй ему.
+
+Ты — оркестратор. Нужна модель Fable 5.1 с
+эффортом high: если сейчас стоит другая, скажи…
+
+2. План — файлом <i>docs/plan-wf1-&lt;дата&gt;.md</i>: батчи…
+…
+Отвечай коротко и по делу. В конце каждого
+ответа — строка состояния: 💭[Проект](docs/status.md)…</pre>
+    </div>
+
+    <div class="card pick">
+      <h3>Стало — собран под папку окна <span class="rec">(рекомендую)</span></h3>
+      <p>Шесть подстановок; строка с пустой подстановкой выбрасывается целиком. Свой <code>docs/KICKOFF.md</code> проекта, если он есть, побеждает шаблон.</p>
+<pre>Работаем по подходу Элвиса — «марафон воркфлоу».
+
+Проект: <b>⚪PimpMyClaude</b> · папка <b>/Users/elvis/_ElvisProjects/PimpMyClaude</b>
+Паспорт проекта: <b>…/PimpMyClaude/AGENTS.md</b>
+Сводка: <b>docs/status.md</b> · план пиши файлом <b>docs/plan-wf25-2026-09-05.md</b>
+
+Правила прочитай целиком прямо сейчас — командой <b>/skilzzz</b>.
+Скилла нет — читай файлы SkilZZZ/AGENTS.md и WORKFLOW.md;
+нет и их — копии в ~/Library/Application Support/MyClaude/workflow/.
+Задачник 🟣Trelvis только на твоём Маке; команды нет — веди список задач в ответе.
+
+Ты — оркестратор. Модель — по правилам; стоит другая — скажи
+одной фразой и не начинай, пока не переключу.
+
+Сейчас я наговорю задачи по проекту. Твоя работа:
+1. Каждое пожелание — пунктом и задачей в 🟣Trelvis…
+4. Всё, что видно глазами, — макетом-файлом до кодинга…
+6. Волны — инструментом Workflow; сторож-крон, verify, коммит…
+
+Последняя строка ответа — состояние:
+💭<b>⚪</b>[<b>PimpMyClaude</b>](<b>docs/status.md</b>) · WF N из M · P%💭
+
+Начинаю диктовать задачи:</pre>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Окно</th><th>Маркер</th><th>Сводка</th><th>Следующий план</th></tr>
+    <tr><td>PimpMyClaude</td><td>⚪</td><td><code>docs/status.md</code></td><td><code>docs/plan-wf25-…</code></td></tr>
+    <tr><td>VkusnoffKz</td><td>🟠</td><td><code>audit/status.md</code></td><td><code>audit/plan-wf1-…</code></td></tr>
+    <tr><td>Dictatorik</td><td>🟢</td><td><code>docs/status.md</code></td><td><code>docs/plan-wf1-…</code></td></tr>
+    <tr><td>папка без AGENTS.md</td><td>⚪</td><td>умолчание</td><td>строка «Паспорт проекта» пропадает</td></tr>
+  </table>
+  <p class="note">Маркер и имя берём из первой строки сводки (<code># 🟠VkusnoffKz</code>), а не из списка имён:
+  список врёт — папка <code>TrelvisCom</code> это 🟣Trelvis, а VkusnoffKz в нём нет вовсе.
+  Папку самого окна определяет общий модуль из WF15 (заголовок главного окна — просто «Claude», по нему искать нельзя).</p>
+
+  <h2>3. Кнопка «💤 /skilzzz» <span>— что происходит по клику</span></h2>
+  <div class="cols">
+    <div class="card pick">
+      <h3>Поле пустое <span class="rec">(рекомендую)</span></h3>
+      <p>Вставили <code>/skilzzz</code> и <b>отправили</b> — чат перечитал правила и продолжил работу.</p>
+      <div class="menu wide" style="padding:10px 12px">
+        <div style="color:var(--dim2);font-size:11px">поле ввода</div>
+        <div style="margin-top:4px">/skilzzz</div>
+        <div style="margin-top:8px;color:var(--ok);font-size:12px">→ отправлено · «💤 Перечитал SkilZZZ, работаю по правилам»</div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>В поле черновик</h3>
+      <p>Ничего не улетает: <code>/skilzzz</code> ложится <b>перед</b> черновиком, плашка говорит отправить самому.</p>
+      <div class="menu wide" style="padding:10px 12px">
+        <div style="color:var(--dim2);font-size:11px">поле ввода</div>
+        <div style="margin-top:4px">/skilzzz<br><span style="color:var(--dim)">…и ещё сделай мне полоску</span></div>
+        <div style="margin-top:8px;color:var(--warn);font-size:12px">→ не отправлено · «В поле черновик — отправь сам»</div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Клик второй раз</h3>
+      <p>В поле ровно эта же строка — второй копии и второй отправки не делаем.</p>
+      <div class="menu wide" style="padding:10px 12px">
+        <div style="color:var(--dim2);font-size:11px">поле ввода</div>
+        <div style="margin-top:4px">/skilzzz</div>
+        <div style="margin-top:8px;color:var(--dim);font-size:12px">→ «уже вставлено», тишина</div>
+      </div>
+      <p class="note">А вот кикофф в поле повтором НЕ считается, хотя слово «/skilzzz» внутри него есть:
+      сверяем строку целиком, иначе кнопка молчала бы сразу после кикоффа.</p>
+    </div>
+
+    <div class="card">
+      <h3>Идёт ответ</h3>
+      <p>Пока агент пишет, не отправляем ничего: отправка в этот момент обрывает его работу.</p>
+      <div class="menu wide" style="padding:10px 12px">
+        <div style="color:var(--dim2);font-size:11px">поле ввода</div>
+        <div style="margin-top:4px">/skilzzz</div>
+        <div style="margin-top:8px;color:var(--warn);font-size:12px">→ не отправлено · «Чат занят — отправь сам»</div>
+      </div>
+    </div>
+  </div>
+  <p class="note">У «🚀 Workflow» отправки нет ни в одном варианте: там задачу дописываешь ты и жмёшь сам.
+  Перед кодингом проверим probe'ом, что вставленная программно слэш-команда вообще распознаётся как команда, —
+  если нет, пункт будет вставлять три строки текста «перечитай правила», и вопрос 1 отпадает.</p>
+
+  <h2>4. Вопросы <span>— ответь одной строкой, например «отправлять, А, короткий, авто, без списка, копировать»</span></h2>
+
+  <div class="q"><b>1. «/skilzzz» — отправлять сразу?</b>
+    <div class="opt first"><span class="rec">(рекомендую)</span> вставить и отправить, а если в поле черновик или чат занят ответом — только вставить и сказать плашкой</div>
+    <div class="opt">· всегда только вставлять, отправляешь сам</div>
+    <div class="opt">· всегда отправлять, черновик уходит вместе с командой</div>
+  </div>
+
+  <div class="q"><b>2. Меню</b>
+    <div class="opt first"><span class="rec">(рекомендую)</span> вариант А — «🚀 Workflow ▸» подменю: свой проект, «/skilzzz», список других папок</div>
+    <div class="opt">· вариант Б — «/skilzzz» отдельным пунктом верхнего уровня</div>
+    <div class="opt">· вариант В — «/skilzzz» в «⋯ Ещё ▸»</div>
+  </div>
+
+  <div class="q"><b>3. Текст кикоффа</b>
+    <div class="opt first"><span class="rec">(рекомендую)</span> короткий, как справа во втором разделе: проект, пути, «прочитай /skilzzz», семь шагов</div>
+    <div class="opt">· оставить нынешний длинный и только подставить пути</div>
+    <div class="opt">· два текста — свой и командный (в меню два пункта)</div>
+  </div>
+
+  <div class="q"><b>4. Номер следующего плана в кикоффе</b>
+    <div class="opt first"><span class="rec">(рекомендую)</span> считать по папке автоматически (<code>plan-wf25-…</code>)</div>
+    <div class="opt">· писать без номера («план — файлом в docs/»)</div>
+    <div class="opt">· оставить как есть (<code>plan-wf1-…</code>)</div>
+  </div>
+
+  <div class="q"><b>5. Список других проектов в подменю</b>
+    <div class="opt first"><span class="rec">(рекомендую)</span> без списка, только свой проект — чужие открываются
+    пунктом «🪟 Новое окно ▸», там папка выбирается по-настоящему</div>
+    <div class="opt">· список недавних папок, но каждый пункт открывает НОВОЕ окно в той папке</div>
+    <div class="opt">· все папки ~/_ElvisProjects (их 34 — меню станет простынёй)</div>
+  </div>
+
+  <div class="q"><b>6. Правила в комплекте</b>
+    <div class="opt first"><span class="rec">(рекомендую)</span> при каждой сборке копировать свежие WORKFLOW.md и AGENTS.md из SkilZZZ — сейчас копия отстала на сутки и врёт про модели</div>
+    <div class="opt">· обновлять руками на гейте</div>
+    <div class="opt">· оставить как есть</div>
+  </div>
+
+  <footer>
+    Макет статичный, кода в нём нет. План — <code>docs/plan-wf23-2026-09-04.md</code>.
+    Кодинг начнётся только после твоего ответа на вопросы 1 и 2.
+  </footer>
+
+</div>
+</body>
+</html>

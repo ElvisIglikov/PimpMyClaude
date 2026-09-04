@@ -1,0 +1,35 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf14-2026-09-04.md",
+  "project": "⚪PimpMyClaude",
+  "status": "финиш",
+  "trelvis": "#5359 #5360 #5361 #5362 #5363 #5364",
+  "branch": "wf14",
+  "tag": "wf14-start",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/6d67f948-9b23-45b0-9fef-b332a622ff3f/workflows/scripts/pimpmyclaude-wf14-wf_d8cef71e-b13.js",
+  "run_id": "wf_d8cef71e-b13",
+  "orchestrator": "Fable 5.1 high (Элвис перевёл чат); все агенты Opus max",
+  "decision": "Элвис 04.09 19:30: меню вариант А, «Новое окно» и «В отдельное окно» уже в меню (WF13), «Привет»",
+  "next_steps": [
+    "критик плана → правки плана → батч B (Swift) → батч D (README/TEAM) → V-B — одна цепочка Workflow",
+    "гейт: build/test, bundle → swap, скриншоты углов и полей, ползунок, галки, своя тема по имени",
+    "коммит, слияние в main --no-ff, релиз 1.4.0 (tools/release.sh)"
+  ],
+  "log": [
+    {
+      "at": "2026-09-04T20:15:00+05:00",
+      "who": "оркестратор",
+      "what": "ветка wf14 от main db8b0bb (после WF13); запуск цепочки критик → правки → B → D → V-B"
+    },
+    {
+      "at": "2026-09-04T20:35:00+05:00",
+      "who": "оркестратор",
+      "what": "живьём у Элвиса блок claude.css с маркерами: радиус рамки 15 px (17 по замеру круга, но угол окна — сквиркл, 14–15 сидит ровнее; проверено скриншотами) и поля 5 px под новые классы. На гейте WF14: в LiveStyle радиус для macOS 26 = 15, не 17"
+    },
+    {
+      "at": "2026-09-04T21:05:00+05:00",
+      "who": "оркестратор",
+      "what": "критик, правки, B, D, V-B ok; 57 тестов; радиус на гейте 17→15 (сквиркл); бандл подменён, блок claude.css переписан приложением. Финиш; релиз 1.4.0 — WF17"
+    }
+  ],
+  "watchdog": "watchdog-pimpmyclaude-0409"
+}
