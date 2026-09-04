@@ -1,0 +1,25 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf16-2026-09-04.md",
+  "project": "⚪PimpMyClaude",
+  "status": "идёт",
+  "trelvis": "#5380",
+  "branch": "wf16",
+  "tag": "wf16-start",
+  "script_path": null,
+  "run_id": null,
+  "orchestrator": "Fable 5.1 high; все агенты Opus max",
+  "decision": "вариант А, обе ступени (a + b через стор папки)",
+  "next_steps": [
+    "волна: A-js ∥ A-swift → D → V",
+    "гейт: probe П3 (rename), живой клик «Новое окно ▸ в проекте …», bundle → swap",
+    "коммит, слияние в main; далее WF17 (релиз) — по плану WF21 перенести в конец? решить на гейте"
+  ],
+  "log": [
+    {
+      "at": "2026-09-04T21:55:00+05:00",
+      "who": "оркестратор",
+      "what": "разведка П1/П2 снята (стор папки Zt), ветка wf16 от main после WF15, запуск волны"
+    }
+  ],
+  "watchdog": "watchdog-pimpmyclaude-0409"
+}
