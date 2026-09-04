@@ -274,6 +274,64 @@ enum MenuModel {
         }
     }
 
+    // MARK: - цвет проекта (план WF15)
+
+    /// «🗂 Проект: PimpMyClaude ▸» — первый раздел «🎨 Оформление ▸» (решение 5 плана WF15,
+    /// вопрос 3 макета: «это про вид»).
+    static let projectIcon = "🗂"
+    static let projectPaintTitle = "Красить чаты по проекту"
+    static let projectApplyTitle = "Взять цвет проекта"
+    static let projectApplyIcon = "🎨"
+    static let projectWriteTitle = "Записать этот вид в проект"
+    static let projectWriteIcon = "💾"
+    /// Файла в папке ещё нет — пункт зовётся иначе (макет WF15).
+    static let projectCreateTitle = "Завести настройки проекта"
+    static let projectCreateIcon = "✍️"
+    static let projectAgentsTitle = "Вписать строку в AGENTS.md"
+    static let projectAgentsIcon = "📝"
+    static let projectRemoveTitle = "Убрать настройки из проекта"
+    static let projectRemoveIcon = "🗑"
+    /// Папку не узнали (не Claude Code, чужая машина, индекс сменил формат) — пункт остаётся
+    /// и гаснет: Элвис должен видеть, что приложение не знает папку, а не гадать, почему
+    /// не красит.
+    static let projectUnknownTitle = "Проект: не определён"
+
+    static func projectTitle(_ name: String) -> String { "Проект: " + name }
+
+    /// Плашки. Подсказка «у проекта нет своего вида» — один раз на папку (решение 6 плана
+    /// WF15, ключ по пути — критик М7).
+    static func projectHint(_ name: String) -> String {
+        "У проекта \(name) нет своего вида. Меню ▸ Оформление ▸ Проект"
+    }
+
+    static func projectWritten(_ name: String) -> String {
+        "Вид записан в \(name)/\(ProjectSettings.fileName)"
+    }
+
+    /// В папку писать нельзя (нет прав, том только для чтения, отказ TCC) — вид ушёл в реестр
+    /// приложения и с папкой к команде уже не поедет.
+    static func projectWrittenToRegistry(_ name: String) -> String {
+        "В папку \(name) писать нельзя — запомнил вид в приложении"
+    }
+
+    static func projectWriteFailed(_ name: String) -> String { "Не удалось записать вид в \(name)" }
+
+    static func projectAgentsWritten(_ name: String) -> String {
+        "Строка-памятка вписана в \(name)/\(ProjectPaint.agentsFileName)"
+    }
+
+    static func projectAgentsFailed(_ name: String) -> String {
+        "Не удалось вписать строку в \(name)/\(ProjectPaint.agentsFileName)"
+    }
+
+    /// «Убрать настройки» окна назад не перекрашивает и AGENTS.md не трогает — говорим об этом.
+    static func projectRemoved(_ name: String) -> String {
+        "Настройки \(name) убраны; строку в AGENTS.md не трогал, цвет окон остался"
+    }
+
+    static let projectNoSettings = "У этого проекта своего вида нет"
+    static let projectNothingToWrite = "Сначала выбери окну цвет или шрифт — его и запишу в проект"
+
     /// ⌘Q — не пункт меню, а блокировка выхода (claude_noquit.lua).
     static let quitKey = KeySpec(mods: [.command], name: "q")
     static let quitMessage = "⌘Q в Claude заблокирован — выход через меню Claude → Quit"

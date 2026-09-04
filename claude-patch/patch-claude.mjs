@@ -35,7 +35,7 @@ const SUPPORT = path.join(os.homedir(), "Library", "Application Support", "MyCla
 const CONFIG = path.join(SUPPORT, "claude.json");
 const BACKUPS = path.join(SUPPORT, "backups");
 const BUNDLE_ID = "com.anthropic.claudefordesktop";
-const LOADER_VERSION = 6;
+const LOADER_VERSION = 7;
 const MARK_START = `/* [MyClaude:v${LOADER_VERSION}:start] */`;
 const MARK_END = `/* [MyClaude:v${LOADER_VERSION}:end] */`;
 const DEFAULTS = { minWindowWidth: 360, sidePadding: 5 }; // 5 px — решение Элвиса 04.09 (WF14); та же цифра в Patcher.configDefaults, LiveStyle.defaultSidePadding и claude.json
@@ -138,7 +138,7 @@ const readConfig=()=>{try{return JSON.parse(fs.readFileSync(configPath,"utf8"))|
 // setMinimumSize при смене экрана, поэтому метод подменяется: всё, что выше
 // желаемого, прижимается к желаемому; штатное значение помнится для отката.
 const limits={desired:null,requested:new WeakMap(),native:null};
-function desiredMinWidth(){const v=Number(readConfig().minWindowWidth);if(!Number.isFinite(v)||v<=0)return null;return Math.max(320,Math.round(v))}
+function desiredMinWidth(){const v=Number(readConfig().minWindowWidth);if(!Number.isFinite(v)||v<=0)return null;return Math.max(200,Math.round(v))}
 function hookMinimumSize(){if(limits.native)return;const proto=BrowserWindow.prototype;const native=proto.setMinimumSize;if(typeof native!=="function")return;limits.native=native;
 // Claude сам зовёт setMinimumSize и с 600, и с 0 (при стыковке панелей):
 // ниже желаемого окно тоже не пускаем, иначе содержимое вылезает за край.

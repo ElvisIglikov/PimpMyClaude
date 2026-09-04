@@ -37,6 +37,13 @@ final class MinimizeMenu: NSObject {
     private(set) var shows = 0
     /// Меню сейчас всплывёт — самое время перечитать сводки проектов (решение 2 плана WF9).
     var onWillShow: (() -> Void)?
+    /// Цвет проекта (план WF15): подменю «🗂 Проект ▸» и его пункты. nil — приложение собрано
+    /// без покраски по проекту, тогда пункта в меню нет вовсе.
+    var project: ProjectPaint?
+
+    /// Открыто ли меню (или его модальный диалог): пока открыто, фоновая покраска по проекту
+    /// молчит — не-preview команда сбила бы примерку темы мышью (критик В1 плана WF15).
+    var isMenuOpen: Bool { menuOpen }
 
     init(app: ClaudeApp, actions: ClaudeActions) {
         self.app = app
@@ -142,6 +149,17 @@ final class MinimizeMenu: NSObject {
         // Два случая, где памяти о цвете окна верить нельзя (критик В1 плана WF14).
         config.windowTitled = !title.isEmpty
         config.windowAutoPainted = actions.autoPaintedTheme(title: title) != nil
+        // «🗂 Проект ▸»: папка окна под кнопкой и что у неё лежит — читаем на каждый показ,
+        // файл проекта правится и руками (план WF15 п. 5). Пункты работают уже после popUp,
+        // как и все остальные: покраска в это время всё равно молчит.
+        if let project = project {
+            config.project = project.menuState(title: title)
+            config.projectPaint = { on in DispatchQueue.main.async { project.setEnabled(on) } }
+            config.projectApply = { DispatchQueue.main.async { project.applyNow(title: title) } }
+            config.projectWrite = { DispatchQueue.main.async { project.writeCurrentView(title: title) } }
+            config.projectAgents = { DispatchQueue.main.async { project.writeAgentsLine(title: title) } }
+            config.projectRemove = { DispatchQueue.main.async { project.removeSettings(title: title) } }
+        }
         // Поля по бокам: значение читаем из claude.json на каждый показ — его правит и сам
         // Элвис, и лоадер берёт его оттуда же (критик В7).
         config.sidePadding = LiveStyle.currentSidePadding()
@@ -219,7 +237,16 @@ final class MinimizeMenu: NSObject {
         // activate() на macOS 14+ без yield со стороны Claude приложение не активирует —
         // нужен именно ignoringOtherApps, как делает Hammerspoon перед popupMenu.
         NSApp.activate(ignoringOtherApps: true)
-        let origin = Screens.flip(point: CGPoint(x: rect.minX, y: rect.maxY + 2))
+        // Меню открываем СБОКУ от окна, а не поверх него: каскад подменю тогда уходит в сторону,
+        // и примерка темы/шрифта видна (#5395, слово Элвиса 04.09 21:20). Справа, если влезает,
+        // иначе слева; совсем некуда — как раньше, под кнопкой.
+        var point = CGPoint(x: rect.minX, y: rect.maxY + 2)
+        if let frame = AX.frame(window), let area = Screens.mainUsableFrame {
+            let width: CGFloat = 280
+            if frame.maxX + 6 + width <= area.maxX { point = CGPoint(x: frame.maxX + 6, y: rect.minY) }
+            else if frame.minX - 6 - width >= area.minX { point = CGPoint(x: frame.minX - 6 - width, y: rect.minY) }
+        }
+        let origin = Screens.flip(point: point)
         menu.popUp(positioning: nil, at: origin, in: nil)
         menuOpen = false
         // Ушли из меню, ничего не выбрав, — вернуть окну сохранённое. Синхронно, сразу после
@@ -281,6 +308,16 @@ final class MinimizeMenu: NSObject {
         /// Поля по бокам (задача #5360): текущее значение ползунка из claude.json и обработчик.
         var sidePadding = LiveStyle.defaultSidePadding
         var setSidePadding: (Int) -> Void = { _ in }
+        /// Цвет проекта (план WF15 п. 5): папка окна и что у неё лежит. nil — меню собрано
+        /// без сведений о проекте, и пункта «🗂 Проект ▸» в нём нет; живьём состояние есть
+        /// всегда — папку не узнали, значит пункт погашен («Проект: не определён»).
+        var project: ProjectMenuState?
+        /// Тумблер «Красить чаты по проекту» — приходит уже перевёрнутым.
+        var projectPaint: (Bool) -> Void = { _ in }
+        var projectApply: () -> Void = {}
+        var projectWrite: () -> Void = {}
+        var projectAgents: () -> Void = {}
+        var projectRemove: () -> Void = {}
 
         /// Можно ли верить памяти приложения об этом окне — от этого зависит галка «Как у Claude».
         var windowMemoryTrusted: Bool { windowTitled && !windowAutoPainted }
@@ -366,6 +403,11 @@ final class MinimizeMenu: NSObject {
         // Свои темы переехали сюда — значит, и предпросмотр по наведению нужен на этом уровне.
         submenu.delegate = PreviewMenuDelegate.shared
 
+        // «🗂 Проект ▸» — первым разделом (решение 5 плана WF15, вопрос 3 макета).
+        if let project = config.project {
+            submenu.addItem(projectItem(config, project))
+            submenu.addItem(.separator())
+        }
         if !config.myThemes.isEmpty {
             submenu.addItem(header(MenuModel.myThemesHeader))
             for my in config.myThemes { submenu.addItem(myThemeItem(config, my, scope: window)) }
@@ -400,6 +442,50 @@ final class MinimizeMenu: NSObject {
         reset.image = icon(MenuModel.resetAllIcon)
         submenu.addItem(reset)
         return submenuItem(title: MenuModel.appearanceTitle, icon: MenuModel.appearanceIcon,
+                           submenu: submenu)
+    }
+
+    /// «🗂 Проект: PimpMyClaude ▸» — первый раздел «🎨 Оформление ▸» (план WF15 п. 5):
+    /// подпись папки, тумблер покраски, разделитель и четыре действия с настройками проекта.
+    /// Папку не узнали — пункт остаётся, но зовётся «Проект: не определён» и погашен: Элвис
+    /// должен видеть, что приложение не знает папку, а не гадать, почему не красит.
+    /// Настроек у проекта ещё нет — «💾 Записать этот вид в проект» становится
+    /// «✍️ Завести настройки проекта», а пункты, которым нечего брать и нечего убирать, гаснут.
+    static func projectItem(_ config: MenuConfig, _ state: ProjectMenuState) -> NSMenuItem {
+        guard state.folder != nil else {
+            let item = NSMenuItem(title: MenuModel.projectUnknownTitle, action: nil, keyEquivalent: "")
+            item.image = icon(MenuModel.projectIcon)
+            item.isEnabled = false
+            return item
+        }
+        let submenu = NSMenu(title: MenuModel.projectTitle(state.name))
+        submenu.autoenablesItems = false
+        // Путь папки — disabled-подпись, как заголовки секций.
+        submenu.addItem(header(state.path))
+        let paint = BlockMenuItem(title: MenuModel.projectPaintTitle) { config.projectPaint(!state.painting) }
+        paint.state = state.painting ? .on : .off
+        submenu.addItem(paint)
+        submenu.addItem(.separator())
+
+        let apply = BlockMenuItem(title: MenuModel.projectApplyTitle) { config.projectApply() }
+        apply.image = icon(MenuModel.projectApplyIcon)
+        apply.isEnabled = state.hasSettings
+        submenu.addItem(apply)
+        let write = BlockMenuItem(title: state.hasSettings ? MenuModel.projectWriteTitle
+                                                           : MenuModel.projectCreateTitle) {
+            config.projectWrite()
+        }
+        write.image = icon(state.hasSettings ? MenuModel.projectWriteIcon : MenuModel.projectCreateIcon)
+        submenu.addItem(write)
+        let agents = BlockMenuItem(title: MenuModel.projectAgentsTitle) { config.projectAgents() }
+        agents.image = icon(MenuModel.projectAgentsIcon)
+        agents.isEnabled = state.hasSettings
+        submenu.addItem(agents)
+        let remove = BlockMenuItem(title: MenuModel.projectRemoveTitle) { config.projectRemove() }
+        remove.image = icon(MenuModel.projectRemoveIcon)
+        remove.isEnabled = state.hasSettings
+        submenu.addItem(remove)
+        return submenuItem(title: MenuModel.projectTitle(state.name), icon: MenuModel.projectIcon,
                            submenu: submenu)
     }
 

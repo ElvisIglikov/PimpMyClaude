@@ -51,6 +51,14 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
   первое сообщение, чат выносится popout-окном (стор claude.ai `openPopout`, ищется поведенчески через `import()`
   чанков modulepreload), главное окно возвращается на прежний чат по строке сайдбара; `status().newWindow`.
 - `popout-window` (WF13): `{…,"scope":"window","title","x","y"}` — вынести текущий чат главного окна в отдельное окно.
+- Адресация окна (WF15): у любой команды с `scope:"window"` необязательное поле `match` — путь страницы
+  (`/epitaxy/local_<id>`); есть строка → страница сверяет `location.pathname`, поля нет — по `title`/фокусу, как раньше.
+  Главное окно так и адресуется (его заголовок «Claude» — заглушка).
+- Настройки проекта (WF15): файл `.pimpmyclaude.json` в корне проекта (`{"pimpmyclaude":1,"name","theme","font","size","frame"}`,
+  ключ отсутствует → слой не трогать, `false` у frame → сброс), контракт побайтно — `ProjectSettings.swift`; индекс чатов
+  Claude `~/Library/Application Support/Claude/claude-code-sessions/*/*/local_*.json` → `ProjectIndex.swift` (папка по
+  sessionId/заголовку, главное окно по `status.json`). Индекс пропал — молчим, не красим. Покраска не трогает окна с ручной
+  темой/автопокраской; файл в репозитории — в `~/.config/git/ignore`.
 - Старые: `cashout` (title), `collapse`, `expand`, `scroll`.
 - Хранилище тем на странице: localStorage `myclaude-themes-v1` — карта `{ключ: {theme, font, size, frame}}`, ключи
   `chat:<заголовок>` (тема на чат), `main` (главное окно), `*` (всем); sessionStorage `myclaude-theme-v1` по окну
@@ -61,7 +69,7 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
 
 ## Сборка, гейт, релиз
 
-- `cd app && swift build && swift test` (57 тестов). JS: `node --check claude-patch/inject.js` + скретч-тесты в
+- `cd app && swift build && swift test` (71 тест). JS: `node --check claude-patch/inject.js` + скретч-тесты в
   scratchpad сессии (`theme-store-test.mjs`, `theme-css-test.mjs`, `progress-test.mjs`, `progress-dom-test.mjs`,
   `workflow-insert-test.mjs`) — они не в репозитории; новый чат их не найдёт, при необходимости просить агента написать.
 - `tools/bundle.sh release` → `app/.build/PimpMyClaude.app` (Developer ID). **Подмена без простоя:** сначала bundle,
