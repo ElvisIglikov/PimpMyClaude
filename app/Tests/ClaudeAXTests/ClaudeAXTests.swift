@@ -587,9 +587,10 @@ final class ClaudeAXTests: XCTestCase {
 
         // MARK: «🖥 Всем окнам ▸» — шапка ровно одна, у него самого (критик В4)
         let all = try XCTUnwrap(appearance.items.first { $0.title == MenuModel.allWindowsTitle }?.submenu)
+        // «🌊 Живые цвета ▸» встали сразу под «🌈 Раскрасить по кругу ▸» (план WF18, вариант А).
         XCTAssertEqual(all.items.map { $0.isSeparatorItem ? "—" : $0.title },
                        ["ВСЕМ ОКНАМ", "Цвет", "Шрифт", "Размер ответов", "Размер вопросов",
-                        "Неоновая рамка", "—", "Раскрасить по кругу"])
+                        "Неоновая рамка", "—", "Раскрасить по кругу", "Живые цвета"])
         XCTAssertFalse(try XCTUnwrap(all.items.first).isEnabled)
         XCTAssertNotNil(appearance.items.first { $0.title == MenuModel.allWindowsTitle }?.image) // 🖥
         // МОИ ТЕМЫ остались в «Всем окнам ▸ → Цвет ▸» (блокер Б2): свою тему можно дать всем окнам.
@@ -676,7 +677,7 @@ final class ClaudeAXTests: XCTestCase {
             .first { $0.title == MenuModel.allWindowsTitle }?.submenu)
         XCTAssertEqual(bareAll.items.map { $0.isSeparatorItem ? "—" : $0.title },
                        ["ВСЕМ ОКНАМ", "Размер ответов", "Размер вопросов", "Неоновая рамка", "—",
-                        "Раскрасить по кругу"])
+                        "Раскрасить по кругу", "Живые цвета"])
     }
 
     func testHoverPreviewsThemeAndFont() throws {
@@ -1897,7 +1898,8 @@ final class ClaudeAXTests: XCTestCase {
             .first { $0.title == MenuModel.appearanceTitle }?.submenu)
         let item = try XCTUnwrap(appearance.items.first { $0.title == MenuModel.sidePaddingTitle })
         XCTAssertNil(item.submenu)
-        let view = try XCTUnwrap(item.view as? SidePaddingView)
+        // Ползунок — общий компонент: им же сделана «⏱ Скорость» живых цветов (план WF18).
+        let view = try XCTUnwrap(item.view as? SliderMenuView)
         XCTAssertEqual(view.slider.minValue, Double(LiveStyle.minSidePadding))
         XCTAssertEqual(view.slider.maxValue, Double(LiveStyle.maxSidePadding))
         XCTAssertEqual(view.slider.doubleValue, 24, accuracy: 0.001)
@@ -1912,6 +1914,361 @@ final class ClaudeAXTests: XCTestCase {
         }
         waitForExpectations(timeout: 2)
         XCTAssertEqual(changed, [8])
+    }
+
+    // MARK: - живые цвета (план WF18)
+
+    private func liveBody(_ state: LiveColorsState, titles: [String] = [],
+                          id: String = "1-0001", at: TimeInterval = 0) -> String {
+        CommandChannel.payload(action: LiveColors.action,
+                               fields: LiveColors.fields(state: state, titles: titles),
+                               id: id, at: Date(timeIntervalSince1970: at))
+    }
+
+    func testLiveColorsPayloadMatchesContract() throws {
+        // Контракт п. 3 плана WF18, побайтно: id, action, at, scope, on, mode, period, epoch,
+        // light, titles, ring. Числа — числами, не строками.
+        let state = LiveColorsState(on: true, mode: .sync, period: 300, tone: .dark,
+                                    epoch: 1_757_000_000_000)
+        let body = liveBody(state, titles: ["Trelvis", "Dictatorik"])
+        XCTAssertTrue(body.hasPrefix("{\"id\":\"1-0001\",\"action\":\"live-colors\","
+            + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"all\",\"on\":true,\"mode\":\"sync\","
+            + "\"period\":300,\"epoch\":1757000000000,\"light\":false,"
+            + "\"titles\":[\"Trelvis\",\"Dictatorik\"],\"ring\":{\"dark\":[{\"accent\":\"#"), body)
+        XCTAssertTrue(body.hasSuffix("}]}}"), body)
+
+        // Порядок ключей внутри каждой палитры кольца — accent, background, foreground, sidebar,
+        // panel, muted (критик В6): обход словаря в Swift непредсказуем, поэтому палитры идут
+        // через Theme.paletteValue, и контракт не плывёт от запуска к запуску.
+        for light in [false, true] {
+            for palette in LiveColors.palettes(light: light) {
+                let literal = "{" + Theme.paletteOrder.map { "\"\($0)\":\"\(palette[$0] ?? "")\"" }
+                    .joined(separator: ",") + "}"
+                XCTAssertTrue(body.contains(literal), literal)
+            }
+        }
+        // Оба кольца целиком: 12 тёмных палитр и 12 светлых.
+        XCTAssertEqual(body.components(separatedBy: "\"accent\":").count - 1, LiveColors.ringCount * 2)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let ring = try XCTUnwrap(json["ring"] as? [String: Any])
+        XCTAssertEqual((ring["dark"] as? [[String: String]])?.count, LiveColors.ringCount)
+        XCTAssertEqual((ring["light"] as? [[String: String]])?.count, LiveColors.ringCount)
+        // Команда одна на всё и не бесконечная: 24 палитры по шесть hex — около 3,5 КБ.
+        XCTAssertLessThan(body.count, 5000, "команда распухла: \(body.count) байт")
+
+        // Выключение — только scope и on: страница сама вернёт окну прежнюю тему.
+        var off = state
+        off.on = false
+        XCTAssertEqual(liveBody(off), "{\"id\":\"1-0001\",\"action\":\"live-colors\","
+            + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"all\",\"on\":false}")
+
+        // «🪟 Как окно сейчас» — light: null; в режиме «все одним цветом» он невозможен (М2).
+        var window = state
+        window.mode = .solo
+        window.tone = .window
+        XCTAssertTrue(liveBody(window).contains("\"light\":null,\"titles\":[]"), liveBody(window))
+        window.mode = .sync
+        XCTAssertTrue(liveBody(window).contains("\"light\":false"))
+        // Светлые — true.
+        var light = state
+        light.tone = .light
+        XCTAssertTrue(liveBody(light).contains("\"light\":true"))
+    }
+
+    func testLiveColorsRingKeepsContrastBetweenAnchors() throws {
+        // Критик В14: контраст WF10 гарантирован в опорных точках, а страница идёт между ними
+        // по хорде в sRGB, и просадка возможна ровно в середине шага. Проверяем середины
+        // ВСЕХ хорд обоих колец — не уложились бы, кольцо стало бы из 24 точек.
+        for light in [false, true] {
+            let ring = LiveColors.palettes(light: light)
+            XCTAssertEqual(ring.count, LiveColors.ringCount)
+            for (index, palette) in ring.enumerated() {
+                XCTAssertEqual(Set(palette.keys), Set(Theme.paletteOrder))
+                let next = ring[(index + 1) % ring.count]
+                for share in [0.0, 0.5] {
+                    func mixed(_ key: String) -> String {
+                        LiveColors.mix(palette[key] ?? "", next[key] ?? "", share)
+                    }
+                    let where_ = "кольцо \(light ? "светлое" : "тёмное") \(index)+\(share)"
+                    let text = try XCTUnwrap(AutoPaint.contrast(hex: mixed("foreground"),
+                                                                hex: mixed("background")))
+                    XCTAssertGreaterThanOrEqual(text, AutoPaint.accentContrast, "текст, \(where_)")
+                    let accent = try XCTUnwrap(AutoPaint.contrast(hex: mixed("accent"),
+                                                                  hex: mixed("background")))
+                    XCTAssertGreaterThanOrEqual(accent, AutoPaint.accentContrast, "акцент, \(where_)")
+                    XCTAssertLessThanOrEqual(accent, AutoPaint.accentContrastCap(light: light),
+                                             "акцент кричит, \(where_)")
+                    // Фон остаётся «трендовым, не кричащим» и между опорными точками.
+                    let saturation = try XCTUnwrap(AutoPaint.saturation(hex: mixed("background")))
+                    XCTAssertLessThanOrEqual(saturation, AutoPaint.maxBackgroundSaturation + 0.5,
+                                             "фон кричит, \(where_)")
+                }
+            }
+        }
+        // Смешение — как на странице: половина хорды между чёрным и белым.
+        XCTAssertEqual(LiveColors.mix("#000000", "#ffffff", 0.5), "#808080")
+        XCTAssertEqual(LiveColors.mix("#102030", "#102030", 1), "#102030")
+        XCTAssertEqual(LiveColors.mix("не цвет", "#ffffff", 0.5), "не цвет")
+    }
+
+    func testLiveColorsScaleAndEpochKeepTheHue() {
+        // Шкала: восемь делений, 30…1 минута, по умолчанию 5 минут (решение 5, критик В4).
+        XCTAssertEqual(LiveColors.periods, [1800, 1200, 900, 600, 300, 180, 120, 60])
+        XCTAssertEqual(LiveColors.defaultPeriod, 300)
+        XCTAssertEqual(LiveColors.defaultMode, .solo)
+        XCTAssertEqual(LiveColors.defaultTone, .dark)
+        XCTAssertEqual(LiveColors.period(at: 0), 1800)
+        XCTAssertEqual(LiveColors.period(at: 99), 60) // быстрее минуты не даём
+        XCTAssertEqual(LiveColors.period(at: -3), 1800)
+        XCTAssertEqual(LiveColors.index(of: 300), 4)
+        XCTAssertEqual(LiveColors.index(of: 310), 4) // правленое руками — ближайшее деление
+        XCTAssertEqual(LiveColors.period(clamping: 45), 60)
+        XCTAssertEqual(MenuModel.liveColorsSpeed(300), "круг за 5 мин")
+        XCTAssertEqual(MenuModel.liveColorsSpeed(1800), "круг за 30 мин")
+
+        // Цвет считается от стенных часов (решение 1): четверть круга — 90°.
+        let now = 1_757_000_000_000
+        XCTAssertEqual(LiveColors.hue(epoch: now, period: 300, now: now), 0, accuracy: 0.001)
+        XCTAssertEqual(LiveColors.hue(epoch: now - 75_000, period: 300, now: now), 90, accuracy: 0.001)
+        // Круг замкнулся — тот же цвет, а не 450°.
+        XCTAssertEqual(LiveColors.hue(epoch: now - 375_000, period: 300, now: now), 90, accuracy: 0.001)
+
+        // Смена скорости не дёргает цвет (решение 3): hue до и после совпадает.
+        let before = LiveColorsState(on: true, mode: .solo, period: 300, tone: .dark,
+                                     epoch: now - 75_000)
+        let after = LiveColors.state(before, period: 60, now: now)
+        XCTAssertEqual(after.period, 60)
+        XCTAssertEqual(LiveColors.hue(epoch: after.epoch, period: after.period, now: now), 90,
+                       accuracy: 0.01)
+        XCTAssertEqual(LiveColors.state(before, period: 7, now: now).period, 60)
+
+        // «Как окно сейчас» живёт только в режиме «каждое своим» (критик М2).
+        XCTAssertEqual(LiveColors.tone(.window, mode: .solo), .window)
+        XCTAssertEqual(LiveColors.tone(.window, mode: .sync), .dark)
+        XCTAssertEqual(LiveColors.tone(.light, mode: .sync), .light)
+        XCTAssertEqual(LiveColorsTone.dark.lightValue, false)
+        XCTAssertEqual(LiveColorsTone.light.lightValue, true)
+        XCTAssertNil(LiveColorsTone.window.lightValue)
+    }
+
+    func testLiveColorsStoreRemembersRunAndDefaults() {
+        let defaults = MemoryDefaults()
+        let store = LiveColorsStore(defaults: defaults)
+        // Пусто — выключено, «каждое своим», круг за 5 минут, тёмные.
+        XCTAssertEqual(store.state, LiveColorsState())
+        XCTAssertFalse(store.state.on)
+
+        let state = LiveColorsState(on: true, mode: .sync, period: 120, tone: .window,
+                                    epoch: 1_757_000_000_000)
+        store.save(state)
+        XCTAssertEqual(store.state, state)
+        // Ключи — те, что читает живое приложение (решение 4 плана).
+        XCTAssertEqual(defaults.values[LiveColorsStore.onKey] as? Bool, true)
+        XCTAssertEqual(defaults.values[LiveColorsStore.modeKey] as? String, "sync")
+        XCTAssertEqual(defaults.values[LiveColorsStore.periodKey] as? Int, 120)
+        XCTAssertEqual(defaults.values[LiveColorsStore.toneKey] as? String, "window")
+        XCTAssertEqual(defaults.values[LiveColorsStore.epochKey] as? Int, 1_757_000_000_000)
+
+        // Настройки правят и руками: мусор даёт умолчания, а не падение.
+        defaults.values[LiveColorsStore.modeKey] = "неведомо"
+        defaults.values[LiveColorsStore.toneKey] = 42
+        defaults.values[LiveColorsStore.periodKey] = 7
+        XCTAssertEqual(store.state.mode, .solo)
+        XCTAssertEqual(store.state.tone, .dark)
+        XCTAssertEqual(store.state.period, 60)
+    }
+
+    func testLiveColorsMenuHasOffModesSpeedAndTones() throws {
+        var modes: [String] = []
+        var tones: [String] = []
+        var periods: [Int] = []
+        let dragged = expectation(description: "дебаунс ползунка скорости")
+        var config = menuConfig()
+        config.liveColors = LiveColorsState(on: true, mode: .solo, period: 120, tone: .light,
+                                            epoch: 1)
+        config.setLiveColorsMode = { modes.append($0?.rawValue ?? "off") }
+        config.setLiveColorsTone = { tones.append($0.rawValue) }
+        config.setLiveColorsPeriod = {
+            periods.append($0)
+            dragged.fulfill()
+        }
+        let appearance = try XCTUnwrap(MinimizeMenu.build(config: config).items
+            .first { $0.title == MenuModel.appearanceTitle }?.submenu)
+        let all = try XCTUnwrap(appearance.items.first { $0.title == MenuModel.allWindowsTitle }?.submenu)
+        let live = try XCTUnwrap(all.items.first { $0.title == MenuModel.liveColorsTitle }?.submenu)
+
+        // Вариант А макета: выключатель, два режима, ползунок, три режима света.
+        XCTAssertEqual(live.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Выключить", "—", "Все окна одним цветом", "Каждое окно своим цветом",
+                        "—", "Скорость", "—", "Тёмные", "Светлые", "Как окно сейчас"])
+        XCTAssertEqual(live.items.filter { $0.state == .on }.map { $0.title },
+                       ["Каждое окно своим цветом", "Светлые"])
+        // Предпросмотра нет: команда одна на все окна, примерять нечего.
+        XCTAssertNil(live.delegate)
+        XCTAssertTrue(live.items.compactMap { ($0 as? BlockMenuItem)?.preview }.isEmpty)
+        // «🪟 Как окно сейчас» доступен в режиме «каждое своим» (критик М2).
+        XCTAssertTrue(try XCTUnwrap(live.items.first { $0.title == MenuModel.liveColorsWindowTitle }).isEnabled)
+
+        // Ползунок — тот же компонент, что «Поля по бокам»: восемь делений шкалы.
+        let speed = try XCTUnwrap(live.items.first { $0.title == MenuModel.liveColorsSpeedTitle })
+        XCTAssertNil(speed.submenu)
+        let view = try XCTUnwrap(speed.view as? SliderMenuView)
+        XCTAssertEqual(view.slider.minValue, 0)
+        XCTAssertEqual(view.slider.maxValue, Double(LiveColors.periods.count - 1))
+        XCTAssertEqual(view.slider.doubleValue, Double(LiveColors.index(of: 120)), accuracy: 0.001)
+
+        for item in live.items where !item.isSeparatorItem && item.view == nil { click(item) }
+        XCTAssertEqual(modes, ["off", "sync", "solo"])
+        XCTAssertEqual(tones, ["dark", "light", "window"])
+
+        // Тащим ползунок: одна запись после дебаунса, значение — с деления шкалы.
+        let action = try XCTUnwrap(view.slider.action)
+        view.slider.doubleValue = 0.4
+        _ = (view.slider.target as? NSObject)?.perform(action, with: view.slider)
+        waitForExpectations(timeout: 2)
+        XCTAssertEqual(periods, [1800])
+
+        // Выключено — галка у «⏹ Выключить»; в режиме «все одним цветом» «Как окно сейчас» погашен.
+        var off = menuConfig()
+        off.liveColors = LiveColorsState(on: false, mode: .sync, period: 300, tone: .dark, epoch: 0)
+        let offAppearance = try XCTUnwrap(MinimizeMenu.build(config: off).items
+            .first { $0.title == MenuModel.appearanceTitle }?.submenu)
+        let offLive = try XCTUnwrap(offAppearance.items
+            .first { $0.title == MenuModel.allWindowsTitle }?.submenu?.items
+            .first { $0.title == MenuModel.liveColorsTitle }?.submenu)
+        XCTAssertEqual(offLive.items.filter { $0.state == .on }.map { $0.title },
+                       ["Выключить", "Тёмные"])
+        XCTAssertFalse(try XCTUnwrap(offLive.items
+            .first { $0.title == MenuModel.liveColorsWindowTitle }).isEnabled)
+    }
+
+    func testAutoPaintDimsWhileLiveColorsRun() throws {
+        // Критик В13: пока живые цвета крутятся, «🌈 Раскрасить по кругу ▸» гаснет — иначе
+        // покраска пишет темы окнам, а живой слой перекрывает их через четверть секунды.
+        var config = menuConfig()
+        config.liveColors = LiveColorsState(on: true, mode: .solo, period: 300, tone: .dark, epoch: 1)
+        func autoPaint(_ config: MinimizeMenu.MenuConfig) throws -> NSMenu {
+            let appearance = try XCTUnwrap(MinimizeMenu.build(config: config).items
+                .first { $0.title == MenuModel.appearanceTitle }?.submenu)
+            return try XCTUnwrap(appearance.items
+                .first { $0.title == MenuModel.allWindowsTitle }?.submenu?.items
+                .first { $0.title == MenuModel.autoPaintTitle }?.submenu)
+        }
+        let dimmed = try autoPaint(config)
+        XCTAssertEqual(dimmed.items.first?.title, MenuModel.autoPaintLiveHint)
+        XCTAssertTrue(dimmed.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
+
+        // Живые выключены — подсказки нет, пункты работают.
+        let plain = try autoPaint(menuConfig())
+        XCTAssertNil(plain.items.first { $0.title == MenuModel.autoPaintLiveHint })
+        XCTAssertTrue(plain.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.isEnabled })
+    }
+
+    func testLiveColorsGoOutAsOneCommandAndAreRemembered() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("command.json")
+        var now = Date(timeIntervalSince1970: 1_757_000_000)
+        // Таймер не нужен: между записями часы двигаем сами, зазор канала выдержан.
+        let channel = CommandChannel(path: file, now: { now }, schedule: { _, _ in })
+        let defaults = MemoryDefaults()
+        let actions = ClaudeActions(app: ClaudeApp(), commands: channel, themes: [], fonts: [],
+                                    themeStore: ThemeStore(defaults: MemoryDefaults()),
+                                    myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")),
+                                    autoPaintStore: AutoPaintStore(defaults: MemoryDefaults()),
+                                    liveColorsStore: LiveColorsStore(defaults: defaults))
+        actions.clock = { now }
+        func command() throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: try Data(contentsOf: file)) as? [String: Any])
+        }
+
+        XCTAssertTrue(actions.startLiveColors(mode: .solo))
+        var json = try command()
+        XCTAssertEqual(json["action"] as? String, LiveColors.action)
+        XCTAssertEqual(json["scope"] as? String, "all")
+        XCTAssertEqual(json["on"] as? Bool, true)
+        XCTAssertEqual(json["mode"] as? String, "solo")
+        XCTAssertEqual(json["period"] as? Int, LiveColors.defaultPeriod)
+        XCTAssertEqual(json["epoch"] as? Int, LiveColors.milliseconds(now))
+        XCTAssertNotNil(json["ring"])
+        XCTAssertTrue(actions.liveColors.on) // запомнили в настройках приложения
+
+        // Скорость меняется без прыжка цвета: за 75 с круга по 300 с прошло 90°.
+        now = now.addingTimeInterval(75)
+        XCTAssertTrue(actions.setLiveColors(period: 60))
+        json = try command()
+        XCTAssertEqual(json["period"] as? Int, 60)
+        XCTAssertEqual(LiveColors.hue(epoch: try XCTUnwrap(json["epoch"] as? Int), period: 60,
+                                      now: LiveColors.milliseconds(now)), 90, accuracy: 0.01)
+        XCTAssertEqual(actions.liveColors.period, 60)
+
+        // Режим света запоминается и уезжает той же одной командой.
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.setLiveColors(tone: .light))
+        XCTAssertEqual(try command()["light"] as? Bool, true)
+        XCTAssertEqual(actions.liveColors.tone, .light)
+
+        // Выключение — короткая команда; кольца в ней нет вовсе.
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.stopLiveColors())
+        json = try command()
+        XCTAssertEqual(json["on"] as? Bool, false)
+        XCTAssertNil(json["ring"])
+        XCTAssertFalse(actions.liveColors.on)
+        // Выключенные живые цвета при старте приложения молчат, а включённые — пересылаются.
+        XCTAssertFalse(actions.resendLiveColors())
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.startLiveColors(mode: .sync))
+        // «Как окно сейчас» в «синхронно» невозможен: свет садится на тёмные (критик М2).
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.setLiveColors(tone: .window))
+        XCTAssertEqual(actions.liveColors.tone, .dark)
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.resendLiveColors())
+        XCTAssertEqual(try command()["mode"] as? String, "sync")
+    }
+
+    func testProjectPaintStaysSilentWhileLiveColorsRun() throws {
+        // Блокер Б2 плана WF18: живой слой перекрывает цвет проекта — пока живые цвета
+        // крутятся, ProjectPaint не шлёт ни одной команды. Выключили — красит как обычно.
+        let box = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: box) }
+        let root = box.appendingPathComponent("_ElvisProjects", isDirectory: true)
+        let sessions = box.appendingPathComponent("sessions", isDirectory: true)
+        let folder = root.appendingPathComponent("PimpMyClaude", isDirectory: true)
+        let place = sessions.appendingPathComponent("4646c58f/8cb117af", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent(".git"),
+                                                withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: place, withIntermediateDirectories: true)
+        let session: [String: Any] = ["sessionId": "local_a1", "title": "Vkusnoff",
+                                      "titleSource": "user", "cwd": folder.path,
+                                      "originCwd": folder.path, "lastFocusedAt": 3000,
+                                      "lastActivityAt": 3000, "isArchived": false]
+        try JSONSerialization.data(withJSONObject: session)
+            .write(to: place.appendingPathComponent("local_a1.json"))
+
+        let index = ProjectIndex(sessionsDirectory: sessions,
+                                 statusURL: box.appendingPathComponent("status.json"),
+                                 projectsRoot: root, home: box)
+        let store = ProjectSettingsStore(registryURL: box.appendingPathComponent("projects.json"))
+        store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(catalog()[0])), to: folder)
+        let paint = ProjectPaint(index: index, store: store, defaults: MemoryDefaults())
+        var sent = 0
+        var live = true
+        paint.send = { _ in
+            sent += 1
+            return true
+        }
+        paint.windowTitles = { ["Vkusnoff"] }
+        paint.isLiveColorsOn = { live }
+
+        paint.tick()
+        XCTAssertEqual(sent, 0, "цвет проекта заговорил поверх живых цветов")
+        live = false
+        paint.tick()
+        XCTAssertEqual(sent, 1)
     }
 
     /// Наведение на пункт без popUp: так его зовёт AppKit — через делегата подменю.

@@ -55,6 +55,12 @@ final class ClaudeActions {
     let myThemes: MyThemesStore
     /// Последний набор автопокраски и его старт — из них «🔁 Ещё раз» (план WF10 п. 5).
     let autoPaintStore: AutoPaintStore
+    /// Состояние живых цветов (план WF18): тумблер, режим, скорость, режим света и точка
+    /// отсчёта круга.
+    let liveColorsStore: LiveColorsStore
+    /// Стенные часы: `epoch` живых цветов считается в тех же миллисекундах, что `Date.now()`
+    /// страницы. Подставляются в тестах.
+    var clock: () -> Date = Date.init
 
     /// Что это приложение применило последним — из этого делается «моя тема» (план п. 4).
     /// Сброс слоя обнуляет: «Как у Claude» + «Сохранить как мою тему…» сохранять нечего.
@@ -73,7 +79,8 @@ final class ClaudeActions {
     init(app: ClaudeApp, commands: CommandChannel,
          themes: [Theme] = ThemeCatalog.bundled, fonts: [Font] = FontCatalog.available,
          themeStore: ThemeStore = ThemeStore(), myThemes: MyThemesStore = MyThemesStore(),
-         autoPaintStore: AutoPaintStore = AutoPaintStore()) {
+         autoPaintStore: AutoPaintStore = AutoPaintStore(),
+         liveColorsStore: LiveColorsStore = LiveColorsStore()) {
         self.app = app
         self.commands = commands
         self.themes = themes
@@ -81,6 +88,7 @@ final class ClaudeActions {
         self.themeStore = themeStore
         self.myThemes = myThemes
         self.autoPaintStore = autoPaintStore
+        self.liveColorsStore = liveColorsStore
     }
 
     var lastCommand: String { commands.lastCommand }
@@ -619,6 +627,89 @@ final class ClaudeActions {
         let ids = themeStore.windowThemeIDs + [themeStore.allThemeID].compactMap { $0 }
         let types = ids.compactMap { known[$0] }
         return types.filter { $0 }.count > types.filter { !$0 }.count
+    }
+
+    // MARK: - живые цвета (план WF18)
+
+    /// Что крутится сейчас — из этого галки меню, гашение «🌈 Раскрасить по кругу ▸» и молчание
+    /// цвета проекта.
+    var liveColors: LiveColorsState { liveColorsStore.state }
+
+    /// «🔗 Все окна одним цветом» / «🎭 Каждое окно своим цветом»: одна команда на все окна.
+    /// Круг стартует от сейчас; смена режима на ходу точку отсчёта не сбивает — цвет едет дальше.
+    @discardableResult
+    func startLiveColors(mode: LiveColorsMode) -> Bool {
+        var state = liveColorsStore.state
+        let now = LiveColors.milliseconds(clock())
+        if !state.on { state.epoch = now }
+        state.on = true
+        state.mode = mode
+        // «Как окно сейчас» в режиме «все одним цветом» смысла не имеет (критик М2): в меню
+        // пункт погашен, а тут закрыт и путь «переключили режим, когда он уже был выбран».
+        state.tone = LiveColors.tone(state.tone, mode: mode)
+        return sendLiveColors(state)
+    }
+
+    /// «⏹ Выключить»: короткая команда `on:false` — страница сама возвращает окну тему чата
+    /// (`restoreTheme`), запоминать «что было» не нужно.
+    @discardableResult
+    func stopLiveColors() -> Bool {
+        var state = liveColorsStore.state
+        state.on = false
+        return sendLiveColors(state)
+    }
+
+    /// Ползунок скорости: новый период и пересчитанная точка отсчёта, чтобы цвет не прыгнул.
+    /// Живые цвета выключены — просто запоминаем скорость, команду не шлём.
+    ///
+    /// Идёт мимо очереди канала, как примерка темы: ползунок тащат мышью, и очередь по 0,6 с
+    /// на запись растянула бы смену темпа на секунды после того, как Элвис его отпустил.
+    /// Потерянная промежуточная скорость безвредна — на диске остаётся последняя.
+    @discardableResult
+    func setLiveColors(period: Int) -> Bool {
+        let state = LiveColors.state(liveColorsStore.state, period: period,
+                                     now: LiveColors.milliseconds(clock()))
+        guard state.on else {
+            liveColorsStore.save(state)
+            return false
+        }
+        return sendLiveColors(state, priority: .preview)
+    }
+
+    /// «🌑 Тёмные» / «☀️ Светлые» / «🪟 Как окно сейчас». Выключенные живые цвета так же только
+    /// запоминают выбор: галка в меню обязана стоять там, куда её поставили.
+    @discardableResult
+    func setLiveColors(tone: LiveColorsTone) -> Bool {
+        var state = liveColorsStore.state
+        state.tone = LiveColors.tone(tone, mode: state.mode)
+        guard state.on else {
+            liveColorsStore.save(state)
+            return false
+        }
+        return sendLiveColors(state)
+    }
+
+    /// Пересыл при старте приложения: окна могли открыться, пока приложение не работало, и
+    /// список `titles` в них устарел. Крутёж выключен — молчим (страница и так ничего не крутит).
+    @discardableResult
+    func resendLiveColors() -> Bool {
+        let state = liveColorsStore.state
+        guard state.on else { return false }
+        return sendLiveColors(state)
+    }
+
+    /// Одна команда на всё (`scope: "all"`) — ни в одном режиме N команд по окнам не пишем.
+    /// `ClaudeCommand.liveColors` не заводим: enum — это пункты верхнего уровня и слоты
+    /// хоткеев, а `theme` и `status` тоже пишутся строкой (критик В1).
+    @discardableResult
+    private func sendLiveColors(_ state: LiveColorsState,
+                                priority: CommandChannel.Priority = .normal) -> Bool {
+        noteUserCommand()
+        let fields = LiveColors.fields(state: state, titles: paintableTitles())
+        guard commands.write(action: LiveColors.action, fields: fields,
+                             priority: priority) else { return false }
+        liveColorsStore.save(state)
+        return true
     }
 
     // MARK: - цвет проекта (план WF15)

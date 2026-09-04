@@ -237,6 +237,24 @@ final class MinimizeMenu: NSObject {
         config.autoPaintReset = { [weak self] in
             DispatchQueue.main.async { self?.actions.autoPaintReset(window: window) }
         }
+        // Живые цвета адресованы всем окнам сразу (одна команда `scope: "all"`), поэтому окно
+        // под курсором им тоже не нужно; примерку они не закрепляют — крутёж и так перекроет
+        // всё, что примерялось.
+        config.liveColors = actions.liveColors
+        config.setLiveColorsMode = { [weak self] mode in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let mode = mode { self.actions.startLiveColors(mode: mode) }
+                else { self.actions.stopLiveColors() }
+            }
+        }
+        config.setLiveColorsTone = { [weak self] tone in
+            DispatchQueue.main.async { self?.actions.setLiveColors(tone: tone) }
+        }
+        // Ползунок скорости, как и «Поля по бокам», работает в открытом меню — отсрочки нет.
+        config.setLiveColorsPeriod = { [weak self] period in
+            self?.actions.setLiveColors(period: period)
+        }
         let menu = MinimizeMenu.build(config: config)
 
         shows += 1
@@ -356,6 +374,14 @@ final class MinimizeMenu: NSObject {
         var autoPaint: (AutoPaintPreset) -> Void = { _ in }
         var autoPaintAgain: () -> Void = {}
         var autoPaintReset: () -> Void = {}
+        /// «🌊 Живые цвета ▸» (план WF18): что крутится сейчас — от этого галки и гашение
+        /// «🌈 Раскрасить по кругу ▸».
+        var liveColors = LiveColorsState()
+        /// Клик по режиму; nil — «⏹ Выключить».
+        var setLiveColorsMode: (LiveColorsMode?) -> Void = { _ in }
+        /// Ползунок скорости: секунды на круг, уже с деления шкалы.
+        var setLiveColorsPeriod: (Int) -> Void = { _ in }
+        var setLiveColorsTone: (LiveColorsTone) -> Void = { _ in }
     }
 
     /// Меню кнопки — вариант А плана WF14: короткий верхний уровень (Workflow, оконная тройка,
@@ -556,29 +582,95 @@ final class MinimizeMenu: NSObject {
         submenu.addItem(frameItem(config, scope: all))
         submenu.addItem(.separator())
         submenu.addItem(autoPaintItem(config))
+        submenu.addItem(liveColorsItem(config))
         return submenuItem(title: MenuModel.allWindowsTitle, icon: MenuModel.allWindowsIcon,
                            submenu: submenu)
     }
 
     /// «🌈 Раскрасить по кругу ▸»: наборы, разделитель, «🎲 Случайно», «🔁 Ещё раз» и сброс всем
     /// окнам (план WF10 п. 1). Предпросмотра тут нет: набор красит все окна разом, примерять нечего.
+    ///
+    /// Пока крутятся живые цвета, все пункты погашены и сверху стоит строка «сначала выключи
+    /// живые цвета» (критик В13): покраска писала бы окнам темы, а живой слой перекрывал бы их
+    /// через четверть секунды — со стороны это «кнопка не работает». Обратной симметрии нет:
+    /// включение живых цветов у автопокраски ничего не спрашивает.
     static func autoPaintItem(_ config: MenuConfig) -> NSMenuItem {
+        let live = config.liveColors.on
         let submenu = NSMenu(title: MenuModel.autoPaintTitle)
         submenu.autoenablesItems = false
+        if live { submenu.addItem(header(MenuModel.autoPaintLiveHint)) }
         for preset in AutoPaint.presets {
             let item = BlockMenuItem(title: preset.title) { config.autoPaint(preset) }
             item.image = icon(preset.icon)
+            item.isEnabled = !live
             submenu.addItem(item)
         }
         submenu.addItem(.separator())
         let random = BlockMenuItem(title: AutoPaint.random.title) { config.autoPaint(AutoPaint.random) }
         random.image = icon(AutoPaint.random.icon)
+        random.isEnabled = !live
         submenu.addItem(random)
         let again = BlockMenuItem(title: MenuModel.autoPaintAgainTitle) { config.autoPaintAgain() }
         again.image = icon(MenuModel.autoPaintAgainIcon)
+        again.isEnabled = !live
         submenu.addItem(again)
-        submenu.addItem(BlockMenuItem(title: MenuModel.autoPaintResetTitle) { config.autoPaintReset() })
+        let reset = BlockMenuItem(title: MenuModel.autoPaintResetTitle) { config.autoPaintReset() }
+        reset.isEnabled = !live
+        submenu.addItem(reset)
         return submenuItem(title: MenuModel.autoPaintTitle, icon: MenuModel.autoPaintIcon, submenu: submenu)
+    }
+
+    /// «🌊 Живые цвета ▸» (план WF18, вариант А макета): выключатель, два режима, ползунок
+    /// скорости и три режима света. Тумблера как такового нет — «⏹ Выключить» и два режима
+    /// стоят одной тройкой галок: выключено — галка у «Выключить».
+    ///
+    /// Предпросмотра нет и здесь: команда одна на все окна, примерять нечего.
+    static func liveColorsItem(_ config: MenuConfig) -> NSMenuItem {
+        let state = config.liveColors
+        let submenu = NSMenu(title: MenuModel.liveColorsTitle)
+        submenu.autoenablesItems = false
+
+        let off = BlockMenuItem(title: MenuModel.liveColorsOffTitle) { config.setLiveColorsMode(nil) }
+        off.image = icon(MenuModel.liveColorsOffIcon)
+        off.state = state.on ? .off : .on
+        submenu.addItem(off)
+        submenu.addItem(.separator())
+        for mode in LiveColorsMode.allCases {
+            let names = MenuModel.liveColorsMode(mode)
+            let item = BlockMenuItem(title: names.title) { config.setLiveColorsMode(mode) }
+            item.image = icon(names.icon)
+            item.state = state.on && state.mode == mode ? .on : .off
+            submenu.addItem(item)
+        }
+        submenu.addItem(.separator())
+        submenu.addItem(liveSpeedItem(config))
+        submenu.addItem(.separator())
+        for tone in LiveColorsTone.allCases {
+            let names = MenuModel.liveColorsTone(tone)
+            let item = BlockMenuItem(title: names.title) { config.setLiveColorsTone(tone) }
+            item.image = icon(names.icon)
+            item.state = tone == LiveColors.tone(state.tone, mode: state.mode) ? .on : .off
+            // «🪟 Как окно сейчас» — только в режиме «🎭 Каждое окно своим цветом» (критик М2):
+            // команда одна на всех, и в «синхронно» окна взяли бы разные кольца.
+            item.isEnabled = tone != .window || state.mode == .solo
+            submenu.addItem(item)
+        }
+        return submenuItem(title: MenuModel.liveColorsTitle, icon: MenuModel.liveColorsIcon,
+                           submenu: submenu)
+    }
+
+    /// «⏱ Скорость» — тот же пункт-ползунок, что «↔️ Поля по бокам» (компонент WF14):
+    /// восемь делений шкалы `LiveColors.periods`, справа подпись «круг за 5 мин».
+    static func liveSpeedItem(_ config: MenuConfig) -> NSMenuItem {
+        let item = NSMenuItem(title: MenuModel.liveColorsSpeedTitle, action: nil, keyEquivalent: "")
+        item.view = SliderMenuView(title: MenuModel.liveColorsSpeedIcon + " "
+                                        + MenuModel.liveColorsSpeedTitle,
+                                   range: 0...(LiveColors.periods.count - 1),
+                                   value: LiveColors.index(of: config.liveColors.period),
+                                   width: 280, titleWidth: 80, valueWidth: 84,
+                                   format: { MenuModel.liveColorsSpeed(LiveColors.period(at: $0)) },
+                                   onChange: { config.setLiveColorsPeriod(LiveColors.period(at: $0)) })
+        return item
     }
 
     /// «🎨 Цвет ▸» — один список (решение Элвиса 04.09, вопрос 3 макета).
@@ -769,8 +861,11 @@ final class MinimizeMenu: NSObject {
     /// в решении 3 плана: подменю со значениями 0 · 2 · 5 · 8 · 12 · 16 · 24 и галкой на текущем.
     static func sidePaddingItem(_ config: MenuConfig) -> NSMenuItem {
         let item = NSMenuItem(title: MenuModel.sidePaddingTitle, action: nil, keyEquivalent: "")
-        item.view = SidePaddingView(padding: LiveStyle.clamp(config.sidePadding),
-                                    onChange: config.setSidePadding)
+        item.view = SliderMenuView(title: MenuModel.sidePaddingIcon + " " + MenuModel.sidePaddingTitle,
+                                   range: LiveStyle.minSidePadding...LiveStyle.maxSidePadding,
+                                   value: LiveStyle.clamp(config.sidePadding),
+                                   titleWidth: 122, valueWidth: 20,
+                                   format: { String($0) }, onChange: config.setSidePadding)
         return item
     }
 
@@ -886,15 +981,20 @@ final class PreviewMenuDelegate: NSObject, NSMenuDelegate {
     }
 }
 
-/// Строка-ползунок «↔️ Поля по бокам» внутри открытого меню (задача #5360): заголовок,
-/// `NSSlider` 0…24 и число моноширинными цифрами. `NSMenuItem.view` события мыши получает сам,
-/// поэтому ползунок тащится прямо в меню, и кнопки «применить» нет.
+/// Строка-ползунок внутри открытого меню (задача #5360): заголовок, `NSSlider` и подпись
+/// значения справа. `NSMenuItem.view` события мыши получает сам, поэтому ползунок тащится
+/// прямо в меню, и кнопки «применить» нет.
+///
+/// Компонент общий на два пункта (план WF18: «второй раз не изобретать»): «↔️ Поля по бокам»
+/// (0…24 пикселя, WF14) и «⏱ Скорость» живых цветов (восемь делений шкалы, подпись
+/// «круг за 5 мин»). Отличаются только границами, шириной колонок и тем, как значение
+/// показывается словами.
 ///
 /// Дебаунс — только `DispatchQueue.main.asyncAfter`: меню крутится в
 /// `NSEventTrackingRunLoopMode`, и `Timer.scheduledTimer` в режиме `.default` во время трекинга
 /// просто не сработает (критик В6). Главная очередь в tracking-режиме обслуживается.
-final class SidePaddingView: NSView {
-    /// Пауза перед записью файлов: пока Элвис ведёт ползунок, писать на каждый пиксель незачем.
+final class SliderMenuView: NSView {
+    /// Пауза перед записью: пока Элвис ведёт ползунок, дёргать файлы и канал на каждый шаг незачем.
     static let debounce: TimeInterval = 0.15
     static let width: CGFloat = 260
     static let height: CGFloat = 26
@@ -902,53 +1002,62 @@ final class SidePaddingView: NSView {
     let slider = NSSlider()
 
     private let value = NSTextField(labelWithString: "")
+    private let range: ClosedRange<Int>
+    private let format: (Int) -> String
     private let onChange: (Int) -> Void
     private var pending: Int?
     private var scheduled = false
 
-    init(padding: Int, onChange: @escaping (Int) -> Void) {
+    init(title text: String, range: ClosedRange<Int>, value current: Int,
+         width: CGFloat = SliderMenuView.width, titleWidth: CGFloat, valueWidth: CGFloat,
+         format: @escaping (Int) -> String, onChange: @escaping (Int) -> Void) {
+        self.range = range
+        self.format = format
         self.onChange = onChange
-        super.init(frame: NSRect(x: 0, y: 0, width: SidePaddingView.width, height: SidePaddingView.height))
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: SliderMenuView.height))
+        let current = min(max(current, range.lowerBound), range.upperBound)
 
-        let title = NSTextField(labelWithString: MenuModel.sidePaddingIcon + " " + MenuModel.sidePaddingTitle)
+        let title = NSTextField(labelWithString: text)
         title.font = NSFont.menuFont(ofSize: 0)
         title.textColor = .labelColor
-        title.frame = NSRect(x: 21, y: 5, width: 122, height: 16)
+        title.frame = NSRect(x: 21, y: 5, width: titleWidth, height: 16)
         addSubview(title)
 
         // Делений не рисуем: 25 засечек на дорожке ~90 px дают гребёнку; округляем в обработчике.
-        slider.minValue = Double(LiveStyle.minSidePadding)
-        slider.maxValue = Double(LiveStyle.maxSidePadding)
-        slider.doubleValue = Double(LiveStyle.clamp(padding))
+        slider.minValue = Double(range.lowerBound)
+        slider.maxValue = Double(range.upperBound)
+        slider.doubleValue = Double(current)
         slider.isContinuous = true
         slider.controlSize = .small
         slider.target = self
         slider.action = #selector(dragged(_:))
-        slider.frame = NSRect(x: 145, y: 4, width: 86, height: 18)
+        let valueX = width - 7 - valueWidth
+        let sliderX = 21 + titleWidth + 4
+        slider.frame = NSRect(x: sliderX, y: 4, width: max(40, valueX - 4 - sliderX), height: 18)
         addSubview(slider)
 
         value.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         value.textColor = .secondaryLabelColor
         value.alignment = .right
-        value.stringValue = String(LiveStyle.clamp(padding))
-        value.frame = NSRect(x: 233, y: 5, width: 20, height: 16)
+        value.stringValue = format(current)
+        value.frame = NSRect(x: valueX, y: 5, width: valueWidth, height: 16)
         addSubview(value)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) не используется") }
 
     @objc private func dragged(_ sender: NSSlider) {
-        let padding = LiveStyle.clamp(Int(sender.doubleValue.rounded()))
-        value.stringValue = String(padding)
-        pending = padding
+        let step = min(max(Int(sender.doubleValue.rounded()), range.lowerBound), range.upperBound)
+        value.stringValue = format(step)
+        pending = step
         guard !scheduled else { return }
         scheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + SidePaddingView.debounce) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + SliderMenuView.debounce) { [weak self] in
             guard let self = self else { return }
             self.scheduled = false
-            guard let padding = self.pending else { return }
+            guard let step = self.pending else { return }
             self.pending = nil
-            self.onChange(padding)
+            self.onChange(step)
         }
     }
 }
