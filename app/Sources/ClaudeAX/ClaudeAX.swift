@@ -4,7 +4,9 @@ import Foundation
 public enum ClaudeCommand: String, CaseIterable {
     /// `workflow` — первый пункт меню (решение 3 плана WF9): кладёт комплект воркфлоу
     /// в Application Support и вставляет текст кикоффа в поле ввода окна.
-    case workflow, cashout, newChat, collapse, expand, arrange, show, scroll
+    /// `newWindow`/`popoutWindow` — план WF13: новый чат сразу отдельным окном и вынос
+    /// текущего чата в окно; в command.json их действия пишутся через дефис.
+    case workflow, cashout, newChat, newWindow = "new-window", popoutWindow = "popout-window", collapse, expand, arrange, show, scroll
 }
 
 public protocol ClaudeAXControlling: AnyObject {

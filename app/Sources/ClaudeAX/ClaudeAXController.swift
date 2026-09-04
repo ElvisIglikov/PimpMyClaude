@@ -36,6 +36,8 @@ public final class ClaudeAXController: ClaudeAXControlling {
         actions.onWindowsMoved = { [weak self] in self?.menu.clearCache() }
         // «Workflow» на сборке без комплекта — плашкой на экран (критик п. 3 фикс-батча WF9).
         actions.onWarning = { [weak self] text in self?.hud.show(text, seconds: 2.5) }
+        // «🪟 Новое окно» держит плашку дольше: работа идёт до 40 с (план WF13).
+        actions.onNotice = { [weak self] text, seconds in self?.hud.show(text, seconds: seconds) }
         app.onRestart = { [weak self] in self?.menu.clearCache() }
         // Сводки перечитываются и по таймеру, и когда меню вот-вот всплывёт (решение 2 WF9).
         menu.onWillShow = { [weak self] in self?.statusFeed.refresh() }

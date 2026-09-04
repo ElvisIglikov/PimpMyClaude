@@ -42,6 +42,9 @@ final class ClaudeActions {
     /// «Обкэшить» → ⌘N: лоадер опрашивает command.json раз в 500 мс (fs.watchFile interval),
     /// плюс IPC до страницы — ⌘N раньше 1,2 с открыл бы новый чат до того, как старый отложил ответ.
     let cashoutNewChatDelay: TimeInterval = 1.2
+    /// «Новое окно» → ⌘N: команда должна доехать до страницы раньше, чем ⌘N уведёт окно
+    /// на `/epitaxy` — иначе странице нечего будет запоминать (куда возвращаться).
+    let newWindowKeyDelay: TimeInterval = 0.8
 
     private let app: ClaudeApp
     private let commands: CommandChannel
@@ -92,6 +95,8 @@ final class ClaudeActions {
         case .workflow: workflow(target)
         case .cashout: cashout(target)
         case .newChat: newChat(target)
+        case .newWindow: newWindow(target)
+        case .popoutWindow: popoutWindow(target)
         case .collapse: stage("collapse", target)
         case .expand: stage("expand", target)
         case .arrange: arrange()
@@ -154,6 +159,95 @@ final class ClaudeActions {
         [(key: "scope", value: .string(MenuModel.themeScopeWindow)),
          (key: "title", value: .string(title)),
          (key: "text", value: .string(text))]
+    }
+
+    // MARK: - новое окно (план WF13)
+
+    /// «🪟 Новое окно»: новый чат открывает штатный ⌘N (синтетический keydown страница
+    /// игнорирует — микро-разведка П2), всё остальное делает страница по команде `new-window`:
+    /// ждёт `/epitaxy`, проверяет, что композер пуст, вставляет первое сообщение, отправляет
+    /// и выносит созданный чат отдельным окном. Порядок здесь важен: сперва фокус и команда
+    /// (страница должна успеть запомнить, где стояло главное окно), и только потом ⌘N.
+    /// Окно адресуется AX-заголовком, как «Обкэшить»; пустой заголовок страница понимает
+    /// как «окно в фокусе».
+    private func newWindow(_ window: AXUIElement?) {
+        let origin = ClaudeActions.popoutOrigin(near: window.flatMap { AX.frame($0) })
+        // Работа идёт до 40 с — молчащая кнопка выглядит сломанной (критик п. 20).
+        onNotice?(MenuModel.newWindowNotice, MenuModel.newWindowNoticeSeconds)
+        let send: (String) -> Void = { [weak self] title in
+            guard let self = self else { return }
+            self.commands.write(action: ClaudeCommand.newWindow.rawValue,
+                                fields: ClaudeActions.newWindowFields(title: title, x: origin.x, y: origin.y,
+                                                                      text: MenuModel.newWindowText))
+            self.after(self.newWindowKeyDelay) { self.newChat(window) }
+        }
+        guard let window = window else {
+            send("")
+            return
+        }
+        app.focus(window: window)
+        after(focusDelay) { send(AX.string(window, kAXTitleAttribute) ?? "") }
+    }
+
+    /// «🪟 В отдельное окно»: текущий чат главного окна выносится в окно одним `openPopout`
+    /// на странице — ни нового чата, ни первого сообщения, ни ожиданий. Он же честная
+    /// деградация «Нового окна»: чат создан, а окно не открылось — этот пункт доделает.
+    private func popoutWindow(_ window: AXUIElement?) {
+        let origin = ClaudeActions.popoutOrigin(near: window.flatMap { AX.frame($0) })
+        let send: (String) -> Void = { [weak self] title in
+            self?.commands.write(action: ClaudeCommand.popoutWindow.rawValue,
+                                 fields: ClaudeActions.popoutWindowFields(title: title,
+                                                                          x: origin.x, y: origin.y))
+        }
+        guard let window = window else {
+            send("")
+            return
+        }
+        app.focus(window: window)
+        after(focusDelay) { send(AX.string(window, kAXTitleAttribute) ?? "") }
+    }
+
+    /// Поля команды после id, action, at: scope, title, x, y, text (контракт п. 1 плана WF13).
+    /// `x`/`y` — числа, а не строки (`write(action:extra:)` сюда не годится: он сортирует ключи
+    /// и делает всё строками), страница проверяет их `Number.isFinite`.
+    static func newWindowFields(title: String, x: Int, y: Int,
+                                text: String) -> [(key: String, value: CommandValue)] {
+        [(key: "scope", value: .string(MenuModel.themeScopeWindow)),
+         (key: "title", value: .string(title)),
+         (key: "x", value: .number(x)),
+         (key: "y", value: .number(y)),
+         (key: "text", value: .string(text))]
+    }
+
+    /// То же без первого сообщения: scope, title, x, y (решение Элвиса 04.09).
+    static func popoutWindowFields(title: String, x: Int, y: Int) -> [(key: String, value: CommandValue)] {
+        [(key: "scope", value: .string(MenuModel.themeScopeWindow)),
+         (key: "title", value: .string(title)),
+         (key: "x", value: .number(x)),
+         (key: "y", value: .number(y))]
+    }
+
+    /// Размер окна popout, по которому считается обрезка по экрану (у Claude оно примерно такое).
+    static let popoutWindowSize = CGSize(width: 900, height: 700)
+    /// Новое окно ставим уступом от окна под кнопкой — чтобы не легло ровно на него.
+    static let popoutWindowOffset: CGFloat = 40
+    /// Окна под кнопкой нет (меню-бар приложения, окно без AX-рамки) — ставим от угла экрана.
+    static let popoutWindowFallback = (x: 120, y: 120)
+
+    /// Куда поставить новое окно: угол окна под кнопкой + 40/40 в точках **Quartz** (начало —
+    /// левый верхний угол главного экрана, y вниз) — ровно те же координаты, что у Electron
+    /// в `initialPosition`. Координаты AppKit (снизу вверх) брать нельзя: окно уедет за экран.
+    /// Обрезаем по рабочей области главного экрана так, чтобы окно влезло целиком.
+    static func popoutOrigin(near frame: CGRect?,
+                             area: CGRect? = Screens.mainUsableFrame) -> (x: Int, y: Int) {
+        guard let frame = frame else { return popoutWindowFallback }
+        var x = frame.origin.x + popoutWindowOffset
+        var y = frame.origin.y + popoutWindowOffset
+        if let area = area {
+            x = min(max(x, area.minX), max(area.minX, area.maxX - popoutWindowSize.width))
+            y = min(max(y, area.minY), max(area.minY, area.maxY - popoutWindowSize.height))
+        }
+        return (Int(x.rounded()), Int(y.rounded()))
     }
 
     // MARK: - темы и шрифты
@@ -495,6 +589,10 @@ final class ClaudeActions {
     /// Короткая плашка на экран (HUD) — ставит ClaudeAXController. Пока единственный повод:
     /// в сборке нет комплекта workflow-kit.
     var onWarning: ((String) -> Void)?
+
+    /// То же, но со своим сроком: «Новое окно» работает до 40 с, и штатные 2,5 с `onWarning`
+    /// гасли бы задолго до результата (критик п. 20 плана WF13).
+    var onNotice: ((String, TimeInterval) -> Void)?
 
     private func after(_ delay: TimeInterval, _ block: @escaping () -> Void) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
