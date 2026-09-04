@@ -4,7 +4,6 @@
 [aria-label="Message actions"] { opacity: 1 !important; }
 /* PimpMyClaude:auto */
 #myclaude-window-frame{border-radius:15px !important}
-:root{--chat-gutter:5px !important;--chat-gutter-start:5px !important;--chat-gutter-end:5px !important}
 [class*="--chat-column-gutter-start"]{--chat-column-gutter-start:5px !important;--chat-column-gutter-end:5px !important}
 [class*="ps-[var(--chat-gutter"],[class*="pe-[var(--chat-gutter"],.epitaxy-transcript-width,.epitaxy-composer-width{padding-inline-start:5px !important;padding-inline-end:5px !important;padding-left:5px !important;padding-right:5px !important}
 [class*="ps-[var(--chat"],[class*="pe-[var(--chat"]{padding-inline-start:5px !important;padding-inline-end:5px !important}

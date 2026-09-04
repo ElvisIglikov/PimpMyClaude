@@ -1627,7 +1627,6 @@ final class ClaudeAXTests: XCTestCase {
     private static let expectedBlock = """
     /* PimpMyClaude:auto */
     #myclaude-window-frame{border-radius:15px !important}
-    :root{--chat-gutter:5px !important;--chat-gutter-start:5px !important;--chat-gutter-end:5px !important}
     [class*="--chat-column-gutter-start"]{--chat-column-gutter-start:5px !important;--chat-column-gutter-end:5px !important}
     [class*="ps-[var(--chat-gutter"],[class*="pe-[var(--chat-gutter"],.epitaxy-transcript-width,.epitaxy-composer-width{padding-inline-start:5px !important;padding-inline-end:5px !important;padding-left:5px !important;padding-right:5px !important}
     [class*="ps-[var(--chat"],[class*="pe-[var(--chat"]{padding-inline-start:5px !important;padding-inline-end:5px !important}
@@ -1742,7 +1741,7 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), "{сломано")
         XCTAssertTrue(LiveStyle.writeBlock(padding: 8, directory: dir, majorVersion: 26))
         XCTAssertTrue(try String(contentsOf: css, encoding: .utf8).contains("border-radius:15px"))
-        XCTAssertTrue(try String(contentsOf: css, encoding: .utf8).contains("--chat-gutter:8px"))
+        XCTAssertTrue(try String(contentsOf: css, encoding: .utf8).contains("--chat-column-gutter-start:8px"))
 
         // Файла claude.json нет — создаём из умолчаний, ничего не теряя.
         try FileManager.default.removeItem(at: config)
