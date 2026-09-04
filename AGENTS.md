@@ -62,6 +62,12 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
   Claude `~/Library/Application Support/Claude/claude-code-sessions/*/*/local_*.json` → `ProjectIndex.swift` (папка по
   sessionId/заголовку, главное окно по `status.json`). Индекс пропал — молчим, не красим. Покраска не трогает окна с ручной
   темой/автопокраской; файл в репозитории — в `~/.config/git/ignore`.
+- `live-colors` (WF18): `{…,"scope":"all","on":true,"mode":"sync"|"solo","period":<с>,"epoch":<мс>,"light":true|false|null,
+  "titles":[…],"ring":{"dark":[палитры…],"light":[…]}}` — порядок полей побайтно, числа числами, палитра в порядке
+  `Theme.paletteOrder`; выключение — `{…,"scope":"all","on":false}`. Страница: раздел 2в inject.js, шаг кольца = 360/длина,
+  память `myclaude-live-v1` (localStorage, общая — крутёж живёт и без приложения) и `myclaude-live-phase-v1`
+  (sessionStorage по окну, `{key: sessionKey(), phase}`; фаза запирается по первому настоящему заголовку, новый `titles`
+  пересчитывает). `ClaudeCommand` не расширяется — команда пишется строкой (`LiveColors.swift`).
 - Старые: `cashout` (title), `collapse`, `expand`, `scroll`.
 - Хранилище тем на странице: localStorage `myclaude-themes-v1` — карта `{ключ: {theme, font, size, frame}}`, ключи
   `chat:<заголовок>` (тема на чат), `main` (главное окно), `*` (всем); sessionStorage `myclaude-theme-v1` по окну
@@ -72,7 +78,7 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
 
 ## Сборка, гейт, релиз
 
-- `cd app && swift build && swift test` (74 теста). JS: `node --check claude-patch/inject.js` + скретч-тесты в
+- `cd app && swift build && swift test` (82 теста). JS: `node --check claude-patch/inject.js` + скретч-тесты в
   scratchpad сессии (`theme-store-test.mjs`, `theme-css-test.mjs`, `progress-test.mjs`, `progress-dom-test.mjs`,
   `workflow-insert-test.mjs`) — они не в репозитории; новый чат их не найдёт, при необходимости просить агента написать.
 - `tools/bundle.sh release` → `app/.build/PimpMyClaude.app` (Developer ID). **Подмена без простоя:** сначала bundle,
@@ -146,6 +152,6 @@ WF1–3 (03.09) ручка/меню/⌘Q в Hammerspoon → WF4 PimpMyClaude.app
 
 ## Кто чем владеет при параллельных батчах (правило одного писателя)
 
-`claude-patch/inject.js` — всегда ОДИН агент на волну (4400 строк, разделы 2а темы, 2б полоска, 12 «Обкэшить»,
+`claude-patch/inject.js` — всегда ОДИН агент на волну (4700 строк, разделы 2а темы, 2б полоска, 12 «Обкэшить»,
 12а Workflow, 16 подписки). Swift — второй агент; `themes.json`, `bundle.sh` — у Swift-батча. Контракт команды
 фиксируется в плане до старта, менять — только на гейте.

@@ -2260,12 +2260,27 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // круга при каждой смене разговора. Список titles задаёт только начальное
   // распределение. Ключа сессии может ещё не быть (about:blank без заголовка) —
   // тогда фаза живёт в памяти окна, а на диск ляжет при следующем случае.
+  //
+  // Но защёлкивать НЕ ПО ЧЕМУ, пока имени у окна нет: попап («Новое окно») в
+  // первые мгновения сидит на about:blank без заголовка, а безымянный чат носит
+  // заглушку («Claude», «New chat») — по такому имени и хэш, и место в списке у
+  // ВСЕХ окон одинаковые. Заперлись бы на нём — окна, открытые во время
+  // крутёжа, поехали бы одним цветом навсегда, и меню это уже не чинило бы.
+  // Поэтому фаза от ненастоящего имени временная: красим ею, но замок не ставим
+  // (livePaint пересчитает, как только заголовок появится) и на диск не пишем.
+  // Присланный список окон авторитетнее памяти окна и сильнее замка: нашли себя
+  // в нём — считаем фазу заново даже при phased, иначе повторное «каждое окно
+  // своим цветом» не развело бы окна, слипшиеся по заглушке.
   const liveLatchPhase = titles => {
-    if (liveState.phased) { liveWritePhase(liveState.phase); return; }
-    const stored = liveReadPhase();
-    liveState.phase = stored ?? livePhaseFor(titles);
-    liveState.phased = true;
-    liveWritePhase(liveState.phase);
+    const title = windowTitle();
+    const real = title !== "" && !THEME_TITLE_STUBS.has(title.toLowerCase());
+    const listed = real && Array.isArray(titles) && titles.indexOf(title) >= 0;
+    if (liveState.phased && !listed) { liveWritePhase(liveState.phase); return; }
+    liveState.phase = (listed ? null : liveReadPhase()) ?? livePhaseFor(titles);
+    // Место в списке бывает только у настоящего имени, поэтому «фаза
+    // авторитетная ИЛИ имя настоящее» и сводится к одному условию.
+    liveState.phased = real;
+    if (real) liveWritePhase(liveState.phase);
   };
 
   // Кольцо — текст снаружи, за который мы не отвечаем: палитра только из шести
@@ -2341,6 +2356,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (!liveState.on) return;
     const ring = liveState.useLight ? liveState.ring?.light : liveState.ring?.dark;
     if (!ring || ring.length === 0) return;
+    // Замка ещё нет — окно красится временной фазой (при первом мазке имени не
+    // было). Пробуем на каждом мазке: заголовок появился — фаза села сама, новой
+    // команды из меню для этого не нужно.
+    if (!liveState.phased) liveLatchPhase(null);
     const hue = liveHue();
     const type = liveState.useLight ? "light" : "dark";
     // id виден в status().theme.id — на гейте по нему сразу читается, где окно
@@ -2358,14 +2377,17 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       try { placeProgress(); } catch {}
     }
   };
-  const liveTick = () => {
+  // evenHidden — первый мазок (команда, подъём из памяти): его пускаем и в
+  // спрятанное окно, чтобы к показу цвет был уже верный, но примерку темы он,
+  // как и обычный тик, не трогает.
+  const liveTick = evenHidden => {
     if (!liveState.on || !state.alive) return;
     // Предпросмотр сильнее: мышь ведут по подменю тем, и затирать примерку через
     // четверть секунды нельзя. Меню закрылось — крутёж продолжился сам.
     if (themeState.previewing) return;
     // Окна не видно — цвет не крутим (батарея). Догонит одним шагом, когда
     // вернётся: цвет считается от часов, а не копится тиками.
-    if (document.hidden) return;
+    if (document.hidden && !evenHidden) return;
     livePaint();
   };
   const liveInterval = () => Math.round(Math.min(LIVE_TICK_MAX_MS,
@@ -2404,7 +2426,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     liveState.ring = config.ring;
     liveState.source = source;
     liveState.coarse = null;
-    livePaint();
+    liveTick(true);
     liveState.timer = setInterval(() => { try { liveTick(); } catch {} }, liveInterval());
   };
 
