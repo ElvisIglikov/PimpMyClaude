@@ -120,19 +120,18 @@ final class ClaudeAXTests: XCTestCase {
     /// в «⋯ Ещё ▸» (блокер Б1): прячем их только с глаз.
     func testMenuItemsCarryKeyEquivalents() throws {
         let menu = MinimizeMenu.build(config: MinimizeMenu.MenuConfig())
-        // Верхний уровень — шесть пунктов из entries; «Оформление ▸» и «Ещё ▸» с подменю
-        // и клавиш не носят.
+        // Верхний уровень — пять пунктов-команд из entries; «Новое окно ▸» (план WF16),
+        // «Оформление ▸» и «Ещё ▸» — с подменю, и клавиш сами не носят: ⌥⌘N уехала на
+        // «Здесь же» внутри подменю (сторож — testNewWindowKeepsHotkeyEntry).
         let items = menu.items.filter { !$0.isSeparatorItem && !$0.hasSubmenu }
-        XCTAssertEqual(items.count, MenuModel.entries.count - MenuModel.moreCommands.count)
+        XCTAssertEqual(items.count, MenuModel.entries.count - MenuModel.moreCommands.count - 1)
         XCTAssertEqual(items.map { $0.title },
-                       ["Workflow", "Новый чат", "Новое окно", "В отдельное окно",
-                        "Развернуть", "Свернуть"])
+                       ["Workflow", "Новый чат", "В отдельное окно", "Развернуть", "Свернуть"])
         XCTAssertEqual(items.map { $0.keyEquivalent },
-                       ["", "n", "n", "", String(UnicodeScalar(UInt32(NSUpArrowFunctionKey))!),
+                       ["", "n", "", String(UnicodeScalar(UInt32(NSUpArrowFunctionKey))!),
                         String(UnicodeScalar(UInt32(NSDownArrowFunctionKey))!)])
         XCTAssertEqual(items.map { $0.keyEquivalentModifierMask },
-                       [[], [.command], [.command, .option], [],
-                        [.command, .option], [.command, .option]])
+                       [[], [.command], [], [.command, .option], [.command, .option]])
 
         // Четыре клавиши — внутри «⋯ Ещё ▸», в том же порядке, что в макете.
         let more = try XCTUnwrap(menu.items.first { $0.title == MenuModel.moreTitle }?.submenu)
@@ -542,7 +541,9 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(menu.items.map { $0.isSeparatorItem ? "—" : $0.title },
                        ["Workflow", "Новый чат", "Новое окно", "В отдельное окно", "—",
                         "Развернуть", "Свернуть", "—", "Оформление", "—", "Ещё"])
-        XCTAssertEqual(menu.items.filter { $0.hasSubmenu }.map { $0.title }, ["Оформление", "Ещё"])
+        // «Новое окно» стало подменю в WF16 — верхний уровень при этом не вырос ни на пункт.
+        XCTAssertEqual(menu.items.filter { $0.hasSubmenu }.map { $0.title },
+                       ["Новое окно", "Оформление", "Ещё"])
         // Двух разделителей подряд быть не должно — AppKit нарисовал бы две линии.
         for (index, item) in menu.items.enumerated() where item.isSeparatorItem {
             XCTAssertFalse(index > 0 && menu.items[index - 1].isSeparatorItem, "двойной разделитель")
@@ -665,7 +666,8 @@ final class ClaudeAXTests: XCTestCase {
         // Каталога нет — «Цвет» и «Шрифт» пропадают, остальное оформление на месте, а
         // «Раскрасить по кругу» палитры считает само и в themes.json не заглядывает (критик В10).
         let bare = MinimizeMenu.build(config: MinimizeMenu.MenuConfig())
-        XCTAssertEqual(bare.items.filter { $0.hasSubmenu }.map { $0.title }, ["Оформление", "Ещё"])
+        XCTAssertEqual(bare.items.filter { $0.hasSubmenu }.map { $0.title },
+                       ["Новое окно", "Оформление", "Ещё"])
         let bareAppearance = try XCTUnwrap(bare.items.first { $0.title == MenuModel.appearanceTitle }?.submenu)
         XCTAssertEqual(bareAppearance.items.map { $0.isSeparatorItem ? "—" : $0.title },
                        ["Размер ответов", "Размер вопросов", "Неоновая рамка", "Поля по бокам",
@@ -1042,30 +1044,146 @@ final class ClaudeAXTests: XCTestCase {
     // MARK: - новое окно (план WF13)
 
     func testNewWindowPayloadMatchesContract() throws {
-        // Побайтно, контракт п. 1 плана WF13: id, action, at, scope, title, x, y, text.
+        // Побайтно, контракт п. 1 плана WF13, расширенный решением 1 плана WF16:
+        // id, action, at, scope, title, x, y, text, folder, name, затем слои — тема, шрифт,
+        // размер, рамка. `folder` и `name` есть всегда, пустая строка = «не трогать».
+        let violet = catalog()[0]
         let body = CommandChannel.payload(
             action: ClaudeCommand.newWindow.rawValue,
             fields: ClaudeActions.newWindowFields(title: "Vkusnoff", x: 586, y: 303,
-                                                  text: MenuModel.newWindowText),
+                                                  text: "PimpMyClaude 2",
+                                                  folder: "/Users/elvis/_ElvisProjects/PimpMyClaude",
+                                                  name: "PimpMyClaude 2",
+                                                  theme: .set(violet), font: .keep,
+                                                  size: .set(Size(answer: 16)), frame: .set(true)),
             id: "1756900000123-0042", at: Date(timeIntervalSince1970: 1_756_900_000))
         XCTAssertEqual(body, "{\"id\":\"1756900000123-0042\",\"action\":\"new-window\","
             + "\"at\":\"2025-09-03T11:46:40Z\",\"scope\":\"window\",\"title\":\"Vkusnoff\","
-            + "\"x\":586,\"y\":303,\"text\":\"Привет\"}")
+            + "\"x\":586,\"y\":303,\"text\":\"PimpMyClaude 2\","
+            + "\"folder\":\"/Users/elvis/_ElvisProjects/PimpMyClaude\",\"name\":\"PimpMyClaude 2\","
+            + "\"theme\":{\"id\":\"violet\",\"name\":\"Фиолетовая\",\"type\":\"dark\","
+            + "\"palette\":{\"accent\":\"#a78bfa\",\"background\":\"#1b1626\",\"foreground\":\"#ece9f5\","
+            + "\"sidebar\":\"#151021\",\"panel\":\"#241d33\",\"muted\":\"#8b81a6\"}},"
+            + "\"size\":{\"answer\":16},\"frame\":true}")
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
         XCTAssertEqual(json["scope"] as? String, "window")
-        XCTAssertEqual(json["text"] as? String, "Привет")
+        XCTAssertEqual(json["folder"] as? String, "/Users/elvis/_ElvisProjects/PimpMyClaude")
+        // Имя чата приходит на страницу ГОТОВЫМ, с номером: сайдбар на совпадения она не
+        // проверяет — номер считает приложение по всем сессиям (критик В4).
+        XCTAssertEqual(json["name"] as? String, "PimpMyClaude 2")
+        XCTAssertEqual(json["text"] as? String, "PimpMyClaude 2")
+        XCTAssertNil(json["font"], "слоя, который не трогаем, в команде нет вовсе")
         // Координаты — числа, а не строки: страница проверяет их Number.isFinite.
         XCTAssertEqual(json["x"] as? Int, 586)
         XCTAssertEqual(json["y"] as? Int, 303)
         XCTAssertNil(json["x"] as? String)
-        // Первое сообщение — только приветствие: в этой сессии работает авто-Allow.
+
+        // «Здесь же» (и хоткей ⌥⌘N) — поведение WF13 до буквы: папки и имени нет, слоёв нет,
+        // первое сообщение прежнее «Привет» — только приветствие, в сессии работает авто-Allow.
         XCTAssertFalse(MenuModel.newWindowText.isEmpty)
-        // Без доверия Accessibility заголовка нет — страница поймёт это как «окно в фокусе».
-        XCTAssertTrue(CommandChannel.payload(action: ClaudeCommand.newWindow.rawValue,
-                                             fields: ClaudeActions.newWindowFields(title: "", x: 120, y: 120,
-                                                                                   text: "Привет"),
-                                             id: "1-0001", at: Date(timeIntervalSince1970: 0))
-            .hasSuffix("\"scope\":\"window\",\"title\":\"\",\"x\":120,\"y\":120,\"text\":\"Привет\"}"))
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "", x: 120, y: 120,
+                                                  text: MenuModel.newWindowText),
+            id: "1-0001", at: Date(timeIntervalSince1970: 0)),
+                       "{\"id\":\"1-0001\",\"action\":\"new-window\",\"at\":\"1970-01-01T00:00:00Z\","
+                       + "\"scope\":\"window\",\"title\":\"\",\"x\":120,\"y\":120,\"text\":\"Привет\","
+                       + "\"folder\":\"\",\"name\":\"\"}")
+        // Сброс слоя уходит как null — правило слоёв то же, что у команды `theme`.
+        XCTAssertTrue(CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "", x: 0, y: 0, text: "Проект",
+                                                  folder: "/tmp/Проект", name: "Проект",
+                                                  theme: .reset, frame: .reset),
+            id: "1-0001", at: Date(timeIntervalSince1970: 0))
+            .hasSuffix("\"folder\":\"/tmp/Проект\",\"name\":\"Проект\",\"theme\":null,\"frame\":null}"))
+
+        // Чем красить новое окно (вопрос 2 макета WF16, ответ Элвиса «1»): вид проекта, а пока
+        // его нет — вид окна, из которого нажали.
+        let project = ProjectSettings(theme: .set(violet))
+        let window = ProjectSettings(size: .set(Size(answer: 16)))
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: project, window: window).theme.value?.id,
+                       "violet")
+        XCTAssertTrue(ClaudeActions.newWindowLayers(project: project, window: window).size.isKeep,
+                      "вид проекта берётся целиком, а не смешивается с окном")
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: nil, window: window).size.value,
+                       Size(answer: 16))
+        // Файл проекта есть, а слоёв в нём нет — это не «не красить», а «как у окна».
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: ProjectSettings(name: "Проект"),
+                                                     window: window).size.value, Size(answer: 16))
+        XCTAssertTrue(ClaudeActions.newWindowLayers(project: nil, window: ProjectSettings()).isEmpty)
+    }
+
+    /// Сторож (критик В2 плана WF16 — повтор блокера Б1 из WF14): подменю не должно стоить
+    /// клавиши ⌥⌘N. Carbon-хоткеи регистрируются перебором `MenuModel.entries` (id = индекс+1),
+    /// поэтому `.newWindow` обязан остаться в списке И на своём месте; рисуется клавиша на
+    /// пункте «Здесь же» — у родителя с подменю AppKit её не отрабатывает.
+    func testNewWindowKeepsHotkeyEntry() throws {
+        let index = try XCTUnwrap(MenuModel.entries.firstIndex { $0.command == .newWindow })
+        XCTAssertEqual(index, 2, "индекс .newWindow съехал — вместе с ним съедет id Carbon-хоткея")
+        let entry = try XCTUnwrap(MenuModel.entry(for: .newWindow))
+        XCTAssertEqual(entry.registersHotkey, true, ".newWindow перестал регистрировать хоткей")
+        XCTAssertEqual(entry.key?.keyCode, 0x2D)
+        XCTAssertEqual(entry.key?.keyEquivalent, "n")
+        XCTAssertEqual(entry.key?.modifierMask, [.command, .option])
+
+        var config = MinimizeMenu.MenuConfig()
+        config.projects = [ClaudeAXTests.project("PimpMyClaude")]
+        let parent = try XCTUnwrap(MinimizeMenu.build(config: config).items
+            .first { $0.title == "Новое окно" })
+        XCTAssertNotNil(parent.submenu, "«Новое окно» — подменю (вариант А макета WF16)")
+        XCTAssertEqual(parent.keyEquivalent, "", "у пункта с подменю AppKit клавишу не отработает")
+        XCTAssertEqual(parent.keyEquivalentModifierMask, [])
+        let here = try XCTUnwrap(parent.submenu?.items.first)
+        XCTAssertEqual(here.title, MenuModel.newWindowHereTitle)
+        XCTAssertEqual(here.keyEquivalent, "n")
+        XCTAssertEqual(here.keyEquivalentModifierMask, [.command, .option])
+    }
+
+    /// «🪟 Новое окно ▸» — «Здесь же» первым, за ним «НЕДАВНИЕ ПРОЕКТЫ» и папки (план WF16).
+    func testNewWindowSubmenuListsProjects() throws {
+        var performed: [ClaudeCommand] = []
+        var opened: [String] = []
+        var config = MinimizeMenu.MenuConfig()
+        config.perform = { performed.append($0) }
+        config.newWindowInProject = { opened.append($0.folder.path) }
+        config.projects = [ClaudeAXTests.project("PimpMyClaude"),
+                           ClaudeAXTests.project("Dictatorik", at: 2000)]
+
+        let submenu = try XCTUnwrap(MinimizeMenu.build(config: config).items
+            .first { $0.title == "Новое окно" }?.submenu)
+        XCTAssertEqual(submenu.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       [MenuModel.newWindowHereTitle, "—", MenuModel.recentProjectsHeader,
+                        "PimpMyClaude", "Dictatorik"])
+        let header = try XCTUnwrap(submenu.items.first { $0.title == MenuModel.recentProjectsHeader })
+        XCTAssertFalse(header.isEnabled, "«НЕДАВНИЕ ПРОЕКТЫ» — заголовок секции, а не кнопка")
+        // Имя пункта — имя папки, полный путь — подсказкой при наведении: у двух проектов
+        // папки могут зваться одинаково.
+        let pimp = try XCTUnwrap(submenu.items.first { $0.title == "PimpMyClaude" })
+        XCTAssertNotNil(pimp.image)
+        XCTAssertEqual(pimp.toolTip,
+                       ProjectPaint.short(path: ClaudeAXTests.project("PimpMyClaude").folder))
+        click(pimp)
+        XCTAssertEqual(opened, [ClaudeAXTests.project("PimpMyClaude").folder.path])
+        // «Здесь же» — прежняя команда WF13, ничего про папки не знающая.
+        click(try XCTUnwrap(submenu.items.first))
+        XCTAssertEqual(performed, [.newWindow])
+
+        // Папок не знаем — подменю из одного пункта: раздел «НЕДАВНИЕ ПРОЕКТЫ» без списка
+        // хуже, чем его отсутствие (условие ветвления, критик Б1).
+        config.projects = []
+        let bare = try XCTUnwrap(MinimizeMenu.build(config: config).items
+            .first { $0.title == "Новое окно" }?.submenu)
+        XCTAssertEqual(bare.items.map { $0.title }, [MenuModel.newWindowHereTitle])
+        // Длина списка — ответ Элвиса на вопрос 3 макета.
+        XCTAssertEqual(MenuModel.newWindowProjectsLimit, 8)
+    }
+
+    /// Проект из индекса чатов: папка в ~/_ElvisProjects, имя — её последний компонент.
+    private static func project(_ name: String, at: Double = 3000) -> Project {
+        Project(folder: FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("_ElvisProjects", isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true), name: name, lastFocusedAt: at)
     }
 
     func testPopoutWindowPayloadMatchesContract() throws {

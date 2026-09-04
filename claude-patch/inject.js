@@ -22,7 +22,8 @@
 // сводки, присланной командой status (раздел «2б»). Команда workflow кладёт в
 // поле ввода текст запуска и НЕ отправляет его (раздел «12а»). Команды
 // new-window и popout-window открывают чат отдельным окном — новый (⌘N от
-// приложения, первое сообщение, отправка) или уже открытый (раздел «12б»).
+// приложения, папка проекта, первое сообщение, отправка, имя чата и его цвет
+// вперёд) или уже открытый (раздел «12б»).
 //
 // Логика ступеней, порогов и кликов перенесена из донора ElvisOS
 // (~/_ElvisProjects/ElvisOS/Resources/claude-chat-cleaner-inject.js, разделы
@@ -34,7 +35,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf15-a-1";
+  const VERSION = "wf16-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -273,8 +274,9 @@
     workflowRuns: 0,
     workflowResult: null,
     // «Новое окно» и «В отдельное окно» (раздел 12б): запись последнего запуска
-    // любой из двух команд — {state, step, id, at, busy, runs, back}; она же
-    // уходит наружу полем newWindow в status().
+    // любой из двух команд — {state, step, id, at, busy, runs, back} и, с WF16,
+    // ещё {folder, chip, name, rename, title, layers}; она же уходит наружу
+    // полем newWindow в status().
     newWindow: null,
     scheduled: false,
     rafId: 0,
@@ -3222,15 +3224,36 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const NEW_WINDOW_ROW_GRACE_MS = 1500;
   // Возврат главного окна на прежний чат.
   const NEW_WINDOW_BACK_MS = 1000;
+  // Папка проекта (WF16): сколько ждём, пока выбор дойдёт до стора, а потом до
+  // чипа на домашнем экране.
+  const NEW_WINDOW_FOLDER_MS = 5000;
+  // Переименование чата (WF16): контекстное меню строки, поле имени, закрытие.
+  const NEW_WINDOW_MENU_MS = 1500;
+  const NEW_WINDOW_RENAME_MS = 2000;
+  // Сколько ждём, пока новое имя доедет до строки сайдбара (критик WF16, В3).
+  const NEW_WINDOW_TITLE_MS = 2000;
   // Страховка: сорвавшийся прогон не должен выключить кнопку навсегда.
-  const NEW_WINDOW_GUARD_MS = 75000; // худшая цепочка ожиданий ≈ 50 с (verify WF13, находка 2)
+  // С WF16 к цепочке добавились папка (до 10 с) и имя (до 7,5 с).
+  const NEW_WINDOW_GUARD_MS = 95000; // худшая цепочка ожиданий ≈ 65 с (verify WF13, находка 2)
   const NEW_WINDOW_NOTE_MS = 3000;
   const NEW_WINDOW_NOTE_FAIL = "Новое окно не открылось";
   const NEW_WINDOW_NOTE_CREATED = "Отдельным окном не вышло, чат создан здесь.\nМеню ▸ 🪟 В отдельное окно";
   const NEW_WINDOW_NOTE_DRAFT = "В поле ввода черновик — новый чат не открываю";
   const NEW_WINDOW_NOTE_FOLDER = "Сообщение не ушло: не выбрана папка";
+  // Папку выбрать не вышло (макет WF16): чат в чужой папке хуже отказа — там
+  // работает авто-Allow, и агент стартовал бы в чужом проекте.
+  const NEW_WINDOW_NOTE_FOLDER_PICK = "Не смог выбрать папку — чат не создавал";
   const NEW_WINDOW_NOTE_CHAT = "Сначала открой чат — выносить нечего";
   const NEW_WINDOW_NOTE_POPOUT = "Отдельным окном не вышло";
+  // Пункт «Переименовать» ищем по началу текста: у claude.ai он английский, но
+  // сборка бывает и русской.
+  const NEW_WINDOW_RENAME_RE = /^(rename|переимен)/i;
+  const NEW_WINDOW_MENU_SELECTOR = '[role="menuitem"], [role="menu"] button, [role="menu"] [role="button"]';
+  // Чип папки на домашнем экране («Local / <папка> / <ветка>»): своего селектора
+  // у него мы не снимали, узнаём по тексту среди кнопок и списков.
+  const NEW_WINDOW_CHIP_SELECTOR = 'button, [role="button"], [role="combobox"]';
+  // Поле имени у переименования: модалка, инлайн-поле строки или contenteditable.
+  const NEW_WINDOW_NAME_SELECTOR = 'input[type="text"], input:not([type]), textarea, [contenteditable="true"]';
 
   // Все таймеры раздела — в одном наборе: снимаются разом на dispose, а реестр
   // уборки не пухнет от сотен опросов по 100 мс.
@@ -3378,9 +3401,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     } catch {}
     return urls;
   };
-  const newWindowFindStore = async token => {
-    if (newWindowStoreOk(newWindowStore)) return newWindowStore;
-    newWindowStore = null;
+  // Обход модулей общий на оба стора раздела (попапы и папка проекта): проход
+  // один и тот же, разный только предикат.
+  const newWindowScanStores = async (token, ok) => {
     for (const url of newWindowModuleUrls()) {
       if (!newWindowLive(token)) return null;
       let chunk = null;
@@ -3390,13 +3413,193 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         for (const key of Object.keys(chunk)) {
           const value = chunk[key];
           if (typeof value !== "function" || typeof value.getState !== "function") continue;
-          if (!newWindowStoreOk(value)) continue;
-          newWindowStore = value;
-          return newWindowStore;
+          if (ok(value)) return value;
         }
       } catch {}
     }
     return null;
+  };
+  const newWindowFindStore = async token => {
+    if (newWindowStoreOk(newWindowStore)) return newWindowStore;
+    newWindowStore = await newWindowScanStores(token, newWindowStoreOk);
+    return newWindowStore;
+  };
+
+  // Папка проекта (WF16, ступень b). Домашний экран /epitaxy держит выбранную
+  // папку в СВОЁМ сторе (разведка П2, снято живьём 04.09): состояние с полями
+  // selectedFolder и trustedSelectedFolder, действия setLocalSelectedFolder(path)
+  // и setTrustedSelectedFolder(path). Имя экспорта у него своё («Zt» в сборке
+  // 04.09) и меняется с каждым релизом — ищем ПОВЕДЕНЧЕСКИ, как и стор попапов,
+  // и держим в кэше замыкания с перепроверкой.
+  //
+  // Доверие ставим сразу вторым вызовом: setLocalSelectedFolder обнуляет
+  // trustedSelectedFolder, и без него Claude поднял бы модальное окно доверия к
+  // папке, на котором вся цепочка встала бы (разведка WF16, п. 6). Папки в меню
+  // — только те, где сессии уже были, то есть доверенные.
+  let newWindowFolderStore = null;
+  const newWindowFolderStoreOk = store => {
+    try {
+      const value = store?.getState?.();
+      return Boolean(value && typeof value === "object"
+        && typeof value.setLocalSelectedFolder === "function"
+        && "selectedFolder" in value);
+    } catch { return false; }
+  };
+  const newWindowFindFolderStore = async token => {
+    if (newWindowFolderStoreOk(newWindowFolderStore)) return newWindowFolderStore;
+    newWindowFolderStore = await newWindowScanStores(token, newWindowFolderStoreOk);
+    return newWindowFolderStore;
+  };
+  // Хвостовой слэш путь не меняет: «…/Dictatorik» и «…/Dictatorik/» — одна папка.
+  const newWindowFolderPath = value => {
+    let path = typeof value === "string" ? value.trim() : "";
+    while (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+    return path;
+  };
+  const newWindowFolderName = path => newWindowFolderPath(path).split("/").filter(Boolean).pop() ?? "";
+  const newWindowFolderNow = store => {
+    try { return newWindowFolderPath(store?.getState?.()?.selectedFolder); } catch { return ""; }
+  };
+  // Чип папки виден на домашнем экране, и по нему проверяется, что стор мы нашли
+  // ТОТ: своего селектора у чипа нет, поэтому узнаём его по тексту — имени папки.
+  const newWindowChipShows = name => {
+    if (!name) return false;
+    try {
+      for (const node of document.querySelectorAll(NEW_WINDOW_CHIP_SELECTOR)) {
+        if (String(node.textContent ?? "").replace(/\s+/g, " ").trim() === name) return true;
+      }
+    } catch {}
+    return false;
+  };
+  // Шаг «папка»: поставить папку проекта и СВЕРИТЬ обратно. Отдаёт "ok",
+  // "no-folder-ui" (нечем выбирать — стора нет) или "folder-missing" (выбор не
+  // встал). Проверок две: значение в сторе и чип на экране — но чип спрашиваем
+  // только там, где он вообще нашёлся до переключения (с прежней папкой): иначе
+  // «чипа не видно» значило бы отказ на ровном месте.
+  const newWindowPickFolder = async (folder, token) => {
+    const store = await newWindowFindFolderStore(token);
+    if (!newWindowLive(token) || !store) return "no-folder-ui";
+    const want = newWindowFolderPath(folder);
+    const before = newWindowFolderNow(store);
+    const chipBefore = before !== "" && newWindowChipShows(newWindowFolderName(before));
+    try {
+      const actions = store.getState();
+      actions.setLocalSelectedFolder(folder);
+      if (typeof actions.setTrustedSelectedFolder === "function") actions.setTrustedSelectedFolder(folder);
+    } catch { return "folder-missing"; }
+    const picked = await newWindowWait(
+      () => (newWindowFolderNow(store) === want ? true : null), NEW_WINDOW_FOLDER_MS, token);
+    if (!newWindowLive(token) || !picked) return "folder-missing";
+    if (!chipBefore) { newWindowMark({ chip: "none" }); return "ok"; }
+    const chip = await newWindowWait(
+      () => (newWindowChipShows(newWindowFolderName(want)) ? true : null), NEW_WINDOW_FOLDER_MS, token);
+    if (!newWindowLive(token)) return "folder-missing";
+    newWindowMark({ chip: chip ? "ok" : "stale" });
+    return chip ? "ok" : "folder-missing";
+  };
+
+  // Имя чата (WF16). Штатного действия в предзагруженных сторах claude.ai нет
+  // (разведка П2: у попапов есть setPopoutTitle, но renameSession/setSessionTitle
+  // там не лежит), поэтому переименовываем тем же путём, каким это делает Элвис
+  // руками, — контекстным меню строки сайдбара. Путь заведомо хрупкий, и вся
+  // цепочка от него не зависит: не нашли пункта или поля — молча идём дальше
+  // (статус no-rename), имя чата остаётся авто-заголовком Claude, а ключ темы и
+  // заголовок окна берутся из ФАКТИЧЕСКОЙ строки сайдбара (критик WF16, В3).
+  const newWindowMenuClose = () => {
+    try {
+      document.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true,
+      }));
+    } catch {}
+    try { document.body?.click(); } catch {}
+  };
+  // Поле имени: живое, редактируемое и заведомо НЕ поле ввода чата — иначе имя
+  // проекта уехало бы в композер только что созданного разговора.
+  const newWindowNameField = node => {
+    if (!node?.isConnected) return false;
+    try { if (node.closest?.(NEW_WINDOW_INPUT_SELECTOR)) return false; } catch {}
+    if (node.tagName === "INPUT") return /^(text|search|)$/i.test(node.getAttribute("type") ?? "");
+    if (node.tagName === "TEXTAREA") return true;
+    return node.isContentEditable === true;
+  };
+  const newWindowNameText = node => String(node?.value ?? node?.innerText ?? node?.textContent ?? "").trim();
+  // React слушает не .value, а событие input: присвоение напрямую он не видит,
+  // поэтому значение ставим родным сеттером прототипа и досылаем события сами.
+  const newWindowNameSet = (node, value) => {
+    try {
+      const proto = node.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (setter) setter.call(node, value); else node.value = value;
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+      node.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch {}
+  };
+  const newWindowRename = async (row, name, token) => {
+    if (!row?.isConnected || !name) return false;
+    try {
+      const box = row.getBoundingClientRect();
+      row.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true, cancelable: true, view: window,
+        clientX: Math.round(box.left + box.width / 2), clientY: Math.round(box.top + box.height / 2),
+      }));
+    } catch { return false; }
+    const item = await newWindowWait(() => {
+      try {
+        for (const node of document.querySelectorAll(NEW_WINDOW_MENU_SELECTOR)) {
+          if (NEW_WINDOW_RENAME_RE.test(String(node.textContent ?? "").trim())) return node;
+        }
+      } catch {}
+      return null;
+    }, NEW_WINDOW_MENU_MS, token);
+    // Меню за собой гасим ВСЕГДА: команда идёт в живом окне Элвиса, и открытое
+    // контекстное меню там оставлять нельзя.
+    if (!item) { newWindowMenuClose(); return false; }
+    try { item.click(); } catch { newWindowMenuClose(); return false; }
+    // Где появится поле имени — в модалке или прямо в строке, — зависит от
+    // сборки claude.ai, поэтому берём то, что под фокусом, а нет его — первое
+    // поле внутри модалки или списка чатов. Дальше этих двух мест не смотрим
+    // НАРОЧНО: промахнись мы полем — имя проекта уехало бы в чужую строку
+    // живого окна Элвиса (поиск по чатам, поле ввода).
+    const field = await newWindowWait(() => {
+      const hosts = [];
+      try { hosts.push(...document.querySelectorAll('[role="dialog"]')); } catch {}
+      try {
+        const rows = document.querySelector(NEW_WINDOW_ROWS_SELECTOR);
+        if (rows) hosts.push(rows);
+      } catch {}
+      const active = document.activeElement;
+      if (newWindowNameField(active) && hosts.some(host => host.contains(active))) return active;
+      for (const host of hosts) {
+        let found = null;
+        try { found = host.querySelector(NEW_WINDOW_NAME_SELECTOR); } catch {}
+        if (newWindowNameField(found)) return found;
+      }
+      return null;
+    }, NEW_WINDOW_RENAME_MS, token);
+    if (!field) { newWindowMenuClose(); return false; }
+    try { field.focus(); } catch {}
+    if (typeof field.value === "string") {
+      try { field.select?.(); } catch {}
+      newWindowNameSet(field, name);
+    } else {
+      try { document.execCommand("selectAll", false, null); } catch {}
+      try { document.execCommand("insertText", false, name); } catch {}
+    }
+    if (newWindowNameText(field) !== name) { newWindowMenuClose(); return false; }
+    // Подтверждение — Enter в самом поле: кнопки «Сохранить» у переименования
+    // может и не быть, а Enter понимают обе разметки.
+    try {
+      for (const type of ["keydown", "keypress", "keyup"]) {
+        field.dispatchEvent(new KeyboardEvent(type, {
+          key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true,
+        }));
+      }
+    } catch {}
+    // Поле ушло из документа — переименование приняли. Осталось на месте —
+    // гасим за собой и честно говорим «не вышло».
+    const closed = await newWindowWait(() => (field.isConnected ? null : true), NEW_WINDOW_RENAME_MS, token);
+    if (!closed) { newWindowMenuClose(); return false; }
+    return true;
   };
 
   // Общий шаг обоих пунктов: вынести сессию в отдельное окно. Заголовок берём
@@ -3435,10 +3638,17 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     newWindowMark({ back: ok ? (row ? "row" : "history") : "back-failed" });
   };
 
-  // Команда «Новое окно», контракт WF13: {id, action:"new-window", at,
-  // scope:"window", title, x, y, text}. Исполняет только ГЛАВНОЕ окно и только
+  // Команда «Новое окно», контракт WF16 (расширение WF13): {id,
+  // action:"new-window", at, scope:"window", title, x, y, text, folder, name,
+  // theme?, font?, size?, frame?}. Исполняет только ГЛАВНОЕ окно и только
   // адресованное заголовком: страниц claude.ai может оказаться две, и обе
   // завели бы по чату.
+  //
+  // folder и name — всегда есть, пустая строка = «не трогать» (это и есть
+  // поведение WF13). Слои — по правилам команды theme: поля нет — слой не
+  // трогаем, null — сброс. Уникальность имени считает приложение по всем
+  // сессиям на диске: страница номер не придумывает и сайдбар на совпадения не
+  // проверяет (критик WF16, В4).
   const runNewWindowCommand = async detail => {
     if (!isMainWindow() || !addressed(detail)) return false;
     const text = typeof detail?.text === "string" ? detail.text.trim() : "";
@@ -3447,6 +3657,17 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // молча склеить (контракт WF13 требует write(action:fields:) с .number).
     const x = detail?.x;
     const y = detail?.y;
+    const folder = typeof detail?.folder === "string" ? detail.folder.trim() : "";
+    // Папка — только абсолютный путь (Swift шлёт standardizedFileURL.path); мусор
+    // отсекаем сразу, а не поздним no-folder (verify WF16, находка 5).
+    if (folder && !folder.startsWith("/")) { newWindowMark({ state: "bad-command", step: "folder" }); return false; }
+    // Длину имени режем ровно так же, как её режет строка сайдбара
+    // (newWindowRowTitle): иначе сверка заголовка не сошлась бы никогда.
+    const name = typeof detail?.name === "string" ? detail.name.trim().slice(0, 200) : "";
+    const layers = {};
+    for (const layer of THEME_LAYERS) {
+      if (detail && layer in detail) layers[layer] = LAYER_NORMALIZE[layer](detail[layer]);
+    }
     if (detail?.scope !== "window" || !text || !Number.isFinite(x) || !Number.isFinite(y)) {
       newWindowMark({ state: "bad-command", step: null });
       return false;
@@ -3454,7 +3675,16 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // Второй клик, пока идёт первый: два «Привета» в два чата никому не нужны.
     if (state.newWindow?.busy === true) { newWindowMark({ state: "busy" }); return false; }
     const token = ++newWindowToken;
-    newWindowMark({ state: "run", step: "store", id: null, back: null, pushed: false, busy: true, runs: newWindowRuns() });
+    newWindowMark({
+      state: "run", step: "store", id: null, back: null, pushed: false, busy: true, runs: newWindowRuns(),
+      // Поля WF16 — начисто на каждый запуск: иначе на гейте не отличить, что
+      // от этого прогона, а что осталось от прошлого.
+      folder: folder || null, chip: null, name: name || null, rename: null, title: null,
+      layers: Object.keys(layers).length ? Object.keys(layers) : null,
+    });
+    // Мягкая осечка: чат создан и вынесен, но имя или цвет не задались. Роняет
+    // не цепочку, а только итоговый статус — плашки у неё нет.
+    let soft = null;
     const guard = newWindowLater(() => {
       if (token !== newWindowToken) return;
       newWindowMark({ state: "timeout", busy: false });
@@ -3514,11 +3744,30 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         return false;
       }
 
-      // 3. Первое сообщение.
+      // 2б. Папка проекта (WF16). Шаг стоит ДО первого сообщения нарочно:
+      // отправить «Привет» и только потом обнаружить, что папка не та, уже
+      // нельзя — в этой сессии работает авто-Allow, и агент стартовал бы в
+      // чужом проекте. Не вышло — сообщение НЕ отправляем, чат НЕ создаём,
+      // плашка, главное окно назад (решение 1 плана WF16).
+      if (folder) {
+        newWindowMark({ step: "folder" });
+        const picked = await newWindowPickFolder(folder, token);
+        if (!newWindowLive(token)) return false;
+        if (picked !== "ok") {
+          newWindowMark({ state: picked });
+          newWindowNote(NEW_WINDOW_NOTE_FOLDER_PICK);
+          await newWindowBack(prev, prevId, lengthBefore, token);
+          return false;
+        }
+      }
+
+      // 3. Первое сообщение. Узел поля перечитываем: смена папки перерисовывает
+      // домашний экран, и запомненный на шаге 2 узел мог отвалиться.
       newWindowMark({ step: "insert" });
+      const input = document.querySelector(NEW_WINDOW_INPUT_SELECTOR) ?? editor;
       try { window.focus(); } catch {}
       try { window.electronWindowControl?.focus?.(); } catch {}
-      if (!insertIntoEditor(editor, text, false)) {
+      if (!input?.isConnected || !insertIntoEditor(input, text, false)) {
         newWindowMark({ state: "no-insert" });
         newWindowNote(NEW_WINDOW_NOTE_FAIL);
         await newWindowBack(prev, prevId, lengthBefore, token);
@@ -3535,7 +3784,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       else {
         // Кнопка так и не ожила — пробуем Enter в самом редакторе.
         try {
-          editor.dispatchEvent(new KeyboardEvent("keydown", {
+          input.dispatchEvent(new KeyboardEvent("keydown", {
             key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true,
           }));
         } catch {}
@@ -3567,9 +3816,67 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       if (!row) await newWindowSleep(NEW_WINDOW_ROW_GRACE_MS);
       if (!newWindowLive(token)) return false;
 
+      // 6а. Имя чата (WF16). Пока чат не переименован, его заголовок — это текст
+      // первого сообщения, и приложение позже перепишет его своей сводкой; после
+      // переименования заголовок становится «пользовательским» и больше не
+      // меняется — а значит, не съедет и цвет окна, привязанный к заголовку.
+      // Отказ переименования цепочку не роняет: чат создан и назван правильно.
+      if (name) {
+        newWindowMark({ step: "rename" });
+        const renamed = await newWindowRename(newWindowRow(id) ?? row, name, token);
+        if (!newWindowLive(token)) return false;
+        newWindowMark({ rename: renamed });
+        if (!renamed) { soft = "no-rename"; newWindowMark({ state: soft }); }
+      }
+
+      // 6б. Сверка заголовка (критик WF16, В3). В ключ темы и в openPopout
+      // обязана уйти ОДНА И ТА ЖЕ строка — та, что реально показывает сайдбар:
+      // заголовок попапа приходит из сессии, а красится окно по нему
+      // (applyChatEntry). Ждём до двух секунд, пока имя доедет до строки, и
+      // дальше берём фактическое.
+      if (name) {
+        newWindowMark({ step: "title" });
+        await newWindowWait(
+          () => (newWindowRowTitle(newWindowRow(id)) === name ? true : null), NEW_WINDOW_TITLE_MS, token);
+        if (!newWindowLive(token)) return false;
+      }
+      // Ключ темы — ТОЛЬКО из строки сайдбара: без неё (сайдбар свёрнут) document.title
+      // главного окна может ещё быть заголовком чата Элвиса, и слои легли бы под него
+      // (verify WF16, находка 1). Для openPopout заголовок окна как запасной годится.
+      const rowTitle = newWindowRowTitle(newWindowRow(id) ?? row);
+      const title = rowTitle || windowTitle();
+      newWindowMark({ title: title || null });
+
+      // 6в. Цвет и размер нового окна — ДО openPopout: попап читает ту же карту
+      // (localStorage у окон Claude общий), и запись под ключом его чата успевает
+      // лечь раньше, чем окно откроется, — оно рисуется уже покрашенным.
+      // Пишем РОВНО одну запись, чата. Ни writeLayers, ни storeSessionLayers, ни
+      // applyLayer тут звать нельзя: команду исполняет ГЛАВНОЕ окно, и writeKeys()
+      // добавил бы к ключу чата ещё и `main` с сессией — один клик по «Новое окно
+      // ▸ Dictatorik» перекрасил бы окно Элвиса в чужой цвет (критик WF16, Б3).
+      // Слои на экран здесь тоже не применяются: они не про это окно.
+      if (Object.keys(layers).length) {
+        if (!rowTitle || !title || THEME_TITLE_STUBS.has(title.toLowerCase())) {
+          // Заголовок-заглушка ключом чата не бывает: запись под ней досталась бы
+          // каждому безымянному чату разом. Лучше без цвета, чем такой ценой.
+          soft = "no-title";
+          newWindowMark({ state: soft, layers: "no-title" });
+        } else {
+          try {
+            const map = readThemeMap();
+            setMapLayers(map, `${THEME_CHAT_PREFIX}${title}`, layers);
+            writeThemeMap(map);
+            newWindowMark({ layers: Object.keys(layers) });
+          } catch {
+            // Квота или битая карта — не повод ронять окно, как и no-rename.
+            newWindowMark({ layers: "failed" });
+          }
+        }
+      }
+
       // 7. Отдельное окно.
       newWindowMark({ step: "popout" });
-      try { newWindowOpenPopout(store, id, newWindowRowTitle(row) || windowTitle(), x, y); }
+      try { newWindowOpenPopout(store, id, title, x, y); }
       catch (error) {
         newWindowMark({ state: "popout-failed", error: newWindowError(error) });
         newWindowNote(NEW_WINDOW_NOTE_CREATED);
@@ -3578,7 +3885,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
 
       // 8. Главное окно — обратно на прежний разговор (П1: openPopout само его
       // никуда не уводит).
-      newWindowMark({ state: "ok", step: "back" });
+      newWindowMark({ state: soft ?? "ok", step: "back" });
       await newWindowBack(prev, prevId, lengthBefore, token);
       return true;
     } catch (error) {

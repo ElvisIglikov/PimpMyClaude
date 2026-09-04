@@ -16,9 +16,15 @@ public final class ClaudeAXController: ClaudeAXControlling {
     private let autoAllow: AutoAllow
     private let menu: MinimizeMenu
     private let statusFeed: StatusFeed
+    /// Индекс чатов Claude Code — единственный источник правды «папка ↔ сессия» (критик Б2
+    /// плана WF16): из него живёт и покраска по проекту, и список папок «🪟 Новое окно ▸»,
+    /// и уникальное имя чата. Второго сканера тех же файлов в приложении нет.
+    private let index = ProjectIndex()
+    /// Вид проекта (`.pimpmyclaude.json`) — чтение для нового окна; файлов не пишет.
+    private let projectSettings = ProjectSettingsStore()
     /// Цвет проекта (план WF15): своего таймера у покраски нет — она тикает вместе с
     /// watchdog'ом, раз в 2 с (критик М2).
-    private let projectPaint = ProjectPaint()
+    private let projectPaint: ProjectPaint
 
     private var observers: [NSObjectProtocol] = []
     private var watchdog: Timer?
@@ -32,6 +38,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
     public private(set) var lastBlockedQuit = "(none)"
 
     public init() {
+        projectPaint = ProjectPaint(index: index)
         actions = ClaudeActions(app: app, commands: commands)
         autoAllow = AutoAllow(app: app, hud: hud)
         menu = MinimizeMenu(app: app, actions: actions)
@@ -57,15 +64,25 @@ public final class ClaudeAXController: ClaudeAXControlling {
         projectPaint.isMenuOpen = { [weak self] in self?.menu.isMenuOpen ?? true }
         projectPaint.lastMenuCommand = { [weak self] in self?.actions.lastUserCommandAt }
         projectPaint.showNotice = { [weak self] text in self?.hud.show(text, seconds: 3) }
-        // «Записать этот вид в проект» берёт слои окна там же, где меню берёт галки.
+        // «Записать этот вид в проект» берёт слои окна там же, где меню берёт галки, — и там же,
+        // где их берёт новое окно без своего вида проекта (план WF16).
         projectPaint.currentView = { [weak self] title in
-            guard let self = self else { return ProjectSettings() }
-            return ProjectPaint.view(title: title, themeStore: self.actions.themeStore,
-                                     themes: self.actions.themes, fonts: self.actions.fonts,
-                                     myThemes: self.actions.myThemes.load(),
-                                     autoPainted: self.actions.autoPaintedTheme(title: title))
+            self?.actions.windowView(title: title) ?? ProjectSettings()
         }
         menu.project = projectPaint
+
+        // «🪟 Новое окно ▸ <проект>» (план WF16): папки — из индекса чатов, имя чата уникально
+        // по ВСЕМ его заголовкам (критик В4), вид — из файла проекта. Страница ничего этого
+        // не знает: ей всё приходит готовым в команде.
+        menu.recentProjects = { [weak self] in
+            self?.index.recentProjects(limit: MenuModel.newWindowProjectsLimit) ?? []
+        }
+        actions.chatName = { [weak self] project in
+            self?.index.uniqueChatName(project.name) ?? project.name
+        }
+        actions.projectView = { [weak self] project in
+            self?.projectSettings.settings(in: project.folder)
+        }
     }
 
     // MARK: - ClaudeAXControlling

@@ -222,6 +222,76 @@ final class ProjectTests: XCTestCase {
         XCTAssertEqual(index.mainWindow()?.folder?.path, pimp.path)
     }
 
+    /// Список папок для «🪟 Новое окно ▸» и уникальное имя чата (план WF16, решения 2 и 4):
+    /// свежие первыми, по одной записи на папку, архивные и исчезнувшие каталоги — вон,
+    /// потолок — сколько попросили.
+    func testProjectIndexRecentSortsDedupesAndCaps() {
+        let box = makeTemp()
+        let root = box.appendingPathComponent("_ElvisProjects", isDirectory: true)
+        let sessions = box.appendingPathComponent("sessions", isDirectory: true)
+        let status = box.appendingPathComponent("status.json")
+        let clock = Clock()
+
+        // Десять живых папок: «Проект1» самая свежая, «Проект10» самая старая.
+        for number in 1...10 {
+            let folder = root.appendingPathComponent("Проект\(number)", isDirectory: true)
+            makeFolder(folder, marker: ".git")
+            putSession(sessions, id: "local_p\(number)", title: "Проект\(number)", cwd: folder,
+                       at: Double(10_000 - number * 10))
+        }
+        // Второй чат того же проекта, да ещё из подпапки: папка в списке остаётся одна,
+        // и место у неё по самому свежему чату — «Проект3» уходит в начало.
+        makeFolder(root.appendingPathComponent("Проект3/app", isDirectory: true))
+        putSession(sessions, id: "local_dup", title: "Ещё один",
+                   cwd: root.appendingPathComponent("Проект3/app", isDirectory: true), at: 9_999)
+        // Архивный чат в список не идёт вовсе, даже самый свежий.
+        let archived = root.appendingPathComponent("Архивный", isDirectory: true)
+        makeFolder(archived, marker: ".git")
+        putSession(sessions, id: "local_arch", title: "Архивный", cwd: archived, at: 20_000,
+                   archived: true)
+        // Папку снесли, а чат в индексе остался: пункт меню открыл бы окно в никуда.
+        putSession(sessions, id: "local_gone", title: "Снесённый",
+                   cwd: root.appendingPathComponent("Снесённый", isDirectory: true), at: 30_000)
+
+        let index = ProjectIndex(sessionsDirectory: sessions, statusURL: status, projectsRoot: root,
+                                 home: box, now: { clock.now })
+        XCTAssertEqual(index.recentProjects(limit: MenuModel.newWindowProjectsLimit).map { $0.name },
+                       ["Проект3", "Проект1", "Проект2", "Проект4", "Проект5", "Проект6",
+                        "Проект7", "Проект8"])
+        XCTAssertEqual(index.recentProjects(limit: 3).map { $0.name },
+                       ["Проект3", "Проект1", "Проект2"])
+        XCTAssertTrue(index.recentProjects(limit: 0).isEmpty)
+        XCTAssertTrue(index.recentProjects(limit: -1).isEmpty)
+        XCTAssertEqual(index.recentProjects(limit: 50).count, 10, "по одной записи на папку")
+        XCTAssertNil(index.recentProjects(limit: 50).first { $0.name == "Снесённый" },
+                     "папки нет на диске — и пункта быть не должно")
+        XCTAssertNil(index.recentProjects(limit: 50).first { $0.name == "Архивный" })
+        // Полный путь есть у каждой записи — он уходит и в команду, и в подсказку пункта.
+        XCTAssertEqual(index.recentProjects(limit: 1).first?.folder.path,
+                       root.appendingPathComponent("Проект3").path)
+
+        // Имя чата: занятое имя получает номер, свободное остаётся как есть (критик В4).
+        XCTAssertEqual(index.uniqueChatName("Проект1"), "Проект1 2")
+        XCTAssertEqual(index.uniqueChatName("  Проект1  "), "Проект1 2")
+        XCTAssertEqual(index.uniqueChatName("Свежий"), "Свежий")
+        XCTAssertEqual(index.uniqueChatName("   "), "", "пустое имя — переименовывать нечем")
+        XCTAssertEqual(index.uniqueChatName("Архивный"), "Архивный 2", "архивные заголовки заняты тоже")
+
+        // Занятый номер пропускается, а не затирается.
+        putSession(sessions, id: "local_n2", title: "Проект1 2",
+                   cwd: root.appendingPathComponent("Проект1", isDirectory: true), at: 50)
+        clock.advance()
+        XCTAssertEqual(index.uniqueChatName("Проект1"), "Проект1 3")
+        // Номера кончились — отдаём имя как есть: уникальность и так не абсолютная.
+        XCTAssertEqual(index.uniqueChatName("Проект1", limit: 2), "Проект1")
+
+        // Индекса нет вовсе (не Claude Code, чужая машина) — пустой список, а не падение.
+        let empty = ProjectIndex(sessionsDirectory: box.appendingPathComponent("нет"),
+                                 statusURL: status, projectsRoot: root, home: box)
+        XCTAssertTrue(empty.recentProjects(limit: 8).isEmpty)
+        XCTAssertEqual(empty.uniqueChatName("Проект1"), "Проект1")
+    }
+
     func testProjectIndexIgnoresBrokenJSON() {
         let box = makeTemp()
         let root = box.appendingPathComponent("_ElvisProjects", isDirectory: true)

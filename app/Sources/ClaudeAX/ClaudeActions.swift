@@ -171,15 +171,29 @@ final class ClaudeActions {
     /// (страница должна успеть запомнить, где стояло главное окно), и только потом ⌘N.
     /// Окно адресуется AX-заголовком, как «Обкэшить»; пустой заголовок страница понимает
     /// как «окно в фокусе».
-    private func newWindow(_ window: AXUIElement?) {
+    private func newWindow(_ window: AXUIElement?, project: Project? = nil) {
         let origin = ClaudeActions.popoutOrigin(near: window.flatMap { AX.frame($0) })
         // Работа идёт до 40 с — молчащая кнопка выглядит сломанной (критик п. 20).
         onNotice?(MenuModel.newWindowNotice, MenuModel.newWindowNoticeSeconds)
+        // Папка и имя чата считаются здесь, а не на странице (критик В4 плана WF16): на диске
+        // лежат ВСЕ сессии, а сайдбар показывает только хвост. Папки нет — оба поля пустые,
+        // и страница ведёт себя ровно как в WF13.
+        let folder = project?.folder.standardizedFileURL.path ?? ""
+        let name = project.map { chatName($0) } ?? ""
+        // Первое сообщение — оно же авто-заголовок чата: с папкой это имя проекта, без папки
+        // прежнее «Привет» (решение 4 плана WF16). Ни команд, ни путей: работает авто-Allow.
+        let text = name.isEmpty ? MenuModel.newWindowText : name
         let send: (String) -> Void = { [weak self] title in
             guard let self = self else { return }
+            let layers = project.map {
+                ClaudeActions.newWindowLayers(project: self.projectView($0),
+                                              window: self.windowView(title: title))
+            } ?? ProjectSettings()
             self.commands.write(action: ClaudeCommand.newWindow.rawValue,
                                 fields: ClaudeActions.newWindowFields(title: title, x: origin.x, y: origin.y,
-                                                                      text: MenuModel.newWindowText))
+                                                                      text: text, folder: folder, name: name,
+                                                                      theme: layers.theme, font: layers.font,
+                                                                      size: layers.size, frame: layers.frame))
             self.after(self.newWindowKeyDelay) { self.newChat(window) }
         }
         guard let window = window else {
@@ -189,6 +203,36 @@ final class ClaudeActions {
         app.focus(window: window)
         after(focusDelay) { send(AX.string(window, kAXTitleAttribute) ?? "") }
     }
+
+    /// «🪟 Новое окно ▸ PimpMyClaude» (план WF16): то же самое, но чат рождается в папке
+    /// проекта, зовётся его именем и открывается уже в нужном цвете. Пункт меню зовёт этот
+    /// метод мимо `perform` — отметку «была команда из меню» ставим сами, иначе фоновая
+    /// покраска по проекту не замолчала бы на свои 2 с.
+    func newWindow(in project: Project, on window: AXUIElement?) {
+        noteUserCommand()
+        newWindow(window ?? focusedWindow(), project: project)
+    }
+
+    /// Чем красить новое окно (вопрос 2 макета WF16, ответ Элвиса — «1»): вид проекта из
+    /// `.pimpmyclaude.json`, а пока его нет — вид окна, из которого нажали. Пусто и там —
+    /// слоёв в команде не будет вовсе, окно откроется как у Claude.
+    static func newWindowLayers(project: ProjectSettings?, window: ProjectSettings) -> ProjectSettings {
+        guard let project = project, !project.isEmpty else { return window }
+        return project
+    }
+
+    /// Вид окна, каким его помнит приложение, — та же функция, что у «💾 Записать этот вид
+    /// в проект»: галки меню, а у окна после «Раскрасить по кругу» — его сгенерированная тема.
+    func windowView(title: String) -> ProjectSettings {
+        ProjectPaint.view(title: title, themeStore: themeStore, themes: themes, fonts: fonts,
+                          myThemes: myThemes.load(), autoPainted: autoPaintedTheme(title: title))
+    }
+
+    /// Уникальное имя чата для нового окна в папке проекта. Живьём ставит `ClaudeAXController`
+    /// (заголовки всех чатов знает `ProjectIndex`); без него имя = имя папки.
+    var chatName: (Project) -> String = { $0.name }
+    /// Вид проекта из `.pimpmyclaude.json`; nil — своего вида у проекта нет.
+    var projectView: (Project) -> ProjectSettings? = { _ in nil }
 
     /// «🪟 В отдельное окно»: текущий чат главного окна выносится в окно одним `openPopout`
     /// на странице — ни нового чата, ни первого сообщения, ни ожиданий. Он же честная
@@ -208,16 +252,25 @@ final class ClaudeActions {
         after(focusDelay) { send(AX.string(window, kAXTitleAttribute) ?? "") }
     }
 
-    /// Поля команды после id, action, at: scope, title, x, y, text (контракт п. 1 плана WF13).
+    /// Поля команды после id, action, at: scope, title, x, y, text, folder, name, затем слои —
+    /// тема, шрифт, размер, рамка (контракт п. 1 плана WF13, расширен решением 1 плана WF16).
     /// `x`/`y` — числа, а не строки (`write(action:extra:)` сюда не годится: он сортирует ключи
     /// и делает всё строками), страница проверяет их `Number.isFinite`.
-    static func newWindowFields(title: String, x: Int, y: Int,
-                                text: String) -> [(key: String, value: CommandValue)] {
+    /// `folder` и `name` есть ВСЕГДА: пустая строка = «не трогать», и страница ведёт себя ровно
+    /// как в WF13. Слои — по правилам команды `theme`: `.keep` в JSON нет вовсе, `.reset` — null.
+    static func newWindowFields(title: String, x: Int, y: Int, text: String,
+                                folder: String = "", name: String = "",
+                                theme: Layer<Theme> = .keep, font: Layer<Font> = .keep,
+                                size: Layer<Size> = .keep,
+                                frame: Layer<Bool> = .keep) -> [(key: String, value: CommandValue)] {
         [(key: "scope", value: .string(MenuModel.themeScopeWindow)),
          (key: "title", value: .string(title)),
          (key: "x", value: .number(x)),
          (key: "y", value: .number(y)),
-         (key: "text", value: .string(text))]
+         (key: "text", value: .string(text)),
+         (key: "folder", value: .string(folder)),
+         (key: "name", value: .string(name))]
+            + layerFields(theme: theme, font: font, size: size, frame: frame)
     }
 
     /// То же без первого сообщения: scope, title, x, y (решение Элвиса 04.09).
@@ -305,6 +358,15 @@ final class ClaudeActions {
         ]
         if let match = match { fields.append((key: "match", value: .string(match))) }
         if let preview = preview { fields.append((key: "preview", value: .bool(preview))) }
+        return fields + layerFields(theme: theme, font: font, size: size, frame: frame)
+    }
+
+    /// Четыре слоя как поля команды, в порядке контракта: тема, шрифт, размер, рамка. Ими
+    /// одинаково заканчиваются и `theme`, и `new-window` (решение 1 плана WF16) — правило
+    /// «поля нет → слой не трогаем, null → сброс» у них одно на двоих.
+    static func layerFields(theme: Layer<Theme>, font: Layer<Font>, size: Layer<Size>,
+                            frame: Layer<Bool>) -> [(key: String, value: CommandValue)] {
+        var fields: [(key: String, value: CommandValue)] = []
         if let value = theme.commandValue({ $0.commandValue }) { fields.append((key: "theme", value: value)) }
         if let value = font.commandValue({ $0.commandValue }) { fields.append((key: "font", value: value)) }
         // Пустой размер — не слой, а «не трогать»: страница читает {} как сброс.
