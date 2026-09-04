@@ -599,6 +599,7 @@ ${epitaxyCss({ type: theme.type, background, foreground, accent, panel, muted })
     const zScale = zColors.map((color, index) => `  --z${index}: ${color} !important;`).join("\n");
     const promptBorder = mixHex(accent, background, 0.55);
     const promptFocusBorder = mixHex(accent, background, 0.32);
+    const codeBg = mixHex(panel, background, 0.25);
     return `/* Claude Code · Epitaxy */
 .epitaxy-root, [data-mode="dark"] .epitaxy-root, [data-mode="light"] .epitaxy-root {
 ${grayScale}
@@ -632,6 +633,18 @@ ${zScale}
 }
 .epitaxy-root ::placeholder { color: ${muted} !important; -webkit-text-fill-color: ${muted} !important; opacity: 0.78 !important; }
 .epitaxy-root [data-theme="claude"] { --accent-brand: ${hslTriple(accent)} !important; }
+/* Блоки кода — <diffs-container> с shadow DOM: наши таблицы стилей внутрь не
+   попадают, зато его цвета — переменные хоста и схема light-dark(). Без этого
+   блок остаётся чёрным на любой теме (#5365). Фон — между панелью и страницей,
+   текст — цвет темы; схема — по типу темы, чтобы подсветка синтаксиса взяла
+   свой светлый/тёмный набор. */
+.epitaxy-root diffs-container, diffs-container {
+  color-scheme: ${light ? "light" : "dark"} !important;
+  --diffs-light-bg: ${codeBg} !important;
+  --diffs-dark-bg: ${codeBg} !important;
+  --diffs-light: ${foreground} !important;
+  --diffs-dark: ${foreground} !important;
+}
 `;
   };
 

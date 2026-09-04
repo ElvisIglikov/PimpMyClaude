@@ -1,0 +1,35 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf13-2026-09-04.md",
+  "project": "⚪PimpMyClaude",
+  "status": "стоп",
+  "trelvis": "#5358",
+  "branch": "wf13",
+  "tag": "wf13-start",
+  "script_path": null,
+  "run_id": null,
+  "orchestrator": "Fable 5.1 xhigh (разведка и план); прогон — новый чат Fable high (слово Элвиса 17:49)",
+  "next_steps": [
+    "новый чат (Fable high, чистый контекст): прочитать AGENTS.md проекта, docs/plan-wf13-2026-09-04.md",
+    "Workflow: батч A (Opus max) по плану, затем V-A (Opus max)",
+    "гейт живьём на Маке Элвиса, коммит в wf13, слияние в main --no-ff",
+    "затем WF14 (docs/plan-wf14-2026-09-04.md) — после одобрения макетов Элвисом"
+  ],
+  "log": [
+    {
+      "at": "2026-09-04T17:55:00+05:00",
+      "who": "оркестратор",
+      "what": "разведка popout/композера живьём, план; прогон не запущен — Элвис велел запускать из чата с чистым контекстом на Fable high"
+    },
+    {
+      "at": "2026-09-04T18:45:00+05:00",
+      "who": "оркестратор",
+      "what": "блоки кода в цвет темы (#5365) — inject.js правлен и поставлен живьём; запущены критик WF13 и материалы WF14 (Opus max)"
+    }
+  ],
+  "watchdog": null,
+  "materials_run": {
+    "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/6d67f948-9b23-45b0-9fef-b332a622ff3f/workflows/scripts/pimpmyclaude-wf13-14-materials-wf_44310ccd-d06.js",
+    "run_id": "wf_44310ccd-d06",
+    "what": "критик плана WF13 ∥ план+макет WF14 (оба Opus max)"
+  }
+}
