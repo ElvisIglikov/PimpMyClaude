@@ -5,8 +5,8 @@
   "trelvis": "#5380",
   "branch": "wf16",
   "tag": "wf16-start",
-  "script_path": null,
-  "run_id": null,
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/6d67f948-9b23-45b0-9fef-b332a622ff3f/workflows/scripts/pimpmyclaude-wf16-wf_06bccddf-5a5.js",
+  "run_id": "wf_06bccddf-5a5",
   "orchestrator": "Fable 5.1 high; все агенты Opus max",
   "decision": "вариант А, обе ступени (a + b через стор папки)",
   "next_steps": [
