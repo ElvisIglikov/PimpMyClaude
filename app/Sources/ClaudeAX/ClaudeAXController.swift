@@ -61,6 +61,10 @@ public final class ClaudeAXController: ClaudeAXControlling {
             self?.actions.isWindowPainted(title: title) ?? true
         }
         projectPaint.isAllWindowsSet = { [weak self] in self?.actions.hasAllWindowsView ?? true }
+        // Живые цвета сильнее цвета проекта (критик Б2 плана WF18): пока они крутятся, проект
+        // не шлёт команд — иначе окно мигало бы между проектным цветом и живым. Себя нет —
+        // считаем, что крутятся, и молчим.
+        projectPaint.isLiveColorsOn = { [weak self] in self?.actions.liveColors.on ?? true }
         projectPaint.isMenuOpen = { [weak self] in self?.menu.isMenuOpen ?? true }
         projectPaint.lastMenuCommand = { [weak self] in self?.actions.lastUserCommandAt }
         projectPaint.showNotice = { [weak self] text in self?.hud.show(text, seconds: 3) }
@@ -99,6 +103,10 @@ public final class ClaudeAXController: ClaudeAXControlling {
         autoAllow.start()
         menu.start()
         statusFeed.start()
+        // Живые цвета крутились до перезапуска приложения — шлём команду заново (решение 4
+        // плана WF18): окна могли открыться, пока приложение не работало, и список заголовков
+        // в них устарел. Выключены — команды нет вовсе.
+        actions.resendLiveColors()
         observeActivation()
         claudeFrontmost = app.isFrontmost
         refreshHotkeys()
@@ -175,9 +183,17 @@ public final class ClaudeAXController: ClaudeAXControlling {
         menu=\(minimizeMenuEnabled)/\(menu.isRunning) menus=\(menu.shows) \
         blockQuit=\(blockQuitEnabled) blocks=\(blockedQuits) hotkeys=\(hotkeys.count) \
         status=\(statusFeed.isRunning)/\(statusFeed.projectCount)/\(statusFeed.sentCount) \
-        project=\(projectPaint.status) \
+        project=\(projectPaint.status) live=\(liveColorsStatus) \
         lastCommand=\(actions.lastCommand)
         """
+    }
+
+    /// Живые цвета в строке диагностики: «off» или «solo/300/dark» (план WF18) — на гейте по
+    /// ней видно, что приложение думает о крутёже, не открывая меню.
+    private var liveColorsStatus: String {
+        let state = actions.liveColors
+        guard state.on else { return "off" }
+        return "\(state.mode.rawValue)/\(state.period)/\(state.tone.rawValue)"
     }
 
     public func autoAllowHistory() -> [String] {

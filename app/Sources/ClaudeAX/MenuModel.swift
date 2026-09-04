@@ -257,6 +257,46 @@ enum MenuModel {
     /// Красить нечего: окон Claude на экране нет или ни у одного нет AX-заголовка
     /// (без заголовка страница не понимает, какому окну адресована тема).
     static let autoPaintNoWindowsAlert = "Не нашёл окон Claude с заголовком — красить нечего"
+    /// Пока крутятся живые цвета, красить по кругу нечем: живой слой перекрывает темы окон
+    /// сразу же (критик В13 плана WF18). Пункты подменю гасим, а строкой говорим, что делать.
+    static let autoPaintLiveHint = "сначала выключи живые цвета"
+
+    // MARK: - живые цвета (план WF18)
+
+    /// «🌊 Живые цвета ▸» — в «🖥 Всем окнам ▸», сразу под «🌈 Раскрасить по кругу ▸»
+    /// (вариант А макета, вопрос 4).
+    static let liveColorsTitle = "Живые цвета"
+    static let liveColorsIcon = "🌊"
+    static let liveColorsOffTitle = "Выключить"
+    static let liveColorsOffIcon = "⏹"
+    static let liveColorsSyncTitle = "Все окна одним цветом"
+    static let liveColorsSyncIcon = "🔗"
+    static let liveColorsSoloTitle = "Каждое окно своим цветом"
+    static let liveColorsSoloIcon = "🎭"
+    static let liveColorsSpeedTitle = "Скорость"
+    static let liveColorsSpeedIcon = "⏱"
+    static let liveColorsDarkTitle = "Тёмные"
+    static let liveColorsDarkIcon = "🌑"
+    static let liveColorsLightTitle = "Светлые"
+    static let liveColorsLightIcon = "☀️"
+    static let liveColorsWindowTitle = "Как окно сейчас"
+    static let liveColorsWindowIcon = "🪟"
+
+    static func liveColorsMode(_ mode: LiveColorsMode) -> (title: String, icon: String) {
+        mode == .sync ? (liveColorsSyncTitle, liveColorsSyncIcon)
+                      : (liveColorsSoloTitle, liveColorsSoloIcon)
+    }
+
+    static func liveColorsTone(_ tone: LiveColorsTone) -> (title: String, icon: String) {
+        switch tone {
+        case .dark: return (liveColorsDarkTitle, liveColorsDarkIcon)
+        case .light: return (liveColorsLightTitle, liveColorsLightIcon)
+        case .window: return (liveColorsWindowTitle, liveColorsWindowIcon)
+        }
+    }
+
+    /// Подпись справа от ползунка скорости: вся шкала — целые минуты.
+    static func liveColorsSpeed(_ period: Int) -> String { "круг за \(max(period, 60) / 60) мин" }
 
     /// HUD перед покраской: окна красятся по одному раз в 600 мс, и без строки это выглядит
     /// как зависшее меню. Окон на экране больше, чем цветов, — сразу говорим почему.

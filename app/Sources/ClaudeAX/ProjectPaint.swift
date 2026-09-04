@@ -137,6 +137,10 @@ final class ProjectPaint {
     var isWindowBusy: (String) -> Bool = { _ in false }
     /// Задан вид «всем окнам» — проект его не перебивает (критик Б3).
     var isAllWindowsSet: () -> Bool = { false }
+    /// Крутятся живые цвета (план WF18, критик Б2): живой слой перекрыл бы цвет проекта через
+    /// четверть секунды, и окна мигали бы между ними. Выключили живые — следующая смена чата
+    /// красит как обычно.
+    var isLiveColorsOn: () -> Bool = { false }
     /// Открыто меню на кнопке «Свернуть».
     var isMenuOpen: () -> Bool = { false }
     /// Когда меню в последний раз слало команду (примерка считается тоже).
@@ -196,9 +200,11 @@ final class ProjectPaint {
         return now().timeIntervalSince(at) < ProjectPaint.quietSeconds
     }
 
-    /// Тик общего таймера 2 с: что изменилось — то и красим.
+    /// Тик общего таймера 2 с: что изменилось — то и красим. Пока крутятся живые цвета, проект
+    /// молчит совсем (критик Б2 плана WF18) — и отпечатки не трогает: выключат живые, и
+    /// ближайший тик покрасит окно, если за это время что-то изменилось.
     func tick() {
-        guard enabled, !isQuiet, !isAllWindowsSet() else { return }
+        guard enabled, !isQuiet, !isLiveColorsOn(), !isAllWindowsSet() else { return }
         for target in targets() { paint(target) }
     }
 
