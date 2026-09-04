@@ -15,7 +15,8 @@ private final class MemoryDefaults: ThemeDefaults {
 /// Только чистая логика: раскладка «Расставить», клавиши меню и формат command.json.
 /// Живой AX (окна Claude, авто-Allow, popUp) проверяется руками на гейте.
 final class ClaudeAXTests: XCTestCase {
-    func testSkeleton() { XCTAssertEqual(ClaudeCommand.allCases.count, 8) }
+    // Десять команд: восемь исходных плюс «Новое окно» и «В отдельное окно» (план WF13).
+    func testSkeleton() { XCTAssertEqual(ClaudeCommand.allCases.count, 10) }
 
     // MARK: - «Расставить»
 
@@ -69,18 +70,26 @@ final class ClaudeAXTests: XCTestCase {
             (.cashout, "Обкэшить", 0x2D, "n", [.command, .shift], true),
             // ⌘N — штатная клавиша Claude: показываем, но не регистрируем.
             (.newChat, "Новый чат", 0x2D, "n", [.command], false),
+            // ⌥⌘N у Claude свободна — её мы регистрируем сами (план WF13).
+            (.newWindow, "Новое окно", 0x2D, "n", [.command, .option], true),
             (.collapse, "Свернуть", 0x7D, down, [.command, .option], true),
             (.expand, "Развернуть", 0x7E, up, [.command, .option], true),
             (.arrange, "Расставить", 0x00, "a", [.command, .option], true),
             (.show, "Показать", 0x01, "s", [.command, .option], true),
             (.scroll, "Прокрутить", 0x02, "d", [.command, .option], true),
         ]
-        // «🚀 Workflow» — первым пунктом и без клавиши (⌘⌥W занят самим Claude).
-        XCTAssertEqual(MenuModel.entries.map { $0.command }, [.workflow] + expected.map { $0.0 })
-        let workflow = MenuModel.entry(for: .workflow)
-        XCTAssertEqual(workflow?.menuTitle, "Workflow")
-        XCTAssertNil(workflow?.key)
-        XCTAssertEqual(workflow?.registersHotkey, false)
+        // Порядок пунктов: «🚀 Workflow» первым, оконная тройка WF13 — сразу за «Новый чат».
+        XCTAssertEqual(MenuModel.entries.map { $0.command },
+                       [.workflow, .cashout, .newChat, .newWindow, .popoutWindow,
+                        .collapse, .expand, .arrange, .show, .scroll])
+        // Без клавиш два пункта: «Workflow» (⌘⌥W занят самим Claude) и «В отдельное окно».
+        for (command, title) in [(ClaudeCommand.workflow, "Workflow"),
+                                 (.popoutWindow, "В отдельное окно")] {
+            let entry = MenuModel.entry(for: command)
+            XCTAssertEqual(entry?.menuTitle, title)
+            XCTAssertNil(entry?.key)
+            XCTAssertEqual(entry?.registersHotkey, false)
+        }
 
         for (command, title, code, equivalent, mask, registers) in expected {
             let entry = MenuModel.entry(for: command)
@@ -92,24 +101,26 @@ final class ClaudeAXTests: XCTestCase {
             XCTAssertEqual(entry?.registersHotkey, registers)
         }
         XCTAssertEqual(MenuModel.entries.map { $0.icon },
-                       ["🚀", "💰", "💬", "⬇️", "⬆️", "▦", "👀", "⏬"])
+                       ["🚀", "💰", "💬", "🪟", "🪟", "⬇️", "⬆️", "▦", "👀", "⏬"])
     }
 
-    /// Клавиши обязаны доехать до самих пунктов меню: у семи — свои, у «Workflow» — никакой.
+    /// Клавиши обязаны доехать до самих пунктов меню: у восьми — свои, у «Workflow»
+    /// и «В отдельное окно» — никакой.
     func testMenuItemsCarryKeyEquivalents() throws {
         // Хвост меню («Автопокраска», а с каталогом — ещё «Тема» и «Шрифт») клавиш не носит.
         let items = MinimizeMenu.build(config: MinimizeMenu.MenuConfig())
             .items.filter { !$0.isSeparatorItem && !$0.hasSubmenu }
         XCTAssertEqual(items.count, MenuModel.entries.count)
         XCTAssertEqual(items.map { $0.keyEquivalent },
-                       ["", "n", "n", String(UnicodeScalar(UInt32(NSDownArrowFunctionKey))!),
+                       ["", "n", "n", "n", "", String(UnicodeScalar(UInt32(NSDownArrowFunctionKey))!),
                         String(UnicodeScalar(UInt32(NSUpArrowFunctionKey))!), "a", "s", "d"])
         XCTAssertEqual(items.map { $0.keyEquivalentModifierMask },
-                       [[], [.command, .shift], [.command], [.command, .option], [.command, .option],
+                       [[], [.command, .shift], [.command], [.command, .option], [],
+                        [.command, .option], [.command, .option],
                         [.command, .option], [.command, .option], [.command, .option]])
         XCTAssertEqual(items.map { $0.title },
-                       ["Workflow", "Обкэшить", "Новый чат", "Свернуть", "Развернуть",
-                        "Расставить", "Показать", "Прокрутить"])
+                       ["Workflow", "Обкэшить", "Новый чат", "Новое окно", "В отдельное окно",
+                        "Свернуть", "Развернуть", "Расставить", "Показать", "Прокрутить"])
     }
 
     func testCarbonModifiers() {
@@ -503,10 +514,13 @@ final class ClaudeAXTests: XCTestCase {
         config.deleteMyTheme = { deleted.append($0.id) }
         let menu = MinimizeMenu.build(config: config)
 
-        // Семь пунктов и три подменю; разделителей три — после «Новый чат», «Развернуть» и перед темами.
+        // Десять пунктов и три подменю; разделителей три — после «В отдельное окно» (план WF13
+        // переставил его с «Новый чат»), «Развернуть» и перед темами.
         XCTAssertEqual(menu.items.filter { !$0.isSeparatorItem }.count, MenuModel.entries.count + 3)
         XCTAssertEqual(menu.items.filter { $0.isSeparatorItem }.count, 3)
         XCTAssertTrue(menu.items[MenuModel.entries.count + 2].isSeparatorItem)
+        XCTAssertEqual(menu.items.prefix(6).map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Workflow", "Обкэшить", "Новый чат", "Новое окно", "В отдельное окно", "—"])
         let submenus = menu.items.filter { $0.hasSubmenu }
         // «Автопокраска» стоит сразу за «Шрифт» (план WF10 п. 1).
         XCTAssertEqual(submenus.map { $0.title }, ["Тема", "Шрифт", "Автопокраска"])
@@ -943,6 +957,71 @@ final class ClaudeAXTests: XCTestCase {
                                              fields: ClaudeActions.workflowFields(title: "", text: "x"),
                                              id: "1-0001", at: Date(timeIntervalSince1970: 0))
             .hasSuffix("\"scope\":\"window\",\"title\":\"\",\"text\":\"x\"}"))
+    }
+
+    // MARK: - новое окно (план WF13)
+
+    func testNewWindowPayloadMatchesContract() throws {
+        // Побайтно, контракт п. 1 плана WF13: id, action, at, scope, title, x, y, text.
+        let body = CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "Vkusnoff", x: 586, y: 303,
+                                                  text: MenuModel.newWindowText),
+            id: "1756900000123-0042", at: Date(timeIntervalSince1970: 1_756_900_000))
+        XCTAssertEqual(body, "{\"id\":\"1756900000123-0042\",\"action\":\"new-window\","
+            + "\"at\":\"2025-09-03T11:46:40Z\",\"scope\":\"window\",\"title\":\"Vkusnoff\","
+            + "\"x\":586,\"y\":303,\"text\":\"Привет\"}")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(json["scope"] as? String, "window")
+        XCTAssertEqual(json["text"] as? String, "Привет")
+        // Координаты — числа, а не строки: страница проверяет их Number.isFinite.
+        XCTAssertEqual(json["x"] as? Int, 586)
+        XCTAssertEqual(json["y"] as? Int, 303)
+        XCTAssertNil(json["x"] as? String)
+        // Первое сообщение — только приветствие: в этой сессии работает авто-Allow.
+        XCTAssertFalse(MenuModel.newWindowText.isEmpty)
+        // Без доверия Accessibility заголовка нет — страница поймёт это как «окно в фокусе».
+        XCTAssertTrue(CommandChannel.payload(action: ClaudeCommand.newWindow.rawValue,
+                                             fields: ClaudeActions.newWindowFields(title: "", x: 120, y: 120,
+                                                                                   text: "Привет"),
+                                             id: "1-0001", at: Date(timeIntervalSince1970: 0))
+            .hasSuffix("\"scope\":\"window\",\"title\":\"\",\"x\":120,\"y\":120,\"text\":\"Привет\"}"))
+    }
+
+    func testPopoutWindowPayloadMatchesContract() throws {
+        // Побайтно, решение Элвиса 04.09: те же поля без text.
+        let body = CommandChannel.payload(
+            action: ClaudeCommand.popoutWindow.rawValue,
+            fields: ClaudeActions.popoutWindowFields(title: "Привет", x: 120, y: 120),
+            id: "1-0001", at: Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(body, "{\"id\":\"1-0001\",\"action\":\"popout-window\","
+            + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"window\",\"title\":\"Привет\","
+            + "\"x\":120,\"y\":120}")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertNil(json["text"])
+        XCTAssertEqual(json["x"] as? Int, 120)
+
+        // Координаты — точки Quartz: угол окна под кнопкой + 40/40, обрезанные по экрану так,
+        // чтобы окно 900×700 влезло целиком; окна нет — 120/120.
+        let area = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        XCTAssertEqual(ClaudeActions.popoutOrigin(near: nil, area: area).x, 120)
+        XCTAssertEqual(ClaudeActions.popoutOrigin(near: nil, area: area).y, 120)
+        // На большом экране уступ ничем не обрезан.
+        let wide = CGRect(x: 0, y: 25, width: 1920, height: 1175)
+        let near = ClaudeActions.popoutOrigin(near: CGRect(x: 546, y: 263, width: 900, height: 700),
+                                              area: wide)
+        XCTAssertEqual(near.x, 586)
+        XCTAssertEqual(near.y, 303)
+        // Окно у правого нижнего угла — уступ уехал бы за экран.
+        let corner = ClaudeActions.popoutOrigin(near: CGRect(x: 1000, y: 800, width: 400, height: 300),
+                                                area: area)
+        XCTAssertEqual(corner.x, 540) // 1440 − 900
+        XCTAssertEqual(corner.y, 200) // 25 + 875 − 700
+        // И за левый верхний край тоже не пускаем.
+        let above = ClaudeActions.popoutOrigin(near: CGRect(x: -100, y: -100, width: 400, height: 300),
+                                               area: area)
+        XCTAssertEqual(above.x, 0)
+        XCTAssertEqual(above.y, 25)
     }
 
     func testWorkflowKitLandsInApplicationSupport() throws {

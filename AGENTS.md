@@ -47,6 +47,10 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
   нет → не трогать, null → сброс; `preview:true` — только на экран, `preview:false` без слоёв — конец примерки.
 - `workflow`: `{…,"scope":"window","title","text"}` — вставить текст в поле ввода, не отправлять.
 - `status`: `{…,"scope":"all","projects":[{name,text}]}` — сводки status.md проектов для подсказки полоски.
+- `new-window` (WF13): `{…,"scope":"window","title","x":<число>,"y":<число>,"text":"Привет"}` — главное окно: ⌘N (жмёт Swift),
+  первое сообщение, чат выносится popout-окном (стор claude.ai `openPopout`, ищется поведенчески через `import()`
+  чанков modulepreload), главное окно возвращается на прежний чат по строке сайдбара; `status().newWindow`.
+- `popout-window` (WF13): `{…,"scope":"window","title","x","y"}` — вынести текущий чат главного окна в отдельное окно.
 - Старые: `cashout` (title), `collapse`, `expand`, `scroll`.
 - Хранилище тем на странице: localStorage `myclaude-themes-v1` — карта `{ключ: {theme, font, size, frame}}`, ключи
   `chat:<заголовок>` (тема на чат), `main` (главное окно), `*` (всем); sessionStorage `myclaude-theme-v1` по окну
@@ -57,7 +61,7 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
 
 ## Сборка, гейт, релиз
 
-- `cd app && swift build && swift test` (49 тестов). JS: `node --check claude-patch/inject.js` + скретч-тесты в
+- `cd app && swift build && swift test` (51 тест). JS: `node --check claude-patch/inject.js` + скретч-тесты в
   scratchpad сессии (`theme-store-test.mjs`, `theme-css-test.mjs`, `progress-test.mjs`, `progress-dom-test.mjs`,
   `workflow-insert-test.mjs`) — они не в репозитории; новый чат их не найдёт, при необходимости просить агента написать.
 - `tools/bundle.sh release` → `app/.build/PimpMyClaude.app` (Developer ID). **Подмена без простоя:** сначала bundle,
@@ -104,10 +108,12 @@ WF1–3 (03.09) ручка/меню/⌘Q в Hammerspoon → WF4 PimpMyClaude.app
 
 ## Текущее (04.09 18:45) — продолжать отсюда
 
-- Ветка `wf13` (тег `wf13-start`). WF13 «Новое окно» спланирован (`docs/plan-wf13-2026-09-04.md`, run-файл рядом,
-  статус «стоп» до запуска): прогон — Workflow, батч A и verify Opus max; слово Элвиса 18:40 — Fable экономим, все роли
-  Opus max, Fable только с его разрешения. WF14 «Оформление» — план и макет `docs/mockup-menu-wf14.html` пишет агент;
-  запуск WF14 только после одобрения макета Элвисом. Задачи 🟣Trelvis #5358–#5365.
+- WF13 «Новое окно»/«В отдельное окно» сделан и проверен живьём 04.09 20:10 (ветка `wf13` → main), приложение
+  у Элвиса подменено, релиз 1.4.0 — вместе с WF14. Не проверены живьём сценарии отказа (черновик на /epitaxy, двойной
+  клик, стор не найден) — хвост гейта. Слово Элвиса 18:40 — Fable экономим, все роли Opus max.
+- WF14 «Оформление» — план `docs/plan-wf14-2026-09-04.md`, макет `docs/mockup-menu-wf14.html`; Элвис 19:30 выбрал
+  вариант А, оба пункта окна, «Привет». Новые пожелания: #5370 настройки на проект, #5371 плавная смена цветов.
+  Задачи 🟣Trelvis #5358–#5365, #5370, #5371. Счёт «WF N из M» в строке состояния — только по текущему чату.
 - Блоки кода (`<diffs-container>`, shadow DOM) красятся через переменные хоста в `epitaxyCss` (inject.js) — сделано
   и поставлено живьём 18:40, в бандл/релиз ещё не попало (релиз 1.4.0 вместе с WF13/14).
 - Разведка popout/композера (как открыть чат отдельным окном) — в плане WF13, раздел «Что выяснено»; заново не копать.

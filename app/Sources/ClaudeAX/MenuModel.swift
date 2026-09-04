@@ -89,6 +89,12 @@ enum MenuModel {
                   key: KeySpec(mods: [.command, .shift], name: "n"), registersHotkey: true),
         MenuEntry(command: .newChat, title: "Новый чат", icon: "💬",
                   key: KeySpec(mods: [.command], name: "n"), registersHotkey: false),
+        // «Новое окно» — новый чат сразу отдельным окном (план WF13). ⌥⌘N у Claude свободна,
+        // поэтому её мы регистрируем сами; «В отдельное окно» — без клавиши.
+        MenuEntry(command: .newWindow, title: "Новое окно", icon: "🪟",
+                  key: KeySpec(mods: [.command, .option], name: "n"), registersHotkey: true),
+        MenuEntry(command: .popoutWindow, title: "В отдельное окно", icon: "🪟",
+                  key: nil, registersHotkey: false),
         MenuEntry(command: .collapse, title: "Свернуть", icon: "⬇️",
                   key: KeySpec(mods: [.command, .option], name: "down"), registersHotkey: true),
         MenuEntry(command: .expand, title: "Развернуть", icon: "⬆️",
@@ -101,12 +107,25 @@ enum MenuModel {
                   key: KeySpec(mods: [.command, .option], name: "d"), registersHotkey: true),
     ]
 
-    /// Разделители стоят после «Новый чат» и после «Развернуть» (README).
-    static let separatorsAfter: Set<ClaudeCommand> = [.newChat, .expand]
+    /// Разделители стоят после «В отдельное окно» и после «Развернуть» (README): оконные
+    /// пункты WF13 идут одной группой с «Новый чат», поэтому разделитель переехал с него.
+    static let separatorsAfter: Set<ClaudeCommand> = [.popoutWindow, .expand]
 
     static func entry(for command: ClaudeCommand) -> MenuEntry? {
         entries.first { $0.command == command }
     }
+
+    // MARK: - новое окно (план WF13)
+
+    /// Первое сообщение нового чата: локальная сессия рождается только с ним, пустой строкой
+    /// окно не открыть. Только приветствие — никаких команд, путей и просьб что-то запустить
+    /// (в этой сессии работает авто-Allow).
+    static let newWindowText = "Привет"
+    /// Плашка на время работы: чат создаётся и выносится в окно до 40 с, и молчащая кнопка
+    /// выглядит сломанной. Успех Элвис видит по самому окну, отказ — плашкой страницы.
+    static let newWindowNotice = "Открываю новое окно, несколько секунд…"
+    /// Штатные 2,5 с `onWarning` гаснут задолго до результата (критик п. 20 плана WF13).
+    static let newWindowNoticeSeconds: TimeInterval = 4
 
     // MARK: - темы и шрифты (WF5, переложено в WF6)
 

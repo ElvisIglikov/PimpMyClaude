@@ -10,8 +10,9 @@
 // Что делает: над полем ввода рисует едва заметную полоску. Потянул — меняешь
 // высоту, клик — свернуть/вернуть, двойной клик — во всю высоту окна. Плюс
 // команды из приложения (событие window "myclaude-command"): collapse, expand,
-// cashout, scroll, theme, status, workflow. И сокращает время под сообщениями
-// («3 minutes ago» → «3 min ago»). Команда theme несёт четыре слоя — цвет по
+// cashout, scroll, theme, status, workflow, new-window, popout-window. И
+// сокращает время под сообщениями («3 minutes ago» → «3 min ago»). Команда
+// theme несёт четыре слоя — цвет по
 // палитре из claude-patch/themes.json, шрифт, размер текста сообщений и
 // неоновую рамку окна (раздел «2а. Слои чата»): тема живёт на ЧАТЕ
 // (ключ `chat:<заголовок>`), у главного окна есть ещё и своя — она и остаётся,
@@ -19,7 +20,9 @@
 // рамки поля ввода рисуется полоса прогресса марафона воркфлоу по строке
 // состояния из последнего ответа — по сегменту на воркфлоу, с подсказкой из
 // сводки, присланной командой status (раздел «2б»). Команда workflow кладёт в
-// поле ввода текст запуска и НЕ отправляет его (раздел «12а»).
+// поле ввода текст запуска и НЕ отправляет его (раздел «12а»). Команды
+// new-window и popout-window открывают чат отдельным окном — новый (⌘N от
+// приложения, первое сообщение, отправка) или уже открытый (раздел «12б»).
 //
 // Логика ступеней, порогов и кликов перенесена из донора ElvisOS
 // (~/_ElvisProjects/ElvisOS/Resources/claude-chat-cleaner-inject.js, разделы
@@ -31,7 +34,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf12-a-3";
+  const VERSION = "wf13-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -269,6 +272,10 @@
     // в последний раз (видно в status() на гейте).
     workflowRuns: 0,
     workflowResult: null,
+    // «Новое окно» и «В отдельное окно» (раздел 12б): запись последнего запуска
+    // любой из двух команд — {state, step, id, at, busy, runs, back}; она же
+    // уходит наружу полем newWindow в status().
+    newWindow: null,
     scheduled: false,
     rafId: 0,
     layoutTimer: 0,
@@ -3165,6 +3172,457 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     return ok;
   };
 
+  // ---- 12б. «Новое окно» и «В отдельное окно» -----------------------------
+  // Пункт меню «🪟 Новое окно»: новый чат Claude Code сразу отдельным окном.
+  // Одним вызовом это не делается — окно-попап живёт поверх СУЩЕСТВУЮЩЕЙ сессии,
+  // а локальная сессия рождается только на первом сообщении (свежий local_<uuid>
+  // даёт «This session couldn't be found»). Поэтому порядок ровно тот, что Элвис
+  // проходит руками: ⌘N → «Привет» → отправка → вынести получившийся чат в окно
+  // → вернуть главное окно на прежний разговор.
+  //
+  // Само окно открывает не страница, а приложение claude.ai: у него есть стор с
+  // действием openPopout({type:"code-session", sessionId, …}) — тот же, что за
+  // пунктом «Open in new window» и за ⌘-кликом по строке чата в сайдбаре. Стор
+  // ищем ПОВЕДЕНЧЕСКИ (по наличию popoutWindows и openPopout), а не по имени
+  // экспорта: имена чанков и экспортов claude.ai меняются каждый релиз.
+  //
+  // Второй пункт, «🪟 В отдельное окно» (команда popout-window), — последний шаг
+  // того же пути в отдельности: вынести ТЕКУЩИЙ чат. Он же честная деградация:
+  // не сложилось у «Нового окна» уже после создания чата — плашка зовёт его.
+  //
+  // ⌘N жмёт Swift штатной клавишей: синтетический KeyboardEvent на document
+  // Claude не слышит вовсе (проверено 04.09), поэтому страница только ЖДЁТ.
+  const NEW_WINDOW_NOTE_ID = "myclaude-new-window-note";
+  const NEW_WINDOW_HOME_PATH = "/epitaxy";
+  const NEW_WINDOW_INPUT_SELECTOR = '[data-testid="code-prompt-input"]';
+  const NEW_WINDOW_SEND_SELECTOR = '[data-testid="code-prompt-send"]';
+  const NEW_WINDOW_ROWS_SELECTOR = '[data-testid="sidebar-recents"]';
+  // Шаг опроса: смену адреса роутер делает без события, ловить её нечем.
+  const NEW_WINDOW_POLL_MS = 100;
+  // Сколько ждём домашний экран после ⌘N от приложения.
+  const NEW_WINDOW_HOME_MS = 5000;
+  // Кнопка отправки бывает disabled, пока не выбраны папка и модель.
+  const NEW_WINDOW_SEND_MS = 3000;
+  // Сессия заводится не мгновенно: адрес становится /epitaxy/local_<uuid>.
+  const NEW_WINDOW_SESSION_MS = 15000;
+  // Строка сайдбара появляется, когда сессия уже создана; её имя уходит в окно.
+  const NEW_WINDOW_ROW_MS = 20000;
+  // Строки так и нет — даём ей последний вздох и идём дальше без имени.
+  const NEW_WINDOW_ROW_GRACE_MS = 1500;
+  // Возврат главного окна на прежний чат.
+  const NEW_WINDOW_BACK_MS = 1000;
+  // Страховка: сорвавшийся прогон не должен выключить кнопку навсегда.
+  const NEW_WINDOW_GUARD_MS = 75000; // худшая цепочка ожиданий ≈ 50 с (verify WF13, находка 2)
+  const NEW_WINDOW_NOTE_MS = 3000;
+  const NEW_WINDOW_NOTE_FAIL = "Новое окно не открылось";
+  const NEW_WINDOW_NOTE_CREATED = "Отдельным окном не вышло, чат создан здесь.\nМеню ▸ 🪟 В отдельное окно";
+  const NEW_WINDOW_NOTE_DRAFT = "В поле ввода черновик — новый чат не открываю";
+  const NEW_WINDOW_NOTE_FOLDER = "Сообщение не ушло: не выбрана папка";
+  const NEW_WINDOW_NOTE_CHAT = "Сначала открой чат — выносить нечего";
+  const NEW_WINDOW_NOTE_POPOUT = "Отдельным окном не вышло";
+
+  // Все таймеры раздела — в одном наборе: снимаются разом на dispose, а реестр
+  // уборки не пухнет от сотен опросов по 100 мс.
+  const newWindowTimers = new Set();
+  const newWindowLater = (fn, ms) => {
+    const timer = setTimeout(() => { newWindowTimers.delete(timer); fn(); }, ms);
+    newWindowTimers.add(timer);
+    return timer;
+  };
+  const newWindowClearTimers = () => {
+    for (const timer of newWindowTimers) { try { clearTimeout(timer); } catch {} }
+    newWindowTimers.clear();
+  };
+  // У каждого запуска свой номер. Живой inject.js перечитывается по mtime, и
+  // `cp` посреди работы кнопки поднял бы второй экземпляр: старая цепочка ждёт
+  // адреса ещё десятки секунд и открыла бы ВТОРОЕ окно. Номер и state.alive
+  // проверяет каждый шаг.
+  let newWindowToken = 0;
+  const newWindowLive = token => state.alive && token === newWindowToken;
+  const newWindowMark = patch => {
+    state.newWindow = { ...(state.newWindow ?? {}), ...patch, at: Date.now() };
+  };
+  const newWindowRuns = () => (Number(state.newWindow?.runs) || 0) + 1;
+  const newWindowError = error => String(error?.message ?? error).slice(0, 200);
+
+  // Плашка отказа. Молчать нельзя: со стороны пункт меню выглядит сломанным
+  // (прецедент MenuModel.workflowKitMissingAlert). Стиль — подсказки полосы
+  // прогресса (раздел 2б), слой на единицу ниже неё: подсказка Элвиса важнее.
+  let newWindowNoteNode = null;
+  let newWindowNoteTimer = 0;
+  const newWindowNoteHide = drop => {
+    if (newWindowNoteTimer) {
+      clearTimeout(newWindowNoteTimer);
+      newWindowTimers.delete(newWindowNoteTimer);
+      newWindowNoteTimer = 0;
+    }
+    if (!newWindowNoteNode) return;
+    if (drop) { try { newWindowNoteNode.remove(); } catch {} newWindowNoteNode = null; return; }
+    newWindowNoteNode.style.setProperty("display", "none");
+  };
+  const newWindowNote = text => {
+    if (!text) return;
+    newWindowNoteHide(false);
+    if (!newWindowNoteNode) {
+      const node = document.createElement("div");
+      node.id = NEW_WINDOW_NOTE_ID;
+      node.setAttribute("aria-hidden", "true");
+      // Стили прямо в узел, без <style>: CSP страницы может не пустить нашу
+      // таблицу, а element.style ей неподвластен (довод раздела 2б).
+      for (const [name, value] of Object.entries({
+        position: "fixed", display: "none", "max-width": "420px",
+        padding: "8px 10px", "border-radius": "8px", "border-width": "1px", "border-style": "solid",
+        font: "12px/1.45 -apple-system, system-ui, sans-serif", "white-space": "pre-line",
+        "pointer-events": "none", "z-index": "2147483644",
+        left: "50%", transform: "translateX(-50%)", bottom: "96px",
+      })) node.style.setProperty(name, value);
+      (document.body ?? document.documentElement).appendChild(node);
+      newWindowNoteNode = node;
+    }
+    // Только textContent: текст свой, но разметке в плашке делать нечего.
+    newWindowNoteNode.textContent = text;
+    for (const [name, value] of Object.entries(progressDark()
+      ? { background: "#12151c", color: "#e7e9f0", "border-color": "#2a2f3a", "box-shadow": "0 8px 24px rgba(0,0,0,.45)" }
+      : { background: "#ffffff", color: "#14181f", "border-color": "#d7dbe3", "box-shadow": "0 8px 24px rgba(15,20,30,.18)" })) {
+      newWindowNoteNode.style.setProperty(name, value);
+    }
+    newWindowNoteNode.style.setProperty("display", "block");
+    newWindowNoteTimer = newWindowLater(() => { newWindowNoteTimer = 0; newWindowNoteHide(false); }, NEW_WINDOW_NOTE_MS);
+  };
+  // Экземпляр уходит — с ним уходят таймеры, плашка и признак занятости: иначе
+  // `cp inject.js` посреди работы оставил бы кнопку «занятой» навсегда.
+  track(() => {
+    newWindowClearTimers();
+    newWindowNoteHide(true);
+    if (state.newWindow) state.newWindow.busy = false;
+  });
+
+  // Ожидание опросом: вернёт найденное или null, когда время вышло либо
+  // экземпляр сменился.
+  const newWindowWait = (check, limitMs, token) => new Promise(resolve => {
+    const deadline = now() + limitMs;
+    const tick = () => {
+      if (!newWindowLive(token)) { resolve(null); return; }
+      let hit = null;
+      try { hit = check(); } catch { hit = null; }
+      if (hit) { resolve(hit); return; }
+      if (now() >= deadline) { resolve(null); return; }
+      newWindowLater(tick, NEW_WINDOW_POLL_MS);
+    };
+    tick();
+  });
+  const newWindowSleep = ms => new Promise(resolve => { newWindowLater(resolve, ms); });
+
+  const newWindowSegment = path => String(path ?? "").split("/").filter(Boolean).pop() ?? "";
+  // Открытый чат Claude Code — /epitaxy/local_<uuid>. Всё прочее (обычный чат
+  // claude.ai, домашний экран) сессии popout не даёт.
+  const newWindowSessionId = () => {
+    const id = newWindowSegment(location.pathname);
+    return id.startsWith("local_") ? id : "";
+  };
+  const newWindowAtHome = () =>
+    location.pathname === NEW_WINDOW_HOME_PATH && Boolean(document.querySelector(NEW_WINDOW_INPUT_SELECTOR));
+  // Ключи строк сайдбара — chat:<uuid> / code:… / local_…, поэтому ищем по концу.
+  // Значение внутри кавычек селектора экранируем сами: CSS.escape пишет по
+  // правилам идентификатора и в строке в кавычках только испортил бы ключ.
+  const newWindowRow = id => {
+    if (!id) return null;
+    try {
+      const key = String(id).replace(/["\\]/g, "\\$&");
+      return document.querySelector(`${NEW_WINDOW_ROWS_SELECTOR} [data-row-key$="${key}"]`);
+    } catch { return null; }
+  };
+  const newWindowRowTitle = row => {
+    const raw = String(row?.innerText ?? row?.textContent ?? "").trim();
+    return (raw.split("\n").map(line => line.trim()).find(Boolean) ?? "").slice(0, 200);
+  };
+
+  // Стор ищем ТОЛЬКО по приходу команды и останавливаемся на первом совпадении:
+  // import() исполняет те модули, которые страница ещё не выполняла (preload —
+  // не исполнение), а это чужая инициализация в чужой странице. Найденное — в
+  // кэш замыкания; кэш перепроверяем, вдруг стор пересобрали.
+  let newWindowStore = null;
+  const newWindowStoreOk = store => {
+    try {
+      const value = store?.getState?.();
+      return Boolean(value && value.popoutWindows instanceof Map && typeof value.openPopout === "function");
+    } catch { return false; }
+  };
+  const newWindowModuleUrls = () => {
+    const urls = [];
+    const seen = new Set();
+    const add = href => {
+      const url = typeof href === "string" ? href : "";
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      urls.push(url);
+    };
+    try { for (const link of document.querySelectorAll('link[rel="modulepreload"]')) add(link.href); } catch {}
+    // Запасной источник адресов: ссылок modulepreload в окне может не оказаться.
+    try {
+      for (const entry of performance.getEntriesByType("resource")) {
+        const name = String(entry?.name ?? "");
+        if (/\/assets\/v1\/[^?#]*\.js(\?|#|$)/.test(name)) add(name);
+      }
+    } catch {}
+    return urls;
+  };
+  const newWindowFindStore = async token => {
+    if (newWindowStoreOk(newWindowStore)) return newWindowStore;
+    newWindowStore = null;
+    for (const url of newWindowModuleUrls()) {
+      if (!newWindowLive(token)) return null;
+      let chunk = null;
+      // Каждый import в своём try: чужой модуль вправе упасть на исполнении.
+      try { chunk = await import(url); } catch { continue; }
+      try {
+        for (const key of Object.keys(chunk)) {
+          const value = chunk[key];
+          if (typeof value !== "function" || typeof value.getState !== "function") continue;
+          if (!newWindowStoreOk(value)) continue;
+          newWindowStore = value;
+          return newWindowStore;
+        }
+      } catch {}
+    }
+    return null;
+  };
+
+  // Общий шаг обоих пунктов: вынести сессию в отдельное окно. Заголовок берём
+  // тот, что показывает сайдбар (константу «Новый чат» передавать нельзя — это
+  // заглушка из THEME_TITLE_STUBS, и ключа темы chat: у окна не будет вовсе).
+  const newWindowOpenPopout = (store, id, title, x, y) => {
+    store.getState().openPopout({
+      type: "code-session",
+      sessionId: id,
+      sessionType: "local",
+      isSsh: false,
+      title,
+      entryPoint: "context_menu",
+      initialPosition: { x, y },
+    });
+  };
+
+  // Возврат главного окна на прежний разговор. Основной путь — клик по строке
+  // сайдбара: это собственная навигация приложения. Запасной — history: после
+  // ⌘N и отправки окно прошло ДВЕ навигации, поэтому шагов назад тоже два.
+  // pushState для возврата не годится: он затирает служебный history.state
+  // роутера и ломает back/forward до перезагрузки страницы.
+  const newWindowBack = async (prev, prevId, lengthBefore, token) => {
+    if (location.pathname === prev) { newWindowMark({ back: "stay" }); return; }
+    const row = newWindowRow(prevId);
+    if (row) { try { (row.querySelector("a,button") ?? row).click(); } catch {} }
+    else {
+      const steps = history.length - lengthBefore;
+      // history.go(0) — это перезагрузка страницы, а не шаг назад.
+      if (steps <= 0) { newWindowMark({ back: "back-failed" }); return; }
+      try { history.go(-steps); } catch {}
+    }
+    const ok = await newWindowWait(() => (location.pathname === prev ? true : null), NEW_WINDOW_BACK_MS, token);
+    // Не вернулось — оставляем как есть: лучше остаться на новом чате, чем
+    // ломать роутер главного окна.
+    newWindowMark({ back: ok ? (row ? "row" : "history") : "back-failed" });
+  };
+
+  // Команда «Новое окно», контракт WF13: {id, action:"new-window", at,
+  // scope:"window", title, x, y, text}. Исполняет только ГЛАВНОЕ окно и только
+  // адресованное заголовком: страниц claude.ai может оказаться две, и обе
+  // завели бы по чату.
+  const runNewWindowCommand = async detail => {
+    if (!isMainWindow() || !addressed(detail)) return false;
+    const text = typeof detail?.text === "string" ? detail.text.trim() : "";
+    // Координаты — именно ЧИСЛА, не строки: CommandChannel.write(action:extra:)
+    // делает все значения строками, и такую команду мы обязаны отбить, а не
+    // молча склеить (контракт WF13 требует write(action:fields:) с .number).
+    const x = detail?.x;
+    const y = detail?.y;
+    if (detail?.scope !== "window" || !text || !Number.isFinite(x) || !Number.isFinite(y)) {
+      newWindowMark({ state: "bad-command", step: null });
+      return false;
+    }
+    // Второй клик, пока идёт первый: два «Привета» в два чата никому не нужны.
+    if (state.newWindow?.busy === true) { newWindowMark({ state: "busy" }); return false; }
+    const token = ++newWindowToken;
+    newWindowMark({ state: "run", step: "store", id: null, back: null, pushed: false, busy: true, runs: newWindowRuns() });
+    const guard = newWindowLater(() => {
+      if (token !== newWindowToken) return;
+      newWindowMark({ state: "timeout", busy: false });
+    }, NEW_WINDOW_GUARD_MS);
+    // Чат уже заведён — возвращать главное окно на прежний разговор нельзя:
+    // новый чат живёт именно здесь, и плашка зовёт вынести его вторым пунктом.
+    let created = false;
+    try {
+      // Прежний разговор запоминаем ДО поиска стора: поиск идёт около секунды,
+      // а Swift жмёт ⌘N через 0,9 с — иначе «прежним» окажется уже /epitaxy
+      // (verify WF13, находка 1).
+      const prev = location.pathname;
+      // Домашний экран прежним разговором не считается: возвращаться будем
+      // историей, а не по строке сайдбара (её у /epitaxy нет).
+      const prevId = prev === NEW_WINDOW_HOME_PATH ? "" : newWindowSegment(prev);
+      const lengthBefore = history.length;
+      const store = await newWindowFindStore(token);
+      if (!newWindowLive(token)) return false;
+      if (!store) {
+        newWindowMark({ state: "no-store" });
+        newWindowNote(NEW_WINDOW_NOTE_FAIL);
+        return false;
+      }
+
+      // 1. Новый чат открывает Swift штатным ⌘N — ждём домашний экран.
+      newWindowMark({ step: "home" });
+      let home = await newWindowWait(() => (newWindowAtHome() ? true : null), NEW_WINDOW_HOME_MS, token);
+      if (!newWindowLive(token)) return false;
+      if (!home) {
+        // Последний запасной путь: pushState портит history.state роутера, но
+        // без него команда просто умерла бы. Пометка pushed — для гейта.
+        let pushed = false;
+        try {
+          history.pushState({}, "", NEW_WINDOW_HOME_PATH);
+          window.dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
+          pushed = true;
+        } catch {}
+        newWindowMark({ pushed });
+        home = pushed ? await newWindowWait(() => (newWindowAtHome() ? true : null), NEW_WINDOW_HOME_MS, token) : null;
+        if (!newWindowLive(token)) return false;
+        if (!home) {
+          newWindowMark({ state: "no-home" });
+          newWindowNote(NEW_WINDOW_NOTE_FAIL);
+          return false;
+        }
+      }
+
+      // 2. Композер обязан быть ПУСТ, иначе «Привет» приклеится к недописанной
+      // мысли Элвиса и уедет в модель. Узел берём прямым селектором: в
+      // state.editor/findEditor лежит кэш поля прошлого чата.
+      newWindowMark({ step: "draft" });
+      const editor = document.querySelector(NEW_WINDOW_INPUT_SELECTOR);
+      if (location.pathname !== NEW_WINDOW_HOME_PATH || !editor?.isConnected || editorText(editor) !== "") {
+        newWindowMark({ state: "draft" });
+        newWindowNote(NEW_WINDOW_NOTE_DRAFT);
+        await newWindowBack(prev, prevId, lengthBefore, token);
+        return false;
+      }
+
+      // 3. Первое сообщение.
+      newWindowMark({ step: "insert" });
+      try { window.focus(); } catch {}
+      try { window.electronWindowControl?.focus?.(); } catch {}
+      if (!insertIntoEditor(editor, text, false)) {
+        newWindowMark({ state: "no-insert" });
+        newWindowNote(NEW_WINDOW_NOTE_FAIL);
+        await newWindowBack(prev, prevId, lengthBefore, token);
+        return false;
+      }
+
+      // 4. Отправка. Кнопку ждём живой: пока не выбраны папка и модель, она
+      // disabled, и клик вслепую ничего не даст.
+      newWindowMark({ step: "send" });
+      const send = await newWindowWait(
+        () => document.querySelector(`${NEW_WINDOW_SEND_SELECTOR}:not([disabled])`), NEW_WINDOW_SEND_MS, token);
+      if (!newWindowLive(token)) return false;
+      if (send) { try { send.click(); } catch {} }
+      else {
+        // Кнопка так и не ожила — пробуем Enter в самом редакторе.
+        try {
+          editor.dispatchEvent(new KeyboardEvent("keydown", {
+            key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true,
+          }));
+        } catch {}
+      }
+
+      // 5. Сессия рождается на первом сообщении: ждём /epitaxy/local_<uuid>.
+      // Прежний чат за новую сессию не принимаем: мигни роутер старым адресом —
+      // и в отдельное окно уехал бы не тот разговор.
+      newWindowMark({ step: "session" });
+      const id = await newWindowWait(() => {
+        const found = newWindowSessionId();
+        return found && found !== prevId ? found : null;
+      }, NEW_WINDOW_SESSION_MS, token);
+      if (!newWindowLive(token)) return false;
+      if (!id) {
+        // Кнопка не ожила — почти всегда это несуществующая последняя папка.
+        const reason = send ? "no-send" : "no-folder";
+        newWindowMark({ state: reason });
+        newWindowNote(send ? NEW_WINDOW_NOTE_FAIL : NEW_WINDOW_NOTE_FOLDER);
+        return false;
+      }
+      created = true;
+
+      // 6. Строка сайдбара: по ней видно, что сессия действительно создана, и
+      // из неё же берём имя для окна.
+      newWindowMark({ step: "row", id });
+      const row = await newWindowWait(() => newWindowRow(id), NEW_WINDOW_ROW_MS, token);
+      if (!newWindowLive(token)) return false;
+      if (!row) await newWindowSleep(NEW_WINDOW_ROW_GRACE_MS);
+      if (!newWindowLive(token)) return false;
+
+      // 7. Отдельное окно.
+      newWindowMark({ step: "popout" });
+      try { newWindowOpenPopout(store, id, newWindowRowTitle(row) || windowTitle(), x, y); }
+      catch (error) {
+        newWindowMark({ state: "popout-failed", error: newWindowError(error) });
+        newWindowNote(NEW_WINDOW_NOTE_CREATED);
+        return false;
+      }
+
+      // 8. Главное окно — обратно на прежний разговор (П1: openPopout само его
+      // никуда не уводит).
+      newWindowMark({ state: "ok", step: "back" });
+      await newWindowBack(prev, prevId, lengthBefore, token);
+      return true;
+    } catch (error) {
+      newWindowMark({ state: "error", error: newWindowError(error) });
+      newWindowNote(created ? NEW_WINDOW_NOTE_CREATED : NEW_WINDOW_NOTE_FAIL);
+      return false;
+    } finally {
+      clearTimeout(guard);
+      newWindowTimers.delete(guard);
+      if (token === newWindowToken) newWindowMark({ busy: false });
+    }
+  };
+
+  // Команда «В отдельное окно», контракт WF13: {id, action:"popout-window", at,
+  // scope:"window", title, x, y}. Тот же стор и тот же openPopout, только по уже
+  // открытому чату — мгновенно и без сообщения.
+  const runPopoutCommand = async detail => {
+    if (!isMainWindow() || !addressed(detail)) return false;
+    // Координаты — числа, а не строки (разбор у runNewWindowCommand).
+    const x = detail?.x;
+    const y = detail?.y;
+    if (detail?.scope !== "window" || !Number.isFinite(x) || !Number.isFinite(y)) {
+      newWindowMark({ state: "bad-command", step: null });
+      return false;
+    }
+    const token = newWindowToken;
+    const id = newWindowSessionId();
+    // Запись в state.newWindow одна на оба пункта: она про ПОСЛЕДНИЙ запуск
+    // раздела. Признак занятости чужого прогона мы не трогаем — вынести
+    // текущий чат можно и пока «Новое окно» ещё ждёт свою сессию.
+    newWindowMark({ state: "run", step: "popout", id: id || null, runs: newWindowRuns() });
+    if (!id) {
+      newWindowMark({ state: "no-chat" });
+      newWindowNote(NEW_WINDOW_NOTE_CHAT);
+      return false;
+    }
+    const store = await newWindowFindStore(token);
+    if (!state.alive) return false;
+    if (!store) {
+      newWindowMark({ state: "no-store" });
+      newWindowNote(NEW_WINDOW_NOTE_POPOUT);
+      return false;
+    }
+    try { newWindowOpenPopout(store, id, newWindowRowTitle(newWindowRow(id)) || windowTitle(), x, y); }
+    catch (error) {
+      newWindowMark({ state: "popout-failed", error: newWindowError(error) });
+      newWindowNote(NEW_WINDOW_NOTE_POPOUT);
+      return false;
+    }
+    newWindowMark({ state: "ok" });
+    return true;
+  };
+  // Обе команды асинхронные: отказ промиса не должен всплывать в консоль страницы.
+  const newWindowStart = (run, detail) => { try { run(detail).catch(() => {}); } catch {} };
+
   // ---- 13. Прокрутка ленты ------------------------------------------------
   // Команда «Прокрутить»: поставить ленту разговора на последнее сообщение.
   // В отличие от collapse/expand она адресована ВСЕМ окнам сразу, поэтому
@@ -3372,6 +3830,12 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (action === "status") { try { runStatusCommand(detail); } catch {} return; }
     // Любая другая команда из меню закрывает примерку: меню ушло, выбора темы не было.
     if (themeState.previewing) { try { restoreTheme(true); themeState.previewing = false; } catch {} }
+    // «Новое окно» и «В отдельное окно» — ДО проверки поля ввода: композер
+    // страница дожидается сама (после ⌘N он ещё не тот, что в state.editor), и
+    // команда не должна умирать молча на окне без поля. Обе адресованы одному
+    // главному окну — отбор внутри (isMainWindow + addressed).
+    if (action === "new-window") { newWindowStart(runNewWindowCommand, detail); return; }
+    if (action === "popout-window") { newWindowStart(runPopoutCommand, detail); return; }
     if (!state.editor?.isConnected) return;
     // «Свернуть»/«Развернуть» — тоже на все окна (ElvisOS: «убирает поле ввода во
     // всех окнах»; слово Элвиса 03.09 13:30). Только «Обкэшить» адресована окну в фокусе.
@@ -3550,6 +4014,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       },
       // Кнопка «Workflow»: вставок и чем кончилась последняя.
       workflow: { runs: state.workflowRuns, result: state.workflowResult },
+      // «Новое окно» и «В отдельное окно» (раздел 12б): чем кончился последний
+      // запуск, на каком он шаге, какая сессия уехала в окно, занята ли кнопка
+      // и как вернулось главное окно.
+      newWindow: state.newWindow ? { ...state.newWindow } : null,
       // Ключ чата, под которым окно хранит тему (раздел 2а): у главного окна он
       // меняется вместе с разговором, а у безымянного чата его нет вовсе.
       chatKey: chatKey(),
