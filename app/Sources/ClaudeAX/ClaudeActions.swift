@@ -90,6 +90,7 @@ final class ClaudeActions {
     func focusedWindow() -> AXUIElement? { app.focusedWindow() }
 
     func perform(_ command: ClaudeCommand, on window: AXUIElement?) {
+        noteUserCommand()
         let target = window ?? focusedWindow()
         switch command {
         case .workflow: workflow(target)
@@ -265,6 +266,7 @@ final class ClaudeActions {
                     window: AXUIElement?) -> Bool {
         // Все слои «не трогать» — команде нечего делать.
         guard !theme.isKeep || !font.isKeep || !size.isKeep || !frame.isKeep else { return false }
+        noteUserCommand()
         let target = window ?? focusedWindow()
         let title = target.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
         let send: () -> Bool = { [weak self] in
@@ -283,12 +285,17 @@ final class ClaudeActions {
         return send()
     }
 
-    /// Поля команды после id, action, at: scope, title, preview, затем слои — тема, шрифт,
-    /// размер, рамка. Слоя `.keep` в JSON нет вовсе, `.reset` уходит как `null`
+    /// Поля команды после id, action, at: scope, title, match, preview, затем слои — тема,
+    /// шрифт, размер, рамка. Слоя `.keep` в JSON нет вовсе, `.reset` уходит как `null`
     /// (контракт п. 1 плана WF12). `preview` — только у предпросмотра (контракт п. 1 плана WF8):
     /// у закрепляющей команды поля нет вовсе, `true` — примерить слой не запоминая,
     /// `false` без слоёв — конец примерки.
-    static func themeFields(scope: String, title: String, preview: Bool? = nil,
+    /// `match` — необязательная адресация ПУТЁМ страницы (`/epitaxy/local_…`, план WF15):
+    /// поля нет — всё как было, заголовком; поле есть — страница сверяет `location.pathname`
+    /// и заголовок не смотрит вовсе. Им адресуется главное окно: его заголовок — заглушка
+    /// «Claude», и по ней команда ушла бы веером всем безымянным попапам (критик Б1 плана WF15).
+    static func themeFields(scope: String, title: String, match: String? = nil,
+                            preview: Bool? = nil,
                             theme: Layer<Theme>, font: Layer<Font>,
                             size: Layer<Size> = .keep,
                             frame: Layer<Bool> = .keep) -> [(key: String, value: CommandValue)] {
@@ -296,6 +303,7 @@ final class ClaudeActions {
             (key: "scope", value: .string(scope)),
             (key: "title", value: .string(title)),
         ]
+        if let match = match { fields.append((key: "match", value: .string(match))) }
         if let preview = preview { fields.append((key: "preview", value: .bool(preview))) }
         if let value = theme.commandValue({ $0.commandValue }) { fields.append((key: "theme", value: value)) }
         if let value = font.commandValue({ $0.commandValue }) { fields.append((key: "font", value: value)) }
@@ -433,6 +441,7 @@ final class ClaudeActions {
     private func sendPreview(_ preview: Bool, theme: Layer<Theme>, font: Layer<Font>,
                              size: Layer<Size> = .keep, frame: Layer<Bool> = .keep,
                              window: AXUIElement?) -> Bool {
+        noteUserCommand()
         let target = window ?? focusedWindow()
         let title = target.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
         // Без заголовка примерка не адресуется (фокуса у окна Claude нет, пока открыто меню),
@@ -479,6 +488,7 @@ final class ClaudeActions {
 
     private func paint(preset: AutoPaintPreset, start: Double, scheme index: Int?,
                        light repeated: Bool? = nil) -> Int {
+        noteUserCommand()
         let windows = paintableWindows()
         let titles = windows.titles
         guard !titles.isEmpty else {
@@ -548,6 +558,50 @@ final class ClaudeActions {
         let types = ids.compactMap { known[$0] }
         return types.filter { $0 }.count > types.filter { !$0 }.count
     }
+
+    // MARK: - цвет проекта (план WF15)
+
+    /// Когда меню или хоткей в последний раз слали команду (примерка считается тоже).
+    /// Фоновая покраска по проекту после этого молчит 2 с: не-preview команда гасит примерку
+    /// темы мышью (`endPreviewExcept`, критик В1 плана WF15). Сама покраска сюда не пишет —
+    /// она же и ждёт.
+    private(set) var lastUserCommandAt: Date?
+
+    private func noteUserCommand() { lastUserCommandAt = Date() }
+
+    /// Покраска по проекту: та же команда `theme` (`scope: "window"`), но память приложения
+    /// она не трогает вовсе — галки в меню ставит только ручной выбор (критик Б3 плана WF15).
+    /// Окно адресуется путём страницы (`match`, главное окно) или заголовком (попапы);
+    /// фокус не нужен — как и автопокраске.
+    @discardableResult
+    func applyProject(_ command: ProjectPaintCommand) -> Bool {
+        guard !command.isEmpty else { return false }
+        let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow,
+                                               title: command.title, match: command.match,
+                                               theme: command.theme, font: command.font,
+                                               size: command.size, frame: command.frame)
+        return commands.write(action: "theme", fields: fields)
+    }
+
+    /// Заголовки окон Claude на экране — те же, что берёт «Раскрасить по кругу»: без
+    /// заголовка окно не адресовать, одинаковые схлопнуты.
+    func paintableTitles() -> [String] { paintableWindows().titles }
+
+    /// Окно уже занято: цвет ему выбрали руками из меню (`ThemeStore`) или его красила
+    /// «Раскрасить по кругу» (`autoPaintedThemes`). Проект такое окно не трогает — ни одного
+    /// источника мало: автопокраска сама чистит галки, а свой цвет кладёт только в память
+    /// (критик Б3 плана WF15).
+    func isWindowPainted(title: String) -> Bool {
+        guard !title.isEmpty else { return false }
+        if autoPaintedThemes[title] != nil { return true }
+        return themeStore.windowThemeID(title: title) != nil
+            || themeStore.windowFontID(title: title) != nil
+            || themeStore.windowSize(title: title) != nil
+            || themeStore.windowFrame(title: title)
+    }
+
+    /// Задан вид «всем окнам» — его проект не перебивает вовсе (критик Б3 плана WF15).
+    var hasAllWindowsView: Bool { themeStore.allThemeID != nil || themeStore.allFontID != nil }
 
     // MARK: - оконные команды
 

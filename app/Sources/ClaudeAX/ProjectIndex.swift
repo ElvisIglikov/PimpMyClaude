@@ -51,7 +51,7 @@ final class ProjectIndex {
     /// Имя файла сессии: `local_<uuid>.json`.
     static let sessionPrefix = "local_"
     static let sessionExtension = "json"
-    /// Диагностика лоадера v6 — рядом с command.json, переписывается раз в 2 с.
+    /// Диагностика лоадера (v7) — рядом с command.json, переписывается раз в 2 с.
     static let statusFileName = "status.json"
     static let pageHost = "claude.ai"
     /// Начало пути страницы чата: `/epitaxy/local_<id>`.

@@ -16,6 +16,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
     private let autoAllow: AutoAllow
     private let menu: MinimizeMenu
     private let statusFeed: StatusFeed
+    /// Цвет проекта (план WF15): своего таймера у покраски нет — она тикает вместе с
+    /// watchdog'ом, раз в 2 с (критик М2).
+    private let projectPaint = ProjectPaint()
 
     private var observers: [NSObjectProtocol] = []
     private var watchdog: Timer?
@@ -41,6 +44,28 @@ public final class ClaudeAXController: ClaudeAXControlling {
         app.onRestart = { [weak self] in self?.menu.clearCache() }
         // Сводки перечитываются и по таймеру, и когда меню вот-вот всплывёт (решение 2 WF9).
         menu.onWillShow = { [weak self] in self?.statusFeed.refresh() }
+
+        // Цвет проекта: папку окна знает ProjectIndex, красит та же команда `theme`, а память
+        // приложения покраска не трогает — галки ставит только ручной выбор (план WF15).
+        projectPaint.send = { [weak self] command in self?.actions.applyProject(command) ?? false }
+        projectPaint.windowTitles = { [weak self] in self?.actions.paintableTitles() ?? [] }
+        // Себя нет — считаем окно занятым и молчим: лучше не покрасить, чем покрасить лишнее.
+        projectPaint.isWindowBusy = { [weak self] title in
+            self?.actions.isWindowPainted(title: title) ?? true
+        }
+        projectPaint.isAllWindowsSet = { [weak self] in self?.actions.hasAllWindowsView ?? true }
+        projectPaint.isMenuOpen = { [weak self] in self?.menu.isMenuOpen ?? true }
+        projectPaint.lastMenuCommand = { [weak self] in self?.actions.lastUserCommandAt }
+        projectPaint.showNotice = { [weak self] text in self?.hud.show(text, seconds: 3) }
+        // «Записать этот вид в проект» берёт слои окна там же, где меню берёт галки.
+        projectPaint.currentView = { [weak self] title in
+            guard let self = self else { return ProjectSettings() }
+            return ProjectPaint.view(title: title, themeStore: self.actions.themeStore,
+                                     themes: self.actions.themes, fonts: self.actions.fonts,
+                                     myThemes: self.actions.myThemes.load(),
+                                     autoPainted: self.actions.autoPaintedTheme(title: title))
+        }
+        menu.project = projectPaint
     }
 
     // MARK: - ClaudeAXControlling
@@ -65,6 +90,8 @@ public final class ClaudeAXController: ClaudeAXControlling {
             guard let self = self else { return }
             self.isAccessibilityTrusted = AX.isTrusted
             self.refreshHotkeys()
+            // Цвет проекта — на этом же таймере, своего заводить не надо (критик М2 плана WF15).
+            self.projectPaint.tick()
         }
         RunLoop.main.add(watchdog, forMode: .common)
         self.watchdog = watchdog
@@ -131,6 +158,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         menu=\(minimizeMenuEnabled)/\(menu.isRunning) menus=\(menu.shows) \
         blockQuit=\(blockQuitEnabled) blocks=\(blockedQuits) hotkeys=\(hotkeys.count) \
         status=\(statusFeed.isRunning)/\(statusFeed.projectCount)/\(statusFeed.sentCount) \
+        project=\(projectPaint.status) \
         lastCommand=\(actions.lastCommand)
         """
     }
