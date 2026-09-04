@@ -72,6 +72,7 @@ enum LiveStyle {
         \(markerStart)
         #myclaude-window-frame{border-radius:\(radius)px !important}
         .epitaxy-titlebar span[class*="w-[var(--chat-gutter-start"]{width:32px !important}
+        .tiles-shell{min-width:0 !important}
         [class*="--chat-column-gutter-start"]{--chat-column-gutter-start:\(px) !important;\
         --chat-column-gutter-end:\(px) !important}
         [class*="ps-[var(--chat-gutter"],[class*="pe-[var(--chat-gutter"],\

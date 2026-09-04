@@ -50,9 +50,9 @@ final class PatcherTests: XCTestCase {
         if case .installed = outcome {} else { XCTFail("ожидалась установка, получено \(outcome)") }
 
         let after = try Asar.status(of: patcher.asarURL)
-        XCTAssertEqual(after.loaderVersion, Patcher.requiredLoaderVersion, "лоадер v6 в главном сценарии не найден")
+        XCTAssertEqual(after.loaderVersion, Patcher.requiredLoaderVersion, "лоадер v7 в главном сценарии не найден")
         XCTAssertEqual(patcher.infoPlistHash(), after.headerSHA256, "хэш в Info.plist не совпал с новым архивом")
-        XCTAssertEqual(patcher.state(), .installed(version: try patcher.appVersion(), loaderVersion: 6))
+        XCTAssertEqual(patcher.state(), .installed(version: try patcher.appVersion(), loaderVersion: 7))
 
         // Все упакованные файлы должны читаться по своим (сдвинутым) смещениям с прежними хэшами.
         let archive = try Asar.read(patcher.asarURL)
@@ -122,10 +122,10 @@ final class LoaderTests: XCTestCase {
         XCTAssertEqual(Patcher.configDefaults["minWindowWidth"], 360)
     }
 
-    func testLoaderMarkersAreVersionSix() {
-        XCTAssertTrue(claudeLoaderSource.hasPrefix("/* [MyClaude:v6:start] */\n"))
-        XCTAssertTrue(claudeLoaderSource.hasSuffix("/* [MyClaude:v6:end] */\n"))
-        XCTAssertEqual(Asar.loaderVersion(of: claudeLoaderSource), 6)
+    func testLoaderMarkersAreVersionSeven() {
+        XCTAssertTrue(claudeLoaderSource.hasPrefix("/* [MyClaude:v7:start] */\n"))
+        XCTAssertTrue(claudeLoaderSource.hasSuffix("/* [MyClaude:v7:end] */\n"))
+        XCTAssertEqual(Asar.loaderVersion(of: claudeLoaderSource), 7)
         XCTAssertEqual(Asar.stripLoader(claudeLoaderSource + "// хвост"), "// хвост")
     }
 }

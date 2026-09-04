@@ -1,9 +1,9 @@
 // Сгенерировано из claude-patch/patch-claude.mjs (const LOADER, String.raw) — строка перенесена дословно.
-// Правится только там: смена текста лоадера = смена версии v6 в patch-claude.mjs и здесь.
+// Правится только там: смена текста лоадера = смена версии v7 в patch-claude.mjs и здесь.
 
-/// Лоадер MyClaude v6 — вставляется в начало главного сценария Claude (app.asar → package.json "main").
+/// Лоадер MyClaude v7 — вставляется в начало главного сценария Claude (app.asar → package.json "main").
 let claudeLoaderSource = #"""
-/* [MyClaude:v6:start] */
+/* [MyClaude:v7:start] */
 "use strict";(()=>{try{
 const electron=require("electron"),fs=require("node:fs"),os=require("node:os"),path=require("node:path");
 const {app,BrowserWindow,webContents}=electron;
@@ -14,7 +14,7 @@ const readConfig=()=>{try{return JSON.parse(fs.readFileSync(configPath,"utf8"))|
 // setMinimumSize при смене экрана, поэтому метод подменяется: всё, что выше
 // желаемого, прижимается к желаемому; штатное значение помнится для отката.
 const limits={desired:null,requested:new WeakMap(),native:null};
-function desiredMinWidth(){const v=Number(readConfig().minWindowWidth);if(!Number.isFinite(v)||v<=0)return null;return Math.max(320,Math.round(v))}
+function desiredMinWidth(){const v=Number(readConfig().minWindowWidth);if(!Number.isFinite(v)||v<=0)return null;return Math.max(200,Math.round(v))}
 function hookMinimumSize(){if(limits.native)return;const proto=BrowserWindow.prototype;const native=proto.setMinimumSize;if(typeof native!=="function")return;limits.native=native;
 // Claude сам зовёт setMinimumSize и с 600, и с 0 (при стыковке панелей):
 // ниже желаемого окно тоже не пускаем, иначе содержимое вылезает за край.
@@ -60,7 +60,7 @@ let probeStamp="";
 const stampOf=f=>{try{const s=fs.statSync(f);return s.mtimeMs+":"+s.size}catch{return ""}};
 function writeStatus(){try{const list=[];for(const c of webContents.getAllWebContents()){if(c.isDestroyed())continue;const st=cssState.get(c);list.push({id:c.id,url:c.getURL(),css:st?(st.error?"error: "+st.error:(st.key?"inserted":"none")):"untouched",inject:injected.get(c)||"none"})}
 const wins=BrowserWindow.getAllWindows().filter(w=>!w.isDestroyed()).map(w=>({id:w.id,min:w.getMinimumSize(),size:w.getSize()}));
-fs.writeFileSync(statusPath,JSON.stringify({at:new Date().toISOString(),loader:6,config:readConfig(),desiredMinWidth:limits.desired,windows:wins,webContents:list},null,2))}catch(e){log(e)}}
+fs.writeFileSync(statusPath,JSON.stringify({at:new Date().toISOString(),loader:7,config:readConfig(),desiredMinWidth:limits.desired,windows:wins,webContents:list},null,2))}catch(e){log(e)}}
 async function runProbe(){try{const s=stampOf(probePath);if(!s||s===probeStamp)return;probeStamp=s;const code=fs.readFileSync(probePath,"utf8");const results=[];
 for(const c of webContents.getAllWebContents()){if(c.isDestroyed()||!isClaudePage(c))continue;try{results.push({id:c.id,url:c.getURL(),result:await c.executeJavaScript(code,true)})}catch(e){results.push({id:c.id,url:c.getURL(),error:String(e)})}}
 fs.writeFileSync(probeResultPath,JSON.stringify({at:new Date().toISOString(),results},null,2))}catch(e){log(e)}}
@@ -81,8 +81,8 @@ for(const c of webContents.getAllWebContents()){if(c.isDestroyed()||!isClaudePag
 app.on("web-contents-created",(_,c)=>{try{c.on("dom-ready",()=>applyInject(c,true))}catch(e){log(e)}});
 fs.watchFile(injectPath,{interval:1000},reinjectAll);
 fs.watchFile(commandPath,{interval:500},runCommand);
-log("loader v6 ready");
+log("loader v7 ready");
 }catch(e){console.error("[MyClaude]",e)}})();
-/* [MyClaude:v6:end] */
+/* [MyClaude:v7:end] */
 
 """#
