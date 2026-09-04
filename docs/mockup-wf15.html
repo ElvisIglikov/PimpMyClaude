@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>PimpMyClaude — цвет проекта (WF15)</title>
+<style>
+  :root{
+    --bg:#161618; --card:#232326; --line:rgba(255,255,255,.10);
+    --text:#ececef; --dim:#9b9ba1; --head:#8d8d94; --accent:#3b6fe0; --ok:#3ea06a;
+    --menu:#2c2c2e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:18px 20px 28px;background:var(--bg);color:var(--text);
+    font:13px/1.45 -apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  h1{font-size:17px;margin:0 0 3px;font-weight:600}
+  .lead{color:var(--dim);font-size:12.5px;margin:0 0 14px}
+  h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--head);
+    font-weight:600;margin:22px 0 9px}
+
+  .vars{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .vars2{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .var{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .var.pick{border-color:#3ea06a;background:#1e2a22}
+  .var b{display:block;font-size:14.5px;margin-bottom:5px}
+  .tag{display:inline-block;font-size:10.5px;font-weight:600;color:#0f1a12;background:#4dbb7d;
+    border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:2px}
+  .var p{margin:3px 0;font-size:12.5px;color:#d6d6da}
+  .var p.minus{color:#d99a9a}
+  .var p span{color:var(--dim)}
+
+  .cascade{display:flex;align-items:flex-start;gap:12px;overflow-x:auto;padding:4px 2px 10px}
+  .capt{font-size:11px;color:var(--head);margin:0 0 5px 4px}
+
+  .menu{background:var(--menu);border:1px solid rgba(255,255,255,.09);border-radius:10px;
+    padding:5px 0;box-shadow:0 14px 34px rgba(0,0,0,.55);white-space:nowrap}
+  .row{display:flex;align-items:center;height:22px;margin:0 5px;padding:0 7px 0 2px;
+    border-radius:5px;color:var(--text)}
+  .row.sel{background:var(--accent)}
+  .row.sel .key,.row.sel .arw{color:#dbe4fb}
+  .row.off{color:#76767c}
+  .chk{width:15px;text-align:center;font-size:11px}
+  .ic{width:19px;text-align:center;font-size:12.5px}
+  .t{flex:1;padding-right:22px}
+  .key{color:var(--dim);font-size:12.5px}
+  .arw{color:#b9b9c0;margin-left:10px;font-size:11px}
+  .hdr{font-size:10px;letter-spacing:.07em;color:var(--head);padding:7px 12px 3px 38px}
+  .sub{font-size:11px;color:#7e7e85;padding:1px 12px 4px 40px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .sep{height:1px;background:rgba(255,255,255,.12);margin:5px 11px}
+  .dot{width:11px;height:11px;border-radius:50%;display:inline-block;vertical-align:-1px}
+
+  /* окна */
+  .wins{display:flex;gap:12px;flex-wrap:wrap}
+  .win{width:212px;border-radius:9px;overflow:hidden;border:1px solid rgba(255,255,255,.14);
+    box-shadow:0 8px 22px rgba(0,0,0,.45)}
+  .bar{height:22px;display:flex;align-items:center;gap:5px;padding:0 8px;font-size:11px}
+  .tl{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .body{padding:9px 10px 11px;font-size:11.5px;min-height:74px}
+  .body .q{border-radius:6px;padding:4px 7px;margin-bottom:6px}
+  .body .a{opacity:.85;line-height:1.5}
+  .cwd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;opacity:.75;margin-top:7px}
+
+  /* файлы */
+  .file{background:#1b1b1e;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .file .name{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:#c9c9d0;
+    background:#26262a;padding:5px 10px;border-bottom:1px solid var(--line)}
+  .file pre{margin:0;padding:9px 10px;font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:#c6ccd8;white-space:pre-wrap}
+  .file .k{color:#8fb3ff}
+  .file .s{color:#9ed6a4}
+  .file .c{color:#7b7b83}
+
+  /* подсказка приложения */
+  .hud{display:inline-flex;align-items:center;gap:9px;background:rgba(38,38,42,.97);
+    border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:10px 14px;
+    box-shadow:0 12px 30px rgba(0,0,0,.5);font-size:12.5px}
+  .hud b{font-weight:600}
+  .btn{display:inline-block;background:#3b6fe0;color:#fff;border-radius:6px;padding:3px 10px;font-size:12px}
+  .btn.gray{background:#3a3a3f;color:#d7d7dc}
+  .dlg{width:330px;background:#26262a;border:1px solid rgba(255,255,255,.13);border-radius:12px;
+    padding:14px 16px 13px;box-shadow:0 18px 40px rgba(0,0,0,.6)}
+  .dlg h3{margin:0 0 5px;font-size:13.5px}
+  .dlg p{margin:0 0 11px;font-size:12px;color:var(--dim)}
+  .dlg .foot{display:flex;gap:8px;justify-content:flex-end}
+
+  .qs{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .q{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .q b{display:block;margin-bottom:5px;font-size:13px}
+  .q ul{margin:0;padding-left:17px}
+  .q li{font-size:12.5px;margin:3px 0;color:#d6d6da}
+  .q li.rec{color:#a9e0bf}
+  .q li i{color:#4dbb7d;font-style:normal;font-weight:600}
+  .note{color:var(--dim);font-size:12px;margin-top:16px;max-width:900px}
+</style>
+</head>
+<body>
+
+<h1>Цвет проекта — как это будет выглядеть (WF15)</h1>
+<p class="lead">Оформление (цвет, шрифт, размер, рамка) лежит в папке проекта. Открыл чат с этой папкой — окно
+само стало нужного цвета. Настроек в папке нет — приложение предложит их завести.</p>
+
+<h2>Так это выглядит в работе</h2>
+<div class="wins">
+  <div class="win" style="background:#171a2b;color:#e8e9f5">
+    <div class="bar" style="background:#1e2238">
+      <span class="tl" style="background:#ff5f57"></span><span class="tl" style="background:#febc2e"></span>
+      <span class="tl" style="background:#28c840"></span><span style="margin-left:5px;opacity:.8">PimpMyClaude</span>
+    </div>
+    <div class="body">
+      <div class="q" style="background:#232a48">поправь рамку окна</div>
+      <div class="a">Радиус беру из claude.css, перепатч не нужен…</div>
+      <div class="cwd">~/_ElvisProjects/PimpMyClaude</div>
+    </div>
+  </div>
+  <div class="win" style="background:#14231a;color:#e4f2e8">
+    <div class="bar" style="background:#1b2f22">
+      <span class="tl" style="background:#ff5f57"></span><span class="tl" style="background:#febc2e"></span>
+      <span class="tl" style="background:#28c840"></span><span style="margin-left:5px;opacity:.8">Dictatoric</span>
+    </div>
+    <div class="body">
+      <div class="q" style="background:#20402c">запусти диктовку</div>
+      <div class="a">Готово, слушаю…</div>
+      <div class="cwd">~/_ElvisProjects/Dictatorik</div>
+    </div>
+  </div>
+  <div class="win" style="background:#2a1c1c;color:#f2e6e6">
+    <div class="bar" style="background:#3a2626">
+      <span class="tl" style="background:#ff5f57"></span><span class="tl" style="background:#febc2e"></span>
+      <span class="tl" style="background:#28c840"></span><span style="margin-left:5px;opacity:.8">Vkusnoff</span>
+    </div>
+    <div class="body">
+      <div class="q" style="background:#4a2c2c">что с деплоем</div>
+      <div class="a">Смоук зелёный…</div>
+      <div class="cwd">~/_ElvisProjects/VkusnoffKz</div>
+    </div>
+  </div>
+  <div class="win" style="background:#1c1c1f;color:#e6e6ea">
+    <div class="bar" style="background:#252528">
+      <span class="tl" style="background:#ff5f57"></span><span class="tl" style="background:#febc2e"></span>
+      <span class="tl" style="background:#28c840"></span><span style="margin-left:5px;opacity:.8">проект без настроек</span>
+    </div>
+    <div class="body">
+      <div class="q" style="background:#2c2c30">открыл чат в другой папке</div>
+      <div class="a">У проекта своего вида нет — окно возвращается к прежнему, чужой цвет не остаётся.</div>
+      <div class="cwd">~/_ElvisProjects/TrelvisCom</div>
+    </div>
+  </div>
+
+  <div class="win" style="background:#1c1c1f;color:#e6e6ea">
+    <div class="bar" style="background:#252528">
+      <span class="tl" style="background:#ff5f57"></span><span class="tl" style="background:#febc2e"></span>
+      <span class="tl" style="background:#28c840"></span><span style="margin-left:5px;opacity:.8">обычный чат</span>
+    </div>
+    <div class="body">
+      <div class="q" style="background:#2c2c30">переведи текст</div>
+      <div class="a">Папки у чата нет — цвет не трогаем.</div>
+      <div class="cwd">—</div>
+    </div>
+  </div>
+</div>
+
+<h2>Меню — где живёт «Проект»</h2>
+<div class="cascade">
+  <div>
+    <p class="capt">Вариант А (рекомендую): внутри «🎨 Оформление ▸», первым разделом</p>
+    <div style="display:flex;gap:10px;align-items:flex-start">
+      <div class="menu" style="min-width:196px">
+        <div class="row sel"><span class="chk"></span><span class="ic">🗂</span><span class="t">Проект: PimpMyClaude</span><span class="arw">▸</span></div>
+        <div class="sep"></div>
+        <div class="hdr">МОИ ТЕМЫ</div>
+        <div class="row"><span class="chk">✓</span><span class="ic"><span class="dot" style="background:#7c8cff"></span></span><span class="t">Ночная работа</span></div>
+        <div class="sep"></div>
+        <div class="row"><span class="chk"></span><span class="ic">🎨</span><span class="t">Цвет</span><span class="arw">▸</span></div>
+        <div class="row"><span class="chk"></span><span class="ic">🔤</span><span class="t">Шрифт</span><span class="arw">▸</span></div>
+        <div class="row"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер ответов</span><span class="arw">▸</span></div>
+        <div class="row"><span class="chk">✓</span><span class="ic">✨</span><span class="t">Неоновая рамка</span></div>
+        <div class="sep"></div>
+        <div class="row"><span class="chk"></span><span class="ic">🖥</span><span class="t">Всем окнам</span><span class="arw">▸</span></div>
+      </div>
+      <div class="menu" style="min-width:236px">
+        <div class="sub">~/_ElvisProjects/PimpMyClaude</div>
+        <div class="row"><span class="chk">✓</span><span class="ic"></span><span class="t">Красить чаты по проекту</span></div>
+        <div class="sep"></div>
+        <div class="row"><span class="chk"></span><span class="ic">🎨</span><span class="t">Взять цвет проекта</span></div>
+        <div class="row"><span class="chk"></span><span class="ic">💾</span><span class="t">Записать этот вид в проект</span></div>
+        <div class="row"><span class="chk"></span><span class="ic">📝</span><span class="t">Вписать строку в AGENTS.md</span></div>
+        <div class="row"><span class="chk"></span><span class="ic">🗑</span><span class="t">Убрать настройки из проекта</span></div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <p class="capt">Вариант Б: отдельным пунктом верхнего уровня</p>
+    <div class="menu" style="min-width:196px">
+      <div class="row"><span class="chk"></span><span class="ic">🚀</span><span class="t">Workflow</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">💬</span><span class="t">Новый чат</span><span class="key">⌘N</span></div>
+      <div class="sep"></div>
+      <div class="row"><span class="chk"></span><span class="ic">🎨</span><span class="t">Оформление</span><span class="arw">▸</span></div>
+      <div class="row sel"><span class="chk"></span><span class="ic">🗂</span><span class="t">Проект: PimpMyClaude</span><span class="arw">▸</span></div>
+      <div class="sep"></div>
+      <div class="row"><span class="chk"></span><span class="ic">⋯</span><span class="t">Ещё</span><span class="arw">▸</span></div>
+    </div>
+    <p class="capt" style="margin-top:9px">Папку не узнали — пункт виден, но погашен:</p>
+    <div class="menu" style="min-width:196px">
+      <div class="row off"><span class="chk"></span><span class="ic">🗂</span><span class="t">Проект: не определён</span></div>
+    </div>
+  </div>
+</div>
+
+<h2>Где хранить настройки проекта</h2>
+<div class="vars">
+  <div class="var pick">
+    <b>1. Файл в папке проекта<span class="tag">рекомендую</span></b>
+    <p><span>едет вместе с папкой к команде, правится руками, приложение чужого не трогает</span></p>
+    <p class="minus">− в репозитории появится лишний файл (одна строка в глобальный игнор — и не видно)</p>
+  </div>
+  <div class="var">
+    <b>2. Строка в AGENTS.md проекта</b>
+    <p><span>ровно как ты предложил: коротенько, в агентский файл; агент проекта видит цвет</span></p>
+    <p class="minus">− приложение правит файл, который правишь ты и агенты: каждая смена цвета — дифф в git</p>
+  </div>
+  <div class="var">
+    <b>3. Общий список в настройках приложения</b>
+    <p><span>в папки проектов вообще ничего не пишем</span></p>
+    <p class="minus">− настройки не едут с папкой: у Маши и Дениса цвета проекта не будет</p>
+  </div>
+</div>
+
+<div class="vars2" style="margin-top:10px">
+  <div class="file">
+    <div class="name">~/_ElvisProjects/PimpMyClaude/.pimpmyclaude.json</div>
+<pre>{
+  <span class="k">"pimpmyclaude"</span>: 1,
+  <span class="k">"name"</span>: <span class="s">"PimpMyClaude"</span>,
+  <span class="k">"theme"</span>: { <span class="k">"id"</span>: <span class="s">"indigo"</span>, <span class="k">"type"</span>: <span class="s">"dark"</span>, <span class="k">"palette"</span>: { … } },
+  <span class="k">"font"</span>:  { <span class="k">"id"</span>: <span class="s">"inter"</span>, <span class="k">"mono"</span>: false },
+  <span class="k">"size"</span>:  { <span class="k">"answer"</span>: 16, <span class="k">"question"</span>: 14 },
+  <span class="k">"frame"</span>: true
+}</pre>
+  </div>
+  <div class="file">
+    <div class="name">…/PimpMyClaude/AGENTS.md — одна строка (вариант 2)</div>
+<pre><span class="c">&lt;!-- pimpmyclaude: {"theme":"indigo","font":"inter",
+     "size":{"answer":16},"frame":true} --&gt;</span>
+
+<span class="c">В отрисованном markdown строки не видно,
+агент проекта её читает, файл остаётся твоим.</span></pre>
+  </div>
+</div>
+
+<h2>Настроек у папки нет — как предлагать</h2>
+<div class="cascade">
+  <div>
+    <p class="capt">Вариант 1 (рекомендую): подсказка приложения, один раз на папку</p>
+    <div class="hud">
+      <span>🗂</span><span>У проекта <b>PimpMyClaude</b> нет своего вида. Меню ▸ Оформление ▸ Проект</span>
+    </div>
+  </div>
+  <div>
+    <p class="capt">Вариант 2: окошко с вопросом</p>
+    <div class="dlg">
+      <h3>Завести настройки проекта?</h3>
+      <p>Запишу цвет, шрифт, размер и рамку этого окна в <br>~/_ElvisProjects/PimpMyClaude</p>
+      <div class="foot"><span class="btn gray">Не сейчас</span><span class="btn">Записать</span></div>
+    </div>
+  </div>
+  <div>
+    <p class="capt">Вариант 3: молча, только пункт в меню</p>
+    <div class="menu" style="min-width:212px">
+      <div class="row"><span class="chk"></span><span class="ic">✍️</span><span class="t">Завести настройки проекта</span></div>
+    </div>
+  </div>
+</div>
+
+<h2>Вопросы Элвису</h2>
+<div class="qs">
+  <div class="q">
+    <b>1. Где хранить</b>
+    <ul>
+      <li class="rec"><i>(рекомендую)</i> файл <code>.pimpmyclaude.json</code> в папке проекта — настройки едут с папкой</li>
+      <li>только строка в AGENTS.md проекта (короче, но приложение правит твой файл)</li>
+      <li>общий список внутри приложения (в папки не пишем совсем)</li>
+    </ul>
+  </div>
+  <div class="q">
+    <b>2. Строку в AGENTS.md писать?</b>
+    <ul>
+      <li class="rec"><i>(рекомендую)</i> да, но отдельным пунктом меню и по клику — как памятку агенту, не как хранилище</li>
+      <li>не трогать AGENTS.md вообще</li>
+    </ul>
+  </div>
+  <div class="q">
+    <b>3. Место в меню</b>
+    <ul>
+      <li class="rec"><i>(рекомендую)</i> внутри «🎨 Оформление ▸» первым разделом — это про вид</li>
+      <li>отдельным пунктом верхнего уровня (вариант Б)</li>
+    </ul>
+  </div>
+  <div class="q">
+    <b>4. Когда настроек нет</b>
+    <ul>
+      <li class="rec"><i>(рекомендую)</i> подсказка один раз на папку, дальше молчим</li>
+      <li>окошко с кнопкой «Записать»</li>
+      <li>ничего не показывать, только пункт меню</li>
+    </ul>
+  </div>
+  <div class="q">
+    <b>5. Главное окно красить?</b>
+    <ul>
+      <li class="rec"><i>(рекомендую)</i> да — для этого в страницу добавится три строчки; переустанавливать
+        ничего не надо, ни тебе, ни команде</li>
+      <li>страницу не трогать вовсе: тогда цвет получают только вынесенные окна чатов, а главное окно остаётся
+        как есть (в меню так и будет написано)</li>
+    </ul>
+  </div>
+</div>
+
+<p class="note">Как приложение узнаёт папку: у каждого чата Claude Code на диске лежит запись с путём папки и
+заголовком, а какой чат сейчас открыт — видно по адресу страницы. Патч Claude и лоадер не меняются, поэтому
+переустанавливать («Поставить снова») ни тебе, ни команде не придётся; в саму страницу добавятся три строчки —
+без них главное окно по имени не отличить от безымянных окошек, и цвет разлился бы на все сразу (вопрос 5).
+Ручной выбор сильнее проекта: выбрал окну цвет руками или раскрасил «по кругу» — по проекту оно больше
+не перекрасится, пока не сменишь чат. Открыто меню — фоновая покраска ждёт и примерку не сбивает.
+Перешёл в проект без настроек — окно возвращается к прежнему виду, чужой цвет не залипает.
+Если Claude Code запущен из подпапки, настройки всё равно берутся из корня проекта.
+Тумблер «Красить чаты по проекту» выключает всё разом и возвращает окна к прежнему виду.</p>
+
+</body>
+</html>

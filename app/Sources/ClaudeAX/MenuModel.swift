@@ -82,11 +82,13 @@ struct MenuEntry {
 }
 
 enum MenuModel {
+    /// Порядок — экранный, вариант А плана WF14: «Развернуть выше, свернуть ниже», а четвёрка
+    /// редких команд (`moreCommands`) стоит в конце и рисуется внутри «⋯ Ещё ▸».
+    /// Список остаётся ПОЛНЫМ из десяти пунктов: по нему же `ClaudeAXController.refreshHotkeys`
+    /// регистрирует Carbon-хоткеи (id = индекс+1), и вынести пункт отсюда = убить его клавишу.
     static let entries: [MenuEntry] = [
         // «Workflow» — первым и без клавиши: ⌘⌥W у Claude свой.
         MenuEntry(command: .workflow, title: "Workflow", icon: "🚀", key: nil, registersHotkey: false),
-        MenuEntry(command: .cashout, title: "Обкэшить", icon: "💰",
-                  key: KeySpec(mods: [.command, .shift], name: "n"), registersHotkey: true),
         MenuEntry(command: .newChat, title: "Новый чат", icon: "💬",
                   key: KeySpec(mods: [.command], name: "n"), registersHotkey: false),
         // «Новое окно» — новый чат сразу отдельным окном (план WF13). ⌥⌘N у Claude свободна,
@@ -95,10 +97,12 @@ enum MenuModel {
                   key: KeySpec(mods: [.command, .option], name: "n"), registersHotkey: true),
         MenuEntry(command: .popoutWindow, title: "В отдельное окно", icon: "🪟",
                   key: nil, registersHotkey: false),
-        MenuEntry(command: .collapse, title: "Свернуть", icon: "⬇️",
-                  key: KeySpec(mods: [.command, .option], name: "down"), registersHotkey: true),
         MenuEntry(command: .expand, title: "Развернуть", icon: "⬆️",
                   key: KeySpec(mods: [.command, .option], name: "up"), registersHotkey: true),
+        MenuEntry(command: .collapse, title: "Свернуть", icon: "⬇️",
+                  key: KeySpec(mods: [.command, .option], name: "down"), registersHotkey: true),
+        MenuEntry(command: .cashout, title: "Обкэшить", icon: "💰",
+                  key: KeySpec(mods: [.command, .shift], name: "n"), registersHotkey: true),
         MenuEntry(command: .arrange, title: "Расставить", icon: "▦",
                   key: KeySpec(mods: [.command, .option], name: "a"), registersHotkey: true),
         MenuEntry(command: .show, title: "Показать", icon: "👀",
@@ -107,9 +111,17 @@ enum MenuModel {
                   key: KeySpec(mods: [.command, .option], name: "d"), registersHotkey: true),
     ]
 
-    /// Разделители стоят после «В отдельное окно» и после «Развернуть» (README): оконные
-    /// пункты WF13 идут одной группой с «Новый чат», поэтому разделитель переехал с него.
-    static let separatorsAfter: Set<ClaudeCommand> = [.popoutWindow, .expand]
+    /// Редкое — внутри «⋯ Ещё ▸» (решение Элвиса 04.09: «Расставить, показать, прокрутить —
+    /// давай все скроем», «Обкэшить… давай спрячем»). Прячем только с глаз: пункты остаются
+    /// в `entries`, поэтому ⇧⌘N, ⌥⌘A, ⌥⌘S и ⌥⌘D работают как раньше.
+    static let moreCommands: Set<ClaudeCommand> = [.cashout, .arrange, .show, .scroll]
+    static let moreTitle = "Ещё"
+    static let moreIcon = "⋯"
+
+    /// Разделители стоят после «В отдельное окно» и после «Свернуть»: оконные пункты WF13 идут
+    /// одной группой с «Новый чат», дальше пара «Развернуть/Свернуть». Разделители вокруг
+    /// «🎨 Оформление ▸» ставит сам `build()`.
+    static let separatorsAfter: Set<ClaudeCommand> = [.popoutWindow, .collapse]
 
     static func entry(for command: ClaudeCommand) -> MenuEntry? {
         entries.first { $0.command == command }
@@ -127,15 +139,20 @@ enum MenuModel {
     /// Штатные 2,5 с `onWarning` гаснут задолго до результата (критик п. 20 плана WF13).
     static let newWindowNoticeSeconds: TimeInterval = 4
 
-    // MARK: - темы и шрифты (WF5, переложено в WF6)
+    // MARK: - оформление (WF5 → WF6, переложено в WF14)
 
-    /// Два подменю после семи пунктов, за разделителем. Хоткеев у них нет — только меню.
-    /// «Тема окна»/«Тема всех окон» из WF5 схлопнуты в одно «Тема» с вложенным «Всем окнам ▸»:
-    /// подменю стояли вплотную и при скольжении мыши вниз одно подменялось другим (жалоба #5313).
-    static let themeTitle = "Тема"
+    /// Всё про вид окна — в одном подменю «🎨 Оформление ▸» (вариант А макета WF14):
+    /// свои темы сверху, дальше цвет, шрифт, размеры, рамка, поля и «Всем окнам ▸».
+    static let appearanceTitle = "Оформление"
+    static let appearanceIcon = "🎨"
+    /// «Тема» из WF6 переименована в «Цвет» (слово Элвиса 04.09: «там цвет подраздел, шрифт подраздел»).
+    static let colorTitle = "Цвет"
     static let fontTitle = "Шрифт"
     /// Вложенное подменю «всем окнам» и его disabled-заголовок — чтобы не спутать с окном.
+    /// Заголовок ставится РОВНО ОДИН раз, первым пунктом самого «🖥 Всем окнам ▸»: списки
+    /// внутри него своих шапок больше не рисуют (критик В4).
     static let allWindowsTitle = "Всем окнам"
+    static let allWindowsIcon = "🖥"
     static let allWindowsHeader = "ВСЕМ ОКНАМ"
     /// Disabled-заголовки секций.
     static let myThemesHeader = "МОИ ТЕМЫ"
@@ -159,9 +176,10 @@ enum MenuModel {
     /// Сброс слоя: в команде `"theme":null` / `"font":null`, остальные слои не трогаем.
     static let themeResetTitle = "Как у Claude"
     static let fontResetTitle = "Системный (как у Claude)"
-    /// Размер текста сообщений (план WF12 п. 2) — два подменю в конце «🔤 Шрифт ▸».
+    /// Размер текста сообщений (план WF12 п. 2) — два подменю «🎨 Оформление ▸».
     static let answerSizeTitle = "Размер ответов"
     static let questionSizeTitle = "Размер вопросов"
+    static let sizeIcon = "🔠"
     /// Сброс слоя размера: `"size":null` снимает ОБЕ половины — перефилдового null
     /// в контракте нет, и «Как у Claude» в любом из двух подменю значит одно и то же.
     static let sizeResetTitle = "Как у Claude"
@@ -170,21 +188,40 @@ enum MenuModel {
         half == .answer ? answerSizeTitle : questionSizeTitle
     }
 
-    /// Тумблер «✨ Неоновая рамка» в конце «🎨 Тема ▸» и в его «Всем окнам ▸» (план WF12 п. 4):
+    /// Тумблер «✨ Неоновая рамка» в «🎨 Оформление ▸» и в его «🖥 Всем окнам ▸» (план WF12 п. 4):
     /// галка — рамка включена, клик переключает, наведение примеряет включённую.
     static let frameTitle = "Неоновая рамка"
     static let frameIcon = "✨"
     /// Свои темы (план п. 4).
     static let saveMyThemeTitle = "Сохранить как мою тему…"
+    static let saveMyThemeIcon = "💾"
     static let deleteMyThemeTitle = "Удалить мою тему"
+    static let deleteMyThemeIcon = "🗑"
     static let myThemeNamePrompt = "Имя своей темы"
-    static let myThemeNameHint = "Тема и шрифт запомнятся парой — применить их можно будет одним пунктом."
+    static let myThemeNameHint = "Тема, шрифт и размер запомнятся парой. "
+        + "Имя как у сохранённой — спрошу, перезаписать ли."
     static let myThemeSaveButton = "Сохранить"
     static let myThemeCancelButton = "Отмена"
     static let myThemeEmptyAlert = "Сначала выбери тему — её и запомню вместе со шрифтом."
+    /// Имя занято своей темой — перезапись только после подтверждения (критик В2 плана WF14):
+    /// иначе «Фиолетовая → Сохранить» на втором окне молча затрёт сохранённую раньше.
+    static let myThemeOverwriteButton = "Перезаписать"
+
+    static func myThemeOverwritePrompt(_ name: String) -> String { "Перезаписать «\(name)»?" }
+
+    /// «🧹 Всё как у Claude» — сброс всех четырёх слоёв окна разом, без подтверждения
+    /// (слои возвращаются одним кликом; мелочь М10 критика).
+    static let resetAllTitle = "Всё как у Claude"
+    static let resetAllIcon = "🧹"
+
+    /// «↔️ Поля по бокам» — ползунок прямо в открытом меню (задача #5360). Значение живёт
+    /// в `claude.json` (`sidePadding`), лоадер видит файл опросом раз в секунду.
+    static let sidePaddingTitle = "Поля по бокам"
+    static let sidePaddingIcon = "↔️"
     /// Клик по «🚀 Workflow» на сборке без комплекта (критик п. 3 фикс-батча WF9): молчать
     /// нельзя — со стороны пункт выглядит сломанным.
     static let workflowKitMissingAlert = "В сборке нет комплекта workflow-kit — поставь свежий PimpMyClaude.app"
+    /// Иконка достаётся и «Оформление ▸», и «Цвет ▸» — так в утверждённом макете (мелочь М11).
     static let themeIcon = "🎨"
     static let fontIcon = "🔤"
     /// Значения поля `scope` команды `theme` (контракт п. 5 плана WF6).
@@ -193,9 +230,11 @@ enum MenuModel {
 
     // MARK: - автопокраска (план WF10)
 
-    /// Подменю после «🔤 Шрифт ▸»: наборы, разделитель, «Случайно», «Ещё раз», сброс всем окнам.
-    /// Каталог тем ему не нужен — палитры набор считает сам, поэтому оно есть всегда.
-    static let autoPaintTitle = "Автопокраска"
+    /// Подменю внутри «🖥 Всем окнам ▸»: наборы, разделитель, «Случайно», «Ещё раз», сброс
+    /// всем окнам. Каталог тем ему не нужен — палитры набор считает сам, поэтому оно есть всегда.
+    /// С верхнего уровня меню окна и из меню-бара снято (решение Элвиса 04.09 19:30, задача #5362),
+    /// имя тоже его — «Раскрасить по кругу» вместо «Автопокраска».
+    static let autoPaintTitle = "Раскрасить по кругу"
     static let autoPaintIcon = "🌈"
     static let autoPaintAgainTitle = "Ещё раз"
     static let autoPaintAgainIcon = "🔁"

@@ -114,20 +114,11 @@ public final class ClaudeAXController: ClaudeAXControlling {
         actions.perform(command, on: nil)
     }
 
-    /// Дубль подменю «🌈 Автопокраска» для меню-бара приложения (план WF10 п. 1): то же самое,
-    /// что на жёлтой кнопке, но окно под курсором ему не нужно — набор красит все окна на экране.
-    public func autoPaintMenuItem() -> NSMenuItem {
-        var config = MinimizeMenu.MenuConfig()
-        config.autoPaint = { [weak self] preset in
-            DispatchQueue.main.async { self?.actions.autoPaint(preset: preset) }
-        }
-        config.autoPaintAgain = { [weak self] in
-            DispatchQueue.main.async { self?.actions.autoPaintAgain() }
-        }
-        config.autoPaintReset = { [weak self] in
-            DispatchQueue.main.async { self?.actions.autoPaintReset() }
-        }
-        return MinimizeMenu.autoPaintItem(config)
+    /// Блок стилей в живом `claude.css` (радиус неоновой рамки и поля по бокам) — на запуске
+    /// приложения и после «Поставить»/«Снять»: `Patcher.installLiveFiles` копирует claude.css
+    /// из бандла ЦЕЛИКОМ и затирает его (решение 1 плана WF14).
+    public func refreshLiveStyle() {
+        LiveStyle.refresh()
     }
 
     // MARK: - статус (для меню-бара и живой проверки на гейте)

@@ -51,14 +51,22 @@ final class MyThemesStore {
     func load() -> [MyTheme] { MyThemesStore.parse(try? Data(contentsOf: url)) }
 
     /// Сохранить последний применённый набор слоёв под именем (цвет, шрифт, размер, рамка).
+    /// Имя занято своей темой (после `clean`, регистронезависимо) — перезаписываем её слои,
+    /// сохраняя id и место в списке: это и есть «изменить свою тему» (задача #5364), галка
+    /// в меню не съезжает, а применённая тема остаётся применённой. Спрашивает про перезапись
+    /// вызывающий (`MinimizeMenu.saveMyTheme`), здесь только запись.
     /// Возвращает новый список (nil — не записалось).
     @discardableResult
     func add(name: String, theme: Theme, font: Font?, size: Size? = nil, frame: Bool = false,
              now: TimeInterval = Date().timeIntervalSince1970) -> [MyTheme]? {
-        let my = MyTheme(id: MyThemesStore.makeID(now: now), name: MyThemesStore.clean(name: name),
-                         type: theme.type, palette: theme.palette, font: font, size: size, frame: frame)
-        guard !my.name.isEmpty else { return nil }
-        let list = MyThemesStore.appending(my, to: load())
+        let clean = MyThemesStore.clean(name: name)
+        guard !clean.isEmpty else { return nil }
+        let stored = load()
+        let my = MyTheme(id: MyThemesStore.matching(name: clean, in: stored)?.id
+                             ?? MyThemesStore.makeID(now: now),
+                         name: clean, type: theme.type, palette: theme.palette,
+                         font: font, size: size, frame: frame)
+        let list = MyThemesStore.appending(my, to: stored)
         return write(list) ? list : nil
     }
 
@@ -80,9 +88,22 @@ final class MyThemesStore {
         String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(nameLimit))
     }
 
-    /// Новая тема в конец; за лимитом уходит самая старая.
+    /// Своя тема с таким именем (после `clean`, регистронезависимо) — её и перезаписываем.
+    static func matching(name: String, in list: [MyTheme]) -> MyTheme? {
+        let wanted = clean(name: name).lowercased()
+        guard !wanted.isEmpty else { return nil }
+        return list.first { clean(name: $0.name).lowercased() == wanted }
+    }
+
+    /// Тема с известным id — на своё место (перезапись слоёв «изменить»: галка в меню не
+    /// съезжает); новая — в конец, и за лимитом уходит самая старая.
     static func appending(_ theme: MyTheme, to list: [MyTheme]) -> [MyTheme] {
-        Array((list.filter { $0.id != theme.id } + [theme]).suffix(limit))
+        if let index = list.firstIndex(where: { $0.id == theme.id }) {
+            var updated = list
+            updated[index] = theme
+            return updated
+        }
+        return Array((list + [theme]).suffix(limit))
     }
 
     /// Запись без id, имени или палитры пропускается — из-за одной кривой строки не должен

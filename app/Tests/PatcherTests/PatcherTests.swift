@@ -114,6 +114,14 @@ final class PatcherTests: XCTestCase {
 
 /// Дешёвые проверки самой строки лоадера — без копирования 39 МБ.
 final class LoaderTests: XCTestCase {
+    /// Умолчания claude.json: поля по бокам — 5 px (решение Элвиса 04.09, вопрос 4 макета WF14).
+    /// Та же цифра лежит в `LiveStyle.defaultSidePadding` (таргет ClaudeAX его не видит),
+    /// в `claude-patch/claude.json` и в `DEFAULTS` файла `patch-claude.mjs` — мелочь М6 критика.
+    func testConfigDefaultsCarryFivePixelSidePadding() {
+        XCTAssertEqual(Patcher.configDefaults["sidePadding"], 5)
+        XCTAssertEqual(Patcher.configDefaults["minWindowWidth"], 360)
+    }
+
     func testLoaderMarkersAreVersionSix() {
         XCTAssertTrue(claudeLoaderSource.hasPrefix("/* [MyClaude:v6:start] */\n"))
         XCTAssertTrue(claudeLoaderSource.hasSuffix("/* [MyClaude:v6:end] */\n"))

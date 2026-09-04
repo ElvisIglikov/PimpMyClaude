@@ -38,7 +38,7 @@ const BUNDLE_ID = "com.anthropic.claudefordesktop";
 const LOADER_VERSION = 6;
 const MARK_START = `/* [MyClaude:v${LOADER_VERSION}:start] */`;
 const MARK_END = `/* [MyClaude:v${LOADER_VERSION}:end] */`;
-const DEFAULTS = { minWindowWidth: 360, sidePadding: 16 };
+const DEFAULTS = { minWindowWidth: 360, sidePadding: 5 }; // 5 px — решение Элвиса 04.09 (WF14); та же цифра в Patcher.configDefaults, LiveStyle.defaultSidePadding и claude.json
 
 // ---------------------------------------------------------------- utils
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
