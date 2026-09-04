@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>PimpMyClaude — редактор своей темы (WF20)</title>
+<style>
+  :root{
+    --bg:#161618; --card:#232326; --line:rgba(255,255,255,.10);
+    --text:#ececef; --dim:#9b9ba1; --head:#8d8d94; --accent:#3b6fe0; --ok:#4dbb7d;
+    --menu:#2c2c2e; --panel:#2a2a2d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:18px 20px 30px;background:var(--bg);color:var(--text);
+    font:13px/1.45 -apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  h1{font-size:17px;margin:0 0 3px;font-weight:600}
+  .lead{color:var(--dim);font-size:12.5px;margin:0 0 16px;max-width:900px}
+  h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--head);
+    font-weight:600;margin:22px 0 9px}
+
+  /* ——— живая примерка ——— */
+  .live{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+  .pane{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+    box-shadow:0 16px 40px rgba(0,0,0,.5);width:288px;overflow:hidden}
+  .pane .bar{height:24px;background:linear-gradient(#3a3a3d,#313134);border-bottom:1px solid rgba(0,0,0,.4);
+    display:flex;align-items:center;padding:0 9px;gap:6px}
+  .dotm{width:11px;height:11px;border-radius:50%;background:#5a5a5f}
+  .dotm.r{background:#ee6a5f}
+  .pane .bar b{font-size:11.5px;font-weight:500;color:#c9c9cf;margin-left:5px}
+  .pane .body{padding:11px 13px 13px}
+  .knob{margin:0 0 11px}
+  .knob .lab{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);margin-bottom:3px}
+  .knob .lab b{color:var(--text);font-weight:500}
+  .knob .lab i{font-style:normal;font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:14px;background:transparent;margin:0}
+  input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:rgba(255,255,255,.24)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;
+    background:#f4f4f6;box-shadow:0 1px 3px rgba(0,0,0,.65);margin-top:-5px}
+  #hue::-webkit-slider-runnable-track{background:linear-gradient(90deg,
+    #ff5f5f,#ffd25f,#7bff5f,#5fffe0,#5f9dff,#c15fff,#ff5f9e,#ff5f5f)}
+  .seg{display:flex;gap:0;border:1px solid rgba(255,255,255,.16);border-radius:6px;overflow:hidden;margin:2px 0 12px}
+  .seg button{flex:1;background:transparent;border:0;color:var(--text);font:12px -apple-system,sans-serif;
+    padding:4px 0;cursor:pointer}
+  .seg button.on{background:var(--accent);color:#fff}
+  .name{display:flex;gap:7px;align-items:center;margin:2px 0 10px}
+  .name input{flex:1;background:#1c1c1f;border:1px solid rgba(255,255,255,.18);border-radius:5px;
+    color:var(--text);font:12.5px -apple-system,sans-serif;padding:4px 7px}
+  .btns{display:flex;gap:7px;justify-content:flex-end}
+  .btns button{background:#3a3a3f;border:0;border-radius:6px;color:var(--text);
+    font:12.5px -apple-system,sans-serif;padding:5px 13px;cursor:pointer}
+  .btns button.pr{background:var(--accent);color:#fff}
+  .meter{font-size:11px;color:var(--dim);margin:0 0 9px;font-variant-numeric:tabular-nums}
+  .meter b{color:var(--ok);font-weight:500}
+
+  /* мини-окно Claude */
+  .win{width:392px;border-radius:11px;overflow:hidden;border:1px solid rgba(255,255,255,.10);
+    box-shadow:0 16px 40px rgba(0,0,0,.5)}
+  .win .top{height:24px;display:flex;align-items:center;padding:0 9px;gap:6px;font-size:11.5px}
+  .win .cols{display:flex;height:214px}
+  .win .side{width:104px;padding:9px 8px;font-size:11px}
+  .win .side div{margin-bottom:7px;opacity:.85}
+  .win .main{flex:1;padding:11px 12px}
+  .win .msg{border-radius:9px;padding:8px 10px;margin-bottom:8px;font-size:12px;line-height:1.4}
+  .win .btn{display:inline-block;border-radius:6px;padding:4px 11px;font-size:11.5px;font-weight:600}
+  .win .inp{border-radius:8px;padding:7px 10px;font-size:11.5px;margin-top:9px}
+  .swatches{display:flex;gap:5px;margin-top:9px;flex-wrap:wrap}
+  .sw{width:52px;text-align:center;font-size:9.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .sw i{display:block;height:17px;border-radius:4px;border:1px solid rgba(255,255,255,.14);margin-bottom:2px}
+
+  /* карточки вариантов */
+  .vars{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .var{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .var.pick{border-color:#3ea06a;background:#1e2a22}
+  .var b{display:block;font-size:15px;margin-bottom:5px}
+  .tag{display:inline-block;font-size:10.5px;font-weight:600;color:#0f1a12;background:#4dbb7d;
+    border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:2px}
+  .var p{margin:3px 0;font-size:12.5px;color:#d6d6da}
+  .var p.minus{color:#d99a9a}
+  .var p span{color:var(--dim)}
+
+  /* меню */
+  .cascade{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+  .capt{font-size:11px;color:var(--head);margin:0 0 5px 4px}
+  .menu{background:var(--menu);border:1px solid rgba(255,255,255,.09);border-radius:10px;
+    padding:5px 0;box-shadow:0 14px 34px rgba(0,0,0,.55);white-space:nowrap}
+  .row{display:flex;align-items:center;height:22px;margin:0 5px;padding:0 7px 0 2px;border-radius:5px}
+  .row.sel{background:var(--accent)}
+  .row.new{color:#bfe6cf}
+  .chk{width:15px;text-align:center;font-size:11px}
+  .ic{width:19px;text-align:center;font-size:12.5px}
+  .t{flex:1;padding-right:22px}
+  .arw{color:#b9b9c0;margin-left:10px;font-size:11px}
+  .hdr{font-size:10px;letter-spacing:.07em;color:var(--head);padding:7px 12px 3px 38px}
+  .sep{height:1px;background:rgba(255,255,255,.12);margin:5px 11px}
+  .row.slid{height:26px}
+  .track{position:relative;display:inline-block;width:80px;height:3px;border-radius:2px;
+    background:rgba(255,255,255,.22);margin:0 9px 0 0}
+  .fill{position:absolute;left:0;top:0;height:3px;border-radius:2px;background:#6b93f5}
+  .kn{position:absolute;top:-5px;width:13px;height:13px;border-radius:50%;background:#f4f4f6;
+    box-shadow:0 1px 3px rgba(0,0,0,.65)}
+  .num{color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
+
+  /* вопросы */
+  .qs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .q{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .q b{font-size:13.5px}
+  .q ul{margin:7px 0 0;padding-left:17px}
+  .q li{margin:2px 0;font-size:12.5px;color:#d6d6da}
+  .q li.rec{color:#bfe6cf}
+  .q li.rec i{font-style:normal;color:var(--ok);font-weight:600}
+  .note{color:var(--dim);font-size:12px;margin-top:15px;max-width:900px}
+</style>
+</head>
+<body>
+
+<h1>Редактор своей темы — покрути и скажи, какой вариант</h1>
+<p class="lead">Ниже всё живое: двигай ползунки — окно Claude справа красится теми же формулами, что стоят в приложении.
+Текст и акцент подтягиваются по контрасту сами, поэтому нечитаемую тему ползунками не сделать. Внизу три варианта и пять вопросов.</p>
+
+<h2>Покрути сам</h2>
+<div class="live">
+
+  <div class="pane">
+    <div class="bar"><span class="dotm r"></span><span class="dotm"></span><span class="dotm"></span><b>Своя тема</b></div>
+    <div class="body">
+      <div class="seg">
+        <button id="bDark" class="on">Тёмная</button>
+        <button id="bLight">Светлая</button>
+      </div>
+
+      <div class="knob">
+        <div class="lab"><b>Цвет</b><i id="vHue">262°</i></div>
+        <input id="hue" type="range" min="0" max="359" value="262">
+      </div>
+      <div class="knob">
+        <div class="lab"><b>Акцент</b><i id="vAcc">+0°</i></div>
+        <input id="acc" type="range" min="-180" max="180" value="0">
+      </div>
+      <div class="knob">
+        <div class="lab"><b>Сила цвета</b><i id="vStr">50 %</i></div>
+        <input id="str" type="range" min="0" max="100" value="50">
+      </div>
+
+      <p class="meter">контраст текста <b id="mText">7,1</b> · акцент <b id="mAcc">5,2</b> — оба в норме</p>
+
+      <div class="name">
+        <input id="nm" type="text" value="Ночная работа">
+      </div>
+      <div class="btns">
+        <button>Отмена</button>
+        <button class="pr">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="win" id="win">
+      <div class="top" id="wTop"><span class="dotm r"></span><span class="dotm"></span><span class="dotm"></span>
+        <span id="wTitle" style="margin-left:5px">Claude — Trelvis</span></div>
+      <div class="cols">
+        <div class="side" id="wSide">
+          <div>🔍 Поиск</div><div>Trelvis</div><div>PimpMyClaude</div><div>Dictatorik</div><div>VkusnoffKz</div>
+        </div>
+        <div class="main" id="wMain">
+          <div class="msg" id="wQ">Сделай тёплую тему для ночи</div>
+          <div class="msg" id="wA">Готово: фон, боковина и панель в одном тоне, акцент отдельно —
+            <span id="wLink">вот так</span>.</div>
+          <span class="btn" id="wBtn">Кнопка</span>
+          <div class="inp" id="wInp">Спроси что-нибудь…</div>
+        </div>
+      </div>
+    </div>
+    <div class="swatches" id="sw"></div>
+  </div>
+</div>
+
+<h2>Три варианта</h2>
+<div class="vars">
+  <div class="var pick">
+    <b>Вариант А — панель<span class="tag">рекомендую</span></b>
+    <p><span>Как:</span> пункт «🎚 Своя тема…» открывает маленькое окошко рядом с окном Claude (как слева).
+      Ползунки, имя, «Сохранить»/«Отмена». Окно красится, пока крутишь.</p>
+    <p><span>Плюс:</span> все ручки сразу видно, можно крутить долго, меню не мешает.</p>
+    <p class="minus"><span>Минус:</span> ещё одно окошко на экране — его надо закрывать.</p>
+  </div>
+  <div class="var">
+    <b>Вариант Б — ползунки в меню</b>
+    <p><span>Как:</span> три строки-ползунка прямо в «🎨 Оформление ▸», как «Поля по бокам».
+      Ниже «💾 Сохранить как мою тему…».</p>
+    <p><span>Плюс:</span> ничего нового не открывается, привычное меню.</p>
+    <p class="minus"><span>Минус:</span> меню держит мышь: отпустил — закрылось; имя темы всё равно спросит отдельное окно.</p>
+  </div>
+  <div class="var">
+    <b>Вариант В — шесть цветов вручную</b>
+    <p><span>Как:</span> панель, но вместо трёх ползунков шесть цветных квадратиков (фон, боковина, панель, текст, приглушённый, акцент) — macOS-пипетка на каждый.</p>
+    <p><span>Плюс:</span> полная свобода, можно повторить любую тему из интернета.</p>
+    <p class="minus"><span>Минус:</span> легко сделать нечитаемо, шесть цветов подбирать долго. Годится как «режим для упорных» поверх А.</p>
+  </div>
+</div>
+
+<h2>Как это в меню (вариант А, поверх нового «Оформления»)</h2>
+<div class="cascade">
+  <div>
+    <p class="capt">🎨 Оформление ▸</p>
+    <div class="menu">
+      <div class="hdr">МОИ ТЕМЫ</div>
+      <div class="row"><span class="chk">✓</span><span class="ic">🌑</span><span class="t">Ночная работа</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🌤</span><span class="t">Тёплая</span></div>
+      <div class="sep"></div>
+      <div class="row"><span class="chk"></span><span class="ic">🎨</span><span class="t">Цвет</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🔤</span><span class="t">Шрифт</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер ответов</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер вопросов</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk">✓</span><span class="ic">✨</span><span class="t">Неоновая рамка</span></div>
+      <div class="row slid"><span class="chk"></span><span class="ic">↔️</span><span class="t">Поля по бокам</span>
+        <span class="track"><span class="fill" style="width:17px"></span><span class="kn" style="left:11px"></span></span><span class="num">5</span></div>
+      <div class="sep"></div>
+      <div class="row"><span class="chk"></span><span class="ic">🖥</span><span class="t">Всем окнам</span><span class="arw">▸</span></div>
+      <div class="sep"></div>
+      <div class="row sel new"><span class="chk"></span><span class="ic">🎚</span><span class="t">Своя тема…</span></div>
+      <div class="row new"><span class="chk"></span><span class="ic">✏️</span><span class="t">Изменить мою тему</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">💾</span><span class="t">Сохранить как мою тему…</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🗑</span><span class="t">Удалить мою тему</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🧹</span><span class="t">Всё как у Claude</span></div>
+    </div>
+    <p class="capt" style="margin-top:6px">зелёным — два новых пункта</p>
+  </div>
+
+  <div>
+    <p class="capt">вариант Б — те же ручки прямо в меню</p>
+    <div class="menu">
+      <div class="hdr">СВОЯ ТЕМА</div>
+      <div class="row slid"><span class="chk"></span><span class="ic">🎨</span><span class="t">Цвет</span>
+        <span class="track"><span class="fill" style="width:58px"></span><span class="kn" style="left:52px"></span></span><span class="num">262°</span></div>
+      <div class="row slid"><span class="chk"></span><span class="ic">💡</span><span class="t">Акцент</span>
+        <span class="track"><span class="fill" style="width:40px"></span><span class="kn" style="left:34px"></span></span><span class="num">+0°</span></div>
+      <div class="row slid"><span class="chk"></span><span class="ic">🌡</span><span class="t">Сила цвета</span>
+        <span class="track"><span class="fill" style="width:40px"></span><span class="kn" style="left:34px"></span></span><span class="num">50</span></div>
+      <div class="row"><span class="chk">✓</span><span class="ic">🌑</span><span class="t">Тёмная</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">☀️</span><span class="t">Светлая</span></div>
+      <div class="sep"></div>
+      <div class="row"><span class="chk"></span><span class="ic">💾</span><span class="t">Сохранить как мою тему…</span></div>
+    </div>
+  </div>
+</div>
+
+<h2>👾 Элвис, ответь коротко</h2>
+<div class="qs">
+  <div class="q"><b>1. Панель или ползунки в меню?</b>
+    <ul>
+      <li class="rec"><i>А — панель</i> (рекомендую): крутить можно сколько угодно, имя тут же.</li>
+      <li>Б — ползунки в меню: ничего не открывается, но меню закрывается на каждый чих.</li>
+    </ul>
+  </div>
+  <div class="q"><b>2. Сколько ручек?</b>
+    <ul>
+      <li class="rec"><i>Три</i> (рекомендую): цвет, акцент, сила + тёмная/светлая.</li>
+      <li>Пять: плюс шрифт и размер текста — тогда одна панель настраивает вообще всё окно.</li>
+      <li>Шесть цветов вручную (вариант В) — отдельно и позже.</li>
+    </ul>
+  </div>
+  <div class="q"><b>3. Держать читаемость силой?</b>
+    <ul>
+      <li class="rec"><i>Да</i> (рекомендую): текст и акцент всегда подтягиваются по контрасту — испортить нельзя.</li>
+      <li>Нет: добавить галку «без ограничений», можно сделать чёрное на чёрном.</li>
+    </ul>
+  </div>
+  <div class="q"><b>4. Запоминать положение ползунков?</b>
+    <ul>
+      <li class="rec"><i>Да</i> (рекомендую): в файле тем появится строчка с ручками — «Изменить» откроет тему ровно там, где оставил.</li>
+      <li>Нет: подбирать ручки по цветам каждый раз (сдвиг на пару градусов).</li>
+    </ul>
+  </div>
+  <div class="q"><b>5. Крестик на панели — это что?</b>
+    <ul>
+      <li class="rec"><i>Отмена</i> (рекомендую): окно возвращает прежний цвет, ничего не сохраняется.</li>
+      <li>Сохранить молча — но тогда случайное закрытие перезапишет тему.</li>
+    </ul>
+  </div>
+  <div class="q"><b>6. Красить только это окно?</b>
+    <ul>
+      <li class="rec"><i>Да</i> (рекомендую): пока крутишь — красится окно, из которого открыл. «Всем окнам» — как и раньше, отдельным пунктом после сохранения.</li>
+      <li>Красить сразу все окна — рябит в глазах.</li>
+    </ul>
+  </div>
+</div>
+
+<p class="note">Всё, что видно выше, — Swift и меню приложения. Страницу Claude (inject.js) и лоадер трогать не нужно вовсе,
+значит «Поставить снова» команде не понадобится: тема уезжает в окно тем же способом, что и готовые темы из списка.</p>
+
+<script>
+(function(){
+  var norm = function(h){ return ((h % 360) + 360) % 360; };
+  function channels(c){
+    var h = norm(c.h)/360, s = Math.min(Math.max(c.s,0),100)/100, l = Math.min(Math.max(c.l,0),100)/100;
+    if (s <= 0){ var g = Math.round(l*255); return [g,g,g]; }
+    var q = l < 0.5 ? l*(1+s) : l+s-l*s, p = 2*l-q;
+    var ch = function(t){ if (t<0) t+=1; if (t>1) t-=1; var v;
+      if (t < 1/6) v = p+(q-p)*6*t; else if (t < 1/2) v = q;
+      else if (t < 2/3) v = p+(q-p)*(2/3-t)*6; else v = p;
+      return Math.round(v*255); };
+    return [ch(h+1/3), ch(h), ch(h-1/3)];
+  }
+  function hex(c){ return "#" + channels(c).map(function(v){ return ("0"+v.toString(16)).slice(-2); }).join(""); }
+  function lum(rgb){ var f = function(v){ var x = v/255; return x <= 0.03928 ? x/12.92 : Math.pow((x+0.055)/1.055,2.4); };
+    return 0.2126*f(rgb[0]) + 0.7152*f(rgb[1]) + 0.0722*f(rgb[2]); }
+  function L(c){ return lum(channels(c)); }
+  function contrast(a,b){ var x = L(a), y = L(b); return (Math.max(x,y)+0.05)/(Math.min(x,y)+0.05); }
+  function satHex(c){ var r = channels(c), x = r[0]/255, g = r[1]/255, b = r[2]/255;
+    var hi = Math.max(x,g,b), lo = Math.min(x,g,b); if (hi === lo) return 0;
+    var l = (hi+lo)/2; return (hi-lo)/(1-Math.abs(2*l-1))*100; }
+  function capped(c){ var out = {h:c.h,s:c.s,l:c.l};
+    for (var i=0;i<100;i++){ if (satHex(out) <= 60 || out.s <= 0) break; out.s = Math.max(0, out.s-0.5); } return out; }
+  function pulled(c,target,bg){ var out = {h:c.h,s:c.s,l:c.l}, up = L(bg) < 0.5;
+    for (var i=0;i<100;i++){ if (contrast(out,bg) >= target) break;
+      var next = out.l + (up ? 1 : -1); if (next < 0 || next > 100) break; out.l = next; } return out; }
+  function banded(c,lower,upper,bg){ var aim = (lower+upper)/2, out = pulled(c,aim,bg), back = L(bg) < 0.5 ? -1 : 1;
+    for (var i=0;i<100;i++){ if (contrast(out,bg) <= aim) break;
+      var next = out.l + back; if (next < 0 || next > 100) break;
+      var st = {h:out.h,s:out.s,l:next}; if (contrast(st,bg) < lower) break; out = st; } return out; }
+
+  function palette(hue, light, force, shift){
+    force = Math.min(Math.max(force,0),1);
+    var ah = norm(hue + shift), bg, side, panel, fg, muted, acc, l;
+    if (light){
+      l = 96 - 4*force;
+      bg = capped({h:hue, s:Math.min(60, 40+20*force), l:l});
+      panel = {h:hue, s:bg.s, l:Math.min(99, l+4)};
+      side  = {h:hue, s:bg.s, l:l-4};
+      fg = {h:hue, s:40, l:14}; muted = {h:hue, s:25, l:42}; acc = {h:ah, s:70, l:42};
+    } else {
+      l = 16 - 4*force;
+      bg = capped({h:hue, s:Math.min(60, 45+15*force), l:l});
+      side  = {h:hue, s:bg.s, l:l-3};
+      panel = {h:hue, s:bg.s, l:l+6};
+      fg = {h:hue, s:25, l:92}; muted = {h:hue, s:20, l:65}; acc = {h:ah, s:70+20*force, l:62};
+    }
+    fg = pulled(fg, 7, bg); muted = pulled(muted, 4.5, bg);
+    acc = banded(acc, 4.5, light ? 7 : 6, bg);
+    return { accent:hex(acc), background:hex(bg), foreground:hex(fg), sidebar:hex(side),
+             panel:hex(panel), muted:hex(muted),
+             tc:contrast(fg,bg), ac:contrast(acc,bg) };
+  }
+
+  var light = false;
+  var el = function(id){ return document.getElementById(id); };
+  var names = [["background","фон"],["sidebar","бок"],["panel","панель"],
+               ["foreground","текст"],["muted","тише"],["accent","акцент"]];
+
+  function draw(){
+    var hue = +el("hue").value, shift = +el("acc").value, force = +el("str").value/100;
+    var p = palette(hue, light, force, shift);
+    el("vHue").textContent = hue + "°";
+    el("vAcc").textContent = (shift >= 0 ? "+" : "") + shift + "°";
+    el("vStr").textContent = Math.round(force*100) + " %";
+    el("mText").textContent = p.tc.toFixed(1).replace(".", ",");
+    el("mAcc").textContent = p.ac.toFixed(1).replace(".", ",");
+
+    el("win").style.background = p.background;
+    el("win").style.boxShadow = "0 16px 40px rgba(0,0,0,.5), 0 0 0 1px " + p.accent;
+    el("wTop").style.background = p.sidebar;
+    el("wTop").style.color = p.muted;
+    el("wSide").style.background = p.sidebar;
+    el("wSide").style.color = p.muted;
+    el("wMain").style.background = p.background;
+    el("wQ").style.background = p.panel; el("wQ").style.color = p.foreground;
+    el("wA").style.background = p.panel; el("wA").style.color = p.foreground;
+    el("wLink").style.color = p.accent;
+    el("wBtn").style.background = p.accent;
+    el("wBtn").style.color = light ? "#ffffff" : p.background;
+    el("wInp").style.background = p.panel; el("wInp").style.color = p.muted;
+    el("wInp").style.border = "1px solid " + p.accent;
+    el("wTitle").style.color = p.foreground;
+
+    var out = "";
+    for (var i=0;i<names.length;i++){
+      out += '<span class="sw"><i style="background:' + p[names[i][0]] + '"></i>' + names[i][1] + '<br>' + p[names[i][0]] + '</span>';
+    }
+    el("sw").innerHTML = out;
+  }
+
+  el("hue").addEventListener("input", draw);
+  el("acc").addEventListener("input", draw);
+  el("str").addEventListener("input", draw);
+  el("bDark").addEventListener("click", function(){ light = false;
+    el("bDark").className = "on"; el("bLight").className = ""; draw(); });
+  el("bLight").addEventListener("click", function(){ light = true;
+    el("bLight").className = "on"; el("bDark").className = ""; draw(); });
+  draw();
+})();
+</script>
+
+</body>
+</html>

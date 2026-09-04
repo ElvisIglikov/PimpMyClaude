@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>PimpMyClaude — живые цвета (WF18)</title>
+<style>
+  :root{
+    --bg:#161618; --card:#232326; --line:rgba(255,255,255,.10);
+    --text:#ececef; --dim:#9b9ba1; --head:#8d8d94; --accent:#3b6fe0; --ok:#3ea06a;
+    --menu:#2c2c2e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:18px 20px 28px;background:var(--bg);color:var(--text);
+    font:13px/1.45 -apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  h1{font-size:17px;margin:0 0 3px;font-weight:600}
+  .lead{color:var(--dim);font-size:12.5px;margin:0 0 14px;max-width:900px}
+  h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--head);
+    font-weight:600;margin:22px 0 9px}
+
+  /* ---- живой показ ---- */
+  .radios{position:absolute;opacity:0;pointer-events:none}
+  .ctl{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+  .ctl label{font-size:12px;color:#d6d6da;background:var(--card);border:1px solid var(--line);
+    border-radius:7px;padding:4px 10px;cursor:pointer;user-select:none}
+  .ctl .grp{color:var(--head);font-size:11px;align-self:center;margin-right:2px}
+  #sp1:checked~.ctl label[for=sp1],#sp2:checked~.ctl label[for=sp2],
+  #sp3:checked~.ctl label[for=sp3],#sp4:checked~.ctl label[for=sp4],
+  #md1:checked~.ctl label[for=md1],#md2:checked~.ctl label[for=md2]
+    {background:#26406f;border-color:#4f7ae0;color:#fff}
+
+  .demo{--dur:60s;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:900px}
+  #sp1:checked~.demo{--dur:120s}
+  #sp2:checked~.demo{--dur:60s}
+  #sp3:checked~.demo{--dur:24s}
+  #sp4:checked~.demo{--dur:8s}
+  /* «каждое своим цветом» = сдвиг фазы отрицательной задержкой */
+  #md2:checked~.demo .w2{animation-delay:calc(var(--dur) / -3)}
+  #md2:checked~.demo .w2 .ttl,#md2:checked~.demo .w2 .msg{animation-delay:calc(var(--dur) / -3)}
+  #md2:checked~.demo .w2 .btn,#md2:checked~.demo .w2 .bar i{animation-delay:calc(var(--dur) / -3)}
+  #md2:checked~.demo .w3{animation-delay:calc(var(--dur) / -1.5)}
+  #md2:checked~.demo .w3 .ttl,#md2:checked~.demo .w3 .msg{animation-delay:calc(var(--dur) / -1.5)}
+  #md2:checked~.demo .w3 .btn,#md2:checked~.demo .w3 .bar i{animation-delay:calc(var(--dur) / -1.5)}
+
+  .win{border:1px solid rgba(255,255,255,.14);border-radius:11px;overflow:hidden;
+    animation:bg var(--dur) linear infinite;box-shadow:0 10px 26px rgba(0,0,0,.5)}
+  .bar1{height:24px;display:flex;align-items:center;gap:5px;padding:0 9px;
+    background:rgba(255,255,255,.06)}
+  .bar1 s{width:9px;height:9px;border-radius:50%;background:#ff5f57;display:inline-block}
+  .bar1 s:nth-child(2){background:#febc2e}.bar1 s:nth-child(3){background:#28c840}
+  .ttl{flex:1;text-align:center;font-size:11px;animation:fg var(--dur) linear infinite}
+  .body{padding:10px 11px 12px;min-height:112px}
+  .msg{font-size:11.5px;line-height:1.5;margin:0 0 8px;animation:fg var(--dur) linear infinite}
+  .btn{display:inline-block;font-size:11px;border-radius:6px;padding:3px 9px;color:#101014;
+    animation:ac var(--dur) linear infinite;font-weight:600}
+  .bar{margin-top:11px;height:2px;border-radius:2px;background:rgba(255,255,255,.16)}
+  .bar i{display:block;height:2px;width:62%;border-radius:2px;animation:ac2 var(--dur) linear infinite}
+
+  @keyframes bg{
+    0%{background:hsl(0 52% 14%)}   12.5%{background:hsl(45 52% 14%)}
+    25%{background:hsl(90 52% 14%)} 37.5%{background:hsl(135 52% 14%)}
+    50%{background:hsl(180 52% 14%)}62.5%{background:hsl(225 52% 14%)}
+    75%{background:hsl(270 52% 14%)}87.5%{background:hsl(315 52% 14%)}
+    100%{background:hsl(360 52% 14%)}}
+  @keyframes fg{
+    0%{color:hsl(0 25% 92%)}   12.5%{color:hsl(45 25% 92%)}
+    25%{color:hsl(90 25% 92%)} 37.5%{color:hsl(135 25% 92%)}
+    50%{color:hsl(180 25% 92%)}62.5%{color:hsl(225 25% 92%)}
+    75%{color:hsl(270 25% 92%)}87.5%{color:hsl(315 25% 92%)}
+    100%{color:hsl(360 25% 92%)}}
+  @keyframes ac{
+    0%{background:hsl(0 80% 62%)}   12.5%{background:hsl(45 80% 62%)}
+    25%{background:hsl(90 80% 62%)} 37.5%{background:hsl(135 80% 62%)}
+    50%{background:hsl(180 80% 62%)}62.5%{background:hsl(225 80% 62%)}
+    75%{background:hsl(270 80% 62%)}87.5%{background:hsl(315 80% 62%)}
+    100%{background:hsl(360 80% 62%)}}
+  @keyframes ac2{
+    0%{background:hsl(0 80% 62%)}   12.5%{background:hsl(45 80% 62%)}
+    25%{background:hsl(90 80% 62%)} 37.5%{background:hsl(135 80% 62%)}
+    50%{background:hsl(180 80% 62%)}62.5%{background:hsl(225 80% 62%)}
+    75%{background:hsl(270 80% 62%)}87.5%{background:hsl(315 80% 62%)}
+    100%{background:hsl(360 80% 62%)}}
+
+  /* ---- карточки вариантов ---- */
+  .vars{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:900px}
+  .var{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .var.pick{border-color:#3ea06a;background:#1e2a22}
+  .var b{display:block;font-size:15px;margin-bottom:5px}
+  .tag{display:inline-block;font-size:10.5px;font-weight:600;color:#0f1a12;background:#4dbb7d;
+    border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:2px}
+  .var p{margin:3px 0;font-size:12.5px;color:#d6d6da}
+  .var p.minus{color:#d99a9a}
+  .var p span{color:var(--dim)}
+
+  /* ---- меню ---- */
+  .cascade{display:flex;align-items:flex-start;gap:10px;overflow-x:auto;padding:4px 2px 10px}
+  .capt{font-size:11px;color:var(--head);margin:0 0 5px 4px}
+  .menu{background:var(--menu);border:1px solid rgba(255,255,255,.09);border-radius:10px;
+    padding:5px 0;box-shadow:0 14px 34px rgba(0,0,0,.55);white-space:nowrap}
+  .row{display:flex;align-items:center;height:22px;margin:0 5px;padding:0 7px 0 2px;
+    border-radius:5px;color:var(--text)}
+  .row.sel{background:var(--accent)}
+  .row.sel .key,.row.sel .arw{color:#dbe4fb}
+  .row.off{color:#7d7d85}
+  .chk{width:15px;text-align:center;font-size:11px}
+  .ic{width:19px;text-align:center;font-size:12.5px}
+  .t{flex:1;padding-right:22px}
+  .key{color:var(--dim);font-size:12.5px;font-variant-numeric:tabular-nums}
+  .arw{color:#b9b9c0;margin-left:10px;font-size:11px}
+  .sep{height:1px;background:rgba(255,255,255,.12);margin:5px 11px}
+  .row.slid{height:26px}
+  .track{position:relative;display:inline-block;width:82px;height:3px;border-radius:2px;
+    background:rgba(255,255,255,.22);margin:0 9px 0 0}
+  .fill{position:absolute;left:0;top:0;height:3px;width:34px;border-radius:2px;background:#6b93f5}
+  .knob{position:absolute;left:28px;top:-5px;width:13px;height:13px;border-radius:50%;
+    background:#f4f4f6;box-shadow:0 1px 3px rgba(0,0,0,.65)}
+
+  /* ---- таблица скоростей ---- */
+  table{border-collapse:collapse;font-size:12.5px;margin-top:2px}
+  th,td{border:1px solid var(--line);padding:4px 10px;text-align:center}
+  th{color:var(--head);font-weight:600;font-size:11px;letter-spacing:.04em}
+  td.def{background:#1e2a22;color:#bfe6cf;font-weight:600}
+
+  /* ---- вопросы ---- */
+  .qs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;max-width:900px}
+  .q{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .q b{font-size:13.5px}
+  .q ul{margin:7px 0 0;padding-left:17px}
+  .q li{margin:2px 0;font-size:12.5px;color:#d6d6da}
+  .q li.rec{color:#bfe6cf}
+  .q li.rec i{font-style:normal;color:#4dbb7d;font-weight:600}
+  .note{color:var(--dim);font-size:12px;margin-top:14px;max-width:900px}
+</style>
+</head>
+<body>
+
+<h1>Живые цвета — окна плавно едут по цветовому кругу</h1>
+<p class="lead">Ниже всё живое: покрути скорость и режим — так это и будет выглядеть в окнах Claude.
+Цвета настоящие, из того же генератора, что и «Раскрасить по кругу». Ответь на шесть вопросов внизу — и запускаю.</p>
+
+<h2>Как это выглядит</h2>
+
+<input class="radios" type="radio" name="sp" id="sp1">
+<input class="radios" type="radio" name="sp" id="sp2" checked>
+<input class="radios" type="radio" name="sp" id="sp3">
+<input class="radios" type="radio" name="sp" id="sp4">
+<input class="radios" type="radio" name="md" id="md1">
+<input class="radios" type="radio" name="md" id="md2" checked>
+
+<div class="ctl">
+  <span class="grp">Скорость показа:</span>
+  <label for="sp1">медленно</label>
+  <label for="sp2">обычно</label>
+  <label for="sp3">быстро</label>
+  <label for="sp4">очень быстро</label>
+  <span class="grp" style="margin-left:12px">Режим:</span>
+  <label for="md1">🔗 все одним цветом</label>
+  <label for="md2">🎭 каждое своим</label>
+</div>
+
+<div class="demo">
+  <div class="win w1">
+    <div class="bar1"><s></s><s></s><s></s><span class="ttl">Trelvis</span></div>
+    <div class="body">
+      <p class="msg">Полоска, меню и рамка красятся тем же цветом — они и сейчас берут акцент темы.</p>
+      <span class="btn">Отправить</span>
+      <div class="bar"><i></i></div>
+    </div>
+  </div>
+  <div class="win w2">
+    <div class="bar1"><s></s><s></s><s></s><span class="ttl">Dictatorik</span></div>
+    <div class="body">
+      <p class="msg">В режиме «каждое своим» окна разведены по кругу поровну: три окна — 120° друг от друга.</p>
+      <span class="btn">Отправить</span>
+      <div class="bar"><i></i></div>
+    </div>
+  </div>
+  <div class="win w3">
+    <div class="bar1"><s></s><s></s><s></s><span class="ttl">PimpMyClaude</span></div>
+    <div class="body">
+      <p class="msg">Выключил — окна мгновенно вернулись к своим темам, ничего не потерялось.</p>
+      <span class="btn">Отправить</span>
+      <div class="bar"><i></i></div>
+    </div>
+  </div>
+</div>
+
+<p class="note">В показе «очень быстро» — круг за 8 секунд: так делать не буду, это для наглядности.
+Самое быстрое, что я предлагаю, — круг за 20 секунд.</p>
+
+<h2>Где живёт — три варианта</h2>
+<div class="vars">
+  <div class="var pick">
+    <b>Вариант А<span class="tag">рекомендую</span></b>
+    <p><span>Где:</span> «🎨 Оформление ▸ → 🖥 Всем окнам ▸ → 🌊 Живые цвета ▸» — рядом с «🌈 Раскрасить по кругу».</p>
+    <p><span>Плюс:</span> верхний уровень, который мы только что разгрузили, не пухнет; всё «на все окна» лежит в одном месте.</p>
+    <p class="minus"><span>Минус:</span> три уровня вглубь.</p>
+  </div>
+  <div class="var">
+    <b>Вариант Б</b>
+    <p><span>Где:</span> тумблер «🌊 Живые цвета ✓» прямо в «🎨 Оформление ▸», скорость и режим — подменю рядом.</p>
+    <p><span>Плюс:</span> включить-выключить на клик ближе.</p>
+    <p class="minus"><span>Минус:</span> в «Оформлении» и так девять строк, добавляем десятую.</p>
+  </div>
+  <div class="var">
+    <b>Вариант В</b>
+    <p><span>Где:</span> отдельное окошко-панель с ползунками.</p>
+    <p class="minus"><span>Минус:</span> новое окно ради одной ручки; редактор темы ползунками и так запланирован отдельно.</p>
+  </div>
+</div>
+
+<h2>Подменю (вариант А)</h2>
+<div class="cascade">
+  <div>
+    <p class="capt">🎨 Оформление ▸</p>
+    <div class="menu">
+      <div class="row"><span class="chk"></span><span class="ic">🎨</span><span class="t">Цвет</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🔤</span><span class="t">Шрифт</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер ответов</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk">✓</span><span class="ic">✨</span><span class="t">Неоновая рамка</span></div>
+      <div class="sep"></div>
+      <div class="row sel"><span class="chk"></span><span class="ic">🖥</span><span class="t">Всем окнам</span><span class="arw">▸</span></div>
+    </div>
+  </div>
+  <div>
+    <p class="capt">🖥 Всем окнам ▸</p>
+    <div class="menu">
+      <div class="row"><span class="chk"></span><span class="ic">🎨</span><span class="t">Цвет</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🔤</span><span class="t">Шрифт</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">✨</span><span class="t">Неоновая рамка</span></div>
+      <div class="sep"></div>
+      <div class="row"><span class="chk"></span><span class="ic">🌈</span><span class="t">Раскрасить по кругу</span><span class="arw">▸</span></div>
+      <div class="row sel"><span class="chk"></span><span class="ic">🌊</span><span class="t">Живые цвета</span><span class="arw">▸</span></div>
+    </div>
+  </div>
+  <div>
+    <p class="capt">🌊 Живые цвета ▸</p>
+    <div class="menu">
+      <div class="row"><span class="chk"></span><span class="ic">⏹</span><span class="t">Выключить</span></div>
+      <div class="sep"></div>
+      <div class="row"><span class="chk"></span><span class="ic">🔗</span><span class="t">Все окна одним цветом</span></div>
+      <div class="row"><span class="chk">✓</span><span class="ic">🎭</span><span class="t">Каждое окно своим цветом</span></div>
+      <div class="sep"></div>
+      <div class="row slid"><span class="chk"></span><span class="ic">⏱</span><span class="t">Скорость</span>
+        <span class="track"><span class="fill"></span><span class="knob"></span></span><span class="key">круг за 5 мин</span></div>
+      <div class="sep"></div>
+      <div class="row"><span class="chk">✓</span><span class="ic">🌑</span><span class="t">Тёмные</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">☀️</span><span class="t">Светлые</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🪟</span><span class="t">Как окно сейчас</span></div>
+    </div>
+  </div>
+</div>
+
+<h2>Шкала скорости — восемь делений</h2>
+<table>
+  <tr><th>деление</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th></tr>
+  <tr><th>круг за</th><td>30 мин</td><td>15 мин</td><td>10 мин</td><td class="def">5 мин</td><td>2 мин</td><td>1 мин</td><td>40 с</td><td>20 с</td></tr>
+</table>
+<p class="note">Зелёное — по умолчанию. Ползунок в меню таскается мышью, цвет меняет темп сразу и без прыжка.
+Быстрее 20 секунд не даю: дальше это уже мигание.</p>
+
+<h2>Чего не делаю в этот раз</h2>
+<p class="note">Живые цвета на одно окно (только «всем сразу»); своя скорость каждому окну; светлые и тёмные вперемешку
+в одном круге (экран будет вспыхивать); плавную смену шрифта и размера. Редактор своей темы ползунками и хвосты меню —
+это отдельные воркфлоу, они уже запланированы.</p>
+
+<h2>👾 Элвис, ответь — и запускаю</h2>
+<div class="qs">
+  <div class="q"><b>1. Какой режим по умолчанию?</b>
+    <ul>
+      <li class="rec">🎭 Каждое окно своим цветом <i>(рекомендую)</i> — сразу видно, где какое окно</li>
+      <li>🔗 Все окна одним цветом</li>
+    </ul></div>
+  <div class="q"><b>2. Светлые или тёмные?</b>
+    <ul>
+      <li class="rec">🌑 Тёмные <i>(рекомендую)</i> — у тебя все окна тёмные</li>
+      <li>☀️ Светлые</li>
+      <li>🪟 Как окно сейчас — каждое остаётся в своём</li>
+    </ul></div>
+  <div class="q"><b>3. Скорость по умолчанию?</b>
+    <ul>
+      <li class="rec">Круг за 5 минут, шкала 30 мин…20 с <i>(рекомендую)</i></li>
+      <li>Быстрее по умолчанию — скажи, какое деление</li>
+    </ul></div>
+  <div class="q"><b>4. Где пункт в меню?</b>
+    <ul>
+      <li class="rec">Вариант А: «Всем окнам ▸ → Живые цвета ▸» <i>(рекомендую)</i></li>
+      <li>Вариант Б: тумблером в «Оформление ▸»</li>
+      <li>Вариант В: отдельная панель</li>
+    </ul></div>
+  <div class="q"><b>5. Живые цвета и «Раскрасить по кругу» — вместе?</b>
+    <ul>
+      <li class="rec">Взаимоисключающие: включил живые — автопокраска выключилась <i>(рекомендую)</i>, иначе кнопка выглядит сломанной</li>
+      <li>Пусть уживаются как получится</li>
+    </ul></div>
+  <div class="q"><b>6. Спрятанные окна — тормозить?</b>
+    <ul>
+      <li class="rec">Да, окно не видно — цвет не крутится <i>(рекомендую)</i>, экономит батарею; вернулся — цвет уже правильный</li>
+      <li>Нет, пусть крутится всегда</li>
+    </ul></div>
+</div>
+
+<p class="note">Одно честное предупреждение: это постоянная работа для каждого окна — на ноутбуке без розетки
+батарея сядет заметно быстрее. Поэтому и предлагаю тормозить спрятанные окна, и держать «5 минут на круг» по умолчанию.</p>
+
+</body>
+</html>

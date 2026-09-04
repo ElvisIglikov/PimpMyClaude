@@ -34,7 +34,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf13-a-1";
+  const VERSION = "wf13-a-2";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -2095,7 +2095,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // claude.ai и окна Claude Code разная, свой узкий селектор в 1.40609.1 не находил ничего.
     let nodes = [];
     try {
-      const all = [...document.querySelectorAll(ANSWER_SELECTOR)].filter(answerUsable);
+      // Плюс строки виртуальной ленты Claude Code: у ответа с шагами инструментов
+      // aria-label «Message N» достаётся строке шагов, а итоговый текст (со строкой
+      // состояния) лежит отдельной строкой без приметы (замер 04.09 21:00).
+      const all = [...document.querySelectorAll(`${ANSWER_SELECTOR},[data-testid="transcript-row"]`)]
+        .filter(answerUsable);
       nodes = all.filter(node => !all.some(other => other !== node && other.contains(node)));
     } catch {}
     const stop = Math.max(0, nodes.length - PROGRESS_LOOKBACK);
