@@ -19,7 +19,16 @@
       "at": "2026-09-05T01:35:00+05:00",
       "who": "оркестратор",
       "what": "ветка wf18 от main после WF16; запуск волны"
+    },
+    {
+      "at": "2026-09-05T02:20:00+05:00",
+      "who": "оркестратор",
+      "what": "волна ok: A-js, A-swift (82 теста), D; verify — 1 важная (фаза окна по заглушке) → фикс-батч A-js запущен"
     }
   ],
-  "watchdog": "watchdog-pimpmyclaude-0409"
+  "watchdog": "watchdog-pimpmyclaude-0409",
+  "fix_run": {
+    "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/6d67f948-9b23-45b0-9fef-b332a622ff3f/workflows/scripts/pimpmyclaude-wf18-fix-wf_9c084a7f-872.js",
+    "run_id": "wf_9c084a7f-872"
+  }
 }
