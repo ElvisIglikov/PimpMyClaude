@@ -2939,8 +2939,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     handle.style.display = "flex";
     handle.style.left = `${Math.round(left + (span - width) / 2)}px`;
     handle.style.width = `${width}px`;
+    // Свёрнутая полоска стоит на 5 точек выше, чем раньше: на кромке строки
+    // модели её линия сливалась с полосой прогресса (слово Элвиса 05.09 19:30).
     handle.style.top = `${Math.round(row && row.height > 0
-      ? row.top - HANDLE_HEIGHT + 3
+      ? row.top - HANDLE_HEIGHT - 2
       : innerHeight - HANDLE_HEIGHT - 4)}px`;
     // Хит-тест нужен и здесь: меню модели и effort раскрываются вверх ровно над
     // этим местом. Но одного хит-теста мало: центр свёрнутой полоски лежит выше
