@@ -34,8 +34,10 @@ enum FontCategory: String, CaseIterable {
 /// Кегль текста сообщений — третий слой темы (контракт п. 1 плана WF12):
 /// `"size":{"answer":15,"question":14}` в пикселях. Половинки независимы: половины, которой
 /// в команде нет, страница не трогает (`runThemeCommand` доклеивает её из хранилища).
-/// Сброс — только слоем целиком (`"size":null`): перефилдового null контракт не знает,
-/// поэтому «Как у Claude» в любом из двух подменю снимает обе половины.
+///
+/// Здесь это тип ХРАНЕНИЯ: галки меню, `ThemeStore`, «моя тема», вид проекта. Слой команды —
+/// `SizeLayer` (решение 1 плана WF19): он умеет и снять ОДНУ половину (`{"answer":null}`),
+/// поэтому «Как у Claude» в «Размер ответов ▸» больше не уносит с собой размер вопросов.
 struct Size: Equatable {
     /// Ответы Claude и свои вопросы; nil — половину не трогаем.
     let answer: Int?
@@ -87,6 +89,102 @@ struct Size: Equatable {
     }
 
     func value(_ half: Half) -> Int? { half == .answer ? answer : question }
+}
+
+/// Слой размера в КОМАНДЕ (решение 1 плана WF19). У размера две половины, и «Как у Claude»
+/// в «Размер ответов ▸» обязан снимать только свою. Пара `Layer<Int>` вместо `Layer<Size>`
+/// потому, что `"size":null` (сброс слоя целиком, «🧹 Всё как у Claude») — это ДРУГИЕ байты,
+/// чем `{"answer":null,"question":null}` (критик Б1).
+///
+/// - `keep` — поля `size` в команде нет вовсе, слой не трогаем;
+/// - `reset` — `"size":null`, снять обе половины;
+/// - `halves` — объект: половина `.keep` в него не пишется, `.set` уходит числом, `.reset` —
+///   `null` («снять эту половину»). Обе половины `.keep` — поля снова нет вовсе: пустой
+///   объект страница прочитала бы как полный сброс.
+enum SizeLayer {
+    case keep
+    case reset
+    case halves(answer: Layer<Int>, question: Layer<Int>)
+
+    /// Слой из готового размера («моя тема», вид проекта, «всем окнам»): заданные половины —
+    /// числами, пустые — «не трогать».
+    init(_ size: Size) {
+        self = .halves(answer: size.answer.map { Layer.set($0) } ?? .keep,
+                       question: size.question.map { Layer.set($0) } ?? .keep)
+    }
+
+    /// Слой-значение (`.pimpmyclaude.json`, покраска по проекту) как слой команды.
+    init(_ layer: Layer<Size>) {
+        switch layer {
+        case .keep: self = .keep
+        case .reset: self = .reset
+        case .set(let size): self = SizeLayer(size)
+        }
+    }
+
+    /// Пункт меню трогает ровно свою половину: «Размер ответов ▸ 16» или «… → Как у Claude».
+    static func one(_ half: Size.Half, _ value: Layer<Int>) -> SizeLayer {
+        half == .answer ? .halves(answer: value, question: .keep)
+                        : .halves(answer: .keep, question: value)
+    }
+
+    /// Что слой делает с одной половиной.
+    func half(_ half: Size.Half) -> Layer<Int> {
+        switch self {
+        case .keep: return .keep
+        case .reset: return .reset
+        case .halves(let answer, let question): return half == .answer ? answer : question
+        }
+    }
+
+    /// Слоя в команде нет: ни одной половины не трогаем.
+    var isKeep: Bool {
+        switch self {
+        case .keep: return true
+        case .reset: return false
+        case .halves(let answer, let question): return answer.isKeep && question.isKeep
+        }
+    }
+
+    /// Поле `size` команды: nil — поля нет вовсе; `null` — сброс слоя; объект — только заданные
+    /// половины, `answer` первым, снятая половина как `null`.
+    var commandValue: CommandValue? {
+        switch self {
+        case .keep: return nil
+        case .reset: return .null
+        case .halves:
+            var fields: [(key: String, value: CommandValue)] = []
+            for (key, layer) in [(Size.answerKey, half(.answer)),
+                                 (Size.questionKey, half(.question))] {
+                switch layer {
+                case .keep: continue
+                case .reset: fields.append((key: key, value: .null))
+                case .set(let px): fields.append((key: key, value: .number(Size.clamp(px))))
+                }
+            }
+            return fields.isEmpty ? nil : .object(fields)
+        }
+    }
+
+    /// Что останется в памяти приложения после этой команды: `keep` — прежнее, `reset` —
+    /// ничего, половины — поверх базы, а снятая половина из неё уходит. Обе половины сняты —
+    /// записи нет вовсе (пустой слой страница читает так же, решение 1 плана WF19).
+    func applied(to base: Size?) -> Size? {
+        switch self {
+        case .keep: return base
+        case .reset: return nil
+        case .halves:
+            func value(_ side: Size.Half) -> Int? {
+                switch half(side) {
+                case .keep: return base?.value(side)
+                case .reset: return nil
+                case .set(let px): return px
+                }
+            }
+            let size = Size(answer: value(.answer), question: value(.question))
+            return size.isEmpty ? nil : size
+        }
+    }
 }
 
 /// Каталог шрифтов: белые списки по категориям (решение 7 плана WF9), отфильтрованные по факту

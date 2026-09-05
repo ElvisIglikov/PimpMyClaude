@@ -38,7 +38,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf18-a-1";
+  const VERSION = "wf19-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -720,6 +720,32 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (question != null) clean.question = question;
     return Object.keys(clean).length ? clean : null;
   };
+  // У КОМАНДЫ размера (WF19) половина знает три состояния, у записи в хранилище —
+  // по-прежнему два. Поэтому разбор команды живёт отдельной функцией, а
+  // normalizeSize и карта LAYER_NORMALIZE остаются нетронутыми: ту же normalizeSize
+  // зовёт entryLayer на КАЖДОМ чтении записи карты, и половина со значением null
+  // значит там «слоя нет» — тристейт, вкрученный в неё, потёк бы в хранилище
+  // (разбор критика WF19, В1).
+  //   поля нет    — половину не трогаем;
+  //   число 11…24 — поставить;
+  //   ровно null  — снять ЭТУ половину, вторая остаётся как была.
+  // Дискриминатор снятия строгий (В2): только литеральный null. sizePx одинаково
+  // отдаёт null и на null, и на "abc", и мусор вида {"answer":"abc"} без этого
+  // читался бы как снятие. Мусор равен отсутствию поля, как и раньше.
+  // Ни одного значимого ключа не осталось (пустой объект, один мусор) — слой равен
+  // null, то есть полный сброс: ровно так же читался старый {}.
+  const SIZE_HALVES = ["answer", "question"];
+  const normalizeSizeCommand = value => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const clean = {};
+    for (const half of SIZE_HALVES) {
+      if (!(half in value)) continue;
+      if (value[half] === null) { clean[half] = null; continue; }
+      const px = sizePx(value[half]);
+      if (px != null) clean[half] = px;
+    }
+    return Object.keys(clean).length ? clean : null;
+  };
   // Рамка — слой-тумблер: значение у него ровно одно, true. Всё остальное (в том
   // числе false и "none") доходит сюда как «слоя нет» либо как сброс.
   const normalizeFrame = value => (value === true ? true : null);
@@ -1232,8 +1258,12 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
 
   // Команда меню, порядок полей по контракту WF12: {id, action:"theme", at,
   // scope:"window"|"all", title, preview, theme|null, font|null,
-  // size:{answer,question}|null, frame:true|null}.
+  // size:{answer?,question?}|null, frame:true|null}.
   // Поля слоя нет — слой не трогаем, null — сброс слоя, значение — применить.
+  // У размера то же правило действует и на КАЖДУЮ половину (WF19): поля половины
+  // нет — не трогаем, число — поставить, null — снять её одну («Как у Claude» в
+  // «Размер ответов ▸» не уносит с собой размер вопросов). "size":null по-прежнему
+  // снимает обе — этим ходит «🧹 Всё как у Claude».
   // «Для всех» перекрывает СВОЙ слой у всех окон и чужой не трогает: «шрифт
   // всем» не снимает тем у окон, «тема всем» не снимает их шрифтов.
   // «Для окна» адресуется заголовком, как «Обкэшить», либо необязательным
@@ -1250,7 +1280,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (!themable || !detail || typeof detail !== "object") return false;
     const layers = {};
     for (const layer of THEME_LAYERS) {
-      if (layer in detail) layers[layer] = LAYER_NORMALIZE[layer](detail[layer]);
+      if (!(layer in detail)) continue;
+      // Размер — единственный слой, у которого команда богаче записи: половину
+      // можно снять по отдельности (WF19, normalizeSizeCommand). Остальные слои
+      // разбирает общая карта.
+      layers[layer] = layer === "size"
+        ? normalizeSizeCommand(detail[layer])
+        : LAYER_NORMALIZE[layer](detail[layer]);
     }
     // Размер — единственный слой с половинками: «Размер ответов ▸ 16» приходит
     // без поля question, и оно обязано остаться прежним. Недостающую половину
@@ -1264,7 +1300,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         : (detail.scope === "all"
           ? entryLayer(themeEntry(readThemeMap()[THEME_ALL_KEY]), "size")
           : storedLayer("size"));
-      layers.size = { ...(base ?? {}), ...layers.size };
+      const merged = { ...(base ?? {}), ...layers.size };
+      // Единственное место, где снятая половина исчезает, — сразу после слияния и
+      // ДО экрана (applyLayers), карты (writeLayers), сессии (storeSessionLayers) и
+      // отложенной записи (themeState.pending): в хранилище половина со значением
+      // null читается как «слоя нет» (entryLayer), и запись вышла бы неверной.
+      for (const half of SIZE_HALVES) if (merged[half] == null) delete merged[half];
+      // Снята последняя половина — слоя больше нет вовсе: это полный сброс, как
+      // "size":null (и как старый пустой {}).
+      layers.size = Object.keys(merged).length ? merged : null;
     }
     // Предпросмотр (мышь ведут по подменю тем и шрифтов): слои из команды идут
     // ТОЛЬКО в таблицы стилей, хранилища они не касаются вовсе — иначе проход
@@ -3547,6 +3591,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const NEW_WINDOW_NOTE_FOLDER_PICK = "Не смог выбрать папку — чат не создавал";
   const NEW_WINDOW_NOTE_CHAT = "Сначала открой чат — выносить нечего";
   const NEW_WINDOW_NOTE_POPOUT = "Отдельным окном не вышло";
+  // Пункт нажали в самом окне-попапе: этот чат уже вынесен, выносить его некуда.
+  // Раньше команда там тихо умирала (слово Элвиса 05.09: «ничего не произошло»).
+  const NEW_WINDOW_NOTE_ALREADY = "Этот чат уже в отдельном окне";
   // Пункт «Переименовать» ищем по началу текста: у claude.ai он английский, но
   // сборка бывает и русской.
   const NEW_WINDOW_RENAME_RE = /^(rename|переимен)/i;
@@ -4204,13 +4251,28 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Команда «В отдельное окно», контракт WF13: {id, action:"popout-window", at,
   // scope:"window", title, x, y}. Тот же стор и тот же openPopout, только по уже
   // открытому чату — мгновенно и без сообщения.
+  //
+  // Отказы у неё видимые, все три (WF19): нет чата (домашний экран /epitaxy —
+  // в адресе нет local_<uuid>), окно уже попап и стор не нашёлся. Молчащий пункт
+  // читается как сломанный — тот же довод, что у плашек «Нового окна».
   const runPopoutCommand = async detail => {
-    if (!isMainWindow() || !addressed(detail)) return false;
+    // Отвечаем только на страницах Claude: в оболочке (file://…/main_window), на
+    // логине и в браузерной панели плашке делать нечего.
+    if (!themable || !addressed(detail)) return false;
     // Координаты — числа, а не строки (разбор у runNewWindowCommand).
     const x = detail?.x;
     const y = detail?.y;
     if (detail?.scope !== "window" || !Number.isFinite(x) || !Number.isFinite(y)) {
       newWindowMark({ state: "bad-command", step: null });
+      return false;
+    }
+    // Окно «Open in new window» (about:blank) — это и есть отдельное окно: чат
+    // в нём уже вынесен, второго openPopout у него нет (стор попапов живёт на
+    // claude.ai). Приложение адресует пункт главному окну, но нажимают его и
+    // здесь — отвечаем плашкой, а не молчанием.
+    if (!isMainWindow()) {
+      newWindowMark({ state: "already", step: "popout", id: null, runs: newWindowRuns() });
+      newWindowNote(NEW_WINDOW_NOTE_ALREADY);
       return false;
     }
     const token = newWindowToken;

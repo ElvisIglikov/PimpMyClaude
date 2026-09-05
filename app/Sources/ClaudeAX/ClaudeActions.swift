@@ -181,6 +181,10 @@ final class ClaudeActions {
     /// как «окно в фокусе».
     private func newWindow(_ window: AXUIElement?, project: Project? = nil) {
         let origin = ClaudeActions.popoutOrigin(near: window.flatMap { AX.frame($0) })
+        // Адресуем ГЛАВНОЕ окно, на каком бы окне ни нажали (дополнение 05.09 к плану WF19):
+        // с попапа команда уходила с его заголовком, и её никто не исполнял. Пути не знаем —
+        // адресуем заголовком, как раньше.
+        let match = mainWindowMatch()
         // Работа идёт до 40 с — молчащая кнопка выглядит сломанной (критик п. 20).
         onNotice?(MenuModel.newWindowNotice, MenuModel.newWindowNoticeSeconds)
         // Папка и имя чата считаются здесь, а не на странице (критик В4 плана WF16): на диске
@@ -198,7 +202,8 @@ final class ClaudeActions {
                                               window: self.windowView(title: title))
             } ?? ProjectSettings()
             self.commands.write(action: ClaudeCommand.newWindow.rawValue,
-                                fields: ClaudeActions.newWindowFields(title: title, x: origin.x, y: origin.y,
+                                fields: ClaudeActions.newWindowFields(title: title, match: match,
+                                                                      x: origin.x, y: origin.y,
                                                                       text: text, folder: folder, name: name,
                                                                       theme: layers.theme, font: layers.font,
                                                                       size: layers.size, frame: layers.frame))
@@ -247,9 +252,12 @@ final class ClaudeActions {
     /// деградация «Нового окна»: чат создан, а окно не открылось — этот пункт доделает.
     private func popoutWindow(_ window: AXUIElement?) {
         let origin = ClaudeActions.popoutOrigin(near: window.flatMap { AX.frame($0) })
+        // Как и «Новое окно», адресуется главному окну: с попапа выносить нечего, а команда
+        // с его заголовком раньше просто пропадала (дополнение 05.09 к плану WF19).
+        let match = mainWindowMatch()
         let send: (String) -> Void = { [weak self] title in
             self?.commands.write(action: ClaudeCommand.popoutWindow.rawValue,
-                                 fields: ClaudeActions.popoutWindowFields(title: title,
+                                 fields: ClaudeActions.popoutWindowFields(title: title, match: match,
                                                                           x: origin.x, y: origin.y))
         }
         guard let window = window else {
@@ -260,33 +268,58 @@ final class ClaudeActions {
         after(focusDelay) { send(AX.string(window, kAXTitleAttribute) ?? "") }
     }
 
-    /// Поля команды после id, action, at: scope, title, x, y, text, folder, name, затем слои —
-    /// тема, шрифт, размер, рамка (контракт п. 1 плана WF13, расширен решением 1 плана WF16).
+    /// Поля команды после id, action, at: scope, title, match, x, y, text, folder, name, затем
+    /// слои — тема, шрифт, размер, рамка (контракт п. 1 плана WF13, расширен решением 1 плана
+    /// WF16 и адресацией `match` — дополнение 05.09 к плану WF19).
     /// `x`/`y` — числа, а не строки (`write(action:extra:)` сюда не годится: он сортирует ключи
     /// и делает всё строками), страница проверяет их `Number.isFinite`.
     /// `folder` и `name` есть ВСЕГДА: пустая строка = «не трогать», и страница ведёт себя ровно
     /// как в WF13. Слои — по правилам команды `theme`: `.keep` в JSON нет вовсе, `.reset` — null.
-    static func newWindowFields(title: String, x: Int, y: Int, text: String,
+    /// `match` — путь страницы главного окна, как у команды `theme`: поля нет — адресуем
+    /// заголовком, как раньше.
+    static func newWindowFields(title: String, match: String? = nil, x: Int, y: Int, text: String,
                                 folder: String = "", name: String = "",
                                 theme: Layer<Theme> = .keep, font: Layer<Font> = .keep,
                                 size: Layer<Size> = .keep,
                                 frame: Layer<Bool> = .keep) -> [(key: String, value: CommandValue)] {
-        [(key: "scope", value: .string(MenuModel.themeScopeWindow)),
-         (key: "title", value: .string(title)),
-         (key: "x", value: .number(x)),
-         (key: "y", value: .number(y)),
-         (key: "text", value: .string(text)),
-         (key: "folder", value: .string(folder)),
-         (key: "name", value: .string(name))]
-            + layerFields(theme: theme, font: font, size: size, frame: frame)
+        var fields: [(key: String, value: CommandValue)] = [
+            (key: "scope", value: .string(MenuModel.themeScopeWindow)),
+            (key: "title", value: .string(title)),
+        ]
+        if let match = match { fields.append((key: "match", value: .string(match))) }
+        fields += [(key: "x", value: .number(x)),
+                   (key: "y", value: .number(y)),
+                   (key: "text", value: .string(text)),
+                   (key: "folder", value: .string(folder)),
+                   (key: "name", value: .string(name))]
+        return fields + layerFields(theme: theme, font: font, size: SizeLayer(size), frame: frame)
     }
 
-    /// То же без первого сообщения: scope, title, x, y (решение Элвиса 04.09).
-    static func popoutWindowFields(title: String, x: Int, y: Int) -> [(key: String, value: CommandValue)] {
-        [(key: "scope", value: .string(MenuModel.themeScopeWindow)),
-         (key: "title", value: .string(title)),
-         (key: "x", value: .number(x)),
-         (key: "y", value: .number(y))]
+    /// То же без первого сообщения: scope, title, match, x, y (решение Элвиса 04.09).
+    static func popoutWindowFields(title: String, match: String? = nil,
+                                   x: Int, y: Int) -> [(key: String, value: CommandValue)] {
+        var fields: [(key: String, value: CommandValue)] = [
+            (key: "scope", value: .string(MenuModel.themeScopeWindow)),
+            (key: "title", value: .string(title)),
+        ]
+        if let match = match { fields.append((key: "match", value: .string(match))) }
+        return fields + [(key: "x", value: .number(x)), (key: "y", value: .number(y))]
+    }
+
+    /// Путь страницы ГЛАВНОГО окна (`/epitaxy/local_…`) для поля `match`. «Новое окно» и
+    /// «В отдельное окно» исполняет только главное окно, а нажимают их с любого: с попапа
+    /// команда уходила с его заголовком и молчала (гейт WF16, 05.09 — «ничего не произошло»).
+    /// Читаем ту же диагностику лоадера, что `ProjectIndex`; страниц claude.ai оказалось
+    /// несколько или ни одной — nil, и адресация остаётся прежней, по заголовку.
+    /// Замыкание — чтобы `ClaudeAXController` мог подставить сюда свой `ProjectIndex.mainWindow()`
+    /// (он умеет разбирать и случай двух страниц) и чтобы тесты не читали живой диск.
+    var mainWindowMatch: () -> String? = { ClaudeActions.mainWindowMatch() }
+
+    static func mainWindowMatch(statusURL: URL = CommandChannel.directory
+                                    .appendingPathComponent(ProjectIndex.statusFileName)) -> String? {
+        let pages = ProjectIndex.pages(try? Data(contentsOf: statusURL))
+        guard pages.count == 1 else { return nil }
+        return pages.first?.match
     }
 
     /// Размер окна popout, по которому считается обрезка по экрану (у Claude оно примерно такое).
@@ -323,7 +356,7 @@ final class ClaudeActions {
     /// «окно в фокусе» — тогда, как у «Обкэшить», сперва даём окну фокус и ждём focusDelay.
     @discardableResult
     func applyTheme(scope: String, theme: Layer<Theme> = .keep, font: Layer<Font> = .keep,
-                    size: Layer<Size> = .keep, frame: Layer<Bool> = .keep,
+                    size: SizeLayer = .keep, frame: Layer<Bool> = .keep,
                     window: AXUIElement?) -> Bool {
         // Все слои «не трогать» — команде нечего делать.
         guard !theme.isKeep || !font.isKeep || !size.isKeep || !frame.isKeep else { return false }
@@ -358,7 +391,7 @@ final class ClaudeActions {
     static func themeFields(scope: String, title: String, match: String? = nil,
                             preview: Bool? = nil,
                             theme: Layer<Theme>, font: Layer<Font>,
-                            size: Layer<Size> = .keep,
+                            size: SizeLayer = .keep,
                             frame: Layer<Bool> = .keep) -> [(key: String, value: CommandValue)] {
         var fields: [(key: String, value: CommandValue)] = [
             (key: "scope", value: .string(scope)),
@@ -371,14 +404,14 @@ final class ClaudeActions {
 
     /// Четыре слоя как поля команды, в порядке контракта: тема, шрифт, размер, рамка. Ими
     /// одинаково заканчиваются и `theme`, и `new-window` (решение 1 плана WF16) — правило
-    /// «поля нет → слой не трогаем, null → сброс» у них одно на двоих.
-    static func layerFields(theme: Layer<Theme>, font: Layer<Font>, size: Layer<Size>,
+    /// «поля нет → слой не трогаем, null → сброс» у них одно на двоих. У размера правило то же,
+    /// только по половинам: `SizeLayer` сам решает, писать ли поле и что положить внутрь.
+    static func layerFields(theme: Layer<Theme>, font: Layer<Font>, size: SizeLayer,
                             frame: Layer<Bool>) -> [(key: String, value: CommandValue)] {
         var fields: [(key: String, value: CommandValue)] = []
         if let value = theme.commandValue({ $0.commandValue }) { fields.append((key: "theme", value: value)) }
         if let value = font.commandValue({ $0.commandValue }) { fields.append((key: "font", value: value)) }
-        // Пустой размер — не слой, а «не трогать»: страница читает {} как сброс.
-        if case .set(let value) = size, value.isEmpty {} else if let value = size.commandValue({ $0.commandValue }) { fields.append((key: "size", value: value)) }
+        if let value = size.commandValue { fields.append((key: "size", value: value)) }
         if let value = frame.commandValue({ .bool($0) }) { fields.append((key: "frame", value: value)) }
         return fields
     }
@@ -390,7 +423,7 @@ final class ClaudeActions {
         // шрифты (размеры, рамки) всех окон.
         applyTheme(scope: scope, theme: .set(myTheme.theme),
                    font: myTheme.font.map { Layer.set($0) } ?? .keep,
-                   size: myTheme.size.map { Layer.set($0) } ?? .keep,
+                   size: myTheme.size.map { SizeLayer($0) } ?? .keep,
                    frame: myTheme.frame ? .set(true) : .keep, window: window)
     }
 
@@ -417,9 +450,10 @@ final class ClaudeActions {
 
     /// Галки в меню и «последнее применённое» — по слоям: слой `.keep` остаётся как был.
     /// Размер приходит половинами, поэтому кладётся поверх запомненного — как его склеивает
-    /// страница; `.reset` («Как у Claude») снимает слой целиком, обе половины сразу.
+    /// страница; `.reset` («🧹 Всё как у Claude») снимает слой целиком, а снятая половина
+    /// («Как у Claude» в одном из двух подменю) уходит из записи одна (решение 1 плана WF19).
     private func remember(scope: String, title: String, theme: Layer<Theme>, font: Layer<Font>,
-                          size: Layer<Size>, frame: Layer<Bool>) {
+                          size: SizeLayer, frame: Layer<Bool>) {
         if scope == MenuModel.themeScopeAll {
             if !theme.isKeep {
                 themeStore.setAllTheme(theme.value?.id)
@@ -432,7 +466,7 @@ final class ClaudeActions {
                 themeStore.clearWindowFonts()
             }
             if !size.isKeep {
-                themeStore.setAllSize(size.value.map { (themeStore.allSize ?? Size()).merging($0) })
+                themeStore.setAllSize(size.applied(to: themeStore.allSize))
                 themeStore.clearWindowSizes()
             }
             if !frame.isKeep {
@@ -446,15 +480,28 @@ final class ClaudeActions {
             }
             if !font.isKeep { themeStore.setWindowFont(font.value?.id, title: title) }
             if !size.isKeep {
-                let base = themeStore.windowSize(title: title) ?? Size()
-                themeStore.setWindowSize(size.value.map { base.merging($0) }, title: title)
+                themeStore.setWindowSize(ClaudeActions.windowSize(after: size,
+                                                                  window: themeStore.windowSize(title: title),
+                                                                  all: themeStore.allSize),
+                                         title: title)
             }
             if !frame.isKeep { themeStore.setWindowFrame(frame.value == true, title: title) }
         }
         if !theme.isKeep { lastAppliedTheme = theme.value }
         if !font.isKeep { lastAppliedFont = font.value }
-        if !size.isKeep { lastAppliedSize = size.value.map { (lastAppliedSize ?? Size()).merging($0) } }
+        // Снятую половину убираем и отсюда (критик В5 плана WF19): иначе «💾 Сохранить как мою
+        // тему…» записала бы кегль, которого на экране уже нет.
+        if !size.isKeep { lastAppliedSize = size.applied(to: lastAppliedSize) }
         if !frame.isKeep { lastAppliedFrame = frame.value == true }
+    }
+
+    /// Что записать окну после команды размера (критик В4 плана WF19): база слияния — своя
+    /// запись окна, а её нет — запись «всем окнам». Страница мержит по той же цепочке
+    /// (`storedLayer`: чат → сессия → main → «всем») и материализует унаследованную половину
+    /// в запись чата; мержь Swift поверх одной только записи окна, галки разъехались бы
+    /// с экраном на первом же снятии половины.
+    static func windowSize(after layer: SizeLayer, window: Size?, all: Size?) -> Size? {
+        layer.applied(to: window ?? all)
     }
 
     // MARK: - предпросмотр (план WF8)
@@ -472,7 +519,7 @@ final class ClaudeActions {
     @discardableResult
     func preview(myTheme: MyTheme, window: AXUIElement?) -> Bool {
         sendPreview(true, theme: .set(myTheme.theme), font: myTheme.font.map { Layer.set($0) } ?? .keep,
-                    size: myTheme.size.map { Layer.set($0) } ?? .keep,
+                    size: myTheme.size.map { SizeLayer($0) } ?? .keep,
                     frame: myTheme.frame ? .set(true) : .keep, window: window)
     }
 
@@ -483,12 +530,11 @@ final class ClaudeActions {
     }
 
     /// То же для размера: в команде одна половина слоя, вторую страница доклеивает сама
-    /// из того, что сейчас на экране. `nil` — примерка «Как у Claude», то есть сброса
-    /// всего слоя (обеих половин: перефилдового сброса контракт не знает).
+    /// из того, что сейчас на экране. «Как у Claude» примеряется тем же слоем со снятой
+    /// половиной (`{"answer":null}`, решение 2 плана WF19) — вторая на экране не дрогнет.
     @discardableResult
-    func previewSize(_ size: Size?, window: AXUIElement?) -> Bool {
-        sendPreview(true, theme: .keep, font: .keep, size: size.map { Layer.set($0) } ?? .reset,
-                    window: window)
+    func previewSize(_ size: SizeLayer, window: AXUIElement?) -> Bool {
+        sendPreview(true, theme: .keep, font: .keep, size: size, window: window)
     }
 
     /// Наведение на тумблер рамки примеряет её ВКЛЮЧЁННОЙ, чем бы она сейчас ни была:
@@ -509,7 +555,7 @@ final class ClaudeActions {
     /// пока открыто меню, окно Claude всё равно не впереди, а `focus()` закрыл бы само меню —
     /// страница узнаёт окно по заголовку, как в «Обкэшить».
     private func sendPreview(_ preview: Bool, theme: Layer<Theme>, font: Layer<Font>,
-                             size: Layer<Size> = .keep, frame: Layer<Bool> = .keep,
+                             size: SizeLayer = .keep, frame: Layer<Bool> = .keep,
                              window: AXUIElement?) -> Bool {
         noteUserCommand()
         let target = window ?? focusedWindow()
@@ -537,15 +583,17 @@ final class ClaudeActions {
               scheme: AutoPaint.schemeIndex(for: preset))
     }
 
-    /// «🔁 Ещё раз»: тот же набор И та же схема, старт на +37° (план п. 5) — иначе после
-    /// «Случайно» это был бы уже другой набор, а не тот же, повёрнутый.
+    /// «🔁 Ещё раз»: тот же набор и тот же режим, старт на +37° (план WF10 п. 5). После
+    /// «🎲 Случайно» гармония берётся НОВАЯ — из трёх оставшихся, прежняя не выпадет
+    /// (решение 4 плана WF19): «та же схема, только повёрнутая» читалась как «ничего
+    /// не изменилось». У наборов со своей схемой менять нечего — там `schemeIndex` даёт nil.
     /// Набора в памяти нет — берём первый.
     @discardableResult
     func autoPaintAgain() -> Int {
         let last = autoPaintStore.last
         let preset = last.flatMap { AutoPaint.preset(id: $0.preset) } ?? AutoPaint.presets[0]
         return paint(preset: preset, start: (last?.start ?? 0) + AutoPaint.againStep,
-                     scheme: AutoPaint.schemeIndex(for: preset, repeating: last?.scheme ?? nil),
+                     scheme: AutoPaint.schemeIndex(for: preset, avoiding: last?.scheme ?? nil),
                      light: last?.light ?? nil)
     }
 
@@ -569,10 +617,11 @@ final class ClaudeActions {
         // В счёт «Крашу N» идут только окна, которым цвет достанется (без пропущенных).
         onWarning?(MenuModel.autoPaintStart(windows: windows.onScreen - windows.skipped, shared: windows.shared,
                                             skipped: windows.skipped))
-        // Режим у набора свой; у «Случайно» — тот же, что в прошлый раз («Ещё раз» повторяет
-        // набор целиком), а на первый раз — по памяти окон. После покраски галки сняты, и
-        // сама память уже пуста — потому режим и ложится в AutoPaintStore.
-        let light = preset.light ?? repeated ?? prefersLightWindows()
+        // Режим у набора свой; у «🎲 Случайно» — наоборот к прошлой покраске, а прошлой нет —
+        // монетка (решение 3 плана WF19). «🔁 Ещё раз» режим не меняет — он приходит из памяти
+        // (`repeated`). Считать режим по галкам окон больше нельзя: покраска сама их снимает,
+        // и «Случайно» после неё всегда выпадало тёмным.
+        let light = preset.light ?? repeated ?? AutoPaint.nextLight(last: autoPaintStore.last?.light)
         let themes = AutoPaint.themes(preset: preset,
                                       scheme: AutoPaint.scheme(for: preset, index: index),
                                       count: titles.count, start: start, light: light)
@@ -615,18 +664,6 @@ final class ClaudeActions {
             titles.append(title)
         }
         return (titles, windows.count, windows.count - titles.count - skipped, skipped)
-    }
-
-    /// «🎲 Случайно» красит в тон окнам: светлые сейчас или тёмные. Знаем мы об этом только по
-    /// своей же памяти (`ThemeStore` — что это приложение применяло); ничего не применяли —
-    /// считаем тёмными, как у Claude по умолчанию.
-    private func prefersLightWindows() -> Bool {
-        var known: [String: Bool] = [:]
-        for theme in themes { known[theme.id] = theme.isLight }
-        for my in myThemes.load() { known[my.id] = my.type == "light" }
-        let ids = themeStore.windowThemeIDs + [themeStore.allThemeID].compactMap { $0 }
-        let types = ids.compactMap { known[$0] }
-        return types.filter { $0 }.count > types.filter { !$0 }.count
     }
 
     // MARK: - живые цвета (план WF18)
@@ -732,7 +769,7 @@ final class ClaudeActions {
         let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow,
                                                title: command.title, match: command.match,
                                                theme: command.theme, font: command.font,
-                                               size: command.size, frame: command.frame)
+                                               size: SizeLayer(command.size), frame: command.frame)
         return commands.write(action: "theme", fields: fields)
     }
 
