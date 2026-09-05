@@ -5,8 +5,8 @@
   "trelvis": "#5386",
   "branch": "wf24",
   "tag": "wf24-start",
-  "script_path": null,
-  "run_id": null,
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/6d67f948-9b23-45b0-9fef-b332a622ff3f/workflows/scripts/pimpmyclaude-wf24-wf_14af4c21-bfe.js",
+  "run_id": "wf_14af4c21-bfe",
   "orchestrator": "Fable 5.1 high; все агенты Opus max",
   "decision": "по рекомендациям; WF24 идёт раньше очереди, пока WF20 ждёт макета",
   "next_steps": [

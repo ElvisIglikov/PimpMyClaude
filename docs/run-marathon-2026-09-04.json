@@ -37,5 +37,9 @@
       "who": "оркестратор",
       "what": "WF18, WF19 финиш; WF24 (тесты, без UI) идёт, пока WF20 ждёт макета Элвиса"
     }
-  ]
+  ],
+  "wf20_plan_run": {
+    "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/6d67f948-9b23-45b0-9fef-b332a622ff3f/workflows/scripts/pimpmyclaude-wf20-plan-wf_28e63e48-0b1.js",
+    "run_id": "wf_28e63e48-0b1"
+  }
 }
