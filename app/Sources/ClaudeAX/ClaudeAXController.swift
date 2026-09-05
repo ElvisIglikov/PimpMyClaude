@@ -58,7 +58,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         projectPaint.windowTitles = { [weak self] in self?.actions.paintableTitles() ?? [] }
         // Себя нет — считаем окно занятым и молчим: лучше не покрасить, чем покрасить лишнее.
         projectPaint.isWindowBusy = { [weak self] title in
-            self?.actions.isWindowPainted(title: title) ?? true
+            self?.actions.isWindowAutoPainted(title: title) ?? true
         }
         projectPaint.isAllWindowsSet = { [weak self] in self?.actions.hasAllWindowsView ?? true }
         // Живые цвета сильнее цвета проекта (критик Б2 плана WF18): пока они крутятся, проект
@@ -68,10 +68,12 @@ public final class ClaudeAXController: ClaudeAXControlling {
         projectPaint.isMenuOpen = { [weak self] in self?.menu.isMenuOpen ?? true }
         projectPaint.lastMenuCommand = { [weak self] in self?.actions.lastUserCommandAt }
         projectPaint.showNotice = { [weak self] text in self?.hud.show(text, seconds: 3) }
-        // «Записать этот вид в проект» берёт слои окна там же, где меню берёт галки, — и там же,
-        // где их берёт новое окно без своего вида проекта (план WF16).
-        projectPaint.currentView = { [weak self] title in
-            self?.actions.windowView(title: title) ?? ProjectSettings()
+        // Ручной выбор в окне проекта молча становится видом проекта (решение 3.2 плана WF20):
+        // крючок висит на `remember`, поэтому ни примерка мышью, ни «Раскрасить по кругу»
+        // в файл проекта не пишут.
+        actions.onWindowViewChanged = { [weak self] title, theme, font, size, frame in
+            self?.projectPaint.noteManualChoice(title: title, theme: theme, font: font,
+                                                size: size, frame: frame)
         }
         menu.project = projectPaint
 

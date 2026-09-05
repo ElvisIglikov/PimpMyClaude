@@ -37,8 +37,9 @@ final class MinimizeMenu: NSObject {
     private(set) var shows = 0
     /// Меню сейчас всплывёт — самое время перечитать сводки проектов (решение 2 плана WF9).
     var onWillShow: (() -> Void)?
-    /// Цвет проекта (план WF15): подменю «🗂 Проект ▸» и его пункты. nil — приложение собрано
-    /// без покраски по проекту, тогда пункта в меню нет вовсе.
+    /// Цвет проекта (план WF15, переделан в WF20): один тумблер «🗂 Цвет по проекту»
+    /// в «🖥 Всем окнам ▸». nil — приложение собрано без покраски по проекту, тогда тумблера
+    /// в меню нет вовсе.
     var project: ProjectPaint?
     /// Недавние папки для «🪟 Новое окно ▸» (план WF16): их даёт `ProjectIndex` — единственный
     /// источник правды «папка ↔ сессия». Пусто — в подменю остаётся один пункт «Здесь же».
@@ -47,6 +48,16 @@ final class MinimizeMenu: NSObject {
     /// Открыто ли меню (или его модальный диалог): пока открыто, фоновая покраска по проекту
     /// молчит — не-preview команда сбила бы примерку темы мышью (критик В1 плана WF15).
     var isMenuOpen: Bool { menuOpen }
+
+    /// Открыта панель «Своя тема» (блокер Б2 плана WF20). Панель стоит вплотную к окну, и курсор,
+    /// задержавшийся на жёлтой кнопке, поднял бы меню поверх неё: наведение на тему послало бы
+    /// свою примерку, а закрытие меню — `endPreview`, и окно прыгнуло бы на сохранённую тему.
+    /// Ставит и снимает `ThemeEditor`; панель одна на приложение — отсюда статик.
+    static var editorOpen = false
+
+    /// Можно ли поднимать меню наведением. Первый же `guard` в `tick()` — и он же проверяется
+    /// тестом: живой `tick()` без доверия Accessibility ничего не докажет.
+    var hoverPaused: Bool { !enabled || menuOpen || MinimizeMenu.editorOpen }
 
     init(app: ClaudeApp, actions: ClaudeActions) {
         self.app = app
@@ -69,6 +80,9 @@ final class MinimizeMenu: NSObject {
         hoverSince = 0
         suppressed = false
         menuOpen = false
+        // Панель редактора уходит вместе с меню — и уносит с собой `endPreview` (решение 1.3
+        // плана WF20): иначе окно осталось бы в цвете ползунка навсегда.
+        ThemeEditor.current?.close()
     }
 
     var isRunning: Bool { timer != nil }
@@ -77,7 +91,7 @@ final class MinimizeMenu: NSObject {
     func clearCache() { buttons = [:] }
 
     private func tick() {
-        guard enabled, !menuOpen, AX.isTrustedCached, let pid = app.pid else { return }
+        guard !hoverPaused, AX.isTrustedCached, let pid = app.pid else { return }
         let point = Screens.flip(point: NSEvent.mouseLocation)
 
         var target: (window: AXUIElement, id: CGWindowID, rect: CGRect)?
@@ -152,16 +166,12 @@ final class MinimizeMenu: NSObject {
         // Два случая, где памяти о цвете окна верить нельзя (критик В1 плана WF14).
         config.windowTitled = !title.isEmpty
         config.windowAutoPainted = actions.autoPaintedTheme(title: title) != nil
-        // «🗂 Проект ▸»: папка окна под кнопкой и что у неё лежит — читаем на каждый показ,
-        // файл проекта правится и руками (план WF15 п. 5). Пункты работают уже после popUp,
-        // как и все остальные: покраска в это время всё равно молчит.
+        // «🗂 Цвет по проекту» — один тумблер вместо всего подменю «Проект ▸» (решение 3.4 плана
+        // WF20): папку окна и файл проекта меню больше не показывает — цвет и так стоит,
+        // а выбор темы в окне проекта сам становится темой проекта.
         if let project = project {
-            config.project = project.menuState(title: title)
-            config.projectPaint = { on in DispatchQueue.main.async { project.setEnabled(on) } }
-            config.projectApply = { DispatchQueue.main.async { project.applyNow(title: title) } }
-            config.projectWrite = { DispatchQueue.main.async { project.writeCurrentView(title: title) } }
-            config.projectAgents = { DispatchQueue.main.async { project.writeAgentsLine(title: title) } }
-            config.projectRemove = { DispatchQueue.main.async { project.removeSettings(title: title) } }
+            config.projectColor = project.enabled
+            config.setProjectColor = { on in DispatchQueue.main.async { project.setEnabled(on) } }
         }
         // Поля по бокам: значение читаем из claude.json на каждый показ — его правит и сам
         // Элвис, и лоадер берёт его оттуда же (критик В7).
@@ -222,6 +232,14 @@ final class MinimizeMenu: NSObject {
         config.saveMyTheme = { [weak self] in
             DispatchQueue.main.async { self?.saveMyTheme(window: window) }
         }
+        // Панель редактора открывается ходом вперёд, как и остальные диалоги: сперва должно
+        // закрыться меню (и уйти `endPreview`), и только потом панель берёт примерку себе.
+        config.openThemeEditor = { [weak self] in
+            DispatchQueue.main.async { self?.openThemeEditor(window: window, editing: nil) }
+        }
+        config.editMyTheme = { [weak self] my in
+            DispatchQueue.main.async { self?.openThemeEditor(window: window, editing: my) }
+        }
         config.deleteMyTheme = { [weak self] my in
             DispatchQueue.main.async { self?.actions.myThemes.delete(id: my.id) }
         }
@@ -264,15 +282,10 @@ final class MinimizeMenu: NSObject {
         // activate() на macOS 14+ без yield со стороны Claude приложение не активирует —
         // нужен именно ignoringOtherApps, как делает Hammerspoon перед popupMenu.
         NSApp.activate(ignoringOtherApps: true)
-        // Меню открываем СБОКУ от окна, а не поверх него: каскад подменю тогда уходит в сторону,
-        // и примерка темы/шрифта видна (#5395, слово Элвиса 04.09 21:20). Справа, если влезает,
-        // иначе слева; совсем некуда — как раньше, под кнопкой.
-        var point = CGPoint(x: rect.minX, y: rect.maxY + 2)
-        if let frame = AX.frame(window), let area = Screens.mainUsableFrame {
-            let width: CGFloat = 280
-            if frame.maxX + 6 + width <= area.maxX { point = CGPoint(x: frame.maxX + 6, y: rect.minY) }
-            else if frame.minX - 6 - width >= area.minX { point = CGPoint(x: frame.minX - 6 - width, y: rect.minY) }
-        }
+        // Меню встаёт СЛЕВА от жёлтой кнопки (решение 2.1 плана WF20): точку считает чистая
+        // `origin`, а `NSMenu.size` спрашиваем только здесь — AppKit считает её лениво.
+        let point = MinimizeMenu.origin(button: rect, menuWidth: menu.size.width,
+                                        area: Screens.mainUsableFrame)
         let origin = Screens.flip(point: point)
         menu.popUp(positioning: nil, at: origin, in: nil)
         menuOpen = false
@@ -280,9 +293,38 @@ final class MinimizeMenu: NSObject {
         // popUp: замыкания выбора отложены на ход вперёд, и «конец предпросмотра», посланный
         // после них, перекрыл бы закрепление — лоадер читает command.json раз в 500 мс и
         // берёт последнюю команду.
-        if previewed && !committed { actions.endPreview(window: window) }
+        // Примеркой владеет панель «Своя тема» — молчим: её ползунок мы бы просто погасили.
+        if previewed && !committed && !MinimizeMenu.editorOpen { actions.endPreview(window: window) }
         // Меню закрылось — фокус обратно окну Claude (решение 7 плана).
         app.focus(window: window)
+    }
+
+    // MARK: - положение меню (чистая часть — её и проверяет тест)
+
+    /// Отступ меню от жёлтой кнопки: правый край на столько ЛЕВЕЕ её левого края, верх — на
+    /// столько НИЖЕ её низа (слово Элвиса 05.09 10:40: «правый край чуть левее и чуть ниже значка»).
+    static let menuGap: CGFloat = 2
+    /// Ширина меню, когда `NSMenu.size` соврал: на пунктах с кастомными `view` («↔️ Поля по бокам»,
+    /// «⏱ Скорость») он может отдать что угодно. 280 — та же константа, что стояла в WF19.
+    static let fallbackMenuWidth: CGFloat = 280
+    /// Границы, в которых ширине меню верим (решение 2.1 плана WF20).
+    static let minMenuWidth: CGFloat = 120
+    static let maxMenuWidth: CGFloat = 600
+
+    /// Куда поставить меню — в перевёрнутых координатах Quartz; точка это ЛЕВЫЙ ВЕРХНИЙ угол
+    /// меню, именно её ждёт `popUp(positioning: nil, at:, in: nil)` после `Screens.flip`.
+    ///
+    /// Правило одно, без «если влезет справа» (слово Элвиса 05.09 10:40 перекрывает WF19/#5395):
+    /// правый край меню чуть левее жёлтой кнопки, верх — чуть ниже неё. Слева места нет (окно
+    /// придвинули к краю экрана) — меню падает под левый край окна, как было до WF19.
+    /// Области экрана не знаем — ставим слева и не обрезаем: рисовать меню поверх кнопки хуже.
+    static func origin(button rect: CGRect, menuWidth: CGFloat, area: CGRect?) -> CGPoint {
+        // NaN и прочая небывальщина в `contains` не попадает — уйдёт в запасные 280.
+        let width = (minMenuWidth...maxMenuWidth).contains(menuWidth) ? menuWidth : fallbackMenuWidth
+        let top = rect.maxY + menuGap
+        let left = rect.minX - menuGap - width
+        guard let area = area, left < area.minX else { return CGPoint(x: left, y: top) }
+        return CGPoint(x: rect.minX, y: top)
     }
 
     /// «Сохранить как мою тему…»: имя спрашиваем модально, пару берём из последней команды
@@ -304,8 +346,16 @@ final class MinimizeMenu: NSObject {
         if let existing = MyThemesStore.matching(name: name, in: actions.myThemes.load()),
            !MinimizeMenu.confirmOverwrite(name: existing.name) { return }
         if actions.saveMyTheme(name: name, window: window) == nil {
-            MinimizeMenu.warn("Не удалось записать my-themes.json в Application Support/MyClaude")
+            MinimizeMenu.warn(MenuModel.themeEditorWriteFailed)
         }
+    }
+
+    /// «🎚 Своя тема…» и «✏️ Изменить мою тему ▸» (решение 1.5 плана WF20). Ручки берутся
+    /// у правимой темы, а для новой подбираются по нынешней теме этого окна. Красит панель
+    /// ровно то окно, из меню которого её открыли.
+    private func openThemeEditor(window: AXUIElement, editing: MyTheme?) {
+        let knobs = editing.map { ThemeKnobs.of($0) } ?? actions.editorKnobs(window: window)
+        ThemeEditor.open(window: window, knobs: knobs, editing: editing, actions: actions, app: app)
     }
 
     // MARK: - сборка меню (без AX и popUp — так его и проверяют тесты)
@@ -335,22 +385,17 @@ final class MinimizeMenu: NSObject {
         /// Поля по бокам (задача #5360): текущее значение ползунка из claude.json и обработчик.
         var sidePadding = LiveStyle.defaultSidePadding
         var setSidePadding: (Int) -> Void = { _ in }
-        /// Цвет проекта (план WF15 п. 5): папка окна и что у неё лежит. nil — меню собрано
-        /// без сведений о проекте, и пункта «🗂 Проект ▸» в нём нет; живьём состояние есть
-        /// всегда — папку не узнали, значит пункт погашен («Проект: не определён»).
-        var project: ProjectMenuState?
+        /// Тумблер «🗂 Цвет по проекту» (решение 3.4 плана WF20): галка — покраска включена.
+        /// nil — меню собрано без сведений о проекте, и тумблера в нём нет вовсе.
+        var projectColor: Bool?
         /// Недавние папки в «🪟 Новое окно ▸» (план WF16, ступень b). Пусто — подменю остаётся
         /// с одним пунктом «Здесь же», раздела «НЕДАВНИЕ ПРОЕКТЫ» нет вовсе: пункт, молча
         /// открывающий окно не в той папке, хуже отсутствия пункта.
         var projects: [Project] = []
         /// Клик по папке: новый чат в ней, имя чата — имя проекта, цвет — сразу проектный.
         var newWindowInProject: (Project) -> Void = { _ in }
-        /// Тумблер «Красить чаты по проекту» — приходит уже перевёрнутым.
-        var projectPaint: (Bool) -> Void = { _ in }
-        var projectApply: () -> Void = {}
-        var projectWrite: () -> Void = {}
-        var projectAgents: () -> Void = {}
-        var projectRemove: () -> Void = {}
+        /// Клик по тумблеру «🗂 Цвет по проекту» — приходит уже перевёрнутым.
+        var setProjectColor: (Bool) -> Void = { _ in }
 
         /// Можно ли верить памяти приложения об этом окне — от этого зависит галка «Как у Claude».
         var windowMemoryTrusted: Bool { windowTitled && !windowAutoPainted }
@@ -371,6 +416,10 @@ final class MinimizeMenu: NSObject {
         var previewFrame: () -> Void = {}
         var saveMyTheme: () -> Void = {}
         var deleteMyTheme: (MyTheme) -> Void = { _ in }
+        /// «🎚 Своя тема…» — панель с ручками, подобранными по нынешней теме окна (план WF20).
+        var openThemeEditor: () -> Void = {}
+        /// «✏️ Изменить мою тему ▸ <имя>» — та же панель, но ручками правимой темы.
+        var editMyTheme: (MyTheme) -> Void = { _ in }
         /// «🌈 Раскрасить по кругу» (план WF10, переименовано в WF14): набор красит все окна
         /// на экране — окно под курсором ему не нужно.
         var autoPaint: (AutoPaintPreset) -> Void = { _ in }
@@ -481,11 +530,9 @@ final class MinimizeMenu: NSObject {
         // Свои темы переехали сюда — значит, и предпросмотр по наведению нужен на этом уровне.
         submenu.delegate = PreviewMenuDelegate.shared
 
-        // «🗂 Проект ▸» — первым разделом (решение 5 плана WF15, вопрос 3 макета).
-        if let project = config.project {
-            submenu.addItem(projectItem(config, project))
-            submenu.addItem(.separator())
-        }
+        // Раздела «🗂 Проект ▸» здесь больше нет (решение 3.5 плана WF20): цвет у проекта
+        // появляется сам, а выбор темы в этом окне сам в проект и ложится. Остался один
+        // тумблер — в «🖥 Всем окнам ▸».
         if !config.myThemes.isEmpty {
             submenu.addItem(header(MenuModel.myThemesHeader))
             for my in config.myThemes { submenu.addItem(myThemeItem(config, my, scope: window)) }
@@ -501,6 +548,21 @@ final class MinimizeMenu: NSObject {
         submenu.addItem(.separator())
         submenu.addItem(allWindowsItem(config))
         submenu.addItem(.separator())
+        // Редактор своей темы открывает нижнюю группу (решение 1.5 плана WF20): 🎚 Своя тема… ·
+        // ✏️ Изменить ▸ · 💾 Сохранить как мою тему… · 🗑 Удалить ▸ · 🧹 Всё как у Claude.
+        // Предпросмотра по наведению у новых пунктов нет: панель и так красит окно с первой ручки.
+        let editor = BlockMenuItem(title: MenuModel.themeEditorTitle) { config.openThemeEditor() }
+        editor.image = icon(MenuModel.themeEditorIcon)
+        submenu.addItem(editor)
+        if !config.myThemes.isEmpty {
+            let edits = NSMenu(title: MenuModel.editMyThemeTitle)
+            edits.autoenablesItems = false
+            for my in config.myThemes {
+                edits.addItem(BlockMenuItem(title: my.name) { config.editMyTheme(my) })
+            }
+            submenu.addItem(submenuItem(title: MenuModel.editMyThemeTitle,
+                                        icon: MenuModel.editMyThemeIcon, submenu: edits))
+        }
         let save = BlockMenuItem(title: MenuModel.saveMyThemeTitle) { config.saveMyTheme() }
         save.image = icon(MenuModel.saveMyThemeIcon)
         submenu.addItem(save)
@@ -523,48 +585,14 @@ final class MinimizeMenu: NSObject {
                            submenu: submenu)
     }
 
-    /// «🗂 Проект: PimpMyClaude ▸» — первый раздел «🎨 Оформление ▸» (план WF15 п. 5):
-    /// подпись папки, тумблер покраски, разделитель и четыре действия с настройками проекта.
-    /// Папку не узнали — пункт остаётся, но зовётся «Проект: не определён» и погашен: Элвис
-    /// должен видеть, что приложение не знает папку, а не гадать, почему не красит.
-    /// Настроек у проекта ещё нет — «💾 Записать этот вид в проект» становится
-    /// «✍️ Завести настройки проекта», а пункты, которым нечего брать и нечего убирать, гаснут.
-    static func projectItem(_ config: MenuConfig, _ state: ProjectMenuState) -> NSMenuItem {
-        guard state.folder != nil else {
-            let item = NSMenuItem(title: MenuModel.projectUnknownTitle, action: nil, keyEquivalent: "")
-            item.image = icon(MenuModel.projectIcon)
-            item.isEnabled = false
-            return item
-        }
-        let submenu = NSMenu(title: MenuModel.projectTitle(state.name))
-        submenu.autoenablesItems = false
-        // Путь папки — disabled-подпись, как заголовки секций.
-        submenu.addItem(header(state.path))
-        let paint = BlockMenuItem(title: MenuModel.projectPaintTitle) { config.projectPaint(!state.painting) }
-        paint.state = state.painting ? .on : .off
-        submenu.addItem(paint)
-        submenu.addItem(.separator())
-
-        let apply = BlockMenuItem(title: MenuModel.projectApplyTitle) { config.projectApply() }
-        apply.image = icon(MenuModel.projectApplyIcon)
-        apply.isEnabled = state.hasSettings
-        submenu.addItem(apply)
-        let write = BlockMenuItem(title: state.hasSettings ? MenuModel.projectWriteTitle
-                                                           : MenuModel.projectCreateTitle) {
-            config.projectWrite()
-        }
-        write.image = icon(state.hasSettings ? MenuModel.projectWriteIcon : MenuModel.projectCreateIcon)
-        submenu.addItem(write)
-        let agents = BlockMenuItem(title: MenuModel.projectAgentsTitle) { config.projectAgents() }
-        agents.image = icon(MenuModel.projectAgentsIcon)
-        agents.isEnabled = state.hasSettings
-        submenu.addItem(agents)
-        let remove = BlockMenuItem(title: MenuModel.projectRemoveTitle) { config.projectRemove() }
-        remove.image = icon(MenuModel.projectRemoveIcon)
-        remove.isEnabled = state.hasSettings
-        submenu.addItem(remove)
-        return submenuItem(title: MenuModel.projectTitle(state.name), icon: MenuModel.projectIcon,
-                           submenu: submenu)
+    /// «🗂 Цвет по проекту» — тумблер в «🖥 Всем окнам ▸», всё, что осталось от подменю
+    /// «Проект ▸» (решение 3.4 плана WF20). По умолчанию включён; выключение снимает слои,
+    /// которые проект поставил окнам, включение — красит ближайшим тиком.
+    static func projectColorItem(_ config: MenuConfig, on: Bool) -> NSMenuItem {
+        let item = BlockMenuItem(title: MenuModel.projectColorTitle) { config.setProjectColor(!on) }
+        item.image = icon(MenuModel.projectIcon)
+        item.state = on ? .on : .off
+        return item
     }
 
     /// «🖥 Всем окнам ▸» — то же самое, но сразу всем. Заголовок «ВСЕМ ОКНАМ» ровно один,
@@ -583,6 +611,8 @@ final class MinimizeMenu: NSObject {
         for half in Size.Half.allCases { submenu.addItem(sizeItem(config, half: half, scope: all)) }
         submenu.addItem(frameItem(config, scope: all))
         submenu.addItem(.separator())
+        // Тумблер стоит ПЕРЕД «🌈 Раскрасить по кругу ▸» (решение 3.4 плана WF20).
+        if let on = config.projectColor { submenu.addItem(projectColorItem(config, on: on)) }
         submenu.addItem(autoPaintItem(config))
         submenu.addItem(liveColorsItem(config))
         return submenuItem(title: MenuModel.allWindowsTitle, icon: MenuModel.allWindowsIcon,

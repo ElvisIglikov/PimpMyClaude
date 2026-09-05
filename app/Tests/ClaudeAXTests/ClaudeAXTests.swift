@@ -543,13 +543,59 @@ final class ClaudeAXTests: XCTestCase {
             + (size.isKeep ? "s" : "") + (frame.isKeep ? "r" : "")
     }
 
+    /// Положение меню на жёлтой кнопке (решение 2.1 плана WF20, слово Элвиса 05.09 10:40):
+    /// правый край чуть ЛЕВЕЕ кнопки, верх чуть НИЖЕ неё; у левого края экрана — под левым краем
+    /// окна, как было до WF19. Координаты перевёрнутые (Quartz), точка — левый верхний угол меню.
+    func testMenuOriginSitsLeftOfMinimizeButton() {
+        let area = CGRect(x: 0, y: 25, width: 1710, height: 1055)
+        // Кнопка «Свернуть» окна посреди экрана.
+        let button = CGRect(x: 500, y: 40, width: 14, height: 14)
+        let point = MinimizeMenu.origin(button: button, menuWidth: 300, area: area)
+        XCTAssertEqual(point.x + 300, button.minX - MinimizeMenu.menuGap, "правый край не левее кнопки")
+        XCTAssertEqual(point.y, button.maxY + MinimizeMenu.menuGap, "верх меню не ниже кнопки")
+        // Правило «справа от окна, если влезает» снято: рамка окна на точку не влияет вовсе.
+        XCTAssertEqual(MinimizeMenu.origin(button: button, menuWidth: 300, area: nil), point)
+
+        // Слева не влезло (окно придвинули к краю экрана) — меню падает под ЛЕВЫЙ край окна.
+        let edge = CGRect(x: 40, y: 40, width: 14, height: 14)
+        XCTAssertEqual(MinimizeMenu.origin(button: edge, menuWidth: 300, area: area),
+                       CGPoint(x: edge.minX, y: edge.maxY + MinimizeMenu.menuGap))
+        // Ровно на границе: 302 − 2 − 300 = 0 ещё влезает, на пункт левее — уже нет.
+        XCTAssertEqual(MinimizeMenu.origin(button: CGRect(x: 302, y: 40, width: 14, height: 14),
+                                           menuWidth: 300, area: area).x, area.minX)
+        XCTAssertEqual(MinimizeMenu.origin(button: CGRect(x: 301, y: 40, width: 14, height: 14),
+                                           menuWidth: 300, area: area).x, 301)
+        // Экран не с нуля (второй монитор слева) — считаем от его края, а не от нуля.
+        XCTAssertEqual(MinimizeMenu.origin(button: button, menuWidth: 300,
+                                           area: CGRect(x: 400, y: 25, width: 1000, height: 800)).x,
+                       button.minX)
+
+        // `NSMenu.size` на пунктах с кастомными view может соврать — верим только 120…600,
+        // иначе подставляем 280 (та же константа, что стояла в WF19).
+        let fallback = button.minX - MinimizeMenu.menuGap - MinimizeMenu.fallbackMenuWidth
+        for width in [0, 5, Double(MinimizeMenu.minMenuWidth) - 1,
+                      Double(MinimizeMenu.maxMenuWidth) + 1, 5000, Double.nan] {
+            XCTAssertEqual(MinimizeMenu.origin(button: button, menuWidth: CGFloat(width),
+                                               area: area).x, fallback, "ширина \(width)")
+        }
+        // Крайним значениям полосы верим как есть (широкому меню нужно окно подальше от края).
+        let far = CGRect(x: 900, y: 40, width: 14, height: 14)
+        for (rect, width) in [(button, MinimizeMenu.minMenuWidth), (far, MinimizeMenu.maxMenuWidth)] {
+            XCTAssertEqual(MinimizeMenu.origin(button: rect, menuWidth: width, area: area).x,
+                           rect.minX - MinimizeMenu.menuGap - width, "ширина \(width)")
+        }
+    }
+
     /// Структура меню варианта А (план WF14 п. 5): верхний уровень короткий, всё оформление —
     /// в «🎨 Оформление ▸», редкое — в «⋯ Ещё ▸», «всем окнам» — одним подменю с ОДНОЙ шапкой.
+    /// В WF20 подменю «🗂 Проект ▸» из «Оформления» ушло, а в «Всем окнам ▸» пришёл тумблер
+    /// «🗂 Цвет по проекту» — перед «🌈 Раскрасить по кругу ▸».
     func testAppearanceMenuStructure() throws {
         var applied: [(scope: String, theme: String?, font: String?, keep: String)] = []
         var saved = 0
         var deleted: [String] = []
         var config = menuConfig()
+        config.projectColor = true
         config.apply = { scope, theme, font, size, frame in
             applied.append((scope: scope, theme: theme.value?.id, font: font.value?.id,
                             keep: self.keptLayers(theme, font, size, frame)))
@@ -611,10 +657,14 @@ final class ClaudeAXTests: XCTestCase {
 
         // MARK: «🖥 Всем окнам ▸» — шапка ровно одна, у него самого (критик В4)
         let all = try XCTUnwrap(appearance.items.first { $0.title == MenuModel.allWindowsTitle }?.submenu)
-        // «🌊 Живые цвета ▸» встали сразу под «🌈 Раскрасить по кругу ▸» (план WF18, вариант А).
+        // «🌊 Живые цвета ▸» встали сразу под «🌈 Раскрасить по кругу ▸» (план WF18, вариант А),
+        // а перед ними — тумблер «🗂 Цвет по проекту» (решение 3.4 плана WF20).
         XCTAssertEqual(all.items.map { $0.isSeparatorItem ? "—" : $0.title },
                        ["ВСЕМ ОКНАМ", "Цвет", "Шрифт", "Размер ответов", "Размер вопросов",
-                        "Неоновая рамка", "—", "Раскрасить по кругу", "Живые цвета"])
+                        "Неоновая рамка", "—", "Цвет по проекту", "Раскрасить по кругу",
+                        "Живые цвета"])
+        // Подменю «🗂 Проект ▸» из «Оформления» ушло целиком (решение 3.5 плана WF20).
+        XCTAssertNil(appearance.items.first { $0.title.hasPrefix("Проект") })
         XCTAssertFalse(try XCTUnwrap(all.items.first).isEnabled)
         XCTAssertNotNil(appearance.items.first { $0.title == MenuModel.allWindowsTitle }?.image) // 🖥
         // МОИ ТЕМЫ остались в «Всем окнам ▸ → Цвет ▸» (блокер Б2): свою тему можно дать всем окнам.
