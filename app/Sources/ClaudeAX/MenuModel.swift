@@ -194,8 +194,9 @@ enum MenuModel {
     static let answerSizeTitle = "Размер ответов"
     static let questionSizeTitle = "Размер вопросов"
     static let sizeIcon = "🔠"
-    /// Сброс слоя размера: `"size":null` снимает ОБЕ половины — перефилдового null
-    /// в контракте нет, и «Как у Claude» в любом из двух подменю значит одно и то же.
+    /// Сброс размера в подменю: снимает ровно СВОЮ половину (`{"answer":null}`, решение 1
+    /// плана WF19) — размер вопросов от «Как у Claude» в ответах больше не пропадает.
+    /// Обе половины разом снимает «🧹 Всё как у Claude» (`"size":null`).
     static let sizeResetTitle = "Как у Claude"
 
     static func sizeTitle(_ half: Size.Half) -> String {

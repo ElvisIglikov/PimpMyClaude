@@ -356,15 +356,17 @@ final class MinimizeMenu: NSObject {
         var windowMemoryTrusted: Bool { windowTitled && !windowAutoPainted }
         var perform: (ClaudeCommand) -> Void = { _ in }
         /// scope и четыре слоя — одна команда на все (контракт п. 1 плана WF12);
-        /// пункт меню трогает ровно свой слой, остальные уходят `.keep`.
-        var apply: (String, Layer<Theme>, Layer<Font>, Layer<Size>, Layer<Bool>) -> Void = { _, _, _, _, _ in }
+        /// пункт меню трогает ровно свой слой, остальные уходят `.keep`. У размера — ровно свою
+        /// ПОЛОВИНУ слоя (`SizeLayer`, решение 1 плана WF19).
+        var apply: (String, Layer<Theme>, Layer<Font>, SizeLayer, Layer<Bool>) -> Void = { _, _, _, _, _ in }
         var applyMyTheme: (String, MyTheme) -> Void = { _, _ in }
         /// Наведение на пункт списка окна: примерить слой, ничего не запоминая (план WF8 п. 2).
-        /// `nil` — примерка сброса слоя («Как у Claude» / «Системный»).
+        /// `nil` — примерка сброса слоя («Как у Claude» / «Системный»); у размера сброс приходит
+        /// половиной слоя (`.one(half, .reset)`).
         var previewTheme: (Theme?) -> Void = { _ in }
         var previewMyTheme: (MyTheme) -> Void = { _ in }
         var previewFont: (Font?) -> Void = { _ in }
-        var previewSize: (Size?) -> Void = { _ in }
+        var previewSize: (SizeLayer) -> Void = { _ in }
         /// У тумблера рамки примерка одна — включённая рамка (план WF12 п. 4).
         var previewFrame: () -> Void = {}
         var saveMyTheme: () -> Void = {}
@@ -783,8 +785,10 @@ final class MinimizeMenu: NSObject {
                     submenu: sizeList(config, half: half, scope: scope))
     }
 
-    /// «Как у Claude» первым (сброс слоя целиком: перефилдового null контракт не знает,
-    /// поэтому он снимает и вторую половину), разделитель и кегли из Size.steps.
+    /// «Как у Claude» первым, разделитель и кегли из Size.steps. Сброс снимает ровно СВОЮ
+    /// половину слоя (`{"answer":null}`, решение 2 плана WF19): «Как у Claude» в «Размер
+    /// ответов ▸» больше не уносит с собой размер вопросов. Обе половины сразу снимает
+    /// «🧹 Всё как у Claude» — там слой уходит целиком (`"size":null`).
     static func sizeList(_ config: MenuConfig, half: Size.Half, scope: String) -> NSMenu {
         let all = scope == MenuModel.themeScopeAll
         let selected = (all ? config.allSize : config.windowSize)?.value(half)
@@ -793,9 +797,10 @@ final class MinimizeMenu: NSObject {
         if !all { submenu.delegate = PreviewMenuDelegate.shared }
 
         let reset = BlockMenuItem(title: MenuModel.sizeResetTitle) {
-            config.apply(scope, .keep, .keep, .reset, .keep)
+            config.apply(scope, .keep, .keep, .one(half, .reset), .keep)
         }
-        reset.preview = all ? nil : { config.previewSize(nil) }
+        // Примерка — та же команда: вторая половина на экране не дрогнет (решение 2 плана WF19).
+        reset.preview = all ? nil : { config.previewSize(.one(half, .reset)) }
         // Сравниваем не слой, а свою ПОЛОВИНУ (критик В3): у окна с answer:16, question:nil
         // в «Размер вопросов ▸» галка «Как у Claude» обязана встать — эта половина пуста.
         reset.state = resetState(config, all: all,
@@ -805,8 +810,8 @@ final class MinimizeMenu: NSObject {
         submenu.addItem(.separator())
 
         for px in Size.steps {
-            let size = Size.one(half, px)
-            let item = BlockMenuItem(title: String(px)) { config.apply(scope, .keep, .keep, .set(size), .keep) }
+            let size = SizeLayer.one(half, .set(px))
+            let item = BlockMenuItem(title: String(px)) { config.apply(scope, .keep, .keep, size, .keep) }
             item.preview = all ? nil : { config.previewSize(size) }
             item.state = px == selected ? .on : .off
             submenu.addItem(item)
