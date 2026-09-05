@@ -96,9 +96,10 @@ final class ThemeEditor: NSObject, NSWindowDelegate {
         let frame = AX.frame(window) ?? Screens.mainUsableFrame ?? .zero
         let point = ThemeEditor.origin(window: frame, size: ThemeEditor.panelSize,
                                        area: Screens.mainUsableFrame)
-        // `flip` даёт левый ВЕРХНИЙ угол в координатах AppKit, а окну нужен левый НИЖНИЙ.
+        // `flip` даёт левый ВЕРХНИЙ угол в координатах AppKit, а окну нужен левый НИЖНИЙ —
+        // и считать надо по ВСЕЙ рамке окна, вместе с полосой заголовка.
         let top = Screens.flip(point: point)
-        panel.setFrameOrigin(NSPoint(x: top.x, y: top.y - ThemeEditor.panelSize.height))
+        panel.setFrameOrigin(NSPoint(x: top.x, y: top.y - panel.frame.height))
 
         MinimizeMenu.editorOpen = true
         ClaudeActions.themeEditorTitle = AX.string(window, kAXTitleAttribute)

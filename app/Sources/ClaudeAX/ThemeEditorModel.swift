@@ -129,17 +129,18 @@ final class ThemeEditorModel {
         if let taken = MyThemesStore.matching(name: name, in: store.load()),
            taken.id != editing?.id, !confirm(taken.name) { return .cancelled }
         let theme = knobs.theme(id: editing?.id ?? ThemeKnobs.previewID, name: name)
-        previewing = false
+        let saved: MyTheme?
         if let editing = editing {
-            guard let saved = store.update(id: editing.id, name: name, theme: theme, font: font,
-                                           size: size, frame: frame, knobs: knobs) else {
-                return .failed
-            }
-            return .saved(saved)
+            saved = store.update(id: editing.id, name: name, theme: theme, font: font,
+                                 size: size, frame: frame, knobs: knobs)
+        } else {
+            saved = store.add(name: name, theme: theme, font: font, size: size, frame: frame,
+                              knobs: knobs).flatMap { MyThemesStore.matching(name: name, in: $0) }
         }
-        guard let list = store.add(name: name, theme: theme, font: font, size: size, frame: frame,
-                                   knobs: knobs),
-              let saved = MyThemesStore.matching(name: name, in: list) else { return .failed }
-        return .saved(saved)
+        // Файл не записался — примерка остаётся живой: панель закроется и вернёт окну цвет,
+        // который на нём и был. Записалась — примерку погасит закрепляющая команда.
+        guard let my = saved else { return .failed }
+        previewing = false
+        return .saved(my)
     }
 }

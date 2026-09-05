@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>PimpMyClaude — WF25: своё анимированное меню</title>
+<style>
+  :root{
+    --bg:#161618; --card:#232326; --line:rgba(255,255,255,.10);
+    --text:#ececef; --dim:#9b9ba1; --head:#8d8d94; --accent:#3b6fe0; --ok:#4dbb7d; --warn:#d99a9a;
+    --menu:#2c2c2e; --menuline:rgba(255,255,255,.09); --sel:#3b6fe0;
+    --dur-in:.16s; --dur-out:.11s;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:18px 20px 34px;background:var(--bg);color:var(--text);
+    font:13px/1.45 -apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  h1{font-size:17px;margin:0 0 3px;font-weight:600}
+  .lead{color:var(--dim);font-size:12.5px;margin:0 0 6px;max-width:960px}
+  h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--head);
+    font-weight:600;margin:26px 0 9px;padding-top:14px;border-top:1px solid var(--line)}
+  h2:first-of-type{border-top:0;padding-top:0}
+  .capt{font-size:11px;color:var(--head);margin:0 0 6px 2px}
+  .note{color:var(--dim);font-size:12px;margin-top:12px;max-width:960px}
+  b.g{color:#bfe6cf} b.r{color:var(--warn)}
+  .row2{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+
+  /* ——— кнопки-переключатели ——— */
+  .ctrl{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 0 12px}
+  .grp{display:flex;gap:0;border:1px solid rgba(255,255,255,.16);border-radius:7px;overflow:hidden}
+  .grp button{background:transparent;border:0;color:var(--text);font:12px -apple-system,sans-serif;
+    padding:5px 11px;cursor:pointer;border-right:1px solid rgba(255,255,255,.10)}
+  .grp button:last-child{border-right:0}
+  .grp button.on{background:var(--accent);color:#fff}
+  .go{background:#3a3a3f;border:0;border-radius:7px;color:var(--text);font:12.5px -apple-system,sans-serif;
+    padding:6px 15px;cursor:pointer}
+  .go.pr{background:var(--accent);color:#fff}
+  .lab{font-size:11px;color:var(--head)}
+
+  /* ——— сцена: окно Claude + панель ——— */
+  .stage{position:relative;width:640px;height:330px;background:#0e0e10;border:1px solid var(--line);
+    border-radius:10px;overflow:hidden}
+  .stage .desk{position:absolute;inset:0;background:
+    repeating-linear-gradient(135deg,#121215 0 10px,#141418 10px 20px)}
+  .cwin{position:absolute;left:250px;top:34px;width:360px;height:252px;border-radius:9px;background:#25252a;
+    border:1px solid rgba(255,255,255,.12);box-shadow:0 14px 34px rgba(0,0,0,.55);overflow:hidden}
+  .cbar{height:22px;display:flex;align-items:center;gap:6px;padding:0 8px;background:#313136;
+    border-bottom:1px solid rgba(0,0,0,.4)}
+  .cdot{width:10px;height:10px;border-radius:50%;background:#5a5a5f}
+  .cdot.r{background:#ee6a5f} .cdot.y{background:#f5bd4f;position:relative}
+  .cdot.y.glow{box-shadow:0 0 0 3px rgba(245,189,79,.35)}
+  .cbar b{font-size:11px;font-weight:500;color:#c6c6cc;margin-left:6px}
+  .cbody{display:flex;height:230px}
+  .cside{width:96px;background:#2a2a30;padding:9px 8px}
+  .cside i{display:block;height:7px;border-radius:3px;background:rgba(255,255,255,.13);margin-bottom:8px;font-style:normal}
+  .cmain{flex:1;padding:11px 12px;color:#7c7c85;font-size:10.5px}
+  .cmsg{border-radius:8px;background:#2f2f35;height:34px;margin-bottom:8px}
+  .cmsg.two{height:52px}
+  .cinp{border-radius:8px;border:1px solid rgba(255,255,255,.14);height:26px;margin-top:12px}
+
+  /* панель меню на сцене */
+  /* правый край панели — на 2 px левее жёлтой кнопки, верх — на 2 px ниже неё (правило WF20) */
+  .fly{position:absolute;left:88px;top:53px;transform-origin:100% 0%;opacity:0;transform:scale(.08)}
+  .fly.in{animation:flyin var(--dur-in) cubic-bezier(.16,1,.3,1) forwards}
+  .fly.out{animation:flyout var(--dur-out) cubic-bezier(.4,0,1,1) forwards}
+  @keyframes flyin{from{opacity:0;transform:scale(.08)} to{opacity:1;transform:scale(1)}}
+  @keyframes flyout{from{opacity:1;transform:scale(1)} to{opacity:0;transform:scale(.08)}}
+
+  /* ——— панель меню ——— */
+  .menu{background:var(--menu);border:1px solid var(--menuline);border-radius:11px;padding:5px 0;
+    box-shadow:0 16px 38px rgba(0,0,0,.6);white-space:nowrap;min-width:196px}
+  .menu.blur{background:rgba(58,58,64,.72);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+  .menu.theme{background:#241a35;border-color:rgba(167,139,250,.35)}
+  .menu.theme .r.sel{background:#7c5cf0}
+  .menu.theme .k,.menu.theme .hdr{color:#a99bc8}
+  .r{display:flex;align-items:center;height:22px;margin:0 5px;padding:0 8px 0 2px;border-radius:5px;font-size:12.5px}
+  .r.sel{background:var(--sel);color:#fff}
+  .r.off{color:#7b7b83}
+  .chk{width:15px;text-align:center;font-size:11px;color:#dcdce1}
+  .ic{width:19px;text-align:center;font-size:12.5px}
+  .t{flex:1;padding-right:20px}
+  .k{color:#9a9aa2;font-size:12px;margin-left:12px;font-variant-numeric:tabular-nums}
+  .menu.theme .r.sel .k{color:#e6dcff}
+  .arw{color:#b9b9c0;margin-left:10px;font-size:11px}
+  .hdr{font-size:10px;letter-spacing:.07em;color:var(--head);padding:7px 12px 3px 38px}
+  .sep{height:1px;background:rgba(255,255,255,.12);margin:5px 11px}
+  .dot{width:13px;height:13px;border-radius:50%;display:inline-block;border:1px solid rgba(255,255,255,.35)}
+  .r.slid{height:26px}
+  .track{position:relative;display:inline-block;width:78px;height:3px;border-radius:2px;
+    background:rgba(255,255,255,.22);margin:0 9px 0 0}
+  .fill{position:absolute;left:0;top:0;height:3px;border-radius:2px;background:#6b93f5}
+  .kn{position:absolute;top:-5px;width:13px;height:13px;border-radius:50%;background:#f4f4f6;
+    box-shadow:0 1px 3px rgba(0,0,0,.65)}
+  .num{color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
+
+  /* каскад */
+  .cascade{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
+  .cascade .col{display:flex;flex-direction:column;gap:5px}
+  .cascade .cap{font-size:10.5px;color:var(--head);padding-left:3px}
+
+  /* ступени и карточки */
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:1000px}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .step.pick{border-color:#3ea06a;background:#1e2a22}
+  .step b{display:block;font-size:13.5px;margin-bottom:5px}
+  .step p{margin:3px 0;font-size:12.5px;color:#d6d6da}
+  .step p.min{color:var(--warn)}
+  .tag{display:inline-block;font-size:10.5px;font-weight:600;color:#0f1a12;background:#4dbb7d;
+    border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:2px}
+  .tag.l{background:#5c6470;color:#e6ecf5}
+
+  /* вопросы */
+  .qs{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:1000px}
+  .q{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .q b{font-size:13.5px}
+  .q ul{margin:6px 0 0;padding-left:17px}
+  .q li{font-size:12.5px;color:#d6d6da;margin:3px 0}
+  .q li.rec{color:#bfe6cf}
+  .q li.rec i{font-style:normal;font-weight:600}
+  .old{background:#1b1b1e;border:1px solid var(--line);border-radius:9px;padding:10px 13px;
+    font-size:12.5px;color:#cfcfd4;max-width:1000px;margin-top:12px;line-height:1.6}
+</style>
+</head>
+<body>
+
+<h1>WF25 — своё меню на жёлтой кнопке: вылет с минуса, влёт обратно</h1>
+<p class="lead">Сейчас меню рисует сам macOS (<b>NSMenu</b>), и анимировать его нельзя вообще никак — оно просто
+появляется. WF25 меняет только <b>показ</b>: пункты, галки, примерка и клавиши остаются те же самые, но рисует
+их наша панель — а её уже можно заставить вылетать с минуса и влетать обратно.</p>
+
+<!-- ================================================================ 1. анимация -->
+<h2>1. «Жжик» — посмотри вживую</h2>
+<div class="ctrl">
+  <button class="go pr" id="open">Открыть меню</button>
+  <button class="go" id="close">Закрыть</button>
+  <span class="lab">скорость</span>
+  <span class="grp" id="speed">
+    <button data-in=".10" data-out=".08">быстро</button>
+    <button class="on" data-in=".16" data-out=".11">как советую</button>
+    <button data-in=".24" data-out=".16">медленно</button>
+  </span>
+  <span class="lab">вид панели</span>
+  <span class="grp" id="look">
+    <button class="on" data-look="">как у macOS</button>
+    <button data-look="blur">полупрозрачная</button>
+    <button data-look="theme">в цвет темы</button>
+  </span>
+</div>
+
+<div class="stage" id="stage">
+  <div class="desk"></div>
+  <div class="cwin">
+    <div class="cbar"><span class="cdot r"></span><span class="cdot y glow" id="ybtn"></span><span class="cdot"></span><b>Claude — PimpMyClaude</b></div>
+    <div class="cbody">
+      <div class="cside"><i style="width:70%"></i><i style="width:52%"></i><i style="width:64%"></i><i style="width:44%"></i></div>
+      <div class="cmain">
+        <div class="cmsg"></div><div class="cmsg two"></div><div class="cmsg"></div>
+        <div class="cinp"></div>
+      </div>
+    </div>
+  </div>
+  <div class="fly" id="fly">
+    <div class="menu" id="panel">
+      <div class="r"><span class="chk"></span><span class="ic">🚀</span><span class="t">Workflow</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">💬</span><span class="t">Новый чат</span><span class="k">⌘N</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🪟</span><span class="t">Новое окно</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🪟</span><span class="t">В отдельное окно</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">⬆️</span><span class="t">Развернуть</span><span class="k">⌥⌘↑</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">⬇️</span><span class="t">Свернуть</span><span class="k">⌥⌘↓</span></div>
+      <div class="sep"></div>
+      <div class="r sel"><span class="chk"></span><span class="ic">🎨</span><span class="t">Оформление</span><span class="arw">›</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">⋯</span><span class="t">Ещё</span><span class="arw">›</span></div>
+    </div>
+  </div>
+</div>
+<p class="note">Панель вылетает <b>из жёлтой кнопки</b> и туда же схлопывается при закрытии: точка старта — тот угол
+панели, который ближе к кнопке. Закрывается кликом мимо, <b>Esc</b> или выбором пункта. Если в системе включено
+«Уменьшить движение» — появляется сразу, без полёта.</p>
+
+<!-- ================================================================ 2. каскад -->
+<h2>2. Что должно приехать в свой стиль (это всё уже есть в меню)</h2>
+<p class="capt">16 подменю, до четырёх панелей на экране разом · галки · кружки цветов · имена шрифтов своим шрифтом ·
+шапки секций · погашенные пункты · ползунки прямо в меню · клавиши справа</p>
+<div class="cascade">
+  <div class="col">
+    <div class="cap">верхний уровень</div>
+    <div class="menu casc">
+      <div class="r"><span class="chk"></span><span class="ic">🚀</span><span class="t">Workflow</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">💬</span><span class="t">Новый чат</span><span class="k">⌘N</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🪟</span><span class="t">Новое окно</span><span class="arw">›</span></div>
+      <div class="sep"></div>
+      <div class="r sel"><span class="chk"></span><span class="ic">🎨</span><span class="t">Оформление</span><span class="arw">›</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">⋯</span><span class="t">Ещё</span><span class="arw">›</span></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="cap">🎨 Оформление ▸</div>
+    <div class="menu casc">
+      <div class="hdr">МОИ ТЕМЫ</div>
+      <div class="r"><span class="chk">✓</span><span class="ic"><i class="dot" style="background:#2b2140;border-color:#a78bfa"></i></span><span class="t">Ночная работа</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">🎨</span><span class="t">Цвет</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔤</span><span class="t">Шрифт</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер ответов</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk">✓</span><span class="ic">✨</span><span class="t">Неоновая рамка</span></div>
+      <div class="r slid"><span class="chk"></span><span class="ic">↔️</span><span class="t">Поля по бокам</span>
+        <span class="track"><i class="fill" style="width:22%"></i><i class="kn" style="left:16%"></i></span><span class="num">5</span></div>
+      <div class="sep"></div>
+      <div class="r sel"><span class="chk"></span><span class="ic">🖥</span><span class="t">Всем окнам</span><span class="arw">›</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">🎚</span><span class="t">Своя тема…</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🧹</span><span class="t">Всё как у Claude</span></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="cap">🖥 Всем окнам ▸</div>
+    <div class="menu casc">
+      <div class="hdr">ВСЕМ ОКНАМ</div>
+      <div class="r sel"><span class="chk"></span><span class="ic">🎨</span><span class="t">Цвет</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔤</span><span class="t">Шрифт</span><span class="arw">›</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk">✓</span><span class="ic">🗂</span><span class="t">Цвет по проекту</span></div>
+      <div class="r off"><span class="chk"></span><span class="ic">🌈</span><span class="t">Раскрасить по кругу</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🌊</span><span class="t">Живые цвета</span><span class="arw">›</span></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="cap">🎨 Цвет ▸ — длинный список, крутится колесом</div>
+    <div class="menu casc" style="max-height:210px;overflow:hidden;position:relative">
+      <div class="r"><span class="chk"></span><span class="ic"></span><span class="t">Как у Claude</span></div>
+      <div class="sep"></div>
+      <div class="hdr">ТЁМНЫЕ</div>
+      <div class="r"><span class="chk"></span><span class="ic"><i class="dot" style="background:#241a35;border-color:#a78bfa"></i></span><span class="t">Фиолетовая</span></div>
+      <div class="r sel"><span class="chk">✓</span><span class="ic"><i class="dot" style="background:#102a24;border-color:#3ddc97"></i></span><span class="t">Изумруд</span></div>
+      <div class="r"><span class="chk"></span><span class="ic"><i class="dot" style="background:#2a1616;border-color:#ff8a5c"></i></span><span class="t">Кирпич</span></div>
+      <div class="r"><span class="chk"></span><span class="ic"><i class="dot" style="background:#16202e;border-color:#5fa8ff"></i></span><span class="t">Океан</span></div>
+      <div class="sep"></div>
+      <div class="hdr">СВЕТЛЫЕ</div>
+      <div class="r"><span class="chk"></span><span class="ic"><i class="dot" style="background:#eef3ff;border-color:#3b6fe0"></i></span><span class="t">Арктика</span></div>
+      <div style="position:absolute;right:4px;top:34px;bottom:10px;width:4px;border-radius:2px;background:rgba(255,255,255,.16)"></div>
+    </div>
+  </div>
+</div>
+<p class="note">Панели рисуются <b>из того же самого меню</b>, что сегодня строит приложение: состав, галки и порядок
+не меняются ни на пункт. Значит новые пункты, которые добавят соседние воркфлоу («Расставить ▸», «Workflow ▸»),
+появятся в панели сами.</p>
+
+<!-- ================================================================ 3. ступени -->
+<h2>3. Ступени — каждая сама по себе рабочая</h2>
+<div class="steps">
+  <div class="step pick"><b>1. Верхний уровень + полёт<span class="tag">сначала</span></b>
+    <p>Панель вместо системного меню на верхнем уровне: строки, значки, клавиши справа, подсветка, вылет и влёт,
+      Esc и клик мимо.</p>
+    <p><span style="color:#9b9ba1">Подменю пока системные</span> — открываются как сегодня, всё внутри работает.</p>
+    <p class="min">Стиль на этом шаге ещё смешанный: верх свой, подменю системные.</p>
+  </div>
+  <div class="step"><b>2. Свои подменю<span class="tag l">дальше</span></b>
+    <p>Весь каскад в одном стиле: галки, кружки цветов, шрифты своим шрифтом, шапки, погашенные пункты, ползунки,
+      примерка по наведению, прокрутка длинных списков.</p>
+    <p class="min">Самая долгая часть: каскад должен не закрываться, когда ведёшь мышь наискось.</p>
+  </div>
+  <div class="step"><b>3. Клавиши и доводка<span class="tag l">в конце</span></b>
+    <p>Стрелки ↑↓ по пунктам, → открыть подменю, ← закрыть, ⏎ выбрать, Esc закрыть всё. Анимация подменю,
+      уважение «Уменьшить движение».</p>
+    <p>Только после этого своё меню включается по умолчанию.</p>
+  </div>
+</div>
+<div class="old">
+  <b>Путь назад есть всегда.</b> Своё меню живёт под выключателем: одна строка в настройках — и возвращается
+  системное, ровно такое, как сегодня. Пока идут ступени 1 и 2, выключатель <b>выключен</b>: рабочее меню
+  у тебя и у команды не меняется, пока ты сам не скажешь «включай».
+</div>
+
+<!-- ================================================================ 4. вопросы -->
+<h2>👾 Элвис, ответь коротко</h2>
+<div class="qs">
+  <div class="q"><b>1. Как далеко идём</b>
+    <ul>
+      <li class="rec"><i>Все три ступени</i> (рекомендую): своё меню целиком, включая подменю — один стиль
+        и анимация везде.</li>
+      <li>Только ступень 1: верх свой и с полётом, подменю системные. Быстрее и безопаснее, но вид смешанный.</li>
+    </ul>
+  </div>
+  <div class="q"><b>2. Пока меню открыто</b>
+    <ul>
+      <li class="rec"><i>Как сейчас</i> (рекомендую): приложение становится активным, заголовок окна Claude
+        на это время сереет — зато работают стрелки и Esc. Ровно то же самое происходит и сегодня.</li>
+      <li>Не активировать: Claude не сереет, но клавиш в меню нет вовсе — только мышь.</li>
+    </ul>
+  </div>
+  <div class="q"><b>3. Вид панели</b>
+    <ul>
+      <li class="rec"><i>Как системное меню</i> (рекомендую): тёмно-серая, не отличить от macOS.</li>
+      <li>Полупрозрачная с размытием: красивее в статике, но во время полёта размытие «мылит».</li>
+      <li>В цвет темы окна: меню берёт фон и акцент у темы — заметно и красиво, но это уже не «как у macOS».</li>
+    </ul>
+  </div>
+  <div class="q"><b>4. Скорость «жжика»</b>
+    <ul>
+      <li class="rec"><i>0,16 с туда / 0,11 обратно</i> (рекомендую) — покрути кнопки наверху и сравни.</li>
+      <li>Быстрее (0,10 / 0,08): почти мгновенно, полёт едва заметен.</li>
+      <li>Медленнее (0,24 / 0,16): видно лучше, но на десятом открытии начнёт раздражать.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="old">
+  <b>Уже решено (если не скажешь иного, идём так):</b> пункты, галки, примерка и клавиши не меняются ни на пункт ·
+  положение меню остаётся из прошлого воркфлоу (слева, правый край чуть левее минуса) · клик мимо закрывает меню
+  и до Claude не доходит (как у системного) · ползунки «Поля по бокам» и «Скорость» работают прямо в панели ·
+  если панель начнёт мешать — выключатель возвращает системное меню.
+</div>
+
+<script>
+(function(){
+  var fly = document.getElementById("fly"), root = document.documentElement;
+
+  function show(){
+    fly.classList.remove("out"); void fly.offsetWidth; fly.classList.add("in");
+  }
+  function hide(){
+    fly.classList.remove("in"); void fly.offsetWidth; fly.classList.add("out");
+  }
+  document.getElementById("open").addEventListener("click", show);
+  document.getElementById("close").addEventListener("click", hide);
+  document.getElementById("stage").addEventListener("click", function(e){
+    if (e.target.closest("#fly")) { hide(); return; }
+  });
+
+  var speed = document.getElementById("speed");
+  speed.addEventListener("click", function(e){
+    var b = e.target.closest("button"); if (!b) return;
+    for (var i=0;i<speed.children.length;i++) speed.children[i].className = "";
+    b.className = "on";
+    root.style.setProperty("--dur-in", b.getAttribute("data-in") + "s");
+    root.style.setProperty("--dur-out", b.getAttribute("data-out") + "s");
+    show();
+  });
+
+  var look = document.getElementById("look");
+  look.addEventListener("click", function(e){
+    var b = e.target.closest("button"); if (!b) return;
+    for (var i=0;i<look.children.length;i++) look.children[i].className = "";
+    b.className = "on";
+    var cls = b.getAttribute("data-look");
+    var all = document.querySelectorAll(".menu");
+    for (var j=0;j<all.length;j++) all[j].className = "menu" + (all[j].classList.contains("casc") ? " casc" : "") + (cls ? " " + cls : "");
+    show();
+  });
+
+  setTimeout(show, 350);
+})();
+</script>
+
+</body>
+</html>
