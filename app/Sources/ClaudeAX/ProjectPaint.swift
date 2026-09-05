@@ -312,7 +312,7 @@ final class ProjectPaint {
     func noteManualChoice(title: String, theme: Layer<Theme>, font: Layer<Font>,
                           size: Layer<Size>, frame: Layer<Bool>) {
         // Тумблер выключен — покраски по проекту нет вовсе; в чужую папку тем более не пишем.
-        guard enabled, let folder = folder(for: title) else { return }
+        guard enabled, let folder = writableFolder(for: title) else { return }
         let old = store.settings(in: folder) ?? ProjectSettings()
         let name = folder.lastPathComponent
         let path = folder.standardizedFileURL.path
@@ -321,21 +321,37 @@ final class ProjectPaint {
                                        font: ProjectPaint.merged(old.font, font),
                                        size: ProjectPaint.merged(old.size, size),
                                        frame: ProjectPaint.merged(old.frame, frame))
-        // Отпечатки этой папки забываем: остальные её окна перекрасит ближайший тик (≤ 2 с).
-        marks = marks.filter { $0.value.folder != path }
-        guard !settings.isEmpty else {
-            store.remove(from: folder)
-            // Файла больше нет — у проекта снова авто-цвет, и окно-инициатор берёт его сразу,
-            // иначе оно две секунды стояло бы голым Claude.
-            if let target = target(for: title) { repaint(target) }
-            return
+        // Отпечатки этой папки ГАСИМ, но не забываем (находка 3 проверки WF20): ближайший тик
+        // (≤ 2 с) перекрасит остальные её окна, а список поставленных слоёв нужен, чтобы СНЯТЫЙ
+        // слой ушёл и с них тоже — иначе шрифт, убранный в одном окне проекта, остался бы висеть
+        // в соседнем. Пустой отпечаток с настоящим совпасть не может: у известной папки вид есть
+        // всегда (файл или авто-цвет).
+        marks = marks.mapValues { mark in
+            guard mark.folder == path else { return mark }
+            return Mark(match: mark.match, title: mark.title, folder: mark.folder, digest: "",
+                        layers: mark.layers)
         }
-        switch store.write(settings, to: folder) {
-        case .written: notice(MenuModel.projectWritten(name), folder: path)
-        case .registry: notice(MenuModel.projectWrittenToRegistry(name), folder: path)
-        // Битый файл не перезаписываем «на всякий случай»: в нём могли быть чужие ключи.
-        case .broken: notice(MenuModel.projectBroken(name), folder: path, broken: true)
-        case .failed: notice(MenuModel.projectWriteFailed(name), folder: path, broken: true)
+        if settings.isEmpty {
+            // Битый файл не удаляем (находка 1 проверки WF20): разобрать его мы не смогли,
+            // а в нём чужие ключи. Говорим об этом плашкой и выходим тем же путём, что и
+            // неудачная запись, — выбор остаётся местным.
+            if store.isBroken(in: folder) {
+                notice(MenuModel.projectBroken(name), folder: path, broken: true)
+            } else {
+                store.remove(from: folder)
+                // Файла больше нет — у проекта снова авто-цвет, и окно-инициатор берёт его сразу,
+                // иначе оно две секунды стояло бы голым Claude.
+                if let target = target(for: title) { repaint(target) }
+                return
+            }
+        } else {
+            switch store.write(settings, to: folder) {
+            case .written: notice(MenuModel.projectWritten(name), folder: path)
+            case .registry: notice(MenuModel.projectWrittenToRegistry(name), folder: path)
+            // Битый файл не перезаписываем «на всякий случай»: в нём могли быть чужие ключи.
+            case .broken: notice(MenuModel.projectBroken(name), folder: path, broken: true)
+            case .failed: notice(MenuModel.projectWriteFailed(name), folder: path, broken: true)
+            }
         }
         // Окну-инициатору — свежий отпечаток: выбранное на нём уже стоит, слать его обратно
         // незачем. Отпечаток берём ТОТ, что посчитает ближайший тик: иначе на битом файле
@@ -378,11 +394,18 @@ final class ProjectPaint {
 
     // MARK: - папка окна
 
-    /// Папка окна под кнопкой: по заголовку через индекс, а у безымянного окна (главное зовётся
-    /// «Claude») — папка главного окна.
-    func folder(for title: String) -> URL? {
-        if let folder = index.folder(forTitle: title) { return folder }
-        return index.mainWindow()?.folder
+    /// Папка, в файл которой можно ЗАПИСАТЬ ручной выбор. Тут запас «а возьмём главное окно»
+    /// опасен (находка 2 проверки WF20): попап обычного чата claude.ai в индексе не значится,
+    /// и его тема молча уехала бы в проект главного окна, перекрасив все его окна. Поэтому
+    /// запас только у безымянного окна и у заглушки «Claude» — то есть у самого главного окна;
+    /// у окна с настоящим заголовком папка берётся строго из индекса, а нет её — выбор
+    /// остаётся местным (решение 3.6 плана WF20, строка «Окно без папки»).
+    private func writableFolder(for title: String) -> URL? {
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, clean != ProjectPaint.mainWindowTitle else {
+            return index.mainWindow()?.folder
+        }
+        return index.folder(forTitle: clean)
     }
 
     /// Как адресовать окно под кнопкой: попап — своим заголовком, безымянное окно — путём

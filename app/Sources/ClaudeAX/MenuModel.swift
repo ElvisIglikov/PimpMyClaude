@@ -92,10 +92,10 @@ enum MenuModel {
         MenuEntry(command: .newChat, title: "Новый чат", icon: "💬",
                   key: KeySpec(mods: [.command], name: "n"), registersHotkey: false),
         // «Новое окно» — новый чат сразу отдельным окном (план WF13). ⌥⌘N у Claude свободна,
-        // поэтому её мы регистрируем сами; «В отдельное окно» — без клавиши.
+        // поэтому её мы регистрируем сами; «Вынести этот чат в окно» — без клавиши.
         MenuEntry(command: .newWindow, title: "Новое окно", icon: "🪟",
                   key: KeySpec(mods: [.command, .option], name: "n"), registersHotkey: true),
-        MenuEntry(command: .popoutWindow, title: "В отдельное окно", icon: "🪟",
+        MenuEntry(command: .popoutWindow, title: "Вынести этот чат в окно", icon: "🪟",
                   key: nil, registersHotkey: false),
         MenuEntry(command: .expand, title: "Развернуть", icon: "⬆️",
                   key: KeySpec(mods: [.command, .option], name: "up"), registersHotkey: true),
@@ -118,8 +118,8 @@ enum MenuModel {
     static let moreTitle = "Ещё"
     static let moreIcon = "⋯"
 
-    /// Разделители стоят после «В отдельное окно» и после «Свернуть»: оконные пункты WF13 идут
-    /// одной группой с «Новый чат», дальше пара «Развернуть/Свернуть». Разделители вокруг
+    /// Разделители стоят после «Вынести этот чат в окно» и после «Свернуть»: оконные пункты WF13
+    /// идут одной группой с «Новый чат», дальше пара «Развернуть/Свернуть». Разделители вокруг
     /// «🎨 Оформление ▸» ставит сам `build()`.
     static let separatorsAfter: Set<ClaudeCommand> = [.popoutWindow, .collapse]
 

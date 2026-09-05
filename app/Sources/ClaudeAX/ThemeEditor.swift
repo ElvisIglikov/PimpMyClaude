@@ -141,7 +141,8 @@ final class ThemeEditor: NSObject, NSWindowDelegate {
         // в цвете ползунка и перестало перекрашиваться при смене чата.
         model.cancel()
         MinimizeMenu.editorOpen = false
-        ClaudeActions.themeEditorTitle = nil
+        // Снимает флаг и досылает крутёж живых цветов, если его включили при открытой панели.
+        actions.finishThemeEditor()
         panel?.delegate = nil
         panel = nil
         if ThemeEditor.current === self { ThemeEditor.current = nil }

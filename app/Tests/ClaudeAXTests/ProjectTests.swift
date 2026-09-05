@@ -961,6 +961,22 @@ final class ProjectTests: XCTestCase {
 
     func testManualChoiceWithoutFolderWritesNothing() throws {
         let rig = makeRig()
+        // Попап обычного чата claude.ai: главное окно ЖИВО и смотрит в PimpMyClaude, но такого
+        // заголовка в индексе нет — писать некуда (находка 2 проверки WF20: раньше запас «возьмём
+        // папку главного окна» уводил чужой выбор в чужой проект и перекрашивал все его окна).
+        rig.paint.noteManualChoice(title: "Разговор ни о чём", theme: .set(ProjectTests.arctic),
+                                   font: .keep, size: .keep, frame: .keep)
+        XCTAssertNil(rig.store.settings(in: rig.folder("PimpMyClaude")),
+                     "выбор чужого окна уехал в проект главного окна")
+        XCTAssertTrue(rig.notices.isEmpty)
+        XCTAssertTrue(rig.sent.isEmpty)
+        // А безымянное окно и заглушка «Claude» — это само главное окно, у него папка есть.
+        rig.paint.noteManualChoice(title: " ", theme: .set(ProjectTests.indigo), font: .keep,
+                                   size: .keep, frame: .keep)
+        XCTAssertEqual(rig.store.settings(in: rig.folder("PimpMyClaude"))?.theme.value?.id, "indigo")
+        try FileManager.default.removeItem(at: rig.store.url(in: rig.folder("PimpMyClaude")))
+        rig.notices = []
+
         // Ни главного окна, ни чата в индексе — папку взять неоткуда.
         putStatus(rig.status, urls: ["about:blank"])
         rig.clock.advance()
@@ -1056,6 +1072,24 @@ final class ProjectTests: XCTestCase {
         rig.clock.advance()
         rig.paint.tick()
         XCTAssertEqual(rig.sent.count, 1)
+        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude")])
+
+        // Файл побили руками — «🧹 Всё как у Claude» его НЕ удаляет (находка 1 проверки WF20):
+        // разобрать мы его не смогли, а в нём чужие ключи. Вместо удаления — плашка.
+        try Data("{ это не json".utf8).write(to: rig.store.url(in: pimp))
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle, theme: .reset, font: .reset,
+                                   size: .reset, frame: .reset)
+        XCTAssertEqual(try String(contentsOf: rig.store.url(in: pimp), encoding: .utf8),
+                       "{ это не json", "битый файл снесли вместе с чужими ключами")
+        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude"),
+                                     MenuModel.projectBroken("PimpMyClaude")])
+        XCTAssertEqual(rig.sent.count, 1, "вид проекта не менялся — красить нечем")
+
+        // И ближайший тик окно не трогает: вид проекта на битом файле — тот же авто-цвет,
+        // а на окне стоит выбранное руками.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
     }
 
     func testLastChoiceWinsAcrossProjectWindows() throws {
@@ -1083,6 +1117,32 @@ final class ProjectTests: XCTestCase {
         rig.clock.advance()
         rig.paint.tick()
         XCTAssertEqual(rig.sent.count, 3)
+
+        // Шрифт, выбранный в попапе, тем же путём садится на второе окно.
+        rig.paint.noteManualChoice(title: "PimpMyClaude", theme: .keep,
+                                   font: .set(ProjectTests.menlo), size: .keep, frame: .keep)
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 4)
+        XCTAssertEqual(rig.sent[3].key, "main")
+        XCTAssertEqual(PaintRig.layers(rig.sent[3]), "tf")
+
+        // А «Системный (как у Claude)» в «Шрифт ▸» того же попапа обязан СНЯТЬ шрифт и со
+        // второго окна (находка 3 проверки WF20: раньше отпечатки папки забывались целиком,
+        // соседнее окно красилось с чистого листа — и снятый слой оставался на нём висеть).
+        rig.paint.noteManualChoice(title: "PimpMyClaude", theme: .keep, font: .reset,
+                                   size: .keep, frame: .keep)
+        XCTAssertTrue(try XCTUnwrap(rig.store.settings(in: rig.folder("PimpMyClaude"))).font.isKeep)
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 5)
+        XCTAssertEqual(rig.sent[4].key, "main")
+        XCTAssertEqual(PaintRig.layers(rig.sent[4]), "tF", "шрифт остался висеть на соседнем окне")
+
+        // Дальше тишина: у обоих окон снова свежие отпечатки.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 5)
     }
 
     func testProjectWriteNoticeShowsOncePerFolder() throws {

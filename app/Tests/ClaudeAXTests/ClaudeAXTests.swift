@@ -15,7 +15,7 @@ private final class MemoryDefaults: ThemeDefaults {
 /// Только чистая логика: раскладка «Расставить», клавиши меню и формат command.json.
 /// Живой AX (окна Claude, авто-Allow, popUp) проверяется руками на гейте.
 final class ClaudeAXTests: XCTestCase {
-    // Десять команд: восемь исходных плюс «Новое окно» и «В отдельное окно» (план WF13).
+    // Десять команд: восемь исходных плюс «Новое окно» и «Вынести этот чат в окно» (план WF13).
     func testSkeleton() { XCTAssertEqual(ClaudeCommand.allCases.count, 10) }
 
     // MARK: - «Расставить»
@@ -92,11 +92,11 @@ final class ClaudeAXTests: XCTestCase {
             XCTAssertNotNil(entry?.key, "\(command) выпал из entries — с ним умрёт его клавиша")
             XCTAssertEqual(entry?.registersHotkey, true, "\(command) перестал регистрировать хоткей")
         }
-        // Разделители: после «В отдельное окно» и после «Свернуть» (мелочь М3 критика).
+        // Разделители: после «Вынести этот чат в окно» и после «Свернуть» (мелочь М3 критика).
         XCTAssertEqual(MenuModel.separatorsAfter, [.popoutWindow, .collapse])
-        // Без клавиш два пункта: «Workflow» (⌘⌥W занят самим Claude) и «В отдельное окно».
+        // Без клавиш два пункта: «Workflow» (⌘⌥W занят самим Claude) и «Вынести этот чат в окно».
         for (command, title) in [(ClaudeCommand.workflow, "Workflow"),
-                                 (.popoutWindow, "В отдельное окно")] {
+                                 (.popoutWindow, "Вынести этот чат в окно")] {
             let entry = MenuModel.entry(for: command)
             XCTAssertEqual(entry?.menuTitle, title)
             XCTAssertNil(entry?.key)
@@ -126,7 +126,8 @@ final class ClaudeAXTests: XCTestCase {
         let items = menu.items.filter { !$0.isSeparatorItem && !$0.hasSubmenu }
         XCTAssertEqual(items.count, MenuModel.entries.count - MenuModel.moreCommands.count - 1)
         XCTAssertEqual(items.map { $0.title },
-                       ["Workflow", "Новый чат", "В отдельное окно", "Развернуть", "Свернуть"])
+                       ["Workflow", "Новый чат", "Вынести этот чат в окно", "Развернуть",
+                        "Свернуть"])
         XCTAssertEqual(items.map { $0.keyEquivalent },
                        ["", "n", "", String(UnicodeScalar(UInt32(NSUpArrowFunctionKey))!),
                         String(UnicodeScalar(UInt32(NSDownArrowFunctionKey))!)])
@@ -609,7 +610,7 @@ final class ClaudeAXTests: XCTestCase {
 
         // MARK: верхний уровень — шесть команд, «Оформление ▸» и «Ещё ▸», три разделителя
         XCTAssertEqual(menu.items.map { $0.isSeparatorItem ? "—" : $0.title },
-                       ["Workflow", "Новый чат", "Новое окно", "В отдельное окно", "—",
+                       ["Workflow", "Новый чат", "Новое окно", "Вынести этот чат в окно", "—",
                         "Развернуть", "Свернуть", "—", "Оформление", "—", "Ещё"])
         // «Новое окно» стало подменю в WF16 — верхний уровень при этом не вырос ни на пункт.
         XCTAssertEqual(menu.items.filter { $0.hasSubmenu }.map { $0.title },
@@ -2874,6 +2875,25 @@ final class ClaudeAXTests: XCTestCase {
         // Выключение проходит всегда — оно примерке только помогает.
         now = now.addingTimeInterval(1)
         XCTAssertTrue(actions.stopLiveColors())
+        XCTAssertEqual(try command()["on"] as? Bool, false)
+
+        // Панель закрыли — отложенный крутёж уезжает на страницу сам (находка 4 проверки WF20).
+        // Раньше галка стояла, «Раскрасить по кругу» было погашено, а страница не крутила ничего
+        // до перезапуска приложения.
+        now = now.addingTimeInterval(1)
+        XCTAssertFalse(actions.startLiveColors(mode: .solo))
+        XCTAssertTrue(actions.liveColors.on, "выбор Элвиса потерялся")
+        now = now.addingTimeInterval(1)
+        actions.finishThemeEditor()
+        XCTAssertNil(ClaudeActions.themeEditorTitle, "панель обязана снять свой флаг")
+        json = try command()
+        XCTAssertEqual(json["on"] as? Bool, true)
+        XCTAssertEqual(json["mode"] as? String, "solo")
+        // Крутёж выключен — закрытие панели молчит: слать нечего.
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.stopLiveColors())
+        now = now.addingTimeInterval(1)
+        actions.finishThemeEditor()
         XCTAssertEqual(try command()["on"] as? Bool, false)
     }
 

@@ -97,12 +97,15 @@
 <div class="cols">
   <div>
     <p class="capt">Вариант А (рекомендую): строкой перед «О программе»</p>
+    <p class="note" style="margin:0 0 6px">Пункт называется «Обновить <b>PimpMyClaude</b>…»: выше в меню уже есть «Обновить <b>Claude</b>…» —
+    одинаковые слова со стрелкой рядом читаются как ошибка.</p>
     <div class="menu">
       <div class="row dis"><span class="chk"></span><span class="ic">✓</span><span class="t">Патч стоит · Claude 1.46388.1</span></div>
       <div class="sep"></div>
       <div class="row"><span class="chk"></span><span class="ic">⬇️</span><span class="t">Поставить…</span></div>
       <div class="row"><span class="chk"></span><span class="ic">🧹</span><span class="t">Снять…</span></div>
       <div class="row"><span class="chk"></span><span class="ic">📋</span><span class="t">Статус…</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">⬆️</span><span class="t">Обновить Claude…</span><span class="new" style="color:#8a8f9a">уже есть</span></div>
       <div class="sep"></div>
       <div class="row"><span class="chk">✓</span><span class="ic">🖐</span><span class="t">Авто-Allow</span></div>
       <div class="row"><span class="chk">✓</span><span class="ic">🟡</span><span class="t">Меню на кнопке</span></div>
@@ -111,7 +114,7 @@
       <div class="sep"></div>
       <div class="row"><span class="chk"></span><span class="ic">🔐</span><span class="t">Настроить разрешения…</span></div>
       <div class="row"><span class="chk"></span><span class="ic">🗒</span><span class="t">История авто-Allow…</span></div>
-      <div class="row sel"><span class="chk"></span><span class="ic">⬆️</span><span class="t">Проверить обновления…</span><span class="new">новое</span></div>
+      <div class="row sel"><span class="chk"></span><span class="ic">⬆️</span><span class="t">Обновить PimpMyClaude…</span><span class="new">новое</span></div>
       <div class="row"><span class="chk"></span><span class="ic">ℹ️</span><span class="t">О программе</span></div>
       <div class="sep"></div>
       <div class="row"><span class="chk"></span><span class="ic">🚪</span><span class="t">Выйти</span><span class="key">⌘Q</span></div>
@@ -123,7 +126,7 @@
     <div class="menu">
       <div class="row dis"><span class="chk"></span><span class="ic">✓</span><span class="t">Патч стоит · Claude 1.46388.1</span></div>
       <div class="row dis"><span class="chk"></span><span class="ic">🅿️</span><span class="t">Версия 1.4.0 · проверено сегодня</span></div>
-      <div class="row"><span class="chk"></span><span class="ic">⬆️</span><span class="t">Проверить обновления…</span><span class="new">новое</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">⬆️</span><span class="t">Обновить PimpMyClaude…</span><span class="new">новое</span></div>
       <div class="sep"></div>
       <div class="row"><span class="chk"></span><span class="ic">⬇️</span><span class="t">Поставить…</span></div>
       <div class="row"><span class="chk"></span><span class="ic">🧹</span><span class="t">Снять…</span></div>
@@ -131,8 +134,11 @@
       <div class="sep"></div>
       <div class="row dis"><span class="chk"></span><span class="ic">…</span><span class="t">тумблеры и остальное</span></div>
     </div>
-    <p class="note">Видно сразу, но верх меню занимает не главное: чаще всего туда лезут за «Поставить».
-    Пункт гаснет, пока идёт проверка или установка патча.</p>
+    <p class="note">Видно сразу, но верх меню занимает не главное: чаще всего туда лезут за «Поставить».</p>
+    <div class="box" style="margin-top:12px"><b>Обновление и патч не наступают друг другу на ноги</b><span class="tag">важно</span>
+    <p>Пока ставится патч Claude, обновление не спросит и не перезапустит программу — дождётся. И наоборот: пока
+    качается обновление, «Поставить…» и «Снять…» серые. Выйти (⌘Q) посреди патча тоже нельзя: «Идёт установка патча,
+    подожди 10 секунд».</p></div>
   </div>
 </div>
 
@@ -166,8 +172,8 @@
         <button class="btn pri">Установить</button>
       </div>
     </div>
-    <p class="note">Дальше — полоска загрузки в том же окне и «Программа перезапустится». Всё окно рисует сам Sparkle,
-    по-русски; наших текстов там нет, кроме списка «Что нового» — его пишем мы в релизе.</p>
+    <p class="note">Дальше — полоска загрузки в том же окне и «Программа перезапустится». Всё окно рисует сам механизм
+    обновлений, язык берётся от системы; наших текстов там нет, кроме списка «Что нового» — его пишем мы в релизе.</p>
     <div class="win" style="margin-top:12px">
       <div class="titlebar"><span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span>
         <span class="wtitle">Обновление ПО</span></div>
@@ -206,8 +212,10 @@
     <p>Раз в сутки программа сама смотрит, нет ли новой версии. Есть — окно «Установить». Одна кнопка,
     перезапуск, всё на месте: чаты, темы, разрешения.</p></div>
   <div class="box"><b>Один раз руками</b>
-    <p>Первая версия со Sparkle всё равно ставится по-старому — обновляться умеет только она сама.
-    Поэтому лучше, чтобы такой стала 1.4.0, которую и так раздаём (вопрос 1).</p></div>
+    <p>Первая версия с автообновлением всё равно ставится по-старому: 1.4.0 уедет команде раньше, чем это будет готово.
+    Вопрос только в том, раздать ли следующую сразу или в конце работ (вопрос 1).</p>
+    <p><b>И одно условие:</b> программа должна лежать в «Программах». Запущенная прямо из «Загрузок» она обновиться
+    не сможет — так устроена macOS.</p></div>
 </div>
 
 <h2>4. Как выходит релиз — одной командой</h2>
@@ -222,13 +230,15 @@
 <p class="note">Ключ, которым подписываются обновления, создаёшь ты сам одной командой, и живёт он в связке ключей —
 ни в репозиторий, ни в чат он не попадает. Потерять его нельзя: он единственный способ выпускать обновления
 (бэкап — в 1Password). Ничего никуда не публикуется без явного «публикуй».</p>
+<p class="note"><b>Откат только вперёд.</b> Вернуть команду на прошлую версию нечем: у кого обновление уже встало,
+у того оно и останется. Поэтому публикуем ту сборку, которая сутки прожила у тебя, а плохую чиним следующей версией.</p>
 
 <h2>5. Вопросы</h2>
 <div class="qs">
-  <div class="q"><b>1. Когда делаем — до релиза 1.4.0 или после?</b>
+  <div class="q"><b>1. 1.4.0 уедет команде без автообновления — так уже сложилось по очереди работ. Когда раздаём версию, которая умеет обновляться?</b>
     <ul>
-      <li class="rec"><em>До (рекомендую).</em> 1.4.0 сразу умеет обновляться: команда ставит руками один раз, дальше само.</li>
-      <li>После: релиз не ждёт, но раздавать руками придётся дважды.</li>
+      <li class="rec"><em>В конце всех работ (рекомендую).</em> Раздача руками одна и последняя, версия поднимается один раз.</li>
+      <li>Отдельной раздачей сразу после этой работы: обновления заработают на неделю раньше, но руками раздаём дважды.</li>
     </ul></div>
 
   <div class="q"><b>2. Как ставится обновление?</b>
@@ -255,7 +265,7 @@
       <li>Раз в час — быстрее и заметнее. Раз в неделю — тише, но релиз идёт долго.</li>
     </ul></div>
 
-  <div class="q"><b>6. Где в меню пункт «Проверить обновления…»?</b>
+  <div class="q"><b>6. Где в меню пункт «Обновить PimpMyClaude…»?</b>
     <ul>
       <li class="rec"><em>Вариант А (рекомендую).</em> Строкой перед «О программе», рядом с версией.</li>
       <li>Вариант Б: наверху со строкой «проверено сегодня» — видно сразу, но занимает главное место.</li>
