@@ -84,6 +84,11 @@ public final class ClaudeAXController: ClaudeAXControlling {
         actions.chatName = { [weak self] project in
             self?.index.uniqueChatName(project.name) ?? project.name
         }
+        // Адрес главного окна для «Новое окно»/«В отдельное окно» с любого окна (WF19, verify п. 4):
+        // индекс умеет и случай двух страниц claude.ai; нет ответа — запасной статик в ClaudeActions.
+        actions.mainWindowMatch = { [weak self] in
+            self?.index.mainWindow()?.match ?? ClaudeActions.mainWindowMatch()
+        }
         actions.projectView = { [weak self] project in
             self?.projectSettings.settings(in: project.folder)
         }
