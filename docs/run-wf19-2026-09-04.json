@@ -1,0 +1,25 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf19-2026-09-04.md",
+  "project": "⚪PimpMyClaude",
+  "status": "идёт",
+  "trelvis": "#5383",
+  "branch": "wf19",
+  "tag": "wf19-start",
+  "script_path": null,
+  "run_id": null,
+  "orchestrator": "Fable 5.1 high; все агенты Opus max",
+  "decision": "по рекомендациям + хвост адресации new-window/popout-window с попапа и пустого окна",
+  "next_steps": [
+    "волна: A-js ∥ A-swift → D → V-A",
+    "гейт: bundle → swap, живые проверки",
+    "коммит, слияние; далее WF20"
+  ],
+  "log": [
+    {
+      "at": "2026-09-05T02:50:00+05:00",
+      "who": "оркестратор",
+      "what": "ветка wf19 от main после WF18; запуск волны (первая попытка 02:55 отбита недоступным классификатором)"
+    }
+  ],
+  "watchdog": "watchdog-pimpmyclaude-0409"
+}
