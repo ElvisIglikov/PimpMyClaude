@@ -5,8 +5,8 @@
   "trelvis": "#5383",
   "branch": "wf19",
   "tag": "wf19-start",
-  "script_path": null,
-  "run_id": null,
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/6d67f948-9b23-45b0-9fef-b332a622ff3f/workflows/scripts/pimpmyclaude-wf19-wf_e85a7753-c64.js",
+  "run_id": "wf_e85a7753-c64",
   "orchestrator": "Fable 5.1 high; все агенты Opus max",
   "decision": "по рекомендациям + хвост адресации new-window/popout-window с попапа и пустого окна",
   "next_steps": [
