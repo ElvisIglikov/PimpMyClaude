@@ -50,47 +50,37 @@ struct ProjectTarget: Equatable {
     var commandTitle: String { match == nil ? title : "" }
 }
 
-/// Что показать в пункте «🗂 Проект ▸» (решение 5 плана WF15).
-struct ProjectMenuState: Equatable {
-    /// Корень проекта; nil — папку не узнали, пункт виден и погашен.
-    let folder: URL?
-    /// Подпись под заголовком: путь с `~`.
-    let path: String
-    /// У проекта уже есть свой вид (файл в папке или запись реестра).
-    let hasSettings: Bool
-    /// Тумблер «Красить чаты по проекту».
-    let painting: Bool
-
-    /// Имя проекта в заголовке пункта — последний компонент пути папки.
-    var name: String { folder?.lastPathComponent ?? "" }
-}
-
-/// Цвет проекта: приложение само узнаёт папку каждого окна Claude и красит окно тем видом,
-/// что лежит в папке проекта (`.pimpmyclaude.json`).
+/// Цвет проекта: приложение само узнаёт папку каждого окна Claude и красит окно цветом этого
+/// проекта — видом из `.pimpmyclaude.json`, а пока файла нет, авто-цветом по имени папки.
 ///
 /// Всё делает Swift: папку даёт `ProjectIndex` (индекс чатов Claude Code + `status.json`
 /// лоадера), вид — `ProjectSettings`, а на страницу уходит та же команда `theme`, что и из
 /// меню. Работа идёт на общем таймере 2 с `ClaudeAXController` — своего таймера у покраски
 /// нет (критик М2 плана WF15).
 ///
-/// Три правила, без которых покраска мешала бы жить:
+/// Четыре правила, без которых покраска мешала бы жить:
 /// 1. **Отпечаток** «окно → папка + хэш вида»: пока ничего не изменилось, команда не шлётся
-///    (очередь канала пишет раз в 0,6 с, и лишние команды дёргали бы страницу).
-/// 2. **Смена папки снимает прошлое**: проект без настроек = только снятие слоёв, которые
-///    ставил прошлый проект. Иначе окно (а у главного окна — навсегда, запись `main`
-///    переживает перезапуск) осталось бы в чужом цвете (критик Б2).
-/// 3. **Ручной выбор сильнее**: окно, которому цвет выбрали из меню (`ThemeStore`) или
-///    которое красила «Раскрасить по кругу» (`autoPaintedThemes`), проект не трогает; запись
-///    «всем окнам» он не перебивает вовсе (критик Б3).
+///    (очередь канала пишет раз в 0,6 с, и лишние команды дёргали бы страницу). У авто-цвета
+///    отпечаток свой — `auto:<hue>` (решение 3.1 плана WF20).
+/// 2. **Смена папки снимает прошлое**: слои, которые ставил прошлый проект, а этот не задаёт,
+///    уходят. Иначе окно (а у главного окна — навсегда, запись `main` переживает перезапуск)
+///    осталось бы в чужом цвете (критик Б2 плана WF15).
+/// 3. **Ручной выбор — это и есть вид проекта** (решение 3.2 плана WF20): он молча ложится
+///    в `.pimpmyclaude.json`, и «окно занято ручным выбором» больше не повод молчать. Сильнее
+///    проекта осталась только «Раскрасить по кругу» (`autoPaintedThemes`); запись «всем окнам»
+///    проект не перебивает вовсе (критик Б3 плана WF15).
+/// 4. **Папки не знаем — молчим**: ни авто-цвета, ни записи; снимается только чужое.
 ///
 /// Индекса нет (не Claude Code, старая сборка Claude, чужая машина) — покраска просто молчит:
 /// ни команд, ни подсказок, ни ошибок.
 final class ProjectPaint {
-    /// Тумблер «Красить чаты по проекту» (UserDefaults, по умолчанию включён).
+    /// Тумблер «🗂 Цвет по проекту» (UserDefaults, по умолчанию включён).
     static let enabledKey = "projectPaintEnabled"
-    /// Показанные подсказки: карта «путь папки → true». Одним ключом, чтобы «Забыть
-    /// подсказки» однажды сделать одной строкой (критик М7 плана WF15).
+    /// Показанные плашки: карта «путь папки → true» (у плашки про битый файл ключ с приставкой).
+    /// Одним ключом, чтобы «Забыть подсказки» однажды сделать одной строкой (критик М7 плана WF15).
     static let hintsKey = "projectHints"
+    /// Приставка ключа плашки про битый файл: иначе одна плашка на папку съела бы другую.
+    static let brokenPrefix = "broken:"
     static let mainKey = "main"
     static let windowPrefix = "w:"
     /// Заголовок главного окна на вкладке Claude Code — заглушка (probe 04.09, п. 4 плана):
@@ -99,12 +89,6 @@ final class ProjectPaint {
     /// Пока открыто меню и столько секунд после его последней команды — молчим: не-preview
     /// команда гасит примерку темы мышью (`endPreviewExcept`, критик В1 плана WF15).
     static let quietSeconds: TimeInterval = 2
-    /// Плашка «у проекта нет своего вида» — не чаще одной за раз: при первом запуске папок
-    /// без настроек может быть несколько, и плашки перекрыли бы друг друга.
-    static let hintInterval: TimeInterval = 10
-    /// Памятка агенту проекта (решение 5 плана WF15): пишем по клику, назад НЕ читаем.
-    static let agentsFileName = "AGENTS.md"
-    static let agentsMarker = "<!-- pimpmyclaude:"
 
     /// Отпечаток окна: какой проект на нём стоит и какие слои поставил.
     private struct Mark: Equatable {
@@ -125,7 +109,6 @@ final class ProjectPaint {
 
     /// Живёт в памяти: после перезапуска приложение просто покрасит окна заново.
     private var marks: [String: Mark] = [:]
-    private var lastHintAt: Date?
 
     // MARK: - сиденья (живьём их ставит ClaudeAXController)
 
@@ -133,7 +116,8 @@ final class ProjectPaint {
     var windowTitles: () -> [String] = { [] }
     /// Отправка команды; false — не записалась, попробуем на следующем тике.
     var send: (ProjectPaintCommand) -> Bool = { _ in false }
-    /// Окну уже выбрали вид руками или его красила автопокраска (критик Б3).
+    /// Окно красила «Раскрасить по кругу» — она сильнее проекта (критик Б3 плана WF15).
+    /// Ручной выбор с WF20 сюда не считается: он и есть вид проекта (решение 3.2).
     var isWindowBusy: (String) -> Bool = { _ in false }
     /// Задан вид «всем окнам» — проект его не перебивает (критик Б3).
     var isAllWindowsSet: () -> Bool = { false }
@@ -145,10 +129,8 @@ final class ProjectPaint {
     var isMenuOpen: () -> Bool = { false }
     /// Когда меню в последний раз слало команду (примерка считается тоже).
     var lastMenuCommand: () -> Date? = { nil }
-    /// Плашка на экран: подсказка про папку без настроек и ответы пунктов меню.
+    /// Плашка на экран: про молчаливую запись вида в папку проекта — один раз на папку.
     var showNotice: (String) -> Void = { _ in }
-    /// Что применено к этому окну — это и ложится в файл проекта по «Записать этот вид».
-    var currentView: (String) -> ProjectSettings = { _ in ProjectSettings() }
 
     init(index: ProjectIndex = ProjectIndex(),
          store: ProjectSettingsStore = ProjectSettingsStore(),
@@ -238,27 +220,57 @@ final class ProjectPaint {
     /// Одно окно: сверить отпечаток, при надобности послать команду и запомнить, что послали.
     @discardableResult
     private func paint(_ target: ProjectTarget) -> Bool {
-        let settings = target.folder.flatMap { store.settings(in: $0) }
+        let wanted = self.wanted(in: target.folder)
         let folder = target.folder?.standardizedFileURL.path ?? ""
-        let digest = settings?.digest ?? ""
+        let digest = wanted?.digest ?? ""
         let previous = marks[target.key]
         // Ни папка, ни вид не изменились — молчим: иначе очередь команд (0,6 с на запись)
         // забьётся, а лоадер будет зря дёргать страницу.
         guard previous?.folder != folder || previous?.digest != digest else { return false }
-        hint(about: target.folder, settings: settings)
-        // Ручной выбор из меню и «Раскрасить по кругу» сильнее проекта (критик Б3): окно
-        // остаётся неотмеченным, и как только память о нём очистят, проект его покрасит.
+        // «Раскрасить по кругу» сильнее проекта (критик Б3 плана WF15): окно остаётся
+        // неотмеченным, и как только память о нём очистят, проект его покрасит. А вот ручной
+        // выбор окно больше не «занимает» — он сам стал видом проекта (решение 3.2 плана WF20).
         guard !isWindowBusy(target.title) else { return false }
-        let command = self.command(for: target, settings: settings, previous: previous)
-        // Слать нечего (у проекта настроек нет, и прошлый ничего не ставил) — просто запомним.
+        // Панель «Своя тема» владеет примеркой этого окна (решение 1.6 плана WF20): обычная
+        // команда `theme` погасила бы её на странице, и ползунок остался бы без цвета.
+        // Отпечаток не трогаем — закроют панель, и ближайший тик покрасит окно как обычно.
+        guard ClaudeActions.themeEditorTitle != target.title else { return false }
+        return commit(self.command(for: target, settings: wanted?.settings, previous: previous),
+                      to: target, folder: folder, digest: digest)
+    }
+
+    /// Послать команду и запомнить отпечаток. Слать нечего (папку не знаем, а прошлый проект
+    /// ничего не ставил) — просто запоминаем.
+    @discardableResult
+    private func commit(_ command: ProjectPaintCommand, to target: ProjectTarget, folder: String,
+                        digest: String) -> Bool {
         if !command.isEmpty, !send(command) { return false }
         marks[target.key] = Mark(match: target.match, title: target.title, folder: folder,
                                  digest: digest, layers: command.setLayers)
         return true
     }
 
-    /// Что послать окну: слои из файла проекта плюс снятие слоёв, которые ставил ПРОШЛЫЙ
-    /// проект, а этот не задаёт. Проект без файла настроек = только снятие (критик Б2).
+    /// Вид проекта: `.pimpmyclaude.json` из папки, а его нет (или он пуст, или битый) —
+    /// **авто-цвет по имени папки** (решение 3.1 плана WF20). Файла авто-цвет не заводит:
+    /// он живёт в голове приложения. Папки не знаем — вида нет вовсе, окну достанется одно
+    /// снятие чужих слоёв.
+    private func wanted(in folder: URL?) -> (settings: ProjectSettings, digest: String)? {
+        guard let folder = folder else { return nil }
+        if let settings = store.settings(in: folder), !settings.isEmpty {
+            return (settings, settings.digest)
+        }
+        let name = folder.lastPathComponent
+        return (ProjectSettings(name: name, theme: .set(AutoPaint.projectTheme(folderName: name))),
+                ProjectPaint.autoDigest(name: name))
+    }
+
+    /// Отпечаток авто-цвета. С хэшем настроек из файла он совпасть не может — значит переход
+    /// «свой вид ⇄ авто-цвет» тик не пропустит.
+    static func autoDigest(name: String) -> String { "auto:\(AutoPaint.hue(forName: name))" }
+
+    /// Что послать окну: слои вида проекта (файл или авто-цвет) плюс снятие слоёв, которые
+    /// ставил ПРОШЛЫЙ проект, а этот не задаёт. Вида нет вовсе (папку не знаем) = только
+    /// снятие (критик Б2 плана WF15).
     private func command(for target: ProjectTarget, settings: ProjectSettings?,
                          previous: Mark?) -> ProjectPaintCommand {
         let want = settings ?? ProjectSettings()
@@ -275,36 +287,125 @@ final class ProjectPaint {
         return previous?.layers.contains(key) == true ? .reset : .keep
     }
 
-    /// «У проекта нет своего вида» — плашкой один раз на папку (решение 6 плана WF15).
-    /// Сказал «потом» — больше не покажем, остаётся пункт меню.
-    private func hint(about folder: URL?, settings: ProjectSettings?) {
-        guard settings == nil || settings?.isEmpty == true, let folder = folder else { return }
-        if let at = lastHintAt, now().timeIntervalSince(at) < ProjectPaint.hintInterval { return }
-        let path = folder.standardizedFileURL.path
+    /// Плашка про папку — один раз на папку (решение 3.2 плана WF20): файл `.pimpmyclaude.json`
+    /// заводится молча, и Элвис должен узнать об этом хотя бы однажды. Про битый файл говорим
+    /// своим ключом — иначе одна плашка на папку съела бы другую.
+    private func notice(_ text: String, folder path: String, broken: Bool = false) {
+        let key = broken ? ProjectPaint.brokenPrefix + path : path
         var hints = defaults.dictionary(forKey: ProjectPaint.hintsKey) ?? [:]
-        guard hints[path] == nil else { return }
-        hints[path] = true
+        guard hints[key] == nil else { return }
+        hints[key] = true
         defaults.set(hints, forKey: ProjectPaint.hintsKey)
-        lastHintAt = now()
-        showNotice(MenuModel.projectHint(folder.lastPathComponent))
+        showNotice(text)
     }
 
-    // MARK: - пункт меню «🗂 Проект ▸»
+    // MARK: - ручной выбор = вид проекта (решение 3.2 плана WF20)
 
-    /// Папка окна под кнопкой: по заголовку через индекс, а у безымянного окна (главное зовётся
-    /// «Claude») — папка главного окна.
-    func folder(for title: String) -> URL? {
-        if let folder = index.folder(forTitle: title) { return folder }
-        return index.mainWindow()?.folder
+    /// Выбрал в окне проекта тему (шрифт, размер, рамку) — она молча стала видом проекта.
+    /// Зовётся из `ClaudeActions.remember` и только при `scope:"window"`: примерка мышью
+    /// до `remember` не доходит вовсе, а «Раскрасить по кругу» идёт мимо него.
+    ///
+    /// `.set` — слой ложится в файл, `.reset` («Как у Claude») — уходит из файла, `.keep` —
+    /// не трогаем. Не осталось ни одного слоя — файл удаляется, у проекта снова авто-цвет,
+    /// и окно берёт его сразу, не дожидаясь тика (решение 3.3). Папки не знаем — выходим
+    /// молча: выбор остаётся местным, как до WF20.
+    func noteManualChoice(title: String, theme: Layer<Theme>, font: Layer<Font>,
+                          size: Layer<Size>, frame: Layer<Bool>) {
+        // Тумблер выключен — покраски по проекту нет вовсе; в чужую папку тем более не пишем.
+        guard enabled, let folder = writableFolder(for: title) else { return }
+        let old = store.settings(in: folder) ?? ProjectSettings()
+        let name = folder.lastPathComponent
+        let path = folder.standardizedFileURL.path
+        let settings = ProjectSettings(name: name,
+                                       theme: ProjectPaint.merged(old.theme, theme),
+                                       font: ProjectPaint.merged(old.font, font),
+                                       size: ProjectPaint.merged(old.size, size),
+                                       frame: ProjectPaint.merged(old.frame, frame))
+        // Отпечатки этой папки ГАСИМ, но не забываем (находка 3 проверки WF20): ближайший тик
+        // (≤ 2 с) перекрасит остальные её окна, а список поставленных слоёв нужен, чтобы СНЯТЫЙ
+        // слой ушёл и с них тоже — иначе шрифт, убранный в одном окне проекта, остался бы висеть
+        // в соседнем. Пустой отпечаток с настоящим совпасть не может: у известной папки вид есть
+        // всегда (файл или авто-цвет).
+        marks = marks.mapValues { mark in
+            guard mark.folder == path else { return mark }
+            return Mark(match: mark.match, title: mark.title, folder: mark.folder, digest: "",
+                        layers: mark.layers)
+        }
+        if settings.isEmpty {
+            // Битый файл не удаляем (находка 1 проверки WF20): разобрать его мы не смогли,
+            // а в нём чужие ключи. Говорим об этом плашкой и выходим тем же путём, что и
+            // неудачная запись, — выбор остаётся местным.
+            if store.isBroken(in: folder) {
+                notice(MenuModel.projectBroken(name), folder: path, broken: true)
+            } else {
+                store.remove(from: folder)
+                // Файла больше нет — у проекта снова авто-цвет, и окно-инициатор берёт его сразу,
+                // иначе оно две секунды стояло бы голым Claude.
+                if let target = target(for: title) { repaint(target) }
+                return
+            }
+        } else {
+            switch store.write(settings, to: folder) {
+            case .written: notice(MenuModel.projectWritten(name), folder: path)
+            case .registry: notice(MenuModel.projectWrittenToRegistry(name), folder: path)
+            // Битый файл не перезаписываем «на всякий случай»: в нём могли быть чужие ключи.
+            case .broken: notice(MenuModel.projectBroken(name), folder: path, broken: true)
+            case .failed: notice(MenuModel.projectWriteFailed(name), folder: path, broken: true)
+            }
+        }
+        // Окну-инициатору — свежий отпечаток: выбранное на нём уже стоит, слать его обратно
+        // незачем. Отпечаток берём ТОТ, что посчитает ближайший тик: иначе на битом файле
+        // (вид проекта остался авто-цветом) тик тут же перекрасил бы окно.
+        guard let target = target(for: title) else { return }
+        marks[target.key] = Mark(match: target.match, title: target.title, folder: path,
+                                 digest: wanted(in: folder)?.digest ?? "",
+                                 layers: ProjectPaint.setLayers(settings))
     }
 
-    /// Что показать в подменю проекта для окна под кнопкой.
-    func menuState(title: String) -> ProjectMenuState {
-        let folder = self.folder(for: title)
-        return ProjectMenuState(folder: folder,
-                                path: folder.map { ProjectPaint.short(path: $0) } ?? "",
-                                hasSettings: folder.flatMap { store.settings(in: $0) } != nil,
-                                painting: enabled)
+    /// Покрасить окно прямо сейчас, мимо отпечатка и проверок: файл проекта только что удалили,
+    /// и окно должно вернуться к авто-цвету, а не ждать тика.
+    private func repaint(_ target: ProjectTarget) {
+        guard let wanted = self.wanted(in: target.folder) else { return }
+        commit(command(for: target, settings: wanted.settings, previous: marks[target.key]),
+               to: target, folder: target.folder?.standardizedFileURL.path ?? "",
+               digest: wanted.digest)
+    }
+
+    /// Слой файла после ручного выбора: `.set` — записать, `.reset` («Как у Claude») — убрать
+    /// слой из файла, `.keep` — не трогать. `null` от ручного выбора в файл не пишем: «в этом
+    /// проекте как у Claude» — это и есть отсутствие ключа (решение 3.3 плана WF20).
+    static func merged<Value>(_ old: Layer<Value>, _ change: Layer<Value>) -> Layer<Value> {
+        switch change {
+        case .keep: return old
+        case .reset: return .keep
+        case .set(let value): return .set(value)
+        }
+    }
+
+    /// Слои, которые вид проекта СТАВИТ окну: их и снимать, когда окно уйдёт в другой проект.
+    static func setLayers(_ settings: ProjectSettings) -> [String] {
+        var out: [String] = []
+        if case .set = settings.theme { out.append(ProjectSettings.themeKey) }
+        if case .set = settings.font { out.append(ProjectSettings.fontKey) }
+        if case .set = settings.size { out.append(ProjectSettings.sizeKey) }
+        if case .set = settings.frame { out.append(ProjectSettings.frameKey) }
+        return out
+    }
+
+    // MARK: - папка окна
+
+    /// Папка, в файл которой можно ЗАПИСАТЬ ручной выбор. Тут запас «а возьмём главное окно»
+    /// опасен (находка 2 проверки WF20): попап обычного чата claude.ai в индексе не значится,
+    /// и его тема молча уехала бы в проект главного окна, перекрасив все его окна. Поэтому
+    /// запас только у безымянного окна и у заглушки «Claude» — то есть у самого главного окна;
+    /// у окна с настоящим заголовком папка берётся строго из индекса, а нет её — выбор
+    /// остаётся местным (решение 3.6 плана WF20, строка «Окно без папки»).
+    private func writableFolder(for title: String) -> URL? {
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, clean != ProjectPaint.mainWindowTitle else {
+            return index.mainWindow()?.folder
+        }
+        return index.folder(forTitle: clean)
     }
 
     /// Как адресовать окно под кнопкой: попап — своим заголовком, безымянное окно — путём
@@ -320,70 +421,6 @@ final class ProjectPaint {
                              title: ProjectPaint.mainWindowTitle, folder: main.folder)
     }
 
-    /// «🎨 Взять цвет проекта» — та же команда, что на тике, но мимо проверок «окно занято» и
-    /// «ничего не изменилось»: клик по пункту это явная просьба.
-    func applyNow(title: String) {
-        guard let target = target(for: title), let folder = target.folder else { return }
-        guard let settings = store.settings(in: folder), !settings.isEmpty else {
-            showNotice(MenuModel.projectNoSettings)
-            return
-        }
-        let command = self.command(for: target, settings: settings, previous: marks[target.key])
-        guard !command.isEmpty, send(command) else { return }
-        marks[target.key] = Mark(match: target.match, title: target.title,
-                                 folder: folder.standardizedFileURL.path, digest: settings.digest,
-                                 layers: command.setLayers)
-    }
-
-    /// «💾 Записать этот вид в проект» / «✍️ Завести настройки проекта»: в файл ложатся ровно
-    /// те слои, что применены к этому окну. Битый файл этот пункт перезаписывает (`force`) —
-    /// он и есть то явное «да», без которого чужой файл не трогают.
-    func writeCurrentView(title: String) {
-        guard let folder = folder(for: title) else { return }
-        let view = currentView(title)
-        guard !view.isEmpty else {
-            showNotice(MenuModel.projectNothingToWrite)
-            return
-        }
-        let name = folder.lastPathComponent
-        let settings = ProjectSettings(name: name, theme: view.theme, font: view.font,
-                                       size: view.size, frame: view.frame)
-        switch store.write(settings, to: folder, force: true) {
-        case .written: showNotice(MenuModel.projectWritten(name))
-        case .registry: showNotice(MenuModel.projectWrittenToRegistry(name))
-        case .broken, .failed: showNotice(MenuModel.projectWriteFailed(name))
-        }
-    }
-
-    /// «📝 Вписать строку в AGENTS.md» — памятка агенту проекта, а не хранилище (критик М4):
-    /// пишем по клику, назад не читаем, «Убрать настройки» её не трогает.
-    func writeAgentsLine(title: String) {
-        guard let folder = folder(for: title) else { return }
-        let name = folder.lastPathComponent
-        guard let settings = store.settings(in: folder), !settings.isEmpty else {
-            showNotice(MenuModel.projectNoSettings)
-            return
-        }
-        let url = folder.appendingPathComponent(ProjectPaint.agentsFileName)
-        let text = ProjectPaint.agents(file: try? String(contentsOf: url, encoding: .utf8),
-                                       line: ProjectPaint.agentsLine(settings))
-        showNotice(CommandChannel.writeAtomic(url, text) ? MenuModel.projectAgentsWritten(name)
-                                                         : MenuModel.projectAgentsFailed(name))
-    }
-
-    /// «🗑 Убрать настройки из проекта»: файл и запись реестра. Строку в `AGENTS.md` не трогаем
-    /// (о ней говорим плашкой), окна назад НЕ перекрашиваем — цвет остаётся, пока Элвис не
-    /// выберет «Как у Claude» (решение 5 плана WF15). Для этого и забываем отпечатки папки:
-    /// иначе ближайший тик снял бы слои обратно.
-    func removeSettings(title: String) {
-        guard let folder = folder(for: title) else { return }
-        let path = folder.standardizedFileURL.path
-        let removed = store.remove(from: folder)
-        marks = marks.filter { $0.value.folder != path }
-        showNotice(removed ? MenuModel.projectRemoved(folder.lastPathComponent)
-                           : MenuModel.projectNoSettings)
-    }
-
     // MARK: - чистая часть (её же гоняют тесты)
 
     /// `/Users/elvis/_ElvisProjects/PimpMyClaude` → `~/_ElvisProjects/PimpMyClaude`.
@@ -392,38 +429,6 @@ final class ProjectPaint {
         let base = home.standardizedFileURL.path
         guard path == base || path.hasPrefix(base + "/") else { return path }
         return "~" + path.dropFirst(base.count)
-    }
-
-    /// Строка-памятка: только id слоёв, коротко — её читает агент проекта, а не приложение.
-    static func agentsLine(_ settings: ProjectSettings) -> String {
-        var fields: [(key: String, value: CommandValue)] = []
-        if let theme = settings.theme.value, !theme.id.isEmpty {
-            fields.append((key: ProjectSettings.themeKey, value: .string(theme.id)))
-        }
-        if let font = settings.font.value {
-            fields.append((key: ProjectSettings.fontKey, value: .string(font.id)))
-        }
-        if let size = settings.size.value {
-            fields.append((key: ProjectSettings.sizeKey, value: size.commandValue))
-        }
-        if case .set(true) = settings.frame {
-            fields.append((key: ProjectSettings.frameKey, value: .bool(true)))
-        }
-        return ProjectPaint.agentsMarker + " " + CommandValue.object(fields).json + " -->"
-    }
-
-    /// Текст `AGENTS.md` после вписывания строки: прежняя памятка заменяется на месте, новая
-    /// дописывается в конец. Больше в файле не меняется ничего — его правят и Элвис, и агенты.
-    static func agents(file old: String?, line: String) -> String {
-        guard let old = old, !old.isEmpty else { return line + "\n" }
-        var lines = old.components(separatedBy: "\n")
-        if let index = lines.firstIndex(where: {
-            $0.trimmingCharacters(in: .whitespaces).hasPrefix(ProjectPaint.agentsMarker)
-        }) {
-            lines[index] = line
-            return lines.joined(separator: "\n")
-        }
-        return old + (old.hasSuffix("\n") ? "" : "\n") + "\n" + line + "\n"
     }
 
     /// Вид окна, каким его помнит приложение: галки меню (`ThemeStore`), а у окна после

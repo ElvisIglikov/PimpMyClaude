@@ -38,7 +38,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf24-a-1";
+  const VERSION = "wf20-g-2";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -142,6 +142,9 @@
   const HEARTBEAT_MS = 500;
   // Сколько ждём появления поля ввода, прежде чем признать страницу чужой.
   const GIVE_UP_MS = 60000;
+  // Отказ не окончательный: раз в столько проверяем, не приехала ли разметка
+  // Claude позже (окно «Open in new window» рождается пустым about:blank).
+  const REVIVE_MS = 5000;
   const CASHOUT_FRESH_MS = 90000;
   const CASHOUT_TICK_MS = 300;
   // Ниже этой высоты сосед рамки — пустая обёртка, а не строка модели.
@@ -2939,8 +2942,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     handle.style.display = "flex";
     handle.style.left = `${Math.round(left + (span - width) / 2)}px`;
     handle.style.width = `${width}px`;
+    // Свёрнутая полоска стоит на 5 точек выше, чем раньше: на кромке строки
+    // модели её линия сливалась с полосой прогресса (слово Элвиса 05.09 19:30).
     handle.style.top = `${Math.round(row && row.height > 0
-      ? row.top - HANDLE_HEIGHT + 3
+      ? row.top - HANDLE_HEIGHT - 2
       : innerHeight - HANDLE_HEIGHT - 4)}px`;
     // Хит-тест нужен и здесь: меню модели и effort раскрываются вверх ровно над
     // этим местом. Но одного хит-теста мало: центр свёрнутой полоски лежит выше
@@ -4572,7 +4577,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // документ), свой набор мутаций (ещё и characterData) и свой троттлинг.
   watchTime();
 
-  const heartbeat = setInterval(() => {
+  // Тик вынесен в функцию: после отказа от наблюдения интервал снимают, а при
+  // возврате заводят заново — тем же телом.
+  const heartbeatTick = () => {
     if (!state.alive) return;
     // Лента могла смениться целиком (React пересобрал разговор): наблюдатель за
     // временем остался бы висеть на выброшенном узле и оглох — мутаций оттуда
@@ -4585,7 +4592,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       return;
     }
     scheduleLayout();
-  }, HEARTBEAT_MS);
+  };
+  let heartbeat = setInterval(heartbeatTick, HEARTBEAT_MS);
   track(() => clearInterval(heartbeat));
 
   // Инжект попадает и в оболочку file://…/main_window, и на страницы логина —
@@ -4594,6 +4602,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // интерфейса Claude (последняя проверка — сверх плана: окна «Open in new
   // window» живут на about:blank, и терять в них полоску из-за одного лишь URL
   // было бы обиднее, чем лишний наблюдатель на пустой странице).
+  // Примета интерфейса Claude: по ней страница признаётся своей — и когда мы от
+  // неё отказываемся, и когда возвращаемся.
+  const CLAUDE_MARK_SELECTOR = ".ProseMirror,.epitaxy-prompt,.epitaxy-titlebar,.epitaxy-composer-width";
+  let reviveTimer = 0;
   const stopWatching = () => {
     state.watching = false;
     observer.disconnect();
@@ -4605,12 +4617,39 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     stopTimeWatch();
     clearInterval(progressState.pulse);
     progressState.pulse = 0;
+    // Отказ не окончательный. Окно «Open in new window» рождается пустым
+    // about:blank, а чат в него въезжает позже; тяжёлый чат в фоновом окне
+    // не успевал за GIVE_UP_MS, и страница оставалась мёртвой навсегда — без
+    // ручки и без полоски прогресса, хотя поле ввода в ней уже стояло (окно
+    // «Bro Flow продолжение», 05.09). Наблюдателей обратно не заводим: остаётся
+    // самая дешёвая сторожевая проверка — один querySelector раз в REVIVE_MS.
+    if (!reviveTimer) reviveTimer = setInterval(() => {
+      if (!state.alive) return;
+      if (!document.querySelector(CLAUDE_MARK_SELECTOR)) return;
+      resumeWatching();
+    }, REVIVE_MS);
   };
+  // Разметка Claude всё-таки приехала: поднимаем ровно то, что снял stopWatching.
+  const resumeWatching = () => {
+    if (reviveTimer) { clearInterval(reviveTimer); reviveTimer = 0; }
+    if (!state.alive || state.watching) return;
+    state.watching = true;
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    heartbeat = setInterval(heartbeatTick, HEARTBEAT_MS);
+    if (!progressState.pulse) {
+      progressState.pulse = setInterval(() => { try { progressRefresh(); } catch {} }, PROGRESS_IDLE_MS);
+    }
+    watchTime();
+    scheduleShortTime();
+    scheduleLayout();
+    try { progressSchedule(); } catch {}
+  };
+  track(() => { if (reviveTimer) { clearInterval(reviveTimer); reviveTimer = 0; } });
   state.giveUpTimer = setTimeout(() => {
     state.giveUpTimer = 0;
     if (state.editorFound || !state.alive) return;
     if (location.href.startsWith("https://claude.ai")) return;
-    if (document.querySelector(".ProseMirror,.epitaxy-prompt,.epitaxy-titlebar,.epitaxy-composer-width")) return;
+    if (document.querySelector(CLAUDE_MARK_SELECTOR)) return;
     stopWatching();
   }, GIVE_UP_MS);
   track(() => { if (state.giveUpTimer) { clearTimeout(state.giveUpTimer); state.giveUpTimer = 0; } });

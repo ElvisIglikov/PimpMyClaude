@@ -258,6 +258,17 @@ final class ProjectSettingsStore {
         return registry()[folder.standardizedFileURL.path]
     }
 
+    /// Файл в папке есть, а разобрать его не вышло. Такой файл нельзя ни переписать, ни удалить:
+    /// в нём чужие ключи и чужая работа, а мы его даже не прочли (находка 1 проверки WF20 —
+    /// «🧹 Всё как у Claude» сносила битый файл целиком). Файла нет и пустой файл битыми
+    /// не считаются: первый удалять нечего, второй `merged` разбирает как «настроек не было».
+    func isBroken(in folder: URL) -> Bool {
+        let url = self.url(in: folder)
+        guard fileManager.fileExists(atPath: url.path),
+              let old = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        return ProjectSettings.merged(file: old, settings: ProjectSettings()) == nil
+    }
+
     /// Записать вид в папку проекта. Прежние чужие ключи сохраняются; в папку писать нельзя —
     /// уходим в реестр; файл битый — `.broken`, пока не позовут с `force`.
     @discardableResult

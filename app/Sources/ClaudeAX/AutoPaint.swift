@@ -243,8 +243,14 @@ enum AutoPaint {
     /// приглушённый HSL(hue, 25 %, 42 %), акцент HSL(hue, 70 %, 42 %).
     /// Всё, что читают глазами, потом подтягивается по контрасту (см. `pulled`), а акцент
     /// кладётся в полосу контраста (см. `banded`).
-    static func palette(hue: Double, light: Bool, strength: Double = 0.5) -> [String: String] {
+    ///
+    /// `accentHue` — отдельный тон акцента (ручка «Акцент» редактора своей темы, решение 1.2
+    /// плана WF20). По умолчанию `nil` — «как у фона», и тогда автопокраска, живые цвета и
+    /// цвет проекта считаются ровно как считались: ни один их байт от этого параметра не зависит.
+    static func palette(hue: Double, light: Bool, strength: Double = 0.5,
+                        accentHue: Double? = nil) -> [String: String] {
         let force = min(max(strength, 0), 1)
+        let tone = accentHue ?? hue
         let background: HSL, sidebar: HSL, panel: HSL
         var foreground: HSL, muted: HSL, accent: HSL
         if light {
@@ -255,7 +261,7 @@ enum AutoPaint {
             sidebar = HSL(hue, saturation, lightness - 4)
             foreground = HSL(hue, 40, 14)
             muted = HSL(hue, 25, 42)
-            accent = HSL(hue, 70, 42)
+            accent = HSL(tone, 70, 42)
         } else {
             let lightness = 16 - 4 * force
             background = capped(HSL(hue, min(maxBackgroundSaturation, 45 + 15 * force), lightness))
@@ -265,7 +271,7 @@ enum AutoPaint {
             foreground = HSL(hue, 25, 92)
             muted = HSL(hue, 20, 65)
             // «Неон» — тёмный с ярким акцентом (план п. 2): сила поднимает насыщенность.
-            accent = HSL(hue, 70 + 20 * force, 62)
+            accent = HSL(tone, 70 + 20 * force, 62)
         }
         foreground = pulled(foreground, to: textContrast, on: background)
         muted = pulled(muted, to: accentContrast, on: background)
@@ -333,6 +339,34 @@ enum AutoPaint {
                      name: "\(preset.title) · \(degrees)°",
                      type: light ? "light" : "dark",
                      palette: palette(hue: Double(degrees), light: light, strength: strength))
+    }
+
+    // MARK: - цвет проекта по имени папки (решение 3.1 плана WF20)
+
+    /// Начало FNV-1a 64 и её множитель. Хэш СВОЙ, а не `hashValue`: тот солится на каждый
+    /// запуск процесса — цвет проекта менялся бы после каждого перезапуска приложения
+    /// и не совпадал бы у Элвиса с командой.
+    static let fnvOffset: UInt64 = 14_695_981_039_346_656_037
+    static let fnvPrime: UInt64 = 1_099_511_628_211
+
+    /// Устойчивый тон проекта из имени папки: FNV-1a 64 над `name.lowercased()` в UTF-8,
+    /// остаток от 360. Регистр не важен, число одно и то же на любой машине и в любом запуске.
+    static func hue(forName name: String) -> Int {
+        var hash = fnvOffset
+        for byte in name.lowercased().utf8 { hash = (hash ^ UInt64(byte)) &* fnvPrime }
+        return Int(hash % 360)
+    }
+
+    /// Тема проекта, которой окно красится САМО, пока в папке нет `.pimpmyclaude.json`
+    /// (решение 3.1 плана WF20): id `project-<hue>`, имя «<Папка> · <hue>°». Читаемость держат
+    /// те же `capped`/`pulled`/`banded`, что у автопокраски. Тон тёмный: рабочая тема Элвиса
+    /// и команды тёмная, а светлый цвет проекта задаётся выбором светлой темы в его окне.
+    static func projectTheme(folderName: String, light: Bool = false) -> Theme {
+        let degrees = hue(forName: folderName)
+        return Theme(id: "project-\(degrees)",
+                     name: "\(folderName) · \(degrees)°",
+                     type: light ? "light" : "dark",
+                     palette: palette(hue: Double(degrees), light: light))
     }
 
     /// Темы на N окон подряд — то, что уедет по одной команде на окно.

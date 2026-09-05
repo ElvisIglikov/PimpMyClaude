@@ -234,8 +234,8 @@ final class ClaudeActions {
         return project
     }
 
-    /// Вид окна, каким его помнит приложение, — та же функция, что у «💾 Записать этот вид
-    /// в проект»: галки меню, а у окна после «Раскрасить по кругу» — его сгенерированная тема.
+    /// Вид окна, каким его помнит приложение: галки меню, а у окна после «Раскрасить по кругу» —
+    /// его сгенерированная тема. Нужен «🪟 Новому окну ▸» у проекта без своего вида (план WF16).
     func windowView(title: String) -> ProjectSettings {
         ProjectPaint.view(title: title, themeStore: themeStore, themes: themes, fonts: fonts,
                           myThemes: myThemes.load(), autoPainted: autoPaintedTheme(title: title))
@@ -448,12 +448,45 @@ final class ClaudeActions {
     /// «Как у Claude»: окно цветное, а `ThemeStore` пуст — галка соврала бы (критик В1 плана WF14).
     func autoPaintedTheme(title: String) -> Theme? { autoPaintedThemes[title] }
 
+    /// Заголовок окна, которым сейчас владеет панель «Своя тема» (критик Б3 плана WF20).
+    /// Пока он занят, фоновая покраска по проекту это окно не трогает, а живые цвета
+    /// не запускаются вовсе: обычная команда `theme` гасит примерку на странице
+    /// (`endPreviewExcept`), и ползунок остался бы без цвета. Ставит и снимает `ThemeEditor`;
+    /// панель одна на приложение — отсюда и статик, как у `ThemeEditor.current`.
+    static var themeEditorTitle: String?
+
+    /// Панель закрылась: флаг снят, и отложенный крутёж живых цветов уезжает на страницу
+    /// (находка 4 проверки WF20). Пока панель была открыта, `sendLiveColors` его только
+    /// запоминал — приложение считало живые цвета включёнными, а страница ничего не крутила
+    /// до перезапуска. Зовёт `ThemeEditor.finish()`, и только он.
+    func finishThemeEditor() {
+        ClaudeActions.themeEditorTitle = nil
+        _ = resendLiveColors()
+    }
+
+    /// Ручки, с которых открывается «🎚 Своя тема…»: у выбранной окном своей темы — записанные
+    /// в файл, у темы каталога и автотемы — подобранные по палитре (приблизительно, п. 4
+    /// «Что выяснено»). Ничего не выбрано — умолчание панели.
+    func editorKnobs(window: AXUIElement?) -> ThemeKnobs {
+        let title = window.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
+        if let id = themeStore.windowThemeID(title: title) {
+            if let my = myThemes.load().first(where: { $0.id == id }) { return ThemeKnobs.of(my) }
+            if let found = themes.first(where: { $0.id == id }) {
+                return ThemeKnobs.from(palette: found.palette, type: found.type)
+            }
+        }
+        guard let theme = autoPaintedThemes[title] ?? lastAppliedTheme else { return ThemeKnobs() }
+        return ThemeKnobs.from(palette: theme.palette, type: theme.type)
+    }
+
     /// Галки в меню и «последнее применённое» — по слоям: слой `.keep` остаётся как был.
     /// Размер приходит половинами, поэтому кладётся поверх запомненного — как его склеивает
     /// страница; `.reset` («🧹 Всё как у Claude») снимает слой целиком, а снятая половина
     /// («Как у Claude» в одном из двух подменю) уходит из записи одна (решение 1 плана WF19).
     private func remember(scope: String, title: String, theme: Layer<Theme>, font: Layer<Font>,
                           size: SizeLayer, frame: Layer<Bool>) {
+        // Размер окна ЦЕЛЫМ слоем — таким он и уйдёт в файл проекта (крючок в конце).
+        var windowSize: Layer<Size> = .keep
         if scope == MenuModel.themeScopeAll {
             if !theme.isKeep {
                 themeStore.setAllTheme(theme.value?.id)
@@ -480,10 +513,13 @@ final class ClaudeActions {
             }
             if !font.isKeep { themeStore.setWindowFont(font.value?.id, title: title) }
             if !size.isKeep {
-                themeStore.setWindowSize(ClaudeActions.windowSize(after: size,
-                                                                  window: themeStore.windowSize(title: title),
-                                                                  all: themeStore.allSize),
-                                         title: title)
+                let value = ClaudeActions.windowSize(after: size,
+                                                     window: themeStore.windowSize(title: title),
+                                                     all: themeStore.allSize)
+                themeStore.setWindowSize(value, title: title)
+                // В файл проекта размер уходит целым слоем, а не половиной: страница склеила
+                // половины ровно так же (решение 3.2 плана WF20).
+                windowSize = value.map { Layer.set($0) } ?? .reset
             }
             if !frame.isKeep { themeStore.setWindowFrame(frame.value == true, title: title) }
         }
@@ -493,7 +529,17 @@ final class ClaudeActions {
         // тему…» записала бы кегль, которого на экране уже нет.
         if !size.isKeep { lastAppliedSize = size.applied(to: lastAppliedSize) }
         if !frame.isKeep { lastAppliedFrame = frame.value == true }
+        // Ручной выбор в окне проекта — это и есть вид проекта (решение 3.2 плана WF20).
+        // Только `scope:"window"`: «всем окнам» проект не перебивает вовсе, а примерка
+        // и «Раскрасить по кругу» сюда не доходят.
+        guard scope != MenuModel.themeScopeAll else { return }
+        onWindowViewChanged?(title, theme, font, windowSize, frame)
     }
+
+    /// Окну задали вид руками: заголовок и четыре слоя. Вешает `ClaudeAXController` — на
+    /// `ProjectPaint.noteManualChoice`, которая молча кладёт выбор в `.pimpmyclaude.json`
+    /// (решение 3.2 плана WF20). Размер приходит целым слоем: `.reset` — «как у Claude».
+    var onWindowViewChanged: ((String, Layer<Theme>, Layer<Font>, Layer<Size>, Layer<Bool>) -> Void)?
 
     /// Что записать окну после команды размера (критик В4 плана WF19): база слияния — своя
     /// запись окна, а её нет — запись «всем окнам». Страница мержит по той же цепочке
@@ -742,6 +788,14 @@ final class ClaudeActions {
     private func sendLiveColors(_ state: LiveColorsState,
                                 priority: CommandChannel.Priority = .normal) -> Bool {
         noteUserCommand()
+        // Пока открыта панель «Своя тема», крутёж не запускаем и не пересылаем: живой слой
+        // перекрасил бы окно поверх примерки через четверть секунды (критик Б3 плана WF20).
+        // Выбор всё равно запоминаем — поедет, как только панель закроют. Выключение проходит
+        // всегда: оно примерке только помогает.
+        guard !state.on || ClaudeActions.themeEditorTitle == nil else {
+            liveColorsStore.save(state)
+            return false
+        }
         let fields = LiveColors.fields(state: state, titles: paintableTitles())
         guard commands.write(action: LiveColors.action, fields: fields,
                              priority: priority) else { return false }
@@ -777,17 +831,13 @@ final class ClaudeActions {
     /// заголовка окно не адресовать, одинаковые схлопнуты.
     func paintableTitles() -> [String] { paintableWindows().titles }
 
-    /// Окно уже занято: цвет ему выбрали руками из меню (`ThemeStore`) или его красила
-    /// «Раскрасить по кругу» (`autoPaintedThemes`). Проект такое окно не трогает — ни одного
-    /// источника мало: автопокраска сама чистит галки, а свой цвет кладёт только в память
-    /// (критик Б3 плана WF15).
-    func isWindowPainted(title: String) -> Bool {
+    /// Окно красила «Раскрасить по кругу» — цвет у него сгенерированный, и проект такое окно
+    /// не трогает (критик Б3 плана WF15). Ручной выбор из меню (`ThemeStore`) окно больше
+    /// НЕ занимает: с WF20 он и есть вид проекта (решение 3.2), а старая защита не дала бы
+    /// окну взять цвет нового проекта после смены чата (п. 16 «Что выяснено»).
+    func isWindowAutoPainted(title: String) -> Bool {
         guard !title.isEmpty else { return false }
-        if autoPaintedThemes[title] != nil { return true }
-        return themeStore.windowThemeID(title: title) != nil
-            || themeStore.windowFontID(title: title) != nil
-            || themeStore.windowSize(title: title) != nil
-            || themeStore.windowFrame(title: title)
+        return autoPaintedThemes[title] != nil
     }
 
     /// Задан вид «всем окнам» — его проект не перебивает вовсе (критик Б3 плана WF15).

@@ -38,14 +38,12 @@ private final class PaintRig {
     var sent: [ProjectPaintCommand] = []
     /// Заголовки окон Claude на экране (AX).
     var titles: [String] = []
-    /// Окна с ручным выбором или после «Раскрасить по кругу».
+    /// Окна после «Раскрасить по кругу» (ручной выбор с WF20 окно не занимает).
     var busy: Set<String> = []
     var allWindows = false
     var menuOpen = false
     var lastMenuCommand: Date?
     var notices: [String] = []
-    /// Что «применено к окну» — из этого «Записать этот вид в проект» делает файл.
-    var view = ProjectSettings()
     /// Запись команды не удалась (диск, права): покраска должна попробовать снова.
     var writes = true
 
@@ -71,7 +69,6 @@ private final class PaintRig {
         paint.isMenuOpen = { [unowned self] in self.menuOpen }
         paint.lastMenuCommand = { [unowned self] in self.lastMenuCommand }
         paint.showNotice = { [unowned self] text in self.notices.append(text) }
-        paint.currentView = { [unowned self] _ in self.view }
     }
 
     func folder(_ name: String) -> URL { root.appendingPathComponent(name, isDirectory: true) }
@@ -585,6 +582,28 @@ final class ProjectTests: XCTestCase {
         _ = target.perform(action, with: item)
     }
 
+    /// Живой `ClaudeActions` поверх стенда: команды пишутся во временный файл, а крючок
+    /// «окну задали вид» ведёт в покраску по проекту — ровно так его вешает `ClaudeAXController`.
+    /// Окна Claude на машине теста нет, поэтому заголовок у команд пустой, а пустой заголовок
+    /// покраска понимает как «безымянное окно» — папка главного окна.
+    private func makeActions(_ rig: PaintRig) -> ClaudeActions {
+        let clock = rig.clock
+        let channel = CommandChannel(path: rig.box.appendingPathComponent("command.json"),
+                                     now: { clock.now }, schedule: { _, _ in })
+        let actions = ClaudeActions(app: ClaudeApp(), commands: channel,
+                                    themes: [ProjectTests.indigo, ProjectTests.arctic],
+                                    fonts: [ProjectTests.menlo],
+                                    themeStore: ThemeStore(defaults: ProjectDefaults()),
+                                    myThemes: MyThemesStore(url: rig.box.appendingPathComponent("my.json")),
+                                    autoPaintStore: AutoPaintStore(defaults: ProjectDefaults()),
+                                    liveColorsStore: LiveColorsStore(defaults: ProjectDefaults()))
+        actions.onWindowViewChanged = { [unowned rig] title, theme, font, size, frame in
+            rig.paint.noteManualChoice(title: title, theme: theme, font: font, size: size,
+                                       frame: frame)
+        }
+        return actions
+    }
+
     func testProjectPaintFingerprintSkipsRepeat() throws {
         let rig = makeRig()
         let pimp = rig.folder("PimpMyClaude")
@@ -630,7 +649,9 @@ final class ProjectTests: XCTestCase {
         XCTAssertEqual(rig.sent[2].theme.value?.id, "indigo")
     }
 
-    func testProjectPaintResetsLayersWhenProjectHasNoSettings() throws {
+    /// Переписан в WF20: «у проекта нет настроек» больше не значит «снять всё» — значит
+    /// авто-цвет по имени папки (решение 3.1). Голое снятие осталось там, где папки не знаем.
+    func testProjectPaintFollowsFolderAndFallsBackToAutoColor() throws {
         let rig = makeRig()
         rig.store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(ProjectTests.indigo),
                                         size: .set(Size(answer: 16)), frame: .set(true)),
@@ -638,32 +659,34 @@ final class ProjectTests: XCTestCase {
         rig.paint.tick()
         XCTAssertEqual(rig.sent.map { PaintRig.layers($0) }, ["tsr"])
 
-        // Главное окно ушло в проект БЕЗ настроек: слои прошлого проекта снимаем, иначе окно
-        // осталось бы в чужом цвете — а у главного окна навсегда (запись `main`).
+        // Главное окно ушло в проект БЕЗ файла: тему ему даёт авто-цвет, а размер и рамку
+        // прошлого проекта снимаем — иначе окно осталось бы в чужом виде, а у главного окна
+        // навсегда (запись `main`).
         putStatus(rig.status, urls: ["https://claude.ai/epitaxy/local_b2"])
         rig.clock.advance()
         rig.paint.tick()
         XCTAssertEqual(rig.sent.count, 2)
-        XCTAssertEqual(PaintRig.layers(rig.sent[1]), "TSR")
+        XCTAssertEqual(PaintRig.layers(rig.sent[1]), "tSR")
+        XCTAssertEqual(rig.sent[1].theme.value?.id,
+                       "project-\(AutoPaint.hue(forName: "Dictatorik"))")
         XCTAssertEqual(rig.sent[1].key, "main", "ключ окна переживает смену чата")
         XCTAssertEqual(rig.sent[1].match, "/epitaxy/local_b2")
-        // И один раз на папку — подсказка «своего вида нет».
-        XCTAssertEqual(rig.notices, [MenuModel.projectHint("Dictatorik")])
+        // Плашки «у проекта нет своего вида» больше не бывает: цвет есть у каждого проекта.
+        XCTAssertTrue(rig.notices.isEmpty)
 
-        // Снимать второй раз нечего, приставать второй раз тоже.
+        // Второй раз то же самое не шлём: отпечаток авто-цвета свой (`auto:<hue>`).
         rig.clock.advance()
         rig.paint.tick()
         XCTAssertEqual(rig.sent.count, 2)
-        XCTAssertEqual(rig.notices.count, 1)
 
-        // Вернулись в проект с настройками — красим снова.
+        // Вернулись в проект с файлом — красим его видом.
         putStatus(rig.status, urls: ["https://claude.ai/epitaxy/local_a1"])
         rig.clock.advance()
         rig.paint.tick()
         XCTAssertEqual(rig.sent.count, 3)
         XCTAssertEqual(PaintRig.layers(rig.sent[2]), "tsr")
 
-        // Чата нет в индексе вовсе — папку не знаем, чужой цвет всё равно снимаем.
+        // Чата нет в индексе вовсе — папку не знаем: ни авто-цвета, ни файла, только снятие.
         putStatus(rig.status, urls: ["https://claude.ai/epitaxy/local_unknown"])
         rig.clock.advance()
         rig.paint.tick()
@@ -700,7 +723,9 @@ final class ProjectTests: XCTestCase {
         XCTAssertEqual(PaintRig.layers(rig.sent[2]), "tf")
     }
 
-    func testProjectPaintSkipsManuallyAndAutoPaintedWindows() throws {
+    /// Переписан в WF20: окно «занимает» только «🌈 Раскрасить по кругу». Ручной выбор больше
+    /// не молчание, а сам вид проекта (решение 3.2, п. 16 «Что выяснено»).
+    func testProjectPaintSkipsAutoPaintedWindows() throws {
         let rig = makeRig()
         // Главное окно смотрит в обычный чат — проверяем ровно попап.
         putStatus(rig.status, urls: ["about:blank"])
@@ -709,7 +734,17 @@ final class ProjectTests: XCTestCase {
         rig.titles = ["Dictatoric"]
         rig.busy = ["Dictatoric"]
         rig.paint.tick()
-        XCTAssertTrue(rig.sent.isEmpty, "цвет выбран руками или это «по кругу» — окно не трогаем")
+        XCTAssertTrue(rig.sent.isEmpty, "окно красила «по кругу» — не трогаем")
+
+        // Ручной выбор окно больше НЕ занимает: галки в памяти приложения проекту не помеха.
+        let actions = makeActions(rig)
+        actions.themeStore.setWindowTheme("indigo", title: "Dictatoric")
+        actions.themeStore.setWindowFont("menlo", title: "Dictatoric")
+        actions.themeStore.setWindowSize(Size(answer: 16), title: "Dictatoric")
+        actions.themeStore.setWindowFrame(true, title: "Dictatoric")
+        XCTAssertFalse(actions.isWindowAutoPainted(title: "Dictatoric"),
+                       "ручной выбор снова «занял» окно — цвет нового проекта на него не встанет")
+        XCTAssertFalse(actions.isWindowAutoPainted(title: ""))
 
         // Память об окне очистили («Всё как у Claude») — проект красит его ближайшим тиком.
         rig.busy = []
@@ -801,138 +836,402 @@ final class ProjectTests: XCTestCase {
                        + "\"scope\":\"window\",\"title\":\"Dictatoric\",\"theme\":null}")
     }
 
-    func testProjectMenuActionsWriteAgentsAndRemove() throws {
+    // MARK: - цвет проекта без лишних действий (батч E1 плана WF20)
+
+    func testProjectHueIsStableForFolderName() throws {
+        // Числа зашиты нарочно: солёный `hashValue` дал бы новые после каждого перезапуска
+        // приложения и разные у Элвиса с командой. Сверено двумя реализациями FNV-1a 64.
+        XCTAssertEqual(AutoPaint.hue(forName: "Trelvis"), 20)
+        XCTAssertEqual(AutoPaint.hue(forName: "PimpMyClaude"), 199)
+        XCTAssertEqual(AutoPaint.hue(forName: "Dictatorik"), 153)
+        XCTAssertEqual(AutoPaint.hue(forName: "VkusnoffKz"), 232)
+        XCTAssertEqual(AutoPaint.hue(forName: "SkilZZZ"), 88)
+        XCTAssertEqual(AutoPaint.hue(forName: "ElvisOS"), 284)
+        // Регистр не важен; пустое имя и кириллица тон всё равно дают.
+        XCTAssertEqual(AutoPaint.hue(forName: "TRELVIS"), 20)
+        XCTAssertEqual(AutoPaint.hue(forName: "trelvis"), 20)
+        for name in ["", "Старьё", "проект с пробелом"] {
+            XCTAssertTrue((0..<360).contains(AutoPaint.hue(forName: name)), name)
+        }
+        // Разные имена — разные тоны (на десятке проектов Элвиса совпадений нет).
+        let names = ["Trelvis", "PimpMyClaude", "Dictatorik", "VkusnoffKz", "SkilZZZ", "ElvisOS"]
+        XCTAssertEqual(Set(names.map { AutoPaint.hue(forName: $0) }).count, names.count)
+
+        // Тема проекта: id и имя из тона, палитра — обычная тёмная той же силы 0,5.
+        let theme = AutoPaint.projectTheme(folderName: "PimpMyClaude")
+        XCTAssertEqual(theme.id, "project-199")
+        XCTAssertEqual(theme.name, "PimpMyClaude · 199°")
+        XCTAssertEqual(theme.type, "dark")
+        XCTAssertEqual(theme.palette, AutoPaint.palette(hue: 199, light: false, strength: 0.5))
+        XCTAssertEqual(AutoPaint.projectTheme(folderName: "PimpMyClaude", light: true).type, "light")
+        // Отпечаток авто-цвета с хэшем настроек совпасть не может.
+        XCTAssertEqual(ProjectPaint.autoDigest(name: "PimpMyClaude"), "auto:199")
+        XCTAssertNotEqual(ProjectPaint.autoDigest(name: "PimpMyClaude"),
+                          ProjectSettings(name: "PimpMyClaude", theme: .set(theme)).digest)
+    }
+
+    func testProjectAutoColorPaintsFolderWithoutFile() throws {
         let rig = makeRig()
         let pimp = rig.folder("PimpMyClaude")
-        // «💾 Записать этот вид в проект»: в файл ложатся ровно слои этого окна.
-        rig.view = ProjectSettings(theme: .set(ProjectTests.indigo), size: .set(Size(answer: 16)))
-        rig.paint.writeCurrentView(title: ProjectPaint.mainWindowTitle)
-        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude")])
+        XCTAssertNil(rig.store.settings(in: pimp), "файла в папке нет — и не должно появиться")
+
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
+        let command = try XCTUnwrap(rig.sent.first)
+        XCTAssertEqual(PaintRig.layers(command), "t", "авто-цвет ставит только тему")
+        let theme = try XCTUnwrap(command.theme.value)
+        XCTAssertEqual(theme.id, "project-199")
+        // Читаемость держат те же формулы, что у «Раскрасить по кругу».
+        let background = try XCTUnwrap(theme.palette["background"])
+        XCTAssertGreaterThanOrEqual(
+            try XCTUnwrap(AutoPaint.contrast(hex: try XCTUnwrap(theme.palette["foreground"]),
+                                             hex: background)), AutoPaint.textContrast)
+        XCTAssertGreaterThanOrEqual(
+            try XCTUnwrap(AutoPaint.contrast(hex: try XCTUnwrap(theme.palette["accent"]),
+                                             hex: background)), AutoPaint.accentContrast)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(AutoPaint.saturation(hex: background)),
+                                 AutoPaint.maxBackgroundSaturation)
+        // Файлов на диске не появилось: авто-цвет живёт в голове приложения.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rig.store.url(in: pimp).path))
+        XCTAssertTrue(rig.store.registry().isEmpty)
+        // И плашки нет: цвет есть у каждого проекта, говорить не о чем.
+        XCTAssertTrue(rig.notices.isEmpty)
+
+        // Второй тик молчит — отпечаток `auto:<hue>` не изменился.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
+
+        // Перезапуск приложения даёт ТОТ ЖЕ цвет: он считается из имени папки, а не из памяти.
+        let restarted = ProjectPaint(index: rig.index, store: rig.store, defaults: rig.defaults,
+                                     now: { [clock = rig.clock] in clock.now })
+        restarted.send = { [unowned rig] command in
+            rig.sent.append(command)
+            return true
+        }
+        restarted.tick()
+        XCTAssertEqual(rig.sent.count, 2)
+        XCTAssertEqual(rig.sent[1].theme.value?.palette, theme.palette)
+    }
+
+    func testManualChoiceBecomesProjectSettings() throws {
+        let rig = makeRig()
+        let pimp = rig.folder("PimpMyClaude")
+        // Слой за слоем, как их и выбирают из меню: цвет, шрифт, размер, рамка.
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle,
+                                   theme: .set(ProjectTests.indigo), font: .keep, size: .keep,
+                                   frame: .keep)
+        XCTAssertEqual(rig.store.settings(in: pimp)?.theme.value?.id, "indigo")
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle, theme: .keep,
+                                   font: .set(ProjectTests.menlo), size: .keep, frame: .keep)
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle, theme: .keep, font: .keep,
+                                   size: .set(Size(answer: 16, question: 14)), frame: .keep)
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle, theme: .keep, font: .keep,
+                                   size: .keep, frame: .set(true))
+
         let settings = try XCTUnwrap(rig.store.settings(in: pimp))
         XCTAssertEqual(settings.name, "PimpMyClaude")
         XCTAssertEqual(settings.theme.value?.id, "indigo")
-        XCTAssertEqual(settings.size.value, Size(answer: 16))
-
-        // «🎨 Взять цвет проекта» идёт мимо проверок «занято» и «ничего не изменилось».
-        rig.busy = [ProjectPaint.mainWindowTitle]
-        rig.paint.applyNow(title: ProjectPaint.mainWindowTitle)
-        XCTAssertEqual(rig.sent.count, 1)
-        XCTAssertEqual(rig.sent[0].match, "/epitaxy/local_a1")
-        XCTAssertEqual(PaintRig.layers(rig.sent[0]), "ts")
-
-        // «📝 Вписать строку в AGENTS.md»: файла нет — заводим одной строкой.
-        rig.paint.writeAgentsLine(title: ProjectPaint.mainWindowTitle)
-        XCTAssertEqual(try String(contentsOf: pimp.appendingPathComponent("AGENTS.md"), encoding: .utf8),
-                       "<!-- pimpmyclaude: {\"theme\":\"indigo\",\"size\":{\"answer\":16}} -->\n")
-        // Прежняя памятка заменяется на месте, чужой текст не трогаем.
-        XCTAssertEqual(ProjectPaint.agents(file: "# Проект\n\n<!-- pimpmyclaude: {\"theme\":\"старое\"} -->\nхвост\n",
-                                           line: "<!-- pimpmyclaude: {} -->"),
-                       "# Проект\n\n<!-- pimpmyclaude: {} -->\nхвост\n")
-        XCTAssertEqual(ProjectPaint.agents(file: "# Проект", line: "<!-- pimpmyclaude: {} -->"),
-                       "# Проект\n\n<!-- pimpmyclaude: {} -->\n")
-
-        // «🗑 Убрать настройки»: файл ушёл, AGENTS.md на месте, окна назад не перекрашиваем.
-        rig.paint.removeSettings(title: ProjectPaint.mainWindowTitle)
-        XCTAssertNil(rig.store.settings(in: pimp))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: pimp.appendingPathComponent("AGENTS.md").path))
-        rig.clock.advance()
-        rig.paint.tick()
-        XCTAssertEqual(rig.sent.count, 1, "цвет остаётся, пока Элвис не выберет «Как у Claude»")
-
-        // Пункты меню на папке без настроек: брать и вписывать нечего, и мы об этом говорим.
-        rig.notices = []
-        rig.paint.applyNow(title: ProjectPaint.mainWindowTitle)
-        rig.paint.writeAgentsLine(title: ProjectPaint.mainWindowTitle)
-        XCTAssertEqual(rig.notices, [MenuModel.projectNoSettings, MenuModel.projectNoSettings])
-        XCTAssertEqual(rig.sent.count, 1)
-        // Вид окна пуст — записывать в проект нечего.
-        rig.view = ProjectSettings()
-        rig.notices = []
-        rig.paint.writeCurrentView(title: ProjectPaint.mainWindowTitle)
-        XCTAssertEqual(rig.notices, [MenuModel.projectNothingToWrite])
-        XCTAssertNil(rig.store.settings(in: pimp))
-
-        // Состояние подменю: папка, путь и «настроек нет».
-        let state = rig.paint.menuState(title: ProjectPaint.mainWindowTitle)
-        XCTAssertEqual(state.name, "PimpMyClaude")
-        XCTAssertEqual(state.path, ProjectPaint.short(path: pimp))
-        XCTAssertFalse(state.hasSettings)
-        XCTAssertTrue(state.painting)
+        XCTAssertEqual(settings.font.value?.family, "Menlo")
+        XCTAssertEqual(settings.size.value, Size(answer: 16, question: 14))
+        XCTAssertEqual(settings.frame, .set(true))
+        // Файл побайтно: порядок ключей контракта, два пробела отступа, перевод строки в конце.
+        let text = try String(contentsOf: rig.store.url(in: pimp), encoding: .utf8)
+        XCTAssertTrue(text.hasPrefix("{\n  \"pimpmyclaude\": 1,\n  \"name\": \"PimpMyClaude\",\n  \"theme\""),
+                      text)
+        XCTAssertTrue(text.hasSuffix("}\n"))
+        var cursor = text.startIndex
+        for key in ["\"pimpmyclaude\"", "\"name\"", "\"theme\"", "\"font\"", "\"size\"", "\"frame\""] {
+            let found = try XCTUnwrap(text.range(of: key, range: cursor..<text.endIndex),
+                                      "ключ \(key) не на своём месте")
+            cursor = found.upperBound
+        }
+        // Плашка — один раз на папку, сколько бы слоёв ни выбрали.
+        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude")])
         XCTAssertEqual(ProjectPaint.short(path: URL(fileURLWithPath: "/Users/elvis/_ElvisProjects/Trelvis"),
                                           home: URL(fileURLWithPath: "/Users/elvis")),
                        "~/_ElvisProjects/Trelvis")
+
+        // Окну-инициатору команду обратно не шлём — выбранное на нём уже стоит.
+        XCTAssertTrue(rig.sent.isEmpty)
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertTrue(rig.sent.isEmpty, "отпечаток окна-инициатора уже свежий")
     }
 
-    func testMenuHasProjectItem() throws {
+    func testManualChoiceWithoutFolderWritesNothing() throws {
+        let rig = makeRig()
+        // Попап обычного чата claude.ai: главное окно ЖИВО и смотрит в PimpMyClaude, но такого
+        // заголовка в индексе нет — писать некуда (находка 2 проверки WF20: раньше запас «возьмём
+        // папку главного окна» уводил чужой выбор в чужой проект и перекрашивал все его окна).
+        rig.paint.noteManualChoice(title: "Разговор ни о чём", theme: .set(ProjectTests.arctic),
+                                   font: .keep, size: .keep, frame: .keep)
+        XCTAssertNil(rig.store.settings(in: rig.folder("PimpMyClaude")),
+                     "выбор чужого окна уехал в проект главного окна")
+        XCTAssertTrue(rig.notices.isEmpty)
+        XCTAssertTrue(rig.sent.isEmpty)
+        // А безымянное окно и заглушка «Claude» — это само главное окно, у него папка есть.
+        rig.paint.noteManualChoice(title: " ", theme: .set(ProjectTests.indigo), font: .keep,
+                                   size: .keep, frame: .keep)
+        XCTAssertEqual(rig.store.settings(in: rig.folder("PimpMyClaude"))?.theme.value?.id, "indigo")
+        try FileManager.default.removeItem(at: rig.store.url(in: rig.folder("PimpMyClaude")))
+        rig.notices = []
+
+        // Ни главного окна, ни чата в индексе — папку взять неоткуда.
+        putStatus(rig.status, urls: ["about:blank"])
+        rig.clock.advance()
+        rig.paint.noteManualChoice(title: "Чат без папки", theme: .set(ProjectTests.indigo),
+                                   font: .set(ProjectTests.menlo), size: .keep, frame: .keep)
+        XCTAssertTrue(rig.notices.isEmpty, "молча выходим: выбор остаётся местным")
+        XCTAssertTrue(rig.sent.isEmpty)
+        for name in ["PimpMyClaude", "Dictatorik"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: rig.store.url(in: rig.folder(name)).path),
+                           "в \(name) завёлся файл, которого никто не просил")
+        }
+        XCTAssertTrue(rig.store.registry().isEmpty, "и в реестр приложения тоже не писали")
+
+        // Покраска такое окно не трогает вовсе — ни авто-цветом, ни снятием.
+        rig.titles = ["Чат без папки"]
+        rig.paint.tick()
+        XCTAssertTrue(rig.sent.isEmpty)
+
+        // Тумблер выключен — не пишем даже в известной папке: покраски по проекту нет вовсе.
+        putStatus(rig.status, urls: ["https://claude.ai/epitaxy/local_a1"])
+        rig.clock.advance()
+        rig.paint.setEnabled(false)
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle,
+                                   theme: .set(ProjectTests.indigo), font: .keep, size: .keep,
+                                   frame: .keep)
+        XCTAssertNil(rig.store.settings(in: rig.folder("PimpMyClaude")))
+        XCTAssertTrue(rig.notices.isEmpty)
+    }
+
+    func testPreviewAndAutoPaintDoNotWriteProject() throws {
+        let rig = makeRig()
+        let pimp = rig.folder("PimpMyClaude")
+        let actions = makeActions(rig)
+
+        // Примерка мышью до `remember` не доходит вовсе — ни галок, ни файла проекта.
+        XCTAssertFalse(actions.previewTheme(ProjectTests.indigo, window: nil))
+        XCTAssertFalse(actions.previewFont(ProjectTests.menlo, window: nil))
+        XCTAssertFalse(actions.endPreview(window: nil))
+        XCTAssertNil(rig.store.settings(in: pimp))
+
+        // «🌈 Раскрасить по кругу» пишет команды мимо `remember`: красить нечего, файла нет.
+        XCTAssertEqual(actions.autoPaint(preset: AutoPaint.presets[0]), 0)
+        XCTAssertNil(rig.store.settings(in: pimp))
+
+        // «Всем окнам» — тоже мимо: вид проекта задаёт только окно (`scope:"window"`).
+        XCTAssertTrue(actions.applyTheme(scope: MenuModel.themeScopeAll,
+                                         theme: .set(ProjectTests.arctic), window: nil))
+        XCTAssertNil(rig.store.settings(in: pimp))
+        XCTAssertTrue(rig.notices.isEmpty)
+
+        // А ручной выбор ОКНУ ложится в проект — молча и сразу.
+        XCTAssertTrue(actions.applyTheme(scope: MenuModel.themeScopeWindow,
+                                         theme: .set(ProjectTests.indigo),
+                                         size: .one(.answer, .set(18)), window: nil))
+        let settings = try XCTUnwrap(rig.store.settings(in: pimp))
+        XCTAssertEqual(settings.theme.value?.id, "indigo")
+        XCTAssertEqual(settings.size.value, Size(answer: 18), "размер уходит целым слоем")
+        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude")])
+    }
+
+    func testResetInProjectWindowRemovesProjectSettings() throws {
+        let rig = makeRig()
+        let pimp = rig.folder("PimpMyClaude")
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle,
+                                   theme: .set(ProjectTests.indigo), font: .set(ProjectTests.menlo),
+                                   size: .keep, frame: .keep)
+        XCTAssertNotNil(rig.store.settings(in: pimp))
+
+        // «Системный (как у Claude)» в «Шрифт ▸» — из файла уходит ровно шрифт.
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle, theme: .keep, font: .reset,
+                                   size: .keep, frame: .keep)
+        let left = try XCTUnwrap(rig.store.settings(in: pimp))
+        XCTAssertTrue(left.font.isKeep, "слой должен уйти из файла, а не лечь туда как null")
+        XCTAssertEqual(left.theme.value?.id, "indigo")
+        XCTAssertFalse(try String(contentsOf: rig.store.url(in: pimp), encoding: .utf8)
+            .contains("\"font\""))
+        XCTAssertTrue(rig.sent.isEmpty)
+
+        // «🧹 Всё как у Claude» — ушёл последний слой: файл удалён, а окно тут же получило
+        // авто-цвет, а не голого Claude.
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle, theme: .reset, font: .reset,
+                                   size: .reset, frame: .reset)
+        XCTAssertNil(rig.store.settings(in: pimp))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rig.store.url(in: pimp).path))
+        XCTAssertEqual(rig.sent.count, 1)
+        let auto = try XCTUnwrap(rig.sent.first)
+        XCTAssertEqual(auto.key, "main")
+        XCTAssertEqual(auto.match, "/epitaxy/local_a1")
+        XCTAssertEqual(PaintRig.layers(auto), "t")
+        XCTAssertEqual(auto.theme.value?.id, "project-199")
+
+        // Ближайший тик то же самое второй раз не шлёт.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
+        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude")])
+
+        // Файл побили руками — «🧹 Всё как у Claude» его НЕ удаляет (находка 1 проверки WF20):
+        // разобрать мы его не смогли, а в нём чужие ключи. Вместо удаления — плашка.
+        try Data("{ это не json".utf8).write(to: rig.store.url(in: pimp))
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle, theme: .reset, font: .reset,
+                                   size: .reset, frame: .reset)
+        XCTAssertEqual(try String(contentsOf: rig.store.url(in: pimp), encoding: .utf8),
+                       "{ это не json", "битый файл снесли вместе с чужими ключами")
+        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude"),
+                                     MenuModel.projectBroken("PimpMyClaude")])
+        XCTAssertEqual(rig.sent.count, 1, "вид проекта не менялся — красить нечем")
+
+        // И ближайший тик окно не трогает: вид проекта на битом файле — тот же авто-цвет,
+        // а на окне стоит выбранное руками.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
+    }
+
+    func testLastChoiceWinsAcrossProjectWindows() throws {
+        let rig = makeRig()
+        // Попап того же проекта, что и главное окно: у обоих папка PimpMyClaude.
+        rig.titles = ["PimpMyClaude"]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.map { $0.key }, ["main", "w:PimpMyClaude"])
+        XCTAssertEqual(Set(rig.sent.compactMap { $0.theme.value?.id }), ["project-199"])
+
+        // В попапе выбрали свою тему — она стала темой проекта…
+        rig.paint.noteManualChoice(title: "PimpMyClaude", theme: .set(ProjectTests.arctic),
+                                   font: .keep, size: .keep, frame: .keep)
+        XCTAssertEqual(rig.store.settings(in: rig.folder("PimpMyClaude"))?.theme.value?.id, "arctic")
+        XCTAssertEqual(rig.sent.count, 2, "окну-инициатору команду обратно не шлём")
+
+        // …и ближайший тик перекрасил ВТОРОЕ окно того же проекта (≤ 2 с).
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 3)
+        XCTAssertEqual(rig.sent[2].key, "main")
+        XCTAssertEqual(rig.sent[2].theme.value?.id, "arctic")
+
+        // Следующий тик молчит: отпечатки сошлись у обоих окон.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 3)
+
+        // Шрифт, выбранный в попапе, тем же путём садится на второе окно.
+        rig.paint.noteManualChoice(title: "PimpMyClaude", theme: .keep,
+                                   font: .set(ProjectTests.menlo), size: .keep, frame: .keep)
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 4)
+        XCTAssertEqual(rig.sent[3].key, "main")
+        XCTAssertEqual(PaintRig.layers(rig.sent[3]), "tf")
+
+        // А «Системный (как у Claude)» в «Шрифт ▸» того же попапа обязан СНЯТЬ шрифт и со
+        // второго окна (находка 3 проверки WF20: раньше отпечатки папки забывались целиком,
+        // соседнее окно красилось с чистого листа — и снятый слой оставался на нём висеть).
+        rig.paint.noteManualChoice(title: "PimpMyClaude", theme: .keep, font: .reset,
+                                   size: .keep, frame: .keep)
+        XCTAssertTrue(try XCTUnwrap(rig.store.settings(in: rig.folder("PimpMyClaude"))).font.isKeep)
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 5)
+        XCTAssertEqual(rig.sent[4].key, "main")
+        XCTAssertEqual(PaintRig.layers(rig.sent[4]), "tF", "шрифт остался висеть на соседнем окне")
+
+        // Дальше тишина: у обоих окон снова свежие отпечатки.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 5)
+    }
+
+    func testProjectWriteNoticeShowsOncePerFolder() throws {
+        let rig = makeRig()
+        let pimp = rig.folder("PimpMyClaude")
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle,
+                                   theme: .set(ProjectTests.indigo), font: .keep, size: .keep,
+                                   frame: .keep)
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle, theme: .keep,
+                                   font: .set(ProjectTests.menlo), size: .keep, frame: .keep)
+        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude")])
+
+        // Вторая папка — своя плашка: про каждую говорим ровно раз.
+        putStatus(rig.status, urls: ["https://claude.ai/epitaxy/local_b2"])
+        rig.clock.advance()
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle,
+                                   theme: .set(ProjectTests.arctic), font: .keep, size: .keep,
+                                   frame: .keep)
+        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude"),
+                                     MenuModel.projectWritten("Dictatorik")])
+
+        // Битый файл проекта не переписываем «на всякий случай» — и говорим об этом отдельной
+        // плашкой, тоже один раз на папку.
+        try Data("{ это не json".utf8).write(to: rig.store.url(in: pimp))
+        putStatus(rig.status, urls: ["https://claude.ai/epitaxy/local_a1"])
+        rig.clock.advance()
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle,
+                                   theme: .set(ProjectTests.arctic), font: .keep, size: .keep,
+                                   frame: .keep)
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle,
+                                   theme: .set(ProjectTests.indigo), font: .keep, size: .keep,
+                                   frame: .keep)
+        XCTAssertEqual(try String(contentsOf: rig.store.url(in: pimp), encoding: .utf8),
+                       "{ это не json")
+        XCTAssertEqual(rig.notices.count, 3)
+        XCTAssertEqual(rig.notices.last, MenuModel.projectBroken("PimpMyClaude"))
+        // На битом файле вид проекта остаётся авто-цветом, и тик не перекрашивает окно,
+        // на котором тему выбрали руками.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertTrue(rig.sent.isEmpty)
+    }
+
+    /// Переписан из `testMenuHasProjectItem`: подменю «🗂 Проект ▸» больше нет, остался один
+    /// тумблер «🗂 Цвет по проекту» в «🖥 Всем окнам ▸» (решение 3.4 плана WF20).
+    func testMenuHasProjectColorToggle() throws {
         var toggled: [Bool] = []
-        var clicks: [String] = []
         var config = MinimizeMenu.MenuConfig()
-        config.project = ProjectMenuState(folder: URL(fileURLWithPath: "/Users/elvis/_ElvisProjects/PimpMyClaude"),
-                                          path: "~/_ElvisProjects/PimpMyClaude",
-                                          hasSettings: true, painting: true)
-        config.projectPaint = { toggled.append($0) }
-        config.projectApply = { clicks.append("взять") }
-        config.projectWrite = { clicks.append("записать") }
-        config.projectAgents = { clicks.append("памятка") }
-        config.projectRemove = { clicks.append("убрать") }
+        config.themes = [ProjectTests.indigo]
+        config.projectColor = true
+        config.setProjectColor = { toggled.append($0) }
 
         let appearance = try XCTUnwrap(MinimizeMenu.build(config: config).items
             .first { $0.title == MenuModel.appearanceTitle }?.submenu)
-        // «🗂 Проект ▸» — первым разделом «Оформление ▸», за ним разделитель (план WF15 п. 5).
-        XCTAssertEqual(Array(appearance.items.map { $0.isSeparatorItem ? "—" : $0.title }.prefix(2)),
-                       ["Проект: PimpMyClaude", "—"])
-        let item = try XCTUnwrap(appearance.items.first)
-        XCTAssertNotNil(item.image)
-        let project = try XCTUnwrap(item.submenu)
-        XCTAssertEqual(project.items.map { $0.isSeparatorItem ? "—" : $0.title },
-                       ["~/_ElvisProjects/PimpMyClaude", "Красить чаты по проекту", "—",
-                        "Взять цвет проекта", "Записать этот вид в проект",
-                        "Вписать строку в AGENTS.md", "Убрать настройки из проекта"])
-        // Путь папки — подпись, а не кнопка.
-        XCTAssertFalse(try XCTUnwrap(project.items.first).isEnabled)
-        let toggle = try XCTUnwrap(project.items.first { $0.title == MenuModel.projectPaintTitle })
-        XCTAssertEqual(toggle.state, .on)
+        // Ни подменю проекта, ни «Записать этот вид», ни лишнего разделителя сверху.
+        XCTAssertNil(appearance.items.first { $0.title.hasPrefix("Проект") })
+        XCTAssertNil(appearance.items.first { $0.title.contains("в проект") })
+        XCTAssertNil(appearance.items.first { $0.title.contains("AGENTS.md") })
+        XCTAssertFalse(try XCTUnwrap(appearance.items.first).isSeparatorItem)
+
+        // Тумблер стоит после разделителя и ПЕРЕД «🌈 Раскрасить по кругу ▸».
+        let all = try XCTUnwrap(appearance.items.first { $0.title == MenuModel.allWindowsTitle }?.submenu)
+        XCTAssertEqual(Array(all.items.map { $0.isSeparatorItem ? "—" : $0.title }.suffix(4)),
+                       ["—", MenuModel.projectColorTitle, MenuModel.autoPaintTitle,
+                        MenuModel.liveColorsTitle])
+        let toggle = try XCTUnwrap(all.items.first { $0.title == MenuModel.projectColorTitle })
+        XCTAssertEqual(toggle.state, .on, "по умолчанию цвет по проекту включён")
+        XCTAssertNotNil(toggle.image)
+        XCTAssertNil(toggle.submenu)
         click(toggle)
         XCTAssertEqual(toggled, [false], "клик переключает тумблер")
-        for title in [MenuModel.projectApplyTitle, MenuModel.projectWriteTitle,
-                      MenuModel.projectAgentsTitle, MenuModel.projectRemoveTitle] {
-            let row = try XCTUnwrap(project.items.first { $0.title == title })
-            XCTAssertTrue(row.isEnabled)
-            XCTAssertNotNil(row.image)
-            click(row)
-        }
-        XCTAssertEqual(clicks, ["взять", "записать", "памятка", "убрать"])
 
-        // Настроек у проекта ещё нет: «Записать» становится «Завести», брать и убирать нечего.
-        config.project = ProjectMenuState(folder: URL(fileURLWithPath: "/Users/elvis/_ElvisProjects/Новый"),
-                                          path: "~/_ElvisProjects/Новый", hasSettings: false,
-                                          painting: false)
-        let empty = try XCTUnwrap(try XCTUnwrap(MinimizeMenu.build(config: config).items
-            .first { $0.title == MenuModel.appearanceTitle }?.submenu).items.first?.submenu)
-        XCTAssertEqual(empty.items.map { $0.isSeparatorItem ? "—" : $0.title },
-                       ["~/_ElvisProjects/Новый", "Красить чаты по проекту", "—",
-                        "Взять цвет проекта", "Завести настройки проекта",
-                        "Вписать строку в AGENTS.md", "Убрать настройки из проекта"])
-        XCTAssertEqual(try XCTUnwrap(empty.items.first { $0.title == MenuModel.projectPaintTitle }).state, .off)
-        XCTAssertFalse(try XCTUnwrap(empty.items.first { $0.title == MenuModel.projectApplyTitle }).isEnabled)
-        XCTAssertTrue(try XCTUnwrap(empty.items.first { $0.title == MenuModel.projectCreateTitle }).isEnabled)
-        XCTAssertFalse(try XCTUnwrap(empty.items.first { $0.title == MenuModel.projectRemoveTitle }).isEnabled)
+        // Выключенный — без галки, клик включает обратно.
+        config.projectColor = false
+        let off = try XCTUnwrap(try XCTUnwrap(MinimizeMenu.build(config: config).items
+            .first { $0.title == MenuModel.appearanceTitle }?.submenu).items
+            .first { $0.title == MenuModel.allWindowsTitle }?.submenu)
+        let offToggle = try XCTUnwrap(off.items.first { $0.title == MenuModel.projectColorTitle })
+        XCTAssertEqual(offToggle.state, .off)
+        click(offToggle)
+        XCTAssertEqual(toggled, [false, true])
 
-        // Папку не узнали — пункт остаётся, но погашен и без подменю: Элвис должен видеть,
-        // что приложение не знает папку, а не гадать, почему не красит.
-        config.project = ProjectMenuState(folder: nil, path: "", hasSettings: false, painting: true)
-        let unknown = try XCTUnwrap(try XCTUnwrap(MinimizeMenu.build(config: config).items
-            .first { $0.title == MenuModel.appearanceTitle }?.submenu).items.first)
-        XCTAssertEqual(unknown.title, MenuModel.projectUnknownTitle)
-        XCTAssertFalse(unknown.isEnabled)
-        XCTAssertNil(unknown.submenu)
-
-        // Меню собрано без сведений о проекте — пункта нет вовсе и лишнего разделителя тоже.
-        var without = config
-        without.project = nil
-        let bare = try XCTUnwrap(MinimizeMenu.build(config: without).items
-            .first { $0.title == MenuModel.appearanceTitle }?.submenu)
-        XCTAssertNil(bare.items.first { $0.title.hasPrefix("Проект") })
-        XCTAssertFalse(try XCTUnwrap(bare.items.first).isSeparatorItem)
+        // Меню собрано без сведений о проекте — тумблера нет вовсе.
+        config.projectColor = nil
+        let bare = try XCTUnwrap(try XCTUnwrap(MinimizeMenu.build(config: config).items
+            .first { $0.title == MenuModel.appearanceTitle }?.submenu).items
+            .first { $0.title == MenuModel.allWindowsTitle }?.submenu)
+        XCTAssertNil(bare.items.first { $0.title == MenuModel.projectColorTitle })
+        XCTAssertEqual(Array(bare.items.map { $0.isSeparatorItem ? "—" : $0.title }.suffix(3)),
+                       ["—", MenuModel.autoPaintTitle, MenuModel.liveColorsTitle])
     }
 }

@@ -92,10 +92,10 @@ enum MenuModel {
         MenuEntry(command: .newChat, title: "Новый чат", icon: "💬",
                   key: KeySpec(mods: [.command], name: "n"), registersHotkey: false),
         // «Новое окно» — новый чат сразу отдельным окном (план WF13). ⌥⌘N у Claude свободна,
-        // поэтому её мы регистрируем сами; «В отдельное окно» — без клавиши.
+        // поэтому её мы регистрируем сами; «Вынести этот чат в окно» — без клавиши.
         MenuEntry(command: .newWindow, title: "Новое окно", icon: "🪟",
                   key: KeySpec(mods: [.command, .option], name: "n"), registersHotkey: true),
-        MenuEntry(command: .popoutWindow, title: "В отдельное окно", icon: "🪟",
+        MenuEntry(command: .popoutWindow, title: "Вынести этот чат в окно", icon: "🪟",
                   key: nil, registersHotkey: false),
         MenuEntry(command: .expand, title: "Развернуть", icon: "⬆️",
                   key: KeySpec(mods: [.command, .option], name: "up"), registersHotkey: true),
@@ -118,8 +118,8 @@ enum MenuModel {
     static let moreTitle = "Ещё"
     static let moreIcon = "⋯"
 
-    /// Разделители стоят после «В отдельное окно» и после «Свернуть»: оконные пункты WF13 идут
-    /// одной группой с «Новый чат», дальше пара «Развернуть/Свернуть». Разделители вокруг
+    /// Разделители стоят после «Вынести этот чат в окно» и после «Свернуть»: оконные пункты WF13
+    /// идут одной группой с «Новый чат», дальше пара «Развернуть/Свернуть». Разделители вокруг
     /// «🎨 Оформление ▸» ставит сам `build()`.
     static let separatorsAfter: Set<ClaudeCommand> = [.popoutWindow, .collapse]
 
@@ -223,6 +223,41 @@ enum MenuModel {
     static let myThemeOverwriteButton = "Перезаписать"
 
     static func myThemeOverwritePrompt(_ name: String) -> String { "Перезаписать «\(name)»?" }
+
+    // MARK: - редактор своей темы (план WF20, решения 1.1 и 1.5)
+
+    /// Два пункта в нижней группе «🎨 Оформление ▸»: «🎚 Своя тема…» открывает панель с ручками,
+    /// подобранными по нынешней теме окна, «✏️ Изменить мою тему ▸» — список своих тем
+    /// (пункта нет, пока своих тем нет). Предпросмотра по наведению у обоих нет: панель и так
+    /// красит окно, как только тронули ручку.
+    static let themeEditorTitle = "Своя тема…"
+    static let themeEditorIcon = "🎚"
+    static let editMyThemeTitle = "Изменить мою тему"
+    static let editMyThemeIcon = "✏️"
+
+    /// Заголовок панели и подписи её ручек (вариант А макета WF20).
+    static let themeEditorPanel = "Своя тема"
+    static let themeEditorHueTitle = "Цвет"
+    static let themeEditorAccentTitle = "Акцент"
+    static let themeEditorStrengthTitle = "Сила цвета"
+    static let themeEditorDarkTitle = "Тёмная"
+    static let themeEditorLightTitle = "Светлая"
+    static let themeEditorSaveButton = "Сохранить"
+    static let themeEditorCancelButton = "Отмена"
+    /// Ручки не из файла, а подобранные по палитре (тон ±2°, сила ±5 %) — честно говорим.
+    static let themeEditorGuessedHint = "ручки подобраны по цветам"
+    /// Примерка адресуется AX-заголовком окна; заголовка нет — примерять нечем, но панель
+    /// остаётся рабочей: «Сохранить» запишет тему и без него.
+    static let themeEditorNoTitleHint = "у окна нет заголовка — примерка невозможна"
+    static let themeEditorWriteFailed = "Не удалось записать my-themes.json в Application Support/MyClaude"
+
+    /// Строка под ручками: оба контраста числами, как в макете.
+    static func themeEditorContrast(text: Double, accent: Double) -> String {
+        func number(_ value: Double) -> String {
+            String(format: "%.1f", value).replacingOccurrences(of: ".", with: ",")
+        }
+        return "контраст текста \(number(text)) · акцент \(number(accent))"
+    }
 
     /// «🧹 Всё как у Claude» — сброс всех четырёх слоёв окна разом, без подтверждения
     /// (слои возвращаются одним кликом; мелочь М10 критика).
@@ -329,38 +364,20 @@ enum MenuModel {
         }
     }
 
-    // MARK: - цвет проекта (план WF15)
+    // MARK: - цвет проекта (план WF15, переделан в WF20)
 
-    /// «🗂 Проект: PimpMyClaude ▸» — первый раздел «🎨 Оформление ▸» (решение 5 плана WF15,
-    /// вопрос 3 макета: «это про вид»).
+    /// Тумблер «🗂 Цвет по проекту» — всё, что осталось от подменю «Проект ▸» (решение 3.4
+    /// плана WF20): стоит в «🖥 Всем окнам ▸» перед «🌈 Раскрасить по кругу ▸», включён по
+    /// умолчанию. Подписи папки, «Взять цвет проекта», «Записать этот вид», «Вписать строку
+    /// в AGENTS.md» и «Убрать настройки» больше нет: цвет у проекта появляется сам, а выбор
+    /// темы в окне проекта сам в проект и ложится.
     static let projectIcon = "🗂"
-    static let projectPaintTitle = "Красить чаты по проекту"
-    static let projectApplyTitle = "Взять цвет проекта"
-    static let projectApplyIcon = "🎨"
-    static let projectWriteTitle = "Записать этот вид в проект"
-    static let projectWriteIcon = "💾"
-    /// Файла в папке ещё нет — пункт зовётся иначе (макет WF15).
-    static let projectCreateTitle = "Завести настройки проекта"
-    static let projectCreateIcon = "✍️"
-    static let projectAgentsTitle = "Вписать строку в AGENTS.md"
-    static let projectAgentsIcon = "📝"
-    static let projectRemoveTitle = "Убрать настройки из проекта"
-    static let projectRemoveIcon = "🗑"
-    /// Папку не узнали (не Claude Code, чужая машина, индекс сменил формат) — пункт остаётся
-    /// и гаснет: Элвис должен видеть, что приложение не знает папку, а не гадать, почему
-    /// не красит.
-    static let projectUnknownTitle = "Проект: не определён"
+    static let projectColorTitle = "Цвет по проекту"
 
-    static func projectTitle(_ name: String) -> String { "Проект: " + name }
-
-    /// Плашки. Подсказка «у проекта нет своего вида» — один раз на папку (решение 6 плана
-    /// WF15, ключ по пути — критик М7).
-    static func projectHint(_ name: String) -> String {
-        "У проекта \(name) нет своего вида. Меню ▸ Оформление ▸ Проект"
-    }
-
+    /// Плашка про молчаливую запись — один раз на папку (решение 3.2 плана WF20, ключ по пути):
+    /// файл заводится сам, и Элвис должен знать, что в папке проекта он появился.
     static func projectWritten(_ name: String) -> String {
-        "Вид записан в \(name)/\(ProjectSettings.fileName)"
+        "Цвет записан в проект \(name) (\(ProjectSettings.fileName))"
     }
 
     /// В папку писать нельзя (нет прав, том только для чтения, отказ TCC) — вид ушёл в реестр
@@ -371,21 +388,11 @@ enum MenuModel {
 
     static func projectWriteFailed(_ name: String) -> String { "Не удалось записать вид в \(name)" }
 
-    static func projectAgentsWritten(_ name: String) -> String {
-        "Строка-памятка вписана в \(name)/\(ProjectPaint.agentsFileName)"
+    /// Файл проекта битый: перезаписывать его «на всякий случай» нельзя — в нём могли быть
+    /// чужие ключи (решение 3.6 плана WF20). Плашка тоже один раз на папку.
+    static func projectBroken(_ name: String) -> String {
+        "\(name)/\(ProjectSettings.fileName) битый — не трогаю"
     }
-
-    static func projectAgentsFailed(_ name: String) -> String {
-        "Не удалось вписать строку в \(name)/\(ProjectPaint.agentsFileName)"
-    }
-
-    /// «Убрать настройки» окна назад не перекрашивает и AGENTS.md не трогает — говорим об этом.
-    static func projectRemoved(_ name: String) -> String {
-        "Настройки \(name) убраны; строку в AGENTS.md не трогал, цвет окон остался"
-    }
-
-    static let projectNoSettings = "У этого проекта своего вида нет"
-    static let projectNothingToWrite = "Сначала выбери окну цвет или шрифт — его и запишу в проект"
 
     /// ⌘Q — не пункт меню, а блокировка выхода (claude_noquit.lua).
     static let quitKey = KeySpec(mods: [.command], name: "q")
