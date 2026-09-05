@@ -2,277 +2,551 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>PimpMyClaude — окна умнее (WF21)</title>
+<title>PimpMyClaude — расстановка окон (WF21)</title>
 <style>
   :root{
     --bg:#161618; --card:#232326; --line:rgba(255,255,255,.10);
-    --text:#ececef; --dim:#9b9ba1; --head:#8d8d94; --accent:#3b6fe0; --ok:#4dbb7d;
-    --menu:#2c2c2e; --screen:#111214;
+    --text:#ececef; --dim:#9b9ba1; --head:#8d8d94; --accent:#3b6fe0; --ok:#4dbb7d; --warn:#e0a86a;
+    --menu:#2c2c2e; --screen:#0e0e10;
+    --p1:#3f6ea8; --p2:#6f5fa8; --p3:#4d907c; --p4:#a8804a; --p5:#a35a72;
   }
   *{box-sizing:border-box}
-  body{margin:0;padding:18px 20px 30px;background:var(--bg);color:var(--text);
+  body{margin:0;padding:18px 20px 40px;background:var(--bg);color:var(--text);
     font:13px/1.45 -apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
-  h1{font-size:17px;margin:0 0 3px;font-weight:600}
-  .lead{color:var(--dim);font-size:12.5px;margin:0 0 14px;max-width:820px}
-  h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--head);
-    font-weight:600;margin:22px 0 9px}
-  .capt{font-size:11px;color:var(--head);margin:0 0 5px 4px}
-  .note{color:var(--dim);font-size:12px;margin-top:12px;max-width:820px}
+  h1{font-size:18px;margin:0 0 4px;font-weight:600}
+  .lead{color:var(--dim);font-size:12.5px;margin:0 0 4px;max-width:980px}
+  h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--head);font-weight:600;
+    margin:26px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+  h2:first-of-type{border-top:0;padding-top:0;margin-top:18px}
+  .capt{font-size:11px;color:var(--head);margin:0 0 6px 2px}
+  .note{color:var(--dim);font-size:12px;margin-top:11px;max-width:980px}
+  .note b{color:#cfd3dc;font-weight:600}
+  .row{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+  .col{display:flex;flex-direction:column;gap:0}
 
-  /* меню */
-  .cascade{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
-  .menu{background:var(--menu);border:1px solid rgba(255,255,255,.09);border-radius:10px;
-    padding:5px 0;box-shadow:0 14px 34px rgba(0,0,0,.55);white-space:nowrap}
-  .row{display:flex;align-items:center;height:22px;margin:0 5px;padding:0 7px 0 2px;
-    border-radius:5px;color:var(--text)}
-  .row.sel{background:var(--accent)}
-  .row.sel .key,.row.sel .arw{color:#dbe4fb}
-  .row.dis{color:#7d7d84}
-  .chk{width:15px;text-align:center;font-size:11px}
+  /* ——— экран и окна ——— */
+  .screen{position:relative;background:var(--screen);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .screen .bar{position:absolute;left:0;right:0;top:0;height:7%;min-height:7px;background:rgba(255,255,255,.055)}
+  .w{position:absolute;border-radius:5px;overflow:hidden;border:1px solid rgba(255,255,255,.16);
+    background:#24242a;transition:left .34s cubic-bezier(.16,1,.3,1),top .34s cubic-bezier(.16,1,.3,1),
+    opacity .3s ease,transform .3s cubic-bezier(.16,1,.3,1)}
+  .w .tb{height:15px;display:flex;align-items:center;gap:3.5px;padding:0 5px;background:rgba(255,255,255,.10)}
+  .w .d{width:6px;height:6px;border-radius:50%;background:#5a5a5f}
+  .w .d.r{background:#ee6a5f} .w .d.y{background:#f5bd4f} .w .d.g{background:#61c554}
+  .w .nm{font-size:9px;color:#dfe2ea;padding:5px 5px 0;line-height:1.25}
+  .w .pj{font-size:8.5px;padding:1px 5px 0;opacity:.72}
+  .w .ln{height:4px;border-radius:2px;background:rgba(255,255,255,.13);margin:5px 5px 0}
+  .w .ln.s{width:55%}
+  .c1{background:#26313f;border-color:#4a7bb0} .c1 .tb{background:#2f4059}
+  .c2{background:#2b2739;border-color:#7a68b6} .c2 .tb{background:#3a3352}
+  .c3{background:#26332f;border-color:#4d907c} .c3 .tb{background:#2e4740}
+  .c4{background:#332b23;border-color:#a8804a} .c4 .tb{background:#4a3a2b}
+  .c5{background:#33262c;border-color:#a35a72} .c5 .tb{background:#4a2f3a}
+  .cell{position:absolute;border:1px dashed rgba(255,255,255,.24);border-radius:5px;
+    display:flex;align-items:center;justify-content:center;font-size:9.5px;color:#7f7f88}
+  .halo{position:absolute;border-radius:7px;box-shadow:0 0 0 2px var(--accent),0 0 16px rgba(59,111,224,.55);
+    opacity:0;transition:opacity .2s}
+  .cursor{position:absolute;font-size:12px;opacity:0;transition:opacity .2s,left .34s,top .34s;pointer-events:none}
+  .tag{position:absolute;background:#3b6fe0;color:#fff;font-size:9.5px;font-weight:600;
+    border-radius:5px;padding:1px 6px;opacity:0;transition:opacity .2s}
+
+  /* ——— наше меню на жёлтой кнопке ——— */
+  .menu{background:var(--menu);border:1px solid rgba(255,255,255,.09);border-radius:10px;padding:5px 0;
+    box-shadow:0 14px 34px rgba(0,0,0,.55);white-space:nowrap}
+  .mi{display:flex;align-items:center;height:22px;margin:0 5px;padding:0 7px 0 2px;border-radius:5px}
+  .mi.sel{background:var(--accent)} .mi.sel .k,.mi.sel .a{color:#dbe4fb}
+  .mi.dis{color:#7d7d84}
+  .ck{width:14px;text-align:center;font-size:11px}
   .ic{width:19px;text-align:center;font-size:12.5px}
-  .t{flex:1;padding-right:22px}
-  .key{color:var(--dim);font-size:12.5px}
-  .arw{color:#b9b9c0;margin-left:10px;font-size:11px}
+  .t{flex:1;padding-right:24px}
+  .k{color:var(--dim);font-size:12.5px}
+  .a{color:#b9b9c0;margin-left:10px;font-size:11px}
   .sep{height:1px;background:rgba(255,255,255,.12);margin:5px 11px}
-  .new{color:var(--ok);font-size:10.5px;margin-left:8px}
+  .nw{color:var(--ok);font-size:10px;margin-left:8px}
 
-  /* экраны с окнами */
+  /* ——— иконки конфигураций ——— */
+  .strip{display:flex;align-items:flex-start;gap:2px;padding:7px 8px 6px}
+  .cfg{display:flex;flex-direction:column;align-items:center;gap:4px;padding:5px 6px 4px;border-radius:8px;width:56px}
+  .cfg.on{background:rgba(59,111,224,.20);box-shadow:inset 0 0 0 1px rgba(59,111,224,.6)}
+  .cfg.hv{background:rgba(255,255,255,.07)}
+  .cfg s{text-decoration:none;font-size:9.5px;color:#9b9ba1;text-align:center;line-height:1.15}
+  .cfg.on s{color:#cfdcfb}
+  .ci{width:40px;height:27px;border-radius:4px;background:#141418;border:1px solid rgba(255,255,255,.20);
+    display:flex;gap:2px;padding:2.5px}
+  .ci b{flex:1;background:#5b82d8;border-radius:2px}
+  .ci.rows{flex-direction:column}
+  .ci.rows u{flex:1;display:flex;gap:2px;text-decoration:none}
+  .ci.auto b:last-child{background:transparent;border:1px dashed rgba(91,130,216,.75)}
+  .ci.big{width:58px;height:39px;padding:3.5px;gap:2.5px}
+  .ci.big.rows u{gap:2.5px}
+  .stripline{height:1px;background:rgba(255,255,255,.12);margin:0 11px}
+
+  /* ——— карточки ——— */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 12px}
+  .card.pick{border-color:#3d7a52;background:#1d251f}
+  .card h3{margin:0;font-size:13.5px;font-weight:600}
+  .card p{margin:6px 0 0;font-size:12px;color:#c9cbd2}
+  .pm{margin:7px 0 0;font-size:11.5px;line-height:1.5}
+  .pm .p{color:#a7dcbc} .pm .m{color:#e0b0a8}
   .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-  .box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 11px}
-  .box.pick{border-color:#3ea06a;background:#1e2a22}
-  .box b{font-size:13.5px}
-  .box .tag{display:inline-block;font-size:10.5px;font-weight:600;color:#0f1a12;background:var(--ok);
-    border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:2px}
-  .box p{margin:6px 0 0;font-size:12px;color:#c9cbd2}
-  .screen{position:relative;height:112px;background:var(--screen);border:1px solid var(--line);
-    border-radius:7px;overflow:hidden;margin-top:8px}
-  .bar{position:absolute;left:0;right:0;top:0;height:9px;background:rgba(255,255,255,.06)}
-  .win{position:absolute;border-radius:4px;border:1px solid rgba(255,255,255,.16);
-    background:#333846;color:#cfd3dc;font-size:9.5px;display:flex;align-items:center;justify-content:center}
-  .w1{background:#2f4a68;border-color:#4a7bb0}
-  .w2{background:#3b3357;border-color:#6f5fa8}
-  .w3{background:#2f5147;border-color:#4d907c}
-  .w4{background:#4a3a2d;border-color:#9a7448}
-  .legend{margin-top:7px;font-size:11.5px;color:var(--dim)}
-  .legend i{font-style:normal;display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 4px 0 10px;vertical-align:-1px}
-  .legend i:first-child{margin-left:0}
+  .grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+  .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .legend{margin-top:8px;font-size:11.5px;color:var(--dim)}
+  .legend i{font-style:normal;display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 5px 0 12px;vertical-align:-1px}
+  .legend i:first-of-type{margin-left:0}
 
-  /* вопросы */
+  button{background:#37373d;border:1px solid rgba(255,255,255,.14);border-radius:7px;color:var(--text);
+    font:12px -apple-system,"SF Pro Text",sans-serif;padding:5px 13px;cursor:pointer}
+  button:hover{background:#43434a}
+  button.pr{background:var(--accent);border-color:transparent;color:#fff}
+  .ctrl{display:flex;gap:8px;align-items:center;margin-top:9px;flex-wrap:wrap}
+
+  /* ——— вопросы ——— */
   .qs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
   .q{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
   .q b{font-size:13.5px}
   .q ul{margin:7px 0 0;padding-left:17px}
-  .q li{margin:2px 0;font-size:12.5px;color:#d6d6da}
+  .q li{margin:3px 0;font-size:12.5px;color:#d6d6da}
   .q li.rec{color:#bfe6cf}
   .q li.rec em{font-style:normal;color:var(--ok);font-weight:600}
+  .answer{margin-top:12px;background:#1d2536;border:1px solid #33507f;border-radius:9px;padding:10px 13px;font-size:13px}
+  .answer code{background:#12182a;border-radius:5px;padding:2px 7px;font-family:"SF Mono",Menlo,monospace;font-size:12.5px}
 </style>
 </head>
 <body>
 
-<h1>Окна умнее — покажи, как надо</h1>
-<p class="lead">Три вещи: «Расставить» получает раскладки, окна запоминают, где стояли (по имени чата), и появляется
-«Спрятать все» — пара к «Показать». Меню нарисовано уже по новой структуре WF14: редкие пункты живут в «⋯ Ещё ▸».
-Ответь на шесть вопросов внизу — и запускаю.</p>
+<h1>Расстановка окон — покажи, как надо</h1>
+<p class="lead">Ты просил сетку как в Moom, только по-человечески: жмёшь кнопку окна — под ней появляются картинки раскладок,
+тыкаешь в нужную, окна встают. Плюс пять узких окон в ряд и десять (5×2), плюс перестановка окон местами
+с зажатым ⌘, плюс сохранённые раскладки по проектам. Память позиций и «Спрятать все» отложены — ты сказал, пока не надо.
+Внизу пять вопросов, ответь одной строкой.</p>
 
-<h2>1. Меню — где живут раскладки</h2>
-<div class="cascade">
-
+<!-- ═══════════════ 1 ═══════════════ -->
+<h2>1. Как ты работаешь сейчас</h2>
+<div class="row">
   <div>
-    <p class="capt">Вариант А (рекомендую): подменю у «Расставить»</p>
-    <div class="cascade">
+    <p class="capt">пять узких окон в ряд — то, ради чего всё затевается</p>
+    <div class="screen" style="width:640px;height:210px">
+      <div class="bar"></div>
+      <div class="w c1" style="left:0.4%;top:11%;width:19.5%;height:86%">
+        <div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div>
+        <div class="nm">WF21 сетки</div><div class="pj" style="color:#8fb6e2">🟣 Trelvis</div>
+        <div class="ln"></div><div class="ln s"></div><div class="ln"></div>
+      </div>
+      <div class="w c2" style="left:20.3%;top:11%;width:19.5%;height:86%">
+        <div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div>
+        <div class="nm">гейт и релиз</div><div class="pj" style="color:#b6a8e6">⚪ PimpMyClaude</div>
+        <div class="ln"></div><div class="ln s"></div><div class="ln"></div>
+      </div>
+      <div class="w c3" style="left:40.2%;top:11%;width:19.5%;height:86%">
+        <div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div>
+        <div class="nm">аудит меню</div><div class="pj" style="color:#8fd4bd">🔵 VkusnoffKz</div>
+        <div class="ln"></div><div class="ln s"></div><div class="ln"></div>
+      </div>
+      <div class="w c4" style="left:60.1%;top:11%;width:19.5%;height:86%">
+        <div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div>
+        <div class="nm">правки текстов</div><div class="pj" style="color:#e0bd8a">🟢 Dictatorik</div>
+        <div class="ln"></div><div class="ln s"></div><div class="ln"></div>
+      </div>
+      <div class="w c5" style="left:80%;top:11%;width:19.5%;height:86%">
+        <div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div>
+        <div class="nm">пятое окно</div><div class="pj" style="color:#e0a0b6">🟡 DrStrange</div>
+        <div class="ln"></div><div class="ln s"></div><div class="ln"></div>
+      </div>
+    </div>
+  </div>
+  <div style="max-width:310px">
+    <p class="capt">влезает ли</p>
+    <p class="note" style="margin-top:0">На твоём экране пять окон — это примерно <b>по 300 точек на окно</b>, четыре —
+    по 378. Раньше Клауд не давал ужаться меньше 353 и пятое окно не помещалось; теперь минимум — 200, у тебя это уже
+    стоит. Команда получит с ближайшим обновлением.</p>
+    <p class="note"><b>Жёлтая кнопка</b> в каждом окне — наша: по ней открывается меню, оттуда и будет выбор раскладки.</p>
+  </div>
+</div>
+
+<!-- ═══════════════ 2 ═══════════════ -->
+<h2>2. Где выбираем раскладку — три варианта</h2>
+<div class="row">
+
+  <!-- А -->
+  <div class="col" style="width:366px">
+    <p class="capt">Вариант А — только словами, подменю в меню</p>
+    <div class="row" style="gap:8px">
       <div class="menu">
-        <div class="row"><span class="chk"></span><span class="ic">💰</span><span class="t">Обкэшить</span><span class="key">⇧⌘N</span></div>
-        <div class="row sel"><span class="chk"></span><span class="ic">▦</span><span class="t">Расставить</span><span class="key">⌥⌘A</span><span class="arw">▸</span></div>
-        <div class="row"><span class="chk"></span><span class="ic">👀</span><span class="t">Показать</span><span class="key">⌥⌘S</span></div>
-        <div class="row"><span class="chk"></span><span class="ic">🙈</span><span class="t">Спрятать все</span><span class="new">новое</span></div>
-        <div class="row"><span class="chk"></span><span class="ic">⏬</span><span class="t">Прокрутить</span><span class="key">⌥⌘D</span></div>
+        <div class="mi"><span class="ck"></span><span class="ic">💰</span><span class="t">Обкэшить</span><span class="k">⇧⌘N</span></div>
+        <div class="mi sel"><span class="ck"></span><span class="ic">▦</span><span class="t">Расставить</span><span class="k">⌥⌘A</span><span class="a">▸</span></div>
+        <div class="mi"><span class="ck"></span><span class="ic">👀</span><span class="t">Показать</span><span class="k">⌥⌘S</span></div>
+        <div class="mi"><span class="ck"></span><span class="ic">⏬</span><span class="t">Прокрутить</span><span class="k">⌥⌘D</span></div>
       </div>
       <div class="menu">
-        <div class="row"><span class="chk"></span><span class="ic">▦</span><span class="t">Расставить лентой</span></div>
+        <div class="mi"><span class="ck">✓</span><span class="t">Как сейчас</span></div>
         <div class="sep"></div>
-        <div class="row"><span class="chk">✓</span><span class="ic">▤</span><span class="t">Лентой (столбцами)</span></div>
-        <div class="row"><span class="chk"></span><span class="ic">▩</span><span class="t">Сеткой</span></div>
-        <div class="row"><span class="chk"></span><span class="ic">🗂</span><span class="t">По проектам</span></div>
-        <div class="sep"></div>
-        <div class="row"><span class="chk"></span><span class="ic">↩︎</span><span class="t">Вернуть позиции</span></div>
-        <div class="row"><span class="chk"></span><span class="ic">🧹</span><span class="t">Забыть позиции</span></div>
+        <div class="mi"><span class="ck"></span><span class="t">Одно окно</span></div>
+        <div class="mi"><span class="ck"></span><span class="t">Два в ряд</span></div>
+        <div class="mi"><span class="ck"></span><span class="t">Три в ряд</span></div>
+        <div class="mi"><span class="ck"></span><span class="t">Четыре в ряд</span></div>
+        <div class="mi"><span class="ck"></span><span class="t">Пять в ряд</span></div>
+        <div class="mi"><span class="ck"></span><span class="t">Десять — 5 × 2</span></div>
       </div>
     </div>
-    <p class="note">Сам пункт «Расставить ▸» мышью не нажимается — так устроено меню macOS, поэтому раскладка по умолчанию
-    повторена первым пунктом внутри, и называется он по выбранной раскладке: «Расставить лентой» / «сеткой» / «по проектам».
-    Клавиша ⌥⌘A работает как раньше и ставит ту раскладку, что выбрана галкой.</p>
+    <div class="card" style="margin-top:10px">
+      <p class="pm"><span class="p">+</span> обычное меню macOS, ничего нового не рисуем, дешевле всего<br>
+      <span class="m">−</span> три уровня вглубь, и раскладку не видно глазами — читаешь текст</p>
+    </div>
   </div>
 
+  <!-- Б -->
+  <div class="col" style="width:330px">
+    <p class="capt">Вариант Б (рекомендую) — картинки прямо в меню кнопки</p>
+    <div class="menu" style="width:314px">
+      <div class="strip">
+        <div class="cfg"><i class="ci"><b></b></i><s>1</s></div>
+        <div class="cfg"><i class="ci"><b></b><b></b></i><s>2</s></div>
+        <div class="cfg"><i class="ci"><b></b><b></b><b></b></i><s>3</s></div>
+        <div class="cfg"><i class="ci"><b></b><b></b><b></b><b></b></i><s>4</s></div>
+        <div class="cfg on"><i class="ci"><b></b><b></b><b></b><b></b><b></b></i><s>5</s></div>
+      </div>
+      <div class="strip" style="padding-top:0">
+        <div class="cfg"><i class="ci rows"><u><b></b><b></b><b></b><b></b><b></b></u><u><b></b><b></b><b></b><b></b><b></b></u></i><s>5 × 2</s></div>
+        <div class="cfg"><i class="ci auto"><b></b><b></b><b></b><b></b></i><s>как<br>сейчас</s></div>
+        <div class="cfg"><i class="ci"><b style="background:var(--p1)"></b><b style="background:var(--p3)"></b><b style="background:var(--p4)"></b></i><s>раскладки</s></div>
+      </div>
+      <div class="stripline"></div>
+      <div class="mi"><span class="ck"></span><span class="ic">🚀</span><span class="t">Workflow</span></div>
+      <div class="mi"><span class="ck"></span><span class="ic">✚</span><span class="t">Новый чат</span><span class="k">⌘N</span></div>
+      <div class="mi"><span class="ck"></span><span class="ic">🪟</span><span class="t">Вынести этот чат в окно</span></div>
+      <div class="sep"></div>
+      <div class="mi"><span class="ck"></span><span class="ic">🎨</span><span class="t">Оформление</span><span class="a">▸</span></div>
+      <div class="mi"><span class="ck"></span><span class="ic">⋯</span><span class="t">Ещё</span><span class="a">▸</span></div>
+    </div>
+    <div class="card pick" style="margin-top:10px">
+      <p class="pm"><span class="p">+</span> один клик по жёлтой кнопке — и раскладки уже перед глазами, второй клик расставил<br>
+      <span class="p">+</span> видно картинкой, а не текстом — то, чего не хватало в Moom<br>
+      <span class="m">−</span> панель рисуем сами (в соседнем воркфлоу мы её всё равно рисуем)</p>
+    </div>
+  </div>
+
+  <!-- В -->
+  <div class="col" style="width:396px">
+    <p class="capt">Вариант В — и картинки, и пункты словами</p>
+    <div class="row" style="gap:8px">
+      <div class="menu" style="width:180px">
+        <div class="strip" style="flex-wrap:wrap;gap:0">
+          <div class="cfg" style="width:52px"><i class="ci"><b></b><b></b><b></b></i><s>3</s></div>
+          <div class="cfg" style="width:52px"><i class="ci"><b></b><b></b><b></b><b></b></i><s>4</s></div>
+          <div class="cfg on" style="width:52px"><i class="ci"><b></b><b></b><b></b><b></b><b></b></i><s>5</s></div>
+        </div>
+        <div class="stripline"></div>
+        <div class="mi"><span class="ck"></span><span class="ic">🎨</span><span class="t">Оформление</span><span class="a">▸</span></div>
+        <div class="mi sel"><span class="ck"></span><span class="ic">⋯</span><span class="t">Ещё</span><span class="a">▸</span></div>
+      </div>
+      <div class="menu">
+        <div class="mi"><span class="ck"></span><span class="ic">▦</span><span class="t">Расставить</span><span class="k">⌥⌘A</span><span class="a">▸</span></div>
+        <div class="mi"><span class="ck"></span><span class="ic">👀</span><span class="t">Показать</span><span class="k">⌥⌘S</span></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:10px">
+      <p class="pm"><span class="p">+</span> есть и глазами, и с клавиатуры, и по привычке<br>
+      <span class="m">−</span> одно и то же в двух местах: правишь одно — второе разъезжается, работы больше</p>
+    </div>
+  </div>
+</div>
+<p class="note">Во всех трёх вариантах клавиша <b>⌥⌘A</b> работает как раньше и повторяет ту раскладку, которую ты выбрал
+последней — с клавиатуры ничего не теряется.</p>
+
+<!-- ═══════════════ 3 ═══════════════ -->
+<h2>3. Раскладки — что видно на экране</h2>
+<p class="note" style="margin:0 0 10px">Главное: выбранная раскладка — <b>не разовое действие, а сетка, которая остаётся</b>.
+Окна занимают ячейки слева направо, пустые ячейки ждут. Выбрал «пять», а окон три — они встанут в первые три ячейки,
+две пустые останутся под новые окна.</p>
+<div class="grid4">
+  <div class="card">
+    <h3>Три в ряд</h3>
+    <div class="screen" style="height:104px;margin-top:8px">
+      <div class="bar"></div>
+      <div class="w c1" style="left:0.6%;top:11%;width:32.3%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c3" style="left:33.8%;top:11%;width:32.3%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c4" style="left:67%;top:11%;width:32.3%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+    </div>
+    <p>Широко, читать удобно.</p>
+  </div>
+  <div class="card">
+    <h3>Четыре в ряд</h3>
+    <div class="screen" style="height:104px;margin-top:8px">
+      <div class="bar"></div>
+      <div class="w c1" style="left:0.5%;top:11%;width:24.1%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c2" style="left:25.1%;top:11%;width:24.1%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c3" style="left:49.7%;top:11%;width:24.1%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c4" style="left:74.3%;top:11%;width:24.1%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+    </div>
+    <p>Так работает сегодня.</p>
+  </div>
+  <div class="card pick">
+    <h3>Пять в ряд</h3>
+    <div class="screen" style="height:104px;margin-top:8px">
+      <div class="bar"></div>
+      <div class="w c1" style="left:0.4%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c2" style="left:20.3%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c3" style="left:40.2%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c4" style="left:60.1%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c5" style="left:80%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+    </div>
+    <p>Новое: то, как ты работаешь.</p>
+  </div>
+  <div class="card">
+    <h3>Десять — 5 × 2</h3>
+    <div class="screen" style="height:104px;margin-top:8px">
+      <div class="bar"></div>
+      <div class="w c1" style="left:0.4%;top:10%;width:19.5%;height:44%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c2" style="left:20.3%;top:10%;width:19.5%;height:44%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c3" style="left:40.2%;top:10%;width:19.5%;height:44%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c4" style="left:60.1%;top:10%;width:19.5%;height:44%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c5" style="left:80%;top:10%;width:19.5%;height:44%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c3" style="left:0.4%;top:55%;width:19.5%;height:44%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c4" style="left:20.3%;top:55%;width:19.5%;height:44%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c1" style="left:40.2%;top:55%;width:19.5%;height:44%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c5" style="left:60.1%;top:55%;width:19.5%;height:44%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+      <div class="w c2" style="left:80%;top:55%;width:19.5%;height:44%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div></div>
+    </div>
+    <p>Десять чатов сразу, каждое окно вполовину высоты.</p>
+  </div>
+</div>
+
+<!-- ═══════════════ 4 ═══════════════ -->
+<h2>4. Как окна взаимодействуют</h2>
+<div class="row">
+
+  <!-- 4а -->
+  <div style="width:470px">
+    <p class="capt">4а. Новое окно само встаёт в свободную ячейку</p>
+    <div class="screen" id="s1" style="height:170px">
+      <div class="bar"></div>
+      <div class="cell" style="left:60.1%;top:11%;width:19.5%;height:86%" id="s1cell">свободно</div>
+      <div class="w c1" style="left:0.4%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm">WF21 сетки</div></div>
+      <div class="w c2" style="left:20.3%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm">гейт</div></div>
+      <div class="w c3" style="left:40.2%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm">аудит</div></div>
+      <div class="w c5" style="left:80%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm">идеи</div></div>
+      <div class="w c4" id="s1new" style="left:60.1%;top:11%;width:19.5%;height:86%;opacity:0;transform:scale(.8)">
+        <div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm">новый чат</div>
+        <div class="ln"></div><div class="ln s"></div>
+      </div>
+    </div>
+    <div class="ctrl">
+      <button class="pr" onclick="newWin()">открыть новое окно</button>
+      <button onclick="resetWin()">сбросить</button>
+    </div>
+    <p class="note">Ячейка одна освободилась — туда и приедет следующее окно, без перетаскивания руками.
+    Ячеек не осталось — вопрос 3 внизу.</p>
+  </div>
+
+  <!-- 4б -->
+  <div style="width:470px">
+    <p class="capt">4б. ⌘ + перетаскивание — окна меняются местами</p>
+    <div class="screen" id="s2" style="height:170px">
+      <div class="bar"></div>
+      <div class="w c1 sw" data-pos="0" style="left:0.4%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm">🟣 Trelvis</div></div>
+      <div class="w c2 sw" data-pos="1" style="left:20.3%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm">⚪ PimpMyClaude</div></div>
+      <div class="w c3 sw" data-pos="2" style="left:40.2%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm">🔵 VkusnoffKz</div></div>
+      <div class="w c4 sw" data-pos="3" style="left:60.1%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm">🟢 Dictatorik</div></div>
+      <div class="w c5 sw" data-pos="4" style="left:80%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm">🟡 DrStrange</div></div>
+      <div class="halo" id="s2halo" style="top:9%;width:20.7%;height:90%"></div>
+      <div class="tag" id="s2tag" style="left:3%;top:2%">⌘ держу и веду</div>
+      <div class="cursor" id="s2cur">✥</div>
+    </div>
+    <div class="ctrl">
+      <button class="pr" onclick="swapDemo()">⌘ перетащить второе на четвёртое</button>
+      <button onclick="resetSwap()">сбросить</button>
+    </div>
+    <p class="note">В macOS ⌘ + перетаскивание двигает окно, не выводя его вперёд. Мы это не ломаем: пока держишь ⌘ и
+    ведёшь окно, то, над которым оно висит, <b>подсвечивается</b> — отпустил над ним, поменялись местами; отпустил
+    на пустом месте — просто передвинул, как раньше. Новых разрешений не просим.</p>
+  </div>
+</div>
+
+<!-- ═══════════════ 5 ═══════════════ -->
+<h2>5. Раскладки проектов — сохранить и вернуть</h2>
+<div class="row">
   <div>
-    <p class="capt">Вариант Б: всё плоско, одним списком</p>
-    <div class="menu">
-      <div class="row"><span class="chk"></span><span class="ic">💰</span><span class="t">Обкэшить</span><span class="key">⇧⌘N</span></div>
-      <div class="sep"></div>
-      <div class="row"><span class="chk">✓</span><span class="ic">▤</span><span class="t">Расставить лентой</span><span class="key">⌥⌘A</span></div>
-      <div class="row"><span class="chk"></span><span class="ic">▩</span><span class="t">Расставить сеткой</span></div>
-      <div class="row"><span class="chk"></span><span class="ic">🗂</span><span class="t">Расставить по проектам</span></div>
-      <div class="row"><span class="chk"></span><span class="ic">↩︎</span><span class="t">Вернуть позиции</span></div>
-      <div class="sep"></div>
-      <div class="row"><span class="chk"></span><span class="ic">👀</span><span class="t">Показать</span><span class="key">⌥⌘S</span></div>
-      <div class="row"><span class="chk"></span><span class="ic">🙈</span><span class="t">Спрятать все</span></div>
-      <div class="row"><span class="chk"></span><span class="ic">⏬</span><span class="t">Прокрутить</span><span class="key">⌥⌘D</span></div>
+    <p class="capt">меню «раскладки» — третья картинка в полосе</p>
+    <div class="row" style="gap:8px">
+      <div class="menu">
+        <div class="mi"><span class="ck"></span><span class="ic">💾</span><span class="t">Сохранить эту раскладку…</span></div>
+        <div class="sep"></div>
+        <div class="mi sel"><span class="ck"></span><span class="ic">☀️</span><span class="t">Утро</span><span class="a">▸</span></div>
+        <div class="mi"><span class="ck"></span><span class="ic">🔎</span><span class="t">Разбор задач</span><span class="a">▸</span></div>
+        <div class="mi"><span class="ck"></span><span class="ic">🎬</span><span class="t">Демо команде</span><span class="a">▸</span></div>
+        <div class="sep"></div>
+        <div class="mi dis"><span class="ck"></span><span class="ic">🧹</span><span class="t">Управление раскладками…</span></div>
+      </div>
+      <div class="menu">
+        <div class="mi"><span class="ck"></span><span class="ic">↩︎</span><span class="t">Вернуть эти чаты</span></div>
+        <div class="mi"><span class="ck"></span><span class="ic">✨</span><span class="t">Новые чаты по этим проектам</span></div>
+        <div class="sep"></div>
+        <div class="mi"><span class="ck"></span><span class="ic">✏️</span><span class="t">Переименовать…</span></div>
+        <div class="mi"><span class="ck"></span><span class="ic">🗑</span><span class="t">Удалить</span></div>
+      </div>
     </div>
-    <p class="note">Кликов меньше, но «Ещё ▸» снова длинное — девять пунктов подряд.</p>
+  </div>
+  <div style="max-width:330px">
+    <p class="capt">что запоминается</p>
+    <p class="note" style="margin-top:0">Только три вещи на каждую ячейку: <b>какой проект</b>, <b>какой чат</b> и
+    <b>какое место</b>. Раскладок можно держать сколько угодно и назвать их по-своему: «Утро», «Разбор», «Демо».
+    Сохраняешь одним пунктом — берём то, что сейчас на экране.</p>
   </div>
 </div>
 
-<h2>2. Как расставит — четыре окна на экране</h2>
-<div class="grid3">
-
-  <div class="box pick">
-    <b>Лентой<span class="tag">так сейчас</span></b>
-    <div class="screen">
+<div class="grid3" style="margin-top:12px">
+  <div class="card">
+    <h3>Сохранил «Утро»</h3>
+    <div class="screen" style="height:104px;margin-top:8px">
       <div class="bar"></div>
-      <div class="win w1" style="left:1%;top:11%;width:23.5%;height:87%">Trelvis</div>
-      <div class="win w2" style="left:25.5%;top:11%;width:23.5%;height:87%">Trelvis 2</div>
-      <div class="win w3" style="left:50%;top:11%;width:23.5%;height:87%">Vkusnoff</div>
-      <div class="win w4" style="left:74.5%;top:11%;width:23.5%;height:87%">без проекта</div>
+      <div class="w c1" style="left:0.4%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px">WF21 сетки</div><div class="pj" style="color:#8fb6e2;font-size:7.5px">🟣 Trelvis</div></div>
+      <div class="w c2" style="left:20.3%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px">гейт</div><div class="pj" style="color:#b6a8e6;font-size:7.5px">⚪ PimpMyClaude</div></div>
+      <div class="w c3" style="left:40.2%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px">аудит</div><div class="pj" style="color:#8fd4bd;font-size:7.5px">🔵 VkusnoffKz</div></div>
+      <div class="w c4" style="left:60.1%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px">правки</div><div class="pj" style="color:#e0bd8a;font-size:7.5px">🟢 Dictatorik</div></div>
+      <div class="w c5" style="left:80%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px">идеи</div><div class="pj" style="color:#e0a0b6;font-size:7.5px">🟡 DrStrange</div></div>
     </div>
-    <p>Столбцы во всю высоту. Ряд появляется, только когда столбец стал бы уже 340 точек.</p>
+    <p>Пять проектов, пять чатов, порядок слева направо — так и легло в память.</p>
   </div>
 
-  <div class="box">
-    <b>Сеткой</b>
-    <div class="screen">
+  <div class="card">
+    <h3>↩︎ Вернуть эти чаты</h3>
+    <div class="screen" style="height:104px;margin-top:8px">
       <div class="bar"></div>
-      <div class="win w1" style="left:1%;top:11%;width:48%;height:42%">Trelvis</div>
-      <div class="win w2" style="left:50.5%;top:11%;width:48%;height:42%">Trelvis 2</div>
-      <div class="win w3" style="left:1%;top:55%;width:48%;height:43%">Vkusnoff</div>
-      <div class="win w4" style="left:50.5%;top:55%;width:48%;height:43%">без проекта</div>
+      <div class="w c1" style="left:0.4%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px">WF21 сетки</div><div class="pj" style="color:#8fb6e2;font-size:7.5px">🟣 Trelvis</div></div>
+      <div class="w c2" style="left:20.3%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px">гейт</div><div class="pj" style="color:#b6a8e6;font-size:7.5px">⚪ PimpMyClaude</div></div>
+      <div class="w c3" style="left:40.2%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px">аудит</div><div class="pj" style="color:#8fd4bd;font-size:7.5px">🔵 VkusnoffKz</div></div>
+      <div class="w c4" style="left:60.1%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px">правки</div><div class="pj" style="color:#e0bd8a;font-size:7.5px">🟢 Dictatorik</div></div>
+      <div class="w c5" style="left:80%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px">идеи</div><div class="pj" style="color:#e0a0b6;font-size:7.5px">🟡 DrStrange</div></div>
     </div>
-    <p>Квадратом: четыре окна — 2×2, шесть — 3×2, девять — 3×3. Окна выше, текста видно больше.</p>
+    <p>Те же самые чаты открываются на тех же местах. Чат удалили или переименовали — вместо него открываем новый пустой
+    по тому же проекту, ячейка не пустует.</p>
   </div>
 
-  <div class="box">
-    <b>По проектам</b>
-    <div class="screen">
+  <div class="card pick">
+    <h3>✨ Новые чаты по этим проектам</h3>
+    <div class="screen" style="height:104px;margin-top:8px">
       <div class="bar"></div>
-      <div class="win w1" style="left:1%;top:11%;width:32%;height:42%">Trelvis</div>
-      <div class="win w1" style="left:1%;top:55%;width:32%;height:43%">Trelvis 2</div>
-      <div class="win w3" style="left:34.5%;top:11%;width:32%;height:87%">Vkusnoff</div>
-      <div class="win w4" style="left:68%;top:11%;width:31%;height:87%">без проекта</div>
+      <div class="w c1" style="left:0.4%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px;opacity:.6">новый чат</div><div class="pj" style="color:#8fb6e2;font-size:7.5px">🟣 Trelvis</div></div>
+      <div class="w c2" style="left:20.3%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px;opacity:.6">новый чат</div><div class="pj" style="color:#b6a8e6;font-size:7.5px">⚪ PimpMyClaude</div></div>
+      <div class="w c3" style="left:40.2%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px;opacity:.6">новый чат</div><div class="pj" style="color:#8fd4bd;font-size:7.5px">🔵 VkusnoffKz</div></div>
+      <div class="w c4" style="left:60.1%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px;opacity:.6">новый чат</div><div class="pj" style="color:#e0bd8a;font-size:7.5px">🟢 Dictatorik</div></div>
+      <div class="w c5" style="left:80%;top:11%;width:19.5%;height:86%"><div class="tb"><i class="d r"></i><i class="d y"></i><i class="d g"></i></div><div class="nm" style="font-size:8px;opacity:.6">новый чат</div><div class="pj" style="color:#e0a0b6;font-size:7.5px">🟡 DrStrange</div></div>
     </div>
-    <p>Колонка на проект, окна проекта — друг под другом. Проект узнаём по папке, в которой ты работаешь (это уже умеет
-    воркфлоу «цвет проекта»); чат без папки уходит в колонку «без проекта».</p>
-  </div>
-</div>
-<p class="legend"><i class="w1" style="background:#2f4a68"></i>🟣Trelvis <i class="w3" style="background:#2f5147"></i>🔵VkusnoffKz
-<i class="w4" style="background:#4a3a2d"></i>чат без папки проекта</p>
-
-<h2>3. Память позиций — «Вернуть позиции»</h2>
-<div class="grid3">
-  <div class="box">
-    <b>Как ты расставил руками</b>
-    <div class="screen">
-      <div class="bar"></div>
-      <div class="win w1" style="left:2%;top:14%;width:40%;height:80%">Trelvis</div>
-      <div class="win w3" style="left:44%;top:14%;width:27%;height:52%">Vkusnoff</div>
-      <div class="win w4" style="left:73%;top:30%;width:25%;height:64%">заметки</div>
-    </div>
-    <p>Приложение само запоминает рамку окна по имени чата — через пару секунд после того, как ты его отпустил.</p>
-  </div>
-  <div class="box">
-    <b>Потом — «Расставить» или новый день</b>
-    <div class="screen">
-      <div class="bar"></div>
-      <div class="win w1" style="left:1%;top:11%;width:32%;height:87%">Trelvis</div>
-      <div class="win w3" style="left:34.5%;top:11%;width:32%;height:87%">Vkusnoff</div>
-      <div class="win w4" style="left:68%;top:11%;width:31%;height:87%">заметки</div>
-    </div>
-    <p>Сетка перекрыла твою расстановку — это нормально, память её не забыла.</p>
-  </div>
-  <div class="box pick">
-    <b>«↩︎ Вернуть позиции»<span class="tag">один клик</span></b>
-    <div class="screen">
-      <div class="bar"></div>
-      <div class="win w1" style="left:2%;top:14%;width:40%;height:80%">Trelvis</div>
-      <div class="win w3" style="left:44%;top:14%;width:27%;height:52%">Vkusnoff</div>
-      <div class="win w4" style="left:73%;top:30%;width:25%;height:64%">заметки</div>
-    </div>
-    <p>Каждое окно с знакомым именем чата встаёт на своё место. Монитор отключили — рамка обрезается по экрану, за край
-    не уедет.</p>
+    <p>Те же проекты и те же места, но чаты чистые — начинаешь день с нуля, не разбирая вчерашнее. Папка проекта у каждого
+    окна ставится сразу.</p>
   </div>
 </div>
 
-<h2>4. «Спрятать все» и путь назад</h2>
-<div class="cascade">
-  <div>
-    <p class="capt">меню-бар PimpMyClaude — пока Claude спрятан</p>
-    <div class="menu">
-      <div class="row dis"><span class="chk"></span><span class="ic">🅿️</span><span class="t">Claude спрятан</span></div>
-      <div class="sep"></div>
-      <div class="row"><span class="chk"></span><span class="ic"></span><span class="t">Поставить…</span></div>
-      <div class="row"><span class="chk"></span><span class="ic"></span><span class="t">Снять…</span></div>
-      <div class="row"><span class="chk"></span><span class="ic"></span><span class="t">Статус…</span></div>
-      <div class="sep"></div>
-      <div class="row sel"><span class="chk"></span><span class="ic">👀</span><span class="t">Показать окна Claude</span><span class="new">новое</span></div>
-    </div>
-  </div>
-  <div style="max-width:420px">
-    <p class="capt">почему это важно</p>
-    <p class="note" style="margin-top:0">Спрятанный Claude не впереди — значит жёлтой кнопки на экране нет и клавиши меню
-    не работают. Поэтому «Показать» переезжает ещё и в меню-бар 🅿️ — это и есть путь назад, вместе со значком в Dock.
-    Клавишу ⌥⌘S на время «спрятано» глобальной не делаем: она отбиралась бы у всех остальных приложений.
-    Своей клавиши у «Спрятать все» нет: ⌘H у Claude и так прячет окна.</p>
-  </div>
-</div>
-
-<h2>5. Вопросы — ответь строкой «1А 2Б…»</h2>
+<!-- ═══════════════ 6 ═══════════════ -->
+<h2>6. Вопросы</h2>
 <div class="qs">
   <div class="q">
-    <b>1. Набор раскладок</b>
+    <b>1. Где выбираем раскладку</b>
     <ul>
-      <li class="rec"><em>А (рекомендую)</em> — Лентой · Сеткой · По проектам</li>
-      <li>Б — добавить ещё «Ровно 2×2»: четыре окна на экран, остальные за кадром</li>
-      <li>В — только Лентой и Сеткой, проекты потом</li>
+      <li class="rec"><em>Б (рекомендую)</em> — картинки прямо в меню жёлтой кнопки: открыл, ткнул, расставилось</li>
+      <li>А — только пунктами словами, подменю «Расставить ▸»</li>
+      <li>В — и картинки, и пункты словами (дольше делать, два места вместо одного)</li>
     </ul>
   </div>
   <div class="q">
-    <b>2. Возврат позиций</b>
+    <b>2. Набор раскладок</b>
     <ul>
-      <li class="rec"><em>А (рекомендую)</em> — сами возвращаем только что открытое окно, остальное — по пункту «Вернуть позиции»</li>
-      <li>Б — всегда только вручную</li>
-      <li>В — возвращать всегда, в том числе главному окну при переходе на другой чат (будет прыгать)</li>
+      <li class="rec"><em>А (рекомендую)</em> — 1, 2, 3, 4, 5 в ряд, 5 × 2 и «как сейчас»</li>
+      <li>Б — добавить ещё 2 × 2 и 3 × 2 (квадратами, окна выше)</li>
+      <li>В — короче: только 3, 4, 5 в ряд и 5 × 2</li>
     </ul>
   </div>
   <div class="q">
-    <b>3. Что запоминать</b>
+    <b>3. Окон больше, чем ячеек</b>
     <ul>
-      <li class="rec"><em>А (рекомендую)</em> — только то, как ты расставил руками; после «Расставить» память не трогаем</li>
-      <li>Б — запоминать любую расстановку, включая сетку</li>
+      <li class="rec"><em>А (рекомендую)</em> — лишние не трогаем, стоят где стояли, сверху</li>
+      <li>Б — лишние сворачиваем в Dock</li>
+      <li>В — кладём стопкой в последнюю ячейку, друг на друга</li>
     </ul>
   </div>
   <div class="q">
-    <b>4. Клавиша у «Спрятать все»</b>
+    <b>4. Анимация при обмене местами</b>
     <ul>
-      <li class="rec"><em>А (рекомендую)</em> — без клавиши</li>
-      <li>Б — ⌥⌘H (у Claude пропадёт системное «Скрыть остальные»)</li>
+      <li class="rec"><em>А (рекомендую)</em> — короткая, четверть секунды: видно, что произошло, и не тормозит</li>
+      <li>Б — без анимации, мгновенно</li>
+      <li>В — плавнее и заметнее, полсекунды</li>
     </ul>
   </div>
   <div class="q">
-    <b>5. Откуда берём проект окна</b>
+    <b>5. Где хранить раскладки проектов</b>
     <ul>
-      <li class="rec"><em>А (рекомендую)</em> — из папки, в которой идёт работа: к этому моменту приложение её уже знает,
-      работает для любого чата</li>
-      <li>Б — из строки состояния чата: у обычных чатов её нет, почти всё уедет в «без проекта»</li>
+      <li class="rec"><em>А (рекомендую)</em> — в настройках приложения: всегда под рукой, ничего не настраивать</li>
+      <li>Б — файлом в папке проекта: уедет вместе с проектом, видно в истории</li>
+      <li>В — одним файлом рядом с настройками Клауда, чтобы можно было скопировать команде</li>
     </ul>
   </div>
-  <div class="q">
-    <b>6. Меню</b>
+  <div class="q" style="background:#1e2225;border-color:#33473a">
+    <b>Что откладываем</b>
     <ul>
-      <li class="rec"><em>А (рекомендую)</em> — подменю у «Расставить»</li>
-      <li>Б — плоский список из раздела 1</li>
+      <li>Память позиций окон и «Спрятать все» — по твоему слову, пока не надо.</li>
+      <li>Второй монитор: раскладки, как и сейчас, считаются по главному экрану.</li>
     </ul>
   </div>
 </div>
 
-<p class="note">Второй монитор не трогаем: раскладки, как и сейчас, считаются по главному экрану — окно со второго приедет
-на главный. Если работаешь на двух экранах постоянно, скажи — заведу отдельной задачей.</p>
+<div class="answer">Ответь одной строкой, например: <code>1Б 2А 3А 4А 5А</code> — это как раз то, что я рекомендую.</div>
+
+<script>
+(function(){
+  var LEFTS = [0.4, 20.3, 40.2, 60.1, 80];
+  document.querySelectorAll('#s2 .sw').forEach(function(w){
+    w.style.left = LEFTS[+w.dataset.pos] + '%';
+  });
+
+  window.newWin = function(){
+    var n = document.getElementById('s1new'), c = document.getElementById('s1cell');
+    c.style.opacity = '0';
+    n.style.opacity = '1';
+    n.style.transform = 'scale(1)';
+  };
+  window.resetWin = function(){
+    var n = document.getElementById('s1new'), c = document.getElementById('s1cell');
+    n.style.opacity = '0';
+    n.style.transform = 'scale(.8)';
+    c.style.opacity = '1';
+  };
+
+  function win(pos){ return document.querySelector('#s2 .sw[data-pos="' + pos + '"]'); }
+  var busy = false;
+  window.swapDemo = function(){
+    if (busy) return;
+    busy = true;
+    var a = win(1), b = win(3);
+    if (!a || !b) { busy = false; return; }
+    var halo = document.getElementById('s2halo'),
+        tag = document.getElementById('s2tag'),
+        cur = document.getElementById('s2cur');
+    tag.style.opacity = '1';
+    cur.style.left = '26%'; cur.style.top = '45%'; cur.style.opacity = '1';
+    setTimeout(function(){
+      halo.style.left = (LEFTS[3] - 0.6) + '%';
+      halo.style.opacity = '1';
+      cur.style.left = '66%';
+    }, 260);
+    setTimeout(function(){
+      a.dataset.pos = '3'; b.dataset.pos = '1';
+      a.style.left = LEFTS[3] + '%'; b.style.left = LEFTS[1] + '%';
+      halo.style.opacity = '0'; tag.style.opacity = '0'; cur.style.opacity = '0';
+    }, 900);
+    setTimeout(function(){ busy = false; }, 1300);
+  };
+  window.resetSwap = function(){
+    document.querySelectorAll('#s2 .sw').forEach(function(w, i){
+      w.dataset.pos = i;
+      w.style.left = LEFTS[i] + '%';
+    });
+    document.getElementById('s2halo').style.opacity = '0';
+    document.getElementById('s2tag').style.opacity = '0';
+    document.getElementById('s2cur').style.opacity = '0';
+  };
+})();
+</script>
 
 </body>
 </html>

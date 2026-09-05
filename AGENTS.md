@@ -57,8 +57,15 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
 - Адресация окна (WF15): у любой команды с `scope:"window"` необязательное поле `match` — путь страницы
   (`/epitaxy/local_<id>`); есть строка → страница сверяет `location.pathname`, поля нет — по `title`/фокусу, как раньше.
   Главное окно так и адресуется (его заголовок «Claude» — заглушка).
-- Настройки проекта (WF15): файл `.pimpmyclaude.json` в корне проекта (`{"pimpmyclaude":1,"name","theme","font","size","frame"}`,
+- Настройки проекта (WF15, правило записи WF20): файл `.pimpmyclaude.json` в корне проекта (`{"pimpmyclaude":1,"name","theme","font","size","frame"}`,
   ключ отсутствует → слой не трогать, `false` у frame → сброс), контракт побайтно — `ProjectSettings.swift`; индекс чатов
+- WF20: подменю «🗂 Проект ▸» больше нет — остался тумблер «🗂 Цвет по проекту» в «🖥 Всем окнам ▸». Папки без файла
+  красятся авто-цветом по имени (FNV-1a → тон, `AutoPaint.projectTheme(folderName:)`, отпечаток `auto:<hue>`, файла не
+  заводит). Ручной выбор темы/шрифта/размера/рамки в окне проекта (`remember`, только `scope:"window"`) молча пишется в
+  `.pimpmyclaude.json` (`ProjectPaint.noteManualChoice`); «Как у Claude» снимает слой, последний слой удаляет файл; битый
+  файл не переписывается и не удаляется (плашка). «Своя тема…» — панель `ThemeEditor` (ручки `ThemeKnobs`: тон/сдвиг
+  акцента/сила/тёмная), записи `my-themes.json` получили необязательное поле `knobs`, палитра записи побайтно =
+  `ThemeKnobs.palette()`; `"knobs":null` не пишется. Меню открывается слева от минуса (`MinimizeMenu.origin`).
   Claude `~/Library/Application Support/Claude/claude-code-sessions/*/*/local_*.json` → `ProjectIndex.swift` (папка по
   sessionId/заголовку, главное окно по `status.json`). Индекс пропал — молчим, не красим. Покраска не трогает окна с ручной
   темой/автопокраской; файл в репозитории — в `~/.config/git/ignore`.
@@ -80,9 +87,9 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
 
 ## Сборка, гейт, релиз
 
-- **`bash tools/test.sh`** — один прогон всего (WF24): `node --test tests/` (10 наборов, 122 проверки; страница гоняется в
+- **`bash tools/test.sh`** — один прогон всего (WF24): `node --test tests/` (11 наборов, 127 проверок; страница гоняется в
   `node:vm` через люк `globalThis.__myclaudeTest` и стаб DOM `tests/dom.mjs`, путь к файлу — `MYCLAUDE_INJECT`) + сторожевые
-  grep-проверки inject.js + `swift test` (87). Красное = гейт не проходит. Чеклист гейта и «проверка на своём Маке» для
+  grep-проверки inject.js + `swift test` (104). Красное = гейт не проходит. Чеклист гейта и «проверка на своём Маке» для
   команды — `docs/CHECKLIST.md`.
 - `tools/bundle.sh release` → `app/.build/PimpMyClaude.app` (Developer ID). **Подмена без простоя:** сначала bundle,
   потом `pkill -f PimpMyClaude.app/Contents/MacOS; rm -rf /Applications/PimpMyClaude.app; ditto …; open …` — Элвис

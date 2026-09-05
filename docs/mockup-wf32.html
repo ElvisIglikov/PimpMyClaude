@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>PimpMyClaude — куда выпадает меню на минусе</title>
+<style>
+  :root{
+    --bg:#161618; --card:#232326; --line:rgba(255,255,255,.10);
+    --text:#ececef; --dim:#9b9ba1; --head:#8d8d94; --accent:#3b6fe0; --ok:#4dbb7d; --warn:#d99a9a;
+    --menu:#2c2c2e; --menuline:rgba(255,255,255,.09); --sel:#3b6fe0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:18px 20px 40px;background:var(--bg);color:var(--text);
+    font:13px/1.45 -apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  h1{font-size:17px;margin:0 0 4px;font-weight:600}
+  .lead{color:var(--dim);font-size:12.5px;margin:0 0 4px;max-width:1000px}
+  h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--head);
+    font-weight:600;margin:26px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+  h2:first-of-type{border-top:0;padding-top:0}
+  .note{color:var(--dim);font-size:12px;margin:10px 0 0;max-width:1000px}
+  b.g{color:#bfe6cf} b.r{color:var(--warn)}
+
+  /* ─────────────────────── схема экрана: 5 узких окон ─────────────────────── */
+  .scr{position:relative;width:300px;height:188px;background:#0b0b0d;border:1px solid var(--line);
+    border-radius:8px;overflow:hidden}
+  .scr .mb{position:absolute;left:0;right:0;top:0;height:8px;background:#1b1b1f}
+  .w{position:absolute;top:20px;width:52px;height:152px;background:#1d1d21;border-radius:5px;
+    border:1px solid rgba(255,255,255,.09);overflow:hidden}
+  .w .tb{display:block;height:9px;background:#2a2a30;border-bottom:1px solid rgba(0,0,0,.45);
+    padding:2.5px 0 0 3px;white-space:nowrap}
+  .w .d{display:inline-block;width:4px;height:4px;border-radius:50%;background:#4c4c53;margin-right:2px}
+  .w .d.r{background:#a8534b} .w .d.y{background:#c39a45}
+  .w.act .d.y{background:#ffc850;box-shadow:0 0 0 2.5px rgba(245,189,79,.5)}
+  .w.act{border-color:rgba(245,189,79,.75);box-shadow:0 0 0 1px rgba(245,189,79,.3)}
+  .w .tx{display:block;margin:5px 4px;height:132px;
+    background:repeating-linear-gradient(to bottom,rgba(255,255,255,.09) 0 2px,transparent 2px 8px)}
+  /* меню / подменю на схеме — светлый прямоугольник со «строками», поверх окон */
+  .mn{position:absolute;width:50px;background:#4a4a55;border:1px solid rgba(255,255,255,.42);
+    border-radius:4px;box-shadow:0 10px 24px rgba(0,0,0,.85);z-index:5}
+  .mn::before{content:"";position:absolute;left:4px;right:4px;top:4px;bottom:4px;
+    background:repeating-linear-gradient(to bottom,rgba(255,255,255,.45) 0 2px,transparent 2px 7px)}
+  .mn i{position:absolute;left:3px;right:3px;height:5px;border-radius:2px;background:var(--sel);z-index:2}
+  .mn.flip{border-color:rgba(230,140,140,.9);box-shadow:0 10px 24px rgba(0,0,0,.9),0 0 0 2px rgba(230,140,140,.35)}
+  .mn.pan{width:46px;background:#4a4a55;border-color:rgba(255,255,255,.45);border-radius:6px}
+  .mn.pan::before,.mn.grid::before{top:15px;
+    background:repeating-linear-gradient(to bottom,rgba(255,255,255,.45) 0 2px,transparent 2px 7px)}
+  .mn.pan u{position:absolute;left:4px;right:4px;top:4px;height:8px;border-radius:3px;
+    background:linear-gradient(to right,var(--sel) 0 26%,rgba(255,255,255,.28) 26% 100%);z-index:2}
+  .mn.grid::before{background:
+    repeating-linear-gradient(to bottom,rgba(255,255,255,.42) 0 4px,transparent 4px 8px),
+    repeating-linear-gradient(to right,rgba(0,0,0,.55) 0 1px,transparent 1px 8px)}
+  .path{position:absolute;height:0;border-top:1.5px dashed rgba(245,189,79,.75);z-index:6}
+  .path::after{content:"";position:absolute;right:-1px;top:-3px;width:5px;height:5px;border-radius:50%;
+    background:rgba(245,189,79,.9)}
+
+  /* ─────────────────────── таблица сравнения ─────────────────────── */
+  .cmp{display:grid;grid-template-columns:96px repeat(3,302px);gap:12px;align-items:start;max-width:1060px}
+  .rowlab{font-size:11.5px;color:var(--head);padding-top:6px;line-height:1.3}
+  .vh{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 11px;height:100%}
+  .vh .let{display:inline-block;width:20px;height:20px;border-radius:6px;background:var(--sel);color:#fff;
+    text-align:center;line-height:20px;font-weight:700;font-size:12.5px;margin-right:7px}
+  .vh.pick{border-color:#3ea06a;background:#1e2a22}
+  .vh.pick .let{background:#4dbb7d;color:#0f1a12}
+  .vh b{font-size:13.5px}
+  .vh p{margin:6px 0 0;font-size:12px;color:#d6d6da}
+  .vh p.pl{color:#bfe6cf} .vh p.mi{color:var(--warn)}
+  .cap{font-size:11.5px;color:var(--dim);margin:6px 2px 0;line-height:1.35;min-height:32px}
+  .cap b{color:#bfe6cf;font-weight:600} .cap b.r{color:var(--warn)}
+
+  /* ─────────────────────── настоящее меню (структура) ─────────────────────── */
+  .strip{display:flex;gap:12px;align-items:flex-start;overflow-x:auto;padding:2px 2px 10px}
+  .menu{background:var(--menu);border:1px solid var(--menuline);border-radius:9px;padding:5px 0;
+    box-shadow:0 14px 30px rgba(0,0,0,.6);white-space:nowrap;min-width:196px;flex:0 0 auto}
+  .r{display:flex;align-items:center;height:21px;margin:0 5px;padding:0 8px 0 2px;border-radius:5px;font-size:12px}
+  .r.sel{background:var(--sel);color:#fff}
+  .r.off{color:#7b7b83}
+  .chk{width:14px;text-align:center;font-size:10px;color:#dcdce1}
+  .ic{width:18px;text-align:center;font-size:12px}
+  .t{flex:1;padding-right:16px}
+  .k{color:#9a9aa2;font-size:11.5px;margin-left:10px}
+  .arw{color:#b9b9c0;margin-left:8px;font-size:11px}
+  .hdr{font-size:9.5px;letter-spacing:.07em;color:var(--head);padding:7px 12px 3px 34px}
+  .sep{height:1px;background:rgba(255,255,255,.12);margin:5px 11px}
+  .track{position:relative;display:inline-block;width:64px;height:3px;border-radius:2px;
+    background:rgba(255,255,255,.22);margin:0 8px 0 0}
+  .fill{position:absolute;left:0;top:0;height:3px;border-radius:2px;background:#6b93f5}
+  .kn{position:absolute;top:-5px;width:12px;height:12px;border-radius:50%;background:#f4f4f6;
+    box-shadow:0 1px 3px rgba(0,0,0,.65)}
+  .step{align-self:center;color:var(--head);font-size:16px;flex:0 0 auto}
+  .lvl{font-size:10.5px;color:var(--head);margin:0 0 5px 3px}
+
+  /* ─────────────────────── панель Б крупно ─────────────────────── */
+  .demo{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+  .pnl{width:300px;background:#2c2c2f;border:1px solid rgba(255,255,255,.16);border-radius:12px;
+    box-shadow:0 18px 40px rgba(0,0,0,.65);padding:7px 0 9px;flex:0 0 auto}
+  .tabs{display:flex;gap:3px;margin:0 7px 7px;background:rgba(255,255,255,.07);border-radius:8px;padding:3px}
+  .tabs button{flex:1;background:transparent;border:0;color:#c8c8ce;font:11.5px -apple-system,sans-serif;
+    padding:4px 0;border-radius:6px;cursor:pointer}
+  .tabs button.on{background:var(--sel);color:#fff}
+  .pane{display:none;padding:0 2px} .pane.on{display:block}
+  .swg{display:grid;grid-template-columns:repeat(8,1fr);gap:5px;padding:2px 12px 8px}
+  .sw{height:22px;border-radius:6px;border:1px solid rgba(255,255,255,.2);cursor:pointer;position:relative}
+  .sw::after{content:"";position:absolute;left:4px;right:4px;bottom:3px;height:3px;border-radius:2px;
+    background:var(--acc)}
+  .sw.on{outline:2px solid #fff;outline-offset:1px}
+  .chip{display:inline-block;font-size:11px;color:#dcdce1;background:rgba(255,255,255,.09);
+    border-radius:6px;padding:3px 8px;margin:0 4px 5px 0;cursor:default}
+  .chip.on{background:var(--sel);color:#fff}
+  .chips{padding:2px 12px 6px}
+  .val{color:#9a9aa2;font-size:11.5px;margin-left:auto;padding-left:10px}
+  .tgl{width:26px;height:15px;border-radius:8px;background:rgba(255,255,255,.2);position:relative;margin-left:auto}
+  .tgl.on{background:#4dbb7d}
+  .tgl::after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:#fff}
+  .tgl.on::after{left:13px}
+
+  /* окно Claude рядом с панелью */
+  .cwin{width:300px;height:300px;border-radius:10px;background:var(--wbg,#25252a);
+    border:1px solid rgba(255,255,255,.14);box-shadow:0 14px 34px rgba(0,0,0,.55);overflow:hidden;flex:0 0 auto;
+    transition:background .18s}
+  .cbar{height:24px;display:flex;align-items:center;gap:7px;padding:0 9px;background:rgba(0,0,0,.22);
+    border-bottom:1px solid rgba(0,0,0,.4)}
+  .cdot{width:11px;height:11px;border-radius:50%;background:#5a5a5f}
+  .cdot.r{background:#ee6a5f} .cdot.y{background:#f5bd4f;box-shadow:0 0 0 3px rgba(245,189,79,.35)}
+  .cbar b{font-size:11px;font-weight:500;color:#c6c6cc;margin-left:5px}
+  .cmain{padding:12px 13px}
+  .cmsg{border-radius:9px;background:rgba(255,255,255,.08);height:34px;margin-bottom:9px}
+  .cmsg.two{height:56px} .cmsg.acc{background:var(--wacc,#3b6fe0);opacity:.55;height:26px}
+  .cinp{border-radius:9px;border:1px solid var(--wacc,rgba(255,255,255,.2));height:30px;margin-top:14px}
+
+  /* ─────────────────────── вопросы ─────────────────────── */
+  .qs{display:grid;grid-template-columns:repeat(2,minmax(340px,1fr));gap:11px;max-width:1060px}
+  .q{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .q b{font-size:13.5px}
+  .opt{font-size:12.5px;color:#d6d6da;margin:6px 0 0;padding-left:22px;text-indent:-22px}
+  .opt .let{display:inline-block;width:16px;font-weight:700;color:#a9a9b2;text-indent:0}
+  .opt.first{color:#bfe6cf} .opt.first .let{color:#4dbb7d}
+  .rec{font-weight:600;color:#4dbb7d}
+  .ans{margin-top:12px;background:#1b1b1e;border:1px solid var(--line);border-radius:9px;padding:10px 13px;
+    font-size:12.5px;color:#cfcfd4;max-width:1060px}
+  .old{background:#1b1b1e;border:1px solid var(--line);border-radius:9px;padding:10px 13px;
+    font-size:12.5px;color:#cfcfd4;max-width:1060px;margin-top:12px;line-height:1.6}
+</style>
+</head>
+<body>
+
+<h1>Меню на минусе: куда выпадает оно и куда его подменю</h1>
+<p class="lead">Твои окна узкие (примерно 300 точек) и стоят в ряд по 4–5 штук. Меню шириной почти с окно, а его
+подменю macOS раскрывает туда, где есть место, — поэтому оно каждый раз в новом месте, иногда далеко справа
+поверх соседнего окна. Ниже: как есть сейчас, что внутри меню, и три варианта на выбор.</p>
+
+<!-- ══════════════════════════════ 1. как сейчас ══════════════════════════════ -->
+<h2>1. Как сейчас</h2>
+<p class="lead">Правило одно: меню прижимается <b>слева</b> от жёлтой кнопки. А подменю (Новое окно ▸, Оформление ▸,
+Ещё ▸) ставит уже сама macOS: обычно вправо, а если справа не влезает — переворачивает влево.
+Жёлтым обведено окно, из которого меню открыли; <b class="r">розовым</b> — ступень, которую macOS перевернула
+в другую сторону.</p>
+
+<div class="cmp" style="grid-template-columns:96px repeat(3,302px)">
+  <div class="rowlab"></div>
+  <div class="rowlab" style="padding-top:0;font-size:12px;color:var(--text)">окно у левого края</div>
+  <div class="rowlab" style="padding-top:0;font-size:12px;color:var(--text)">окно посередине</div>
+  <div class="rowlab" style="padding-top:0;font-size:12px;color:var(--text)">окно у правого края</div>
+
+  <div class="rowlab">сегодня</div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w act" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="mn" style="left:8px;top:31px;height:74px"><i style="top:44px"></i></div>
+      <div class="mn" style="left:58px;top:69px;height:58px"><i style="top:24px"></i></div>
+      <div class="mn" style="left:108px;top:87px;height:46px"></div>
+    </div>
+    <p class="cap">Слева места нет — меню падает на <b class="r">своё же окно</b>, а две ступени подменю уезжают
+      на соседей.</p>
+  </div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w act" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="mn" style="left:82px;top:31px;height:74px"><i style="top:44px"></i></div>
+      <div class="mn" style="left:132px;top:69px;height:58px"><i style="top:24px"></i></div>
+      <div class="mn" style="left:182px;top:87px;height:46px"></div>
+    </div>
+    <p class="cap">Меню слева — хорошо, но подменю пошли <b class="r">вправо, прямо на своё окно</b> и на соседнее:
+      как меняется цвет, не видно.</p>
+  </div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w act" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="mn" style="left:198px;top:31px;height:74px"><i style="top:44px"></i></div>
+      <div class="mn" style="left:248px;top:69px;height:58px"><i style="top:24px"></i></div>
+      <div class="mn flip" style="left:196px;top:93px;height:46px"></div>
+    </div>
+    <p class="cap">Третья ступень справа не влезла и <b class="r">перевернулась влево</b> — то самое «меню каждый
+      раз в разном месте».</p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ 2. что внутри ══════════════════════════════ -->
+<h2>2. Что внутри меню — как есть сегодня</h2>
+<p class="lead">Ступеней четыре. Здесь важно, что внутри, — размеры не в масштабе: на самом деле каждая ступень
+почти во всю ширину твоего окна, и вчетвером они закрывают <b>три окна из пяти</b>.</p>
+
+<div class="strip">
+  <div>
+    <p class="lvl">на жёлтой кнопке</p>
+    <div class="menu">
+      <div class="r"><span class="chk"></span><span class="ic">🚀</span><span class="t">Workflow</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">💬</span><span class="t">Новый чат</span><span class="k">⌘N</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🪟</span><span class="t">Новое окно</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🪟</span><span class="t">Вынести этот чат в окно</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">⬆️</span><span class="t">Развернуть</span><span class="k">⌥⌘↑</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">⬇️</span><span class="t">Свернуть</span><span class="k">⌥⌘↓</span></div>
+      <div class="sep"></div>
+      <div class="r sel"><span class="chk"></span><span class="ic">🎨</span><span class="t">Оформление</span><span class="arw">›</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">⋯</span><span class="t">Ещё</span><span class="arw">›</span></div>
+    </div>
+  </div>
+
+  <div class="step">›</div>
+
+  <div>
+    <p class="lvl">Оформление ▸ — про это окно</p>
+    <div class="menu">
+      <div class="hdr">МОИ ТЕМЫ</div>
+      <div class="r"><span class="chk">✓</span><span class="ic"></span><span class="t">Моя ночная</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">🎨</span><span class="t">Цвет</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔤</span><span class="t">Шрифт</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер ответов</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер вопросов</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">✨</span><span class="t">Неоновая рамка</span></div>
+      <div class="r" style="height:26px"><span class="chk"></span><span class="ic">↔️</span><span class="t">Поля</span>
+        <span class="track"><span class="fill" style="width:26px"></span><span class="kn" style="left:20px"></span></span></div>
+      <div class="sep"></div>
+      <div class="r sel"><span class="chk"></span><span class="ic">🖥</span><span class="t">Всем окнам</span><span class="arw">›</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">🎚</span><span class="t">Своя тема…</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">✏️</span><span class="t">Изменить мою тему</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">💾</span><span class="t">Сохранить как мою тему…</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🗑</span><span class="t">Удалить мою тему</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🧹</span><span class="t">Всё как у Claude</span></div>
+    </div>
+  </div>
+
+  <div class="step">›</div>
+
+  <div>
+    <p class="lvl">Всем окнам ▸</p>
+    <div class="menu">
+      <div class="hdr">ВСЕМ ОКНАМ</div>
+      <div class="r"><span class="chk"></span><span class="ic">🎨</span><span class="t">Цвет</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔤</span><span class="t">Шрифт</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер ответов</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер вопросов</span><span class="arw">›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">✨</span><span class="t">Неоновая рамка</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk">✓</span><span class="ic">🗂</span><span class="t">Цвет по проекту</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🌈</span><span class="t">Раскрасить по кругу</span><span class="arw">›</span></div>
+      <div class="r sel"><span class="chk"></span><span class="ic">🌊</span><span class="t">Живые цвета</span><span class="arw">›</span></div>
+    </div>
+  </div>
+
+  <div class="step">›</div>
+
+  <div>
+    <p class="lvl">Живые цвета ▸ — четвёртая ступень</p>
+    <div class="menu">
+      <div class="r"><span class="chk">✓</span><span class="ic">⏹</span><span class="t">Выключить</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔗</span><span class="t">Все окна одним цветом</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🎭</span><span class="t">Каждое окно своим цветом</span></div>
+      <div class="sep"></div>
+      <div class="r" style="height:26px"><span class="chk"></span><span class="ic">⏱</span><span class="t">Скорость</span>
+        <span class="track"><span class="fill" style="width:34px"></span><span class="kn" style="left:28px"></span></span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk">✓</span><span class="ic">🌑</span><span class="t">Тёмные</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">☀️</span><span class="t">Светлые</span></div>
+      <div class="r off"><span class="chk"></span><span class="ic">🪟</span><span class="t">Как окно сейчас</span></div>
+    </div>
+  </div>
+</div>
+<p class="note">В «🎨 Цвет ▸» лежат ещё 24 темы двумя списками — это была бы пятая ступень поперёк экрана.
+Именно её и трудно разглядывать: пока ведёшь мышь по списку, окно под меню не видно.</p>
+
+<!-- ══════════════════════════════ 3. три варианта ══════════════════════════════ -->
+<h2>3. Три варианта — рядом, на трёх положениях окна</h2>
+
+<div class="cmp">
+  <div class="rowlab"></div>
+
+  <div class="vh pick"><b><span class="let">А</span>Меню у минуса, подменю прочь от окна</b>
+    <p>Меню такое же, как сегодня, прижато к жёлтой кнопке. Подменю раскрываются <b>в сторону от окна</b>.</p>
+    <p class="pl">+ окно остаётся открытым — видно, как меняется цвет; работы на пару часов</p>
+    <p class="mi">− сторону подменю решает macOS, мы её только подталкиваем: обычно слушается, но обещать 100 % нельзя</p>
+  </div>
+
+  <div class="vh"><b><span class="let">Б</span>Панель под минусом, как в Moom</b>
+    <p>Вместо каскада — одна панель с вкладками: Окно · Оформление · Цвета · Ещё. Ничего никуда не выпадает.</p>
+    <p class="pl">+ всегда одно и то же место и один размер; цвета сеткой, окно рядом видно целиком</p>
+    <p class="mi">− это уже своё меню, а не системное: работы на день-два, и такое направление у нас уже в планах</p>
+  </div>
+
+  <div class="vh"><b><span class="let">В</span>Как по умолчанию, но в стороне от окна</b>
+    <p>Меню там же, куда его кладёт macOS, только целиком сдвинуто за край окна, чтобы не закрывать текст чата.</p>
+    <p class="pl">+ самая дешёвая правка — полчаса, ломать нечего</p>
+    <p class="mi">− меню далеко от минуса (жёлтая линия — путь мыши), закрывает соседнее окно, у края всё равно прыгает</p>
+  </div>
+
+  <!-- ─── ряд: у левого края ─── -->
+  <div class="rowlab">окно у левого края экрана</div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w act" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="mn" style="left:22px;top:31px;height:74px"><i style="top:44px"></i></div>
+      <div class="mn" style="left:72px;top:69px;height:58px"><i style="top:24px"></i></div>
+      <div class="mn" style="left:122px;top:87px;height:46px"></div>
+    </div>
+    <p class="cap">У самого края деться некуда: меню ляжет на своё окно. Зато ступени <b>идут в одну сторону</b>
+      и не переворачиваются.</p>
+  </div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w act" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="mn pan grid" style="left:24px;top:31px;height:66px"><u></u></div>
+    </div>
+    <p class="cap">Одна панель вместо трёх ступеней: закрыт <b>верх одного окна</b>, низ и края видно.
+      Соседей не трогает вовсе.</p>
+  </div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w act" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="path" style="left:20px;top:26px;width:42px"></div>
+      <div class="mn" style="left:62px;top:31px;height:74px"><i style="top:44px"></i></div>
+      <div class="mn" style="left:112px;top:69px;height:58px"><i style="top:24px"></i></div>
+      <div class="mn" style="left:162px;top:87px;height:46px"></div>
+    </div>
+    <p class="cap">Своё окно видно целиком, но меню <b class="r">через окно от минуса</b> — мышь ведёшь каждый раз.</p>
+  </div>
+
+  <!-- ─── ряд: посередине ─── -->
+  <div class="rowlab">окно посередине</div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w act" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="mn" style="left:82px;top:31px;height:74px"><i style="top:44px"></i></div>
+      <div class="mn" style="left:32px;top:69px;height:58px"><i style="top:24px"></i></div>
+    </div>
+    <p class="cap">Меню у минуса, ступени уходят влево — <b>своё окно открыто целиком</b>, примерку цвета видно.
+      Глубже второй ступени тут уже край экрана.</p>
+  </div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w act" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="mn pan grid" style="left:84px;top:31px;height:66px"><u></u></div>
+    </div>
+    <p class="cap">Панель у минуса, <b>ровно одно место</b>. Своё окно свободно, закрыт кусок соседнего — и всё.</p>
+  </div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w act" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="path" style="left:136px;top:26px;width:42px"></div>
+      <div class="mn" style="left:178px;top:31px;height:74px"><i style="top:44px"></i></div>
+      <div class="mn" style="left:228px;top:69px;height:58px"><i style="top:24px"></i></div>
+      <div class="mn flip" style="left:176px;top:93px;height:46px"></div>
+    </div>
+    <p class="cap">Окно видно, но меню съело <b class="r">два соседних окна</b>, мышь идёт через всё окно,
+      а третья ступень опять перевернулась.</p>
+  </div>
+
+  <!-- ─── ряд: у правого края ─── -->
+  <div class="rowlab">окно у правого края экрана</div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w act" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="mn" style="left:198px;top:31px;height:74px"><i style="top:44px"></i></div>
+      <div class="mn" style="left:148px;top:69px;height:58px"><i style="top:24px"></i></div>
+      <div class="mn" style="left:98px;top:87px;height:46px"></div>
+    </div>
+    <p class="cap">То же самое правило — и <b>тот же вид</b>: ступени всегда влево, окно открыто.
+      Ничего не переворачивается.</p>
+  </div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w act" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="mn pan grid" style="left:200px;top:31px;height:66px"><u></u></div>
+    </div>
+    <p class="cap">Опять то же место относительно минуса. <b>Вид панели не зависит</b> от того, где стоит окно.</p>
+  </div>
+
+  <div>
+    <div class="scr">
+      <div class="mb"></div>
+      <div class="w" style="left:8px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:66px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:124px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w" style="left:182px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="w act" style="left:240px"><span class="tb"><i class="d r"></i><i class="d y"></i><i class="d"></i></span><span class="tx"></span></div>
+      <div class="path" style="left:236px;top:26px;width:16px"></div>
+      <div class="mn" style="left:188px;top:31px;height:74px"><i style="top:44px"></i></div>
+      <div class="mn" style="left:238px;top:69px;height:58px"><i style="top:24px"></i></div>
+      <div class="mn flip" style="left:186px;top:93px;height:46px"></div>
+    </div>
+    <p class="cap">Справа места нет — меню <b class="r">перескочило влево</b>, а подменю всё равно легло на своё
+      окно. Прыжки остались.</p>
+  </div>
+</div>
+
+<p class="note"><b>Честно про вариант А:</b> куда раскрывать подменю, решает сама macOS — такой настройки у неё нет.
+Мы можем только поставить меню так, чтобы с ненужной стороны места физически не осталось, и система развернула
+подменю в нужную. На твоём ряду окон это работает почти всегда, но бывает край экрана, где выбора нет вовсе, —
+там меню ляжет на окно (правый столбец «сегодня» ровно про это).</p>
+
+<!-- ══════════════════════════════ 4. панель Б крупно ══════════════════════════════ -->
+<h2>4. Вариант Б крупно — потыкай вкладки и цвета</h2>
+<p class="lead">Ничего не потеряно: все нынешние пункты на месте, просто разложены по четырём вкладкам вместо
+четырёх ступеней вглубь. Наведи мышь на квадратик цвета — окно справа перекрасится: панель стоит рядом,
+а не поверх, поэтому <b>видно, что меняется</b>.</p>
+
+<div class="demo">
+  <div class="pnl">
+    <div class="tabs" id="tabs">
+      <button data-p="win">Окно</button>
+      <button data-p="look" class="on">Оформление</button>
+      <button data-p="col">Цвета</button>
+      <button data-p="more">Ещё</button>
+    </div>
+
+    <div class="pane" data-p="win">
+      <div class="r"><span class="chk"></span><span class="ic">🚀</span><span class="t">Workflow</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">💬</span><span class="t">Новый чат</span><span class="k">⌘N</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🪟</span><span class="t">Новое окно здесь же</span><span class="k">⌥⌘N</span></div>
+      <div class="hdr">НОВОЕ ОКНО В ПАПКЕ</div>
+      <div class="chips">
+        <span class="chip">📁 PimpMyClaude</span><span class="chip">📁 Trelvis</span><span class="chip">📁 SkilZZZ</span>
+        <span class="chip">📁 Dictatorik</span><span class="chip">📁 VkusBotSDK</span>
+      </div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">🪟</span><span class="t">Вынести этот чат в окно</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">⬆️</span><span class="t">Развернуть</span><span class="k">⌥⌘↑</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">⬇️</span><span class="t">Свернуть</span><span class="k">⌥⌘↓</span></div>
+    </div>
+
+    <div class="pane on" data-p="look">
+      <div class="hdr">МОИ ТЕМЫ</div>
+      <div class="chips"><span class="chip on">Моя ночная</span><span class="chip">Рабочая</span><span class="chip">Ночь в лесу</span></div>
+      <div class="hdr">ЦВЕТ ОКНА — 24 темы, наведи и смотри</div>
+      <div class="swg" id="swg"></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔤</span><span class="t">Шрифт</span><span class="val">Как у Claude ›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер ответов</span><span class="val">− 15 +</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер вопросов</span><span class="val">− 14 +</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">✨</span><span class="t">Неоновая рамка</span><span class="tgl on"></span></div>
+      <div class="r" style="height:28px"><span class="chk"></span><span class="ic">↔️</span><span class="t">Поля по бокам</span>
+        <span class="track" style="width:88px"><span class="fill" style="width:34px"></span><span class="kn" style="left:28px"></span></span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">🧹</span><span class="t">Всё как у Claude</span></div>
+    </div>
+
+    <div class="pane" data-p="col">
+      <div class="hdr">ВСЕМ ОКНАМ СРАЗУ</div>
+      <div class="r"><span class="chk"></span><span class="ic">🗂</span><span class="t">Цвет по проекту</span><span class="tgl on"></span></div>
+      <div class="hdr">РАСКРАСИТЬ ПО КРУГУ</div>
+      <div class="chips">
+        <span class="chip">🌈 Радуга</span><span class="chip">🍭 Пастель</span><span class="chip">🌅 Закат</span>
+        <span class="chip">🌊 Океан</span><span class="chip">🌲 Лес</span><span class="chip">🫐 Ягоды</span>
+        <span class="chip">⚡️ Неон</span><span class="chip">🌓 Монохром</span><span class="chip">🎲 Случайно</span>
+        <span class="chip">🔁 Ещё раз</span>
+      </div>
+      <div class="hdr">ЖИВЫЕ ЦВЕТА</div>
+      <div class="chips"><span class="chip on">⏹ Выключено</span><span class="chip">🔗 Все одним</span><span class="chip">🎭 Каждое своим</span></div>
+      <div class="r" style="height:28px"><span class="chk"></span><span class="ic">⏱</span><span class="t">Скорость</span>
+        <span class="track" style="width:88px"><span class="fill" style="width:46px"></span><span class="kn" style="left:40px"></span></span>
+        <span class="val">5 мин</span></div>
+      <div class="chips"><span class="chip on">🌑 Тёмные</span><span class="chip">☀️ Светлые</span><span class="chip">🪟 Как окно</span></div>
+    </div>
+
+    <div class="pane" data-p="more">
+      <div class="r"><span class="chk"></span><span class="ic">💰</span><span class="t">Обкэшить</span><span class="k">⇧⌘N</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">▦</span><span class="t">Расставить</span><span class="k">⌥⌘A</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">👀</span><span class="t">Показать</span><span class="k">⌥⌘S</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">⏬</span><span class="t">Прокрутить</span><span class="k">⌥⌘D</span></div>
+      <div class="sep"></div>
+      <div class="r"><span class="chk"></span><span class="ic">🎚</span><span class="t">Своя тема…</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">✏️</span><span class="t">Изменить мою тему</span><span class="val">3 ›</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">💾</span><span class="t">Сохранить как мою тему…</span></div>
+      <div class="r"><span class="chk"></span><span class="ic">🗑</span><span class="t">Удалить мою тему</span><span class="val">3 ›</span></div>
+    </div>
+  </div>
+
+  <div class="cwin" id="cwin">
+    <div class="cbar"><span class="cdot r"></span><span class="cdot y"></span><span class="cdot"></span><b>Claude — PimpMyClaude</b></div>
+    <div class="cmain">
+      <div class="cmsg"></div>
+      <div class="cmsg two"></div>
+      <div class="cmsg acc"></div>
+      <div class="cmsg"></div>
+      <div class="cinp"></div>
+    </div>
+  </div>
+</div>
+<p class="note">Панель на схемах выше нарочно нарисована уже окна: сетка цветов экономит место, поэтому панель
+получается компактнее нынешнего меню, а не шире.</p>
+
+<!-- ══════════════════════════════ вопросы ══════════════════════════════ -->
+<h2>Вопросы Элвису</h2>
+
+<div class="qs">
+  <div class="q"><b>1. Что делаем прямо сейчас, быстрой правкой</b>
+    <p class="opt first"><span class="let">А</span><span class="rec">(рекомендую)</span> вариант А: меню у минуса,
+      подменю прочь от окна — пара часов, окно перестаёт закрываться</p>
+    <p class="opt"><span class="let">Б</span>вариант В: просто отодвинуть меню за край окна — полчаса,
+      но до меню вести мышь</p>
+    <p class="opt"><span class="let">В</span>ничего быстрого не делать, ждать панель</p>
+  </div>
+
+  <div class="q"><b>2. Что делаем насовсем</b>
+    <p class="opt first"><span class="let">А</span><span class="rec">(рекомендую)</span> вариант Б: своя панель
+      с вкладками — одно место, один размер, цвета сеткой</p>
+    <p class="opt"><span class="let">Б</span>остаться на варианте А насовсем, панель не делать</p>
+    <p class="opt"><span class="let">В</span>решить через неделю, когда поживёшь на варианте А</p>
+  </div>
+
+  <div class="q"><b>3. Куда раскрывать подменю, если места хватает с обеих сторон</b>
+    <p class="opt first"><span class="let">А</span><span class="rec">(рекомендую)</span> прочь от своего окна —
+      окно свободно, примерку цвета видно</p>
+    <p class="opt"><span class="let">Б</span>всегда влево, что бы ни было — совсем предсказуемо,
+      но иногда ляжет на окно</p>
+    <p class="opt"><span class="let">В</span>всегда вправо, как macOS делает по умолчанию</p>
+  </div>
+
+  <div class="q"><b>4. Если места нет ни слева, ни справа (окно в углу)</b>
+    <p class="opt first"><span class="let">А</span><span class="rec">(рекомендую)</span> оставить у минуса
+      и лечь на своё окно — близко важнее, чем открыто</p>
+    <p class="opt"><span class="let">Б</span>уехать туда, где влезет, даже далеко от минуса</p>
+    <p class="opt"><span class="let">В</span>лечь на соседнее окно, лишь бы не на своё</p>
+  </div>
+</div>
+
+<div class="ans"><b>Ответь одной строкой, например: 1А 2Б 3А 4А.</b> Хочешь иначе — просто допиши словами,
+что поменять.</div>
+
+<div class="old"><b>Уже решено, если не скажешь иного:</b> пункты меню, галки, примерка и клавиши не меняются
+ни на пункт · меню и панель всегда прижаты к жёлтой кнопке, а не к углу окна · клик мимо закрывает и до Claude
+не доходит · вариант А и вариант Б не мешают друг другу: сначала быстрая правка, панель — следом и под
+выключателем, чтобы можно было вернуть системное меню одной строкой.</div>
+
+<script>
+(function(){
+  // вкладки панели Б
+  var tabs = document.getElementById("tabs");
+  tabs.addEventListener("click", function(e){
+    var b = e.target.closest("button"); if(!b) return;
+    Array.prototype.forEach.call(tabs.querySelectorAll("button"), function(x){ x.classList.remove("on"); });
+    b.classList.add("on");
+    Array.prototype.forEach.call(document.querySelectorAll(".pane"), function(p){
+      p.classList.toggle("on", p.getAttribute("data-p") === b.getAttribute("data-p"));
+    });
+  });
+
+  // 24 темы как есть
+  var themes = [
+    ["Красная","#3b1414","#ff5c5c"],["Оранжевая","#3a2010","#ff9147"],["Жёлтая","#3a2e0c","#ffc83d"],
+    ["Зелёная","#0f2e22","#46d18b"],["Матрица","#0b1f0b","#1eff5a"],["Бирюзовая","#0d3033","#2fe0d6"],
+    ["Токийская ночь","#1a1b26","#7aa2f7"],["Синяя","#122446","#5b9bff"],["Фиолетовая","#221640","#b57bff"],
+    ["Дракула","#282a36","#bd93f9"],["Сиреневая","#2c1c3a","#d8a7ff"],["Розовая","#3b1a2f","#ff8ec4"],
+    ["Малиновая","#3c0f1d","#f4335f"],["Коричневая","#2e2018","#d9a066"],["Серая","#131518","#a8b3c4"],
+    ["Персиковая","#fff1e8","#d9611c"],["Лимонная","#fbfae4","#7f8c00"],["Кремовая","#fbf6e9","#b07d2b"],
+    ["Мятная","#e9f8f1","#0f8f5e"],["Небесная","#e9f3ff","#1f6feb"],["Светлая","#f3f8ff","#0066ff"],
+    ["Лавандовая","#f3eefb","#7c4dff"],["Сакура","#fbe9f0","#e13c78"],["Пудровая","#f9eef0","#c0607f"]
+  ];
+  var grid = document.getElementById("swg"), win = document.getElementById("cwin");
+  var base = { bg:"#25252a", acc:"rgba(255,255,255,.2)" };
+
+  themes.forEach(function(t, i){
+    var s = document.createElement("div");
+    s.className = "sw" + (i === 6 ? " on" : "");
+    s.title = t[0];
+    s.style.background = t[1];
+    s.style.setProperty("--acc", t[2]);
+    s.addEventListener("mouseenter", function(){ paint(t[1], t[2]); });
+    s.addEventListener("click", function(){
+      Array.prototype.forEach.call(grid.children, function(x){ x.classList.remove("on"); });
+      s.classList.add("on"); base = { bg:t[1], acc:t[2] }; paint(t[1], t[2]);
+    });
+    grid.appendChild(s);
+  });
+  grid.addEventListener("mouseleave", function(){ paint(base.bg, base.acc); });
+
+  function paint(bg, acc){
+    win.style.setProperty("--wbg", bg);
+    win.style.setProperty("--wacc", acc);
+  }
+  paint(themes[6][1], themes[6][2]);
+  base = { bg:themes[6][1], acc:themes[6][2] };
+})();
+</script>
+
+</body>
+</html>
