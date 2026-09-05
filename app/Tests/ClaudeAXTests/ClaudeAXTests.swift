@@ -624,7 +624,8 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(appearance.items.map { $0.isSeparatorItem ? "—" : $0.title },
                        ["МОИ ТЕМЫ", "Моя тёплая", "—", "Цвет", "Шрифт", "Размер ответов",
                         "Размер вопросов", "Неоновая рамка", "Поля по бокам", "—", "Всем окнам",
-                        "—", "Сохранить как мою тему…", "Удалить мою тему", "Всё как у Claude"])
+                        "—", "Своя тема…", "Изменить мою тему", "Сохранить как мою тему…",
+                        "Удалить мою тему", "Всё как у Claude"])
         XCTAssertFalse(try XCTUnwrap(appearance.items.first).isEnabled) // «МОИ ТЕМЫ» — заголовок
 
         // MARK: «🎨 Цвет ▸» — один список: сброс, полоска, ТЁМНЫЕ, полоска, СВЕТЛЫЕ
@@ -735,8 +736,8 @@ final class ClaudeAXTests: XCTestCase {
             .first { $0.title == MenuModel.appearanceTitle }?.submenu)
         XCTAssertEqual(plain.items.map { $0.isSeparatorItem ? "—" : $0.title },
                        ["Цвет", "Шрифт", "Размер ответов", "Размер вопросов", "Неоновая рамка",
-                        "Поля по бокам", "—", "Всем окнам", "—", "Сохранить как мою тему…",
-                        "Всё как у Claude"])
+                        "Поля по бокам", "—", "Всем окнам", "—", "Своя тема…",
+                        "Сохранить как мою тему…", "Всё как у Claude"])
 
         // Каталога нет — «Цвет» и «Шрифт» пропадают, остальное оформление на месте, а
         // «Раскрасить по кругу» палитры считает само и в themes.json не заглядывает (критик В10).
@@ -746,7 +747,8 @@ final class ClaudeAXTests: XCTestCase {
         let bareAppearance = try XCTUnwrap(bare.items.first { $0.title == MenuModel.appearanceTitle }?.submenu)
         XCTAssertEqual(bareAppearance.items.map { $0.isSeparatorItem ? "—" : $0.title },
                        ["Размер ответов", "Размер вопросов", "Неоновая рамка", "Поля по бокам",
-                        "—", "Всем окнам", "—", "Сохранить как мою тему…", "Всё как у Claude"])
+                        "—", "Всем окнам", "—", "Своя тема…", "Сохранить как мою тему…",
+                        "Всё как у Claude"])
         let bareAll = try XCTUnwrap(bareAppearance.items
             .first { $0.title == MenuModel.allWindowsTitle }?.submenu)
         XCTAssertEqual(bareAll.items.map { $0.isSeparatorItem ? "—" : $0.title },
