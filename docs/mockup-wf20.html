@@ -2,20 +2,26 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>PimpMyClaude — редактор своей темы (WF20)</title>
+<title>PimpMyClaude — WF20: своя тема · меню · цвет проекта</title>
 <style>
   :root{
     --bg:#161618; --card:#232326; --line:rgba(255,255,255,.10);
-    --text:#ececef; --dim:#9b9ba1; --head:#8d8d94; --accent:#3b6fe0; --ok:#4dbb7d;
+    --text:#ececef; --dim:#9b9ba1; --head:#8d8d94; --accent:#3b6fe0; --ok:#4dbb7d; --warn:#d99a9a;
     --menu:#2c2c2e; --panel:#2a2a2d;
   }
   *{box-sizing:border-box}
-  body{margin:0;padding:18px 20px 30px;background:var(--bg);color:var(--text);
+  body{margin:0;padding:18px 20px 34px;background:var(--bg);color:var(--text);
     font:13px/1.45 -apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
   h1{font-size:17px;margin:0 0 3px;font-weight:600}
-  .lead{color:var(--dim);font-size:12.5px;margin:0 0 16px;max-width:900px}
+  .lead{color:var(--dim);font-size:12.5px;margin:0 0 6px;max-width:940px}
   h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--head);
-    font-weight:600;margin:22px 0 9px}
+    font-weight:600;margin:26px 0 9px;padding-top:14px;border-top:1px solid var(--line)}
+  h2:first-of-type{border-top:0;padding-top:0}
+  h3{font-size:12.5px;margin:16px 0 7px;font-weight:600;color:#dcdce1}
+  .capt{font-size:11px;color:var(--head);margin:0 0 5px 2px}
+  .note{color:var(--dim);font-size:12px;margin-top:13px;max-width:940px}
+  b.g{color:#bfe6cf}
+  b.r{color:var(--warn)}
 
   /* ——— живая примерка ——— */
   .live{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
@@ -25,6 +31,7 @@
     display:flex;align-items:center;padding:0 9px;gap:6px}
   .dotm{width:11px;height:11px;border-radius:50%;background:#5a5a5f}
   .dotm.r{background:#ee6a5f}
+  .dotm.y{background:#f5bd4f}
   .pane .bar b{font-size:11.5px;font-weight:500;color:#c9c9cf;margin-left:5px}
   .pane .body{padding:11px 13px 13px}
   .knob{margin:0 0 11px}
@@ -41,9 +48,6 @@
   .seg button{flex:1;background:transparent;border:0;color:var(--text);font:12px -apple-system,sans-serif;
     padding:4px 0;cursor:pointer}
   .seg button.on{background:var(--accent);color:#fff}
-  .name{display:flex;gap:7px;align-items:center;margin:2px 0 10px}
-  .name input{flex:1;background:#1c1c1f;border:1px solid rgba(255,255,255,.18);border-radius:5px;
-    color:var(--text);font:12.5px -apple-system,sans-serif;padding:4px 7px}
   .btns{display:flex;gap:7px;justify-content:flex-end}
   .btns button{background:#3a3a3f;border:0;border-radius:6px;color:var(--text);
     font:12.5px -apple-system,sans-serif;padding:5px 13px;cursor:pointer}
@@ -70,21 +74,22 @@
   .vars{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
   .var{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
   .var.pick{border-color:#3ea06a;background:#1e2a22}
-  .var b{display:block;font-size:15px;margin-bottom:5px}
+  .var b{display:block;font-size:14px;margin-bottom:5px}
   .tag{display:inline-block;font-size:10.5px;font-weight:600;color:#0f1a12;background:#4dbb7d;
     border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:2px}
+  .tag.later{background:#5c6470;color:#e6ecf5}
   .var p{margin:3px 0;font-size:12.5px;color:#d6d6da}
-  .var p.minus{color:#d99a9a}
+  .var p.minus{color:var(--warn)}
   .var p span{color:var(--dim)}
 
   /* меню */
   .cascade{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
-  .capt{font-size:11px;color:var(--head);margin:0 0 5px 4px}
   .menu{background:var(--menu);border:1px solid rgba(255,255,255,.09);border-radius:10px;
     padding:5px 0;box-shadow:0 14px 34px rgba(0,0,0,.55);white-space:nowrap}
   .row{display:flex;align-items:center;height:22px;margin:0 5px;padding:0 7px 0 2px;border-radius:5px}
   .row.sel{background:var(--accent)}
   .row.new{color:#bfe6cf}
+  .row.gone{color:#8a6a6a;text-decoration:line-through;text-decoration-color:#7a5555}
   .chk{width:15px;text-align:center;font-size:11px}
   .ic{width:19px;text-align:center;font-size:12.5px}
   .t{flex:1;padding-right:22px}
@@ -99,36 +104,88 @@
     box-shadow:0 1px 3px rgba(0,0,0,.65)}
   .num{color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
 
+  /* схема положения меню */
+  .stage{position:relative;width:330px;height:186px;background:#0e0e10;border:1px solid var(--line);
+    border-radius:9px;overflow:hidden}
+  .stage .screen{position:absolute;inset:0;background:
+    repeating-linear-gradient(135deg,#121215 0 9px,#141418 9px 18px)}
+  .stage .cwin{position:absolute;border-radius:7px;background:#26262a;border:1px solid rgba(255,255,255,.12);
+    box-shadow:0 8px 22px rgba(0,0,0,.5)}
+  .stage .cbar{height:15px;display:flex;align-items:center;gap:4px;padding:0 6px;
+    border-bottom:1px solid rgba(0,0,0,.35);border-radius:7px 7px 0 0;background:#313136}
+  .stage .cdot{width:7px;height:7px;border-radius:50%}
+  .stage .cbody{padding:7px;font-size:9.5px;color:#7e7e86}
+  .stage .mm{position:absolute;background:var(--menu);border:1px solid rgba(255,255,255,.14);border-radius:6px;
+    box-shadow:0 10px 26px rgba(0,0,0,.6);padding:4px 0}
+  .stage .mm i{display:block;height:8px;margin:3px 6px;border-radius:2px;background:rgba(255,255,255,.20);font-style:normal}
+  .stage .mm i.w1{width:52px} .stage .mm i.w2{width:66px} .stage .mm i.w3{width:44px} .stage .mm i.w4{width:60px}
+  .stage .arrow{position:absolute;font-size:10px;color:#f5bd4f}
+  .stage .lbl{position:absolute;font-size:10px;color:#9b9ba1;background:rgba(0,0,0,.55);
+    padding:1px 5px;border-radius:4px}
+  .stages{display:flex;gap:12px;flex-wrap:wrap}
+
+  /* таблица */
+  table{border-collapse:collapse;width:100%;max-width:940px;font-size:12.5px;margin-top:4px}
+  th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+  th{color:var(--head);font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase;background:#1d1d20}
+  tr.pick td{background:#1e2a22}
+  td.no{color:var(--warn)}
+
+  /* сценарии проекта */
+  .scenes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .scene{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .scene b{display:block;font-size:14px;margin-bottom:6px}
+  .scene p{margin:4px 0;font-size:12.5px;color:#d6d6da}
+  .scene p span{color:var(--dim)}
+  .step{display:flex;gap:7px;align-items:flex-start;margin:5px 0;font-size:12.5px}
+  .step em{font-style:normal;color:var(--accent);font-weight:600;min-width:14px}
+  .pwins{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 2px}
+  .pw{width:150px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,.10);
+    box-shadow:0 8px 20px rgba(0,0,0,.45)}
+  .pw .pt{height:17px;display:flex;align-items:center;gap:4px;padding:0 6px;font-size:9.5px}
+  .pw .pb{height:52px;display:flex}
+  .pw .ps{width:42px}
+  .pw .pm{flex:1;padding:6px 7px;font-size:9.5px}
+  .pw .pl{display:inline-block;height:6px;border-radius:3px;margin-bottom:4px}
+  .file{font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:#1b1b1f;border:1px solid var(--line);
+    border-radius:8px;padding:9px 11px;color:#c9c9cf;white-space:pre;overflow-x:auto;margin:8px 0 0}
+  .file .k{color:#8fb3f5} .file .s{color:#bfe6cf} .file .n{color:#e0c07a}
+
   /* вопросы */
-  .qs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .qs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
   .q{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
   .q b{font-size:13.5px}
   .q ul{margin:7px 0 0;padding-left:17px}
-  .q li{margin:2px 0;font-size:12.5px;color:#d6d6da}
+  .q li{margin:3px 0;font-size:12.5px;color:#d6d6da}
   .q li.rec{color:#bfe6cf}
   .q li.rec i{font-style:normal;color:var(--ok);font-weight:600}
-  .note{color:var(--dim);font-size:12px;margin-top:15px;max-width:900px}
+  .old{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 13px;
+    font-size:12.5px;color:#d6d6da;margin-top:10px;max-width:940px}
 </style>
 </head>
 <body>
 
-<h1>Редактор своей темы — покрути и скажи, какой вариант</h1>
-<p class="lead">Ниже всё живое: двигай ползунки — окно Claude справа красится теми же формулами, что стоят в приложении.
-Текст и акцент подтягиваются по контрасту сами, поэтому нечитаемую тему ползунками не сделать. Внизу три варианта и шесть вопросов.<br>
-В макете цвет меняется мгновенно, в приложении — через <b>полсекунды-секунду</b> после движения ручки (Claude забирает команды раз в полсекунды).
-Пока ручку не тронул, окно стоит в своём прежнем цвете: одно открытие панели ничего не перекрашивает.</p>
+<h1>WF20 — три вещи одним заходом</h1>
+<p class="lead"><b>1.</b> Своя тема ползунками (крутится прямо здесь). &nbsp; <b>2.</b> Меню на жёлтой кнопке
+переезжает влево — и честный разбор, что можно с «вылетом с минуса». &nbsp; <b>3.</b> Цвет проекта без лишних
+действий: появляется сам, выбор темы в окне проекта молча становится темой проекта.<br>
+Внизу — <b>три вопроса</b>, на каждый есть мой вариант с пометкой «рекомендую». Хватит трёх слов в ответ.</p>
 
-<h2>Покрути сам</h2>
+<!-- ================================================================ 1 -->
+<h2>1. Своя тема ползунками — покрути сам</h2>
+<p class="lead">Двигай ручки: окно справа красится теми же формулами, что уедут в приложение. Текст и акцент
+подтягиваются по контрасту сами — нечитаемую тему ползунками не собрать. В приложении цвет догоняет ручку
+за <b>полсекунды-секунду</b> (Claude забирает команды раз в полсекунды). Пока ручку не тронул, окно стоит
+в прежнем цвете: одно открытие панели ничего не перекрашивает.</p>
+
 <div class="live">
-
   <div class="pane">
-    <div class="bar"><span class="dotm r"></span><span class="dotm"></span><span class="dotm"></span><b>Своя тема</b></div>
+    <div class="bar"><span class="dotm r"></span><span class="dotm y"></span><span class="dotm"></span><b>Своя тема</b></div>
     <div class="body">
       <div class="seg">
         <button id="bDark" class="on">Тёмная</button>
         <button id="bLight">Светлая</button>
       </div>
-
       <div class="knob">
         <div class="lab"><b>Цвет</b><i id="vHue">262°</i></div>
         <input id="hue" type="range" min="0" max="359" value="262">
@@ -141,21 +198,19 @@
         <div class="lab"><b>Сила цвета</b><i id="vStr">50 %</i></div>
         <input id="str" type="range" min="0" max="100" value="50">
       </div>
-
       <p class="meter">контраст текста <b id="mText">7,1</b> · акцент <b id="mAcc">5,2</b> — оба в норме</p>
-
       <div class="btns">
         <button>Отмена</button>
         <button class="pr">Сохранить</button>
       </div>
-      <p class="capt" style="margin:8px 0 0">имя темы спросит отдельное окошко по «Сохранить» —
-        в самой панели печатать нельзя (приложение живёт без Dock, буквы уехали бы в Claude)</p>
+      <p class="capt" style="margin:8px 0 0">имя темы спросит отдельное окошко по «Сохранить» — в самой панели
+        печатать нельзя (приложение живёт без Dock, буквы уехали бы в Claude)</p>
     </div>
   </div>
 
   <div>
     <div class="win" id="win">
-      <div class="top" id="wTop"><span class="dotm r"></span><span class="dotm"></span><span class="dotm"></span>
+      <div class="top" id="wTop"><span class="dotm r"></span><span class="dotm y"></span><span class="dotm"></span>
         <span id="wTitle" style="margin-left:5px">Claude — Trelvis</span></div>
       <div class="cols">
         <div class="side" id="wSide">
@@ -174,37 +229,12 @@
   </div>
 </div>
 
-<h2>Три варианта</h2>
-<div class="vars">
-  <div class="var pick">
-    <b>Вариант А — панель<span class="tag">рекомендую</span></b>
-    <p><span>Как:</span> пункт «🎚 Своя тема…» открывает маленькое окошко рядом с окном Claude (как слева).
-      Ползунки, «Сохранить»/«Отмена»; имя спросит отдельное окошко. Окно красится, пока крутишь.</p>
-    <p><span>Плюс:</span> все ручки сразу видно, можно крутить долго, меню не мешает.</p>
-    <p class="minus"><span>Минус:</span> ещё одно окошко на экране — его надо закрывать. Пока оно открыто,
-      меню на жёлтой кнопке не всплывает и «цвет проекта» с «живыми цветами» это окно не трогают — иначе они
-      сбивали бы примерку.</p>
-  </div>
-  <div class="var">
-    <b>Вариант Б — ползунки в меню</b>
-    <p><span>Как:</span> три строки-ползунка прямо в «🎨 Оформление ▸», как «Поля по бокам».
-      Ниже «💾 Сохранить как мою тему…».</p>
-    <p><span>Плюс:</span> ничего нового не открывается, привычное меню.</p>
-    <p class="minus"><span>Минус:</span> меню держит мышь: отпустил — закрылось; имя темы всё равно спросит отдельное окно.</p>
-  </div>
-  <div class="var">
-    <b>Вариант В — шесть цветов вручную</b>
-    <p><span>Как:</span> панель, но вместо трёх ползунков шесть цветных квадратиков (фон, боковина, панель, текст, приглушённый, акцент) — macOS-пипетка на каждый.</p>
-    <p><span>Плюс:</span> полная свобода, можно повторить любую тему из интернета.</p>
-    <p class="minus"><span>Минус:</span> легко сделать нечитаемо, шесть цветов подбирать долго. Годится как «режим для упорных» поверх А.</p>
-  </div>
-</div>
-
-<h2>Как это в меню (вариант А, поверх нового «Оформления»)</h2>
+<h3>Как редактор попадает в меню</h3>
 <div class="cascade">
   <div>
-    <p class="capt">🎨 Оформление ▸</p>
+    <p class="capt">🎨 Оформление ▸ &nbsp;(зелёным — новое, красным зачёркнутым — уходит, см. часть 3)</p>
     <div class="menu">
+      <div class="row gone"><span class="chk"></span><span class="ic">🗂</span><span class="t">Проект: PimpMyClaude</span><span class="arw">▸</span></div>
       <div class="hdr">МОИ ТЕМЫ</div>
       <div class="row"><span class="chk">✓</span><span class="ic">🌑</span><span class="t">Ночная работа</span></div>
       <div class="row"><span class="chk"></span><span class="ic">🌤</span><span class="t">Тёплая</span></div>
@@ -222,80 +252,256 @@
       <div class="row sel new"><span class="chk"></span><span class="ic">🎚</span><span class="t">Своя тема…</span></div>
       <div class="row new"><span class="chk"></span><span class="ic">✏️</span><span class="t">Изменить мою тему</span><span class="arw">▸</span></div>
       <div class="row"><span class="chk"></span><span class="ic">💾</span><span class="t">Сохранить как мою тему…</span></div>
-      <div class="row"><span class="chk"></span><span class="ic">🗑</span><span class="t">Удалить мою тему</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🗑</span><span class="t">Удалить мою тему</span></div>
       <div class="row"><span class="chk"></span><span class="ic">🧹</span><span class="t">Всё как у Claude</span></div>
     </div>
-    <p class="capt" style="margin-top:6px">зелёным — два новых пункта</p>
   </div>
 
   <div>
-    <p class="capt">вариант Б — те же ручки прямо в меню</p>
+    <p class="capt">🖥 Всем окнам ▸ &nbsp;(один новый тумблер вместо всего подменю «Проект»)</p>
     <div class="menu">
-      <div class="hdr">СВОЯ ТЕМА</div>
-      <div class="row slid"><span class="chk"></span><span class="ic">🎨</span><span class="t">Цвет</span>
-        <span class="track"><span class="fill" style="width:58px"></span><span class="kn" style="left:52px"></span></span><span class="num">262°</span></div>
-      <div class="row slid"><span class="chk"></span><span class="ic">💡</span><span class="t">Акцент</span>
-        <span class="track"><span class="fill" style="width:40px"></span><span class="kn" style="left:34px"></span></span><span class="num">+0°</span></div>
-      <div class="row slid"><span class="chk"></span><span class="ic">🌡</span><span class="t">Сила цвета</span>
-        <span class="track"><span class="fill" style="width:40px"></span><span class="kn" style="left:34px"></span></span><span class="num">50</span></div>
-      <div class="row"><span class="chk">✓</span><span class="ic">🌑</span><span class="t">Тёмная</span></div>
-      <div class="row"><span class="chk"></span><span class="ic">☀️</span><span class="t">Светлая</span></div>
+      <div class="hdr">ВСЕМ ОКНАМ</div>
+      <div class="row"><span class="chk"></span><span class="ic">🎨</span><span class="t">Цвет</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🔤</span><span class="t">Шрифт</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер ответов</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🔠</span><span class="t">Размер вопросов</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">✨</span><span class="t">Неоновая рамка</span></div>
       <div class="sep"></div>
-      <div class="row"><span class="chk"></span><span class="ic">💾</span><span class="t">Сохранить как мою тему…</span></div>
+      <div class="row new"><span class="chk">✓</span><span class="ic">🗂</span><span class="t">Цвет по проекту</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🌈</span><span class="t">Раскрасить по кругу</span><span class="arw">▸</span></div>
+      <div class="row"><span class="chk"></span><span class="ic">🌊</span><span class="t">Живые цвета</span><span class="arw">▸</span></div>
+    </div>
+    <p class="capt" style="margin-top:6px">галка стоит по умолчанию: цвет по проекту включён сразу</p>
+  </div>
+</div>
+
+<h3>Панель или что-то попроще</h3>
+<div class="vars">
+  <div class="var pick">
+    <b>А — панель<span class="tag">рекомендую</span></b>
+    <p><span>Как:</span> «🎚 Своя тема…» открывает окошко рядом с окном Claude. Ползунки, «Сохранить»/«Отмена»,
+      имя спросит отдельное окошко. Окно красится, пока крутишь.</p>
+    <p><span>Плюс:</span> все ручки сразу видно, крутить можно долго.</p>
+    <p class="minus"><span>Минус:</span> ещё одно окошко, его надо закрывать. Пока оно открыто, меню на жёлтой
+      кнопке не всплывает, а цвет проекта и живые цвета это окно не трогают — иначе сбили бы примерку.</p>
+  </div>
+  <div class="var">
+    <b>Б — ползунки прямо в меню</b>
+    <p><span>Как:</span> три строки-ползунка в «🎨 Оформление ▸», как «Поля по бокам».</p>
+    <p><span>Плюс:</span> ничего нового не открывается.</p>
+    <p class="minus"><span>Минус:</span> меню держит мышь: отпустил — закрылось. И взять этот вариант можно, только
+      если ползунок «Поля по бокам» из WF14 живьём заработал.</p>
+  </div>
+  <div class="var">
+    <b>В — шесть цветов вручную<span class="tag later">потом</span></b>
+    <p><span>Как:</span> вместо трёх ручек шесть квадратиков с пипеткой (фон, боковина, панель, текст, тише, акцент).</p>
+    <p><span>Плюс:</span> можно повторить любую тему из интернета.</p>
+    <p class="minus"><span>Минус:</span> легко сделать нечитаемо, подбирать долго. Отдельным заходом поверх А.</p>
+  </div>
+</div>
+
+<!-- ================================================================ 2 -->
+<h2>2. Меню на жёлтой кнопке — переезжает влево</h2>
+<p class="lead">Правило простое: правый край меню чуть левее значка «свернуть», верх — чуть ниже него.
+Не влезает у левого края экрана — меню встаёт под левым краем окна, как было раньше.</p>
+
+<div class="stages">
+  <div>
+    <p class="capt">сейчас (WF19): справа от окна, если влезает</p>
+    <div class="stage">
+      <div class="screen"></div>
+      <div class="cwin" style="left:22px;top:26px;width:176px;height:120px">
+        <div class="cbar"><span class="cdot" style="background:#ee6a5f"></span>
+          <span class="cdot" style="background:#f5bd4f"></span><span class="cdot" style="background:#5a5a5f"></span></div>
+        <div class="cbody">окно Claude</div>
+      </div>
+      <div class="mm" style="left:206px;top:34px"><i class="w2"></i><i class="w1"></i><i class="w3"></i><i class="w4"></i><i class="w1"></i></div>
+      <div class="lbl" style="left:206px;top:132px">меню</div>
+    </div>
+  </div>
+
+  <div>
+    <p class="capt">после (слово 05.09 10:40): слева, от жёлтой кнопки</p>
+    <div class="stage">
+      <div class="screen"></div>
+      <div class="cwin" style="left:126px;top:26px;width:176px;height:120px">
+        <div class="cbar"><span class="cdot" style="background:#ee6a5f"></span>
+          <span class="cdot" style="background:#f5bd4f;box-shadow:0 0 0 2px rgba(245,189,79,.45)"></span>
+          <span class="cdot" style="background:#5a5a5f"></span></div>
+        <div class="cbody">окно Claude</div>
+      </div>
+      <div class="mm" style="left:38px;top:37px;width:100px"><i class="w2"></i><i class="w1"></i><i class="w3"></i><i class="w4"></i><i class="w1"></i></div>
+      <div class="arrow" style="left:140px;top:26px">↙</div>
+      <div class="lbl" style="left:36px;top:132px">правый край — на 2 пункта левее жёлтой, верх — на 2 ниже</div>
+    </div>
+  </div>
+
+  <div>
+    <p class="capt">окно у левого края экрана: меню под окном</p>
+    <div class="stage">
+      <div class="screen"></div>
+      <div class="cwin" style="left:8px;top:26px;width:176px;height:120px">
+        <div class="cbar"><span class="cdot" style="background:#ee6a5f"></span>
+          <span class="cdot" style="background:#f5bd4f;box-shadow:0 0 0 2px rgba(245,189,79,.45)"></span>
+          <span class="cdot" style="background:#5a5a5f"></span></div>
+        <div class="cbody">окно Claude</div>
+      </div>
+      <div class="mm" style="left:22px;top:47px;width:100px"><i class="w2"></i><i class="w1"></i><i class="w3"></i><i class="w4"></i><i class="w1"></i></div>
+      <div class="lbl" style="left:8px;top:150px">влево не влезло — падает вниз, как было</div>
     </div>
   </div>
 </div>
 
+<p class="note">Что при этом станет чуть хуже: подменю (Цвет ▸, Шрифт ▸ и так далее) macOS раскрывает туда,
+где есть место, — теперь чаще вправо, поверх левого края окна. Примерку темы мышью будет видно хуже, чем сейчас,
+когда меню стоит справа. Скажешь «неудобно» — вернём «справа» одной строкой.</p>
+
+<h3>«Чтобы вылетало с минуса, а обратно влетало» — разбор честный</h3>
+<p class="lead">Обычное меню macOS <b>анимировать нельзя</b>: его рисует сама система, оно не наше окно, ни начала,
+ни конца показа мы не видим. Поэтому вариантов ровно три.</p>
+
+<table>
+  <tr><th>Вариант</th><th>Что увидишь</th><th>Сколько работы</th><th>Чем плохо</th></tr>
+  <tr class="pick">
+    <td><b class="g">А. Без анимации</b> — рекомендую</td>
+    <td>меню просто появляется в новом месте — слева от кнопки</td>
+    <td>уже в этом воркфлоу, ноль лишнего</td>
+    <td>ничем; просто нет вылета</td>
+  </tr>
+  <tr>
+    <td>Б. Вспышка у кнопки</td>
+    <td>от жёлтой кнопки к месту меню за 0,12 с проскакивает цветная искра, потом появляется меню; при закрытии — обратно</td>
+    <td>маленький кусок, один новый файл</td>
+    <td class="no">это «искра летит», а не «меню вылетает». И перед каждым меню будет пауза 0,12 с — может надоесть за день</td>
+  </tr>
+  <tr>
+    <td>В. Своё меню целиком</td>
+    <td>настоящий вылет и влёт, любая анимация, какую захочешь</td>
+    <td class="no">отдельный воркфлоу: заново все 12 подменю, галки, значки, примерка мышью, ползунки, клавиши, края экрана</td>
+    <td class="no">переписывается всё меню; клавиатуру придётся делать вручную — приложение живёт без Dock</td>
+  </tr>
+</table>
+<p class="note">Моё предложение: сейчас берём <b class="g">А</b> (положение), а «своё меню» ставим отдельной задачей —
+там оживёт не только анимация, но и всё остальное, что в системном меню нельзя.</p>
+
+<!-- ================================================================ 3 -->
+<h2>3. Цвет проекта — без единого лишнего действия</h2>
+<p class="lead">Сейчас надо лезть в «🗂 Проект ▸ → Записать этот вид в проект». Ты сказал: по-дурацки. Становится так:
+у каждого проекта цвет <b>появляется сам</b>, а если он тебе не нравится — просто выбери тему в окне этого проекта,
+и она станет темой проекта. Больше ничего нажимать не надо.</p>
+
+<div class="scenes">
+  <div class="scene">
+    <b>① Цвет появляется сам</b>
+    <p><span>Что делаешь:</span> ничего. Открыл чат в папке — окно уже цветное.</p>
+    <p><span>Как считается:</span> цвет берётся из имени папки, всегда один и тот же — и после перезапуска,
+      и на другом Маке у команды.</p>
+    <div class="pwins" id="autoWins"></div>
+    <p class="capt" style="margin-top:6px">это настоящие цвета: считаны той же формулой, что уедет в приложение</p>
+  </div>
+
+  <div class="scene">
+    <b>② Выбрал тему — она стала темой проекта</b>
+    <div class="step"><em>1</em><span>в окне проекта выбираешь тему (или шрифт, размер, рамку) — как обычно, из меню</span></div>
+    <div class="step"><em>2</em><span>приложение молча кладёт её в папку проекта: <b>.pimpmyclaude.json</b></span></div>
+    <div class="step"><em>3</em><span>все остальные окна этого проекта перекрашиваются сами за пару секунд</span></div>
+    <div class="step"><em>4</em><span>плашка «Цвет записан в проект …» — один раз на папку, чтобы ты знал про файл</span></div>
+    <div class="file"><span class="k">"pimpmyclaude"</span>: <span class="n">1</span>,
+<span class="k">"name"</span>: <span class="s">"PimpMyClaude"</span>,
+<span class="k">"theme"</span>: { <span class="k">"id"</span>: <span class="s">"violet"</span>, … },
+<span class="k">"font"</span>: { <span class="k">"family"</span>: <span class="s">"PT Sans"</span>, … }</div>
+    <p class="capt" style="margin-top:6px">файл едет вместе с папкой — у команды тот же проект будет того же цвета</p>
+  </div>
+
+  <div class="scene">
+    <b>③ Передумал</b>
+    <p><span>«🧹 Всё как у Claude» в окне проекта</span> — снимает тему проекта: файл убирается, окно возвращается
+      к <b>тому самому авто-цвету</b> из ①. То есть это «забудь мой выбор», а не «сделай бесцветным».</p>
+    <p><span>Совсем без цвета</span> — выключи тумблер <b>«🗂 Цвет по проекту»</b> в «🖥 Всем окнам ▸»:
+      цвета снимутся со всех окон проектов сразу. Включил обратно — вернулись.</p>
+    <p><span>Два чата одного проекта</span> — цвет у них всегда один: побеждает <b>последний выбор</b>,
+      второе окно догоняет за пару секунд.</p>
+    <p><span>Окно без папки</span> (просто чат, не проект) — цвет проекта его не трогает вовсе, а выбранная
+      руками тема остаётся только на нём.</p>
+  </div>
+</div>
+
+<h3>Что исчезает из меню</h3>
+<div class="cascade">
+  <div>
+    <p class="capt">было: 🗂 Проект: PimpMyClaude ▸</p>
+    <div class="menu">
+      <div class="hdr">~/_ELVISPROJECTS/PIMPMYCLAUDE</div>
+      <div class="row gone"><span class="chk">✓</span><span class="ic"></span><span class="t">Красить чаты по проекту</span></div>
+      <div class="sep"></div>
+      <div class="row gone"><span class="chk"></span><span class="ic">🎨</span><span class="t">Взять цвет проекта</span></div>
+      <div class="row gone"><span class="chk"></span><span class="ic">💾</span><span class="t">Записать этот вид в проект</span></div>
+      <div class="row gone"><span class="chk"></span><span class="ic">📝</span><span class="t">Вписать строку в AGENTS.md</span></div>
+      <div class="row gone"><span class="chk"></span><span class="ic">🗑</span><span class="t">Убрать настройки из проекта</span></div>
+    </div>
+  </div>
+  <div>
+    <p class="capt">стало: один тумблер в «🖥 Всем окнам ▸»</p>
+    <div class="menu">
+      <div class="row new"><span class="chk">✓</span><span class="ic">🗂</span><span class="t">Цвет по проекту</span></div>
+    </div>
+    <p class="capt" style="margin-top:8px">кто что делает вместо убранных пунктов:</p>
+    <div class="old" style="margin-top:2px">
+      «Взять цвет проекта» — не нужно, цвет и так стоит.<br>
+      «Записать этот вид» — происходит само, когда выбираешь тему.<br>
+      «Убрать настройки» — это «🧹 Всё как у Claude» в окне проекта.<br>
+      <b class="r">«Вписать строку в AGENTS.md» пропадает совсем</b> — памятку агенту проекта больше никто не пишет.
+      Если жалко — скажи, верну отдельным пунктом.
+    </div>
+  </div>
+</div>
+
+<h3>Где цвет проекта молчит (чтобы не удивляло)</h3>
+<div class="old">
+  <b>Пока крутятся «🌊 Живые цвета»</b> — цвет проекта не вмешивается, иначе окна мигали бы между ними.<br>
+  <b>После «🌈 Раскрасить по кругу»</b> — покрашенные окна проект не трогает, пока не сбросишь покраску.<br>
+  <b>Пока задан вид «всем окнам»</b> (Всем окнам ▸ Цвет) — это твой общий приказ, он сильнее; снял — цвет проекта вернулся.<br>
+  <b>Пока открыта панель «Своя тема»</b> — окно, которое примеряешь, никто не перекрашивает.
+</div>
+
+<!-- ================================================================ вопросы -->
 <h2>👾 Элвис, ответь коротко</h2>
 <div class="qs">
-  <div class="q"><b>1. Панель или ползунки в меню?</b>
+  <div class="q"><b>1. Цвет проекта до первого выбора</b>
     <ul>
-      <li class="rec"><i>А — панель</i> (рекомендую): крутить можно сколько угодно, ничего не мешает.</li>
-      <li>Б — ползунки в меню: ничего не открывается, но меню закрывается на каждый чих. И взять его можно,
-        только если ползунок «Поля по бокам» из WF14 живьём заработает — такие ползунки в меню на новой macOS
-        ещё не проверены.</li>
+      <li class="rec"><i>Авто-цвет по имени папки</i> (рекомендую): открыл чат — окно уже цветное, ничего делать
+        не надо. Цвет устойчивый: один и тот же всегда и у всех.</li>
+      <li>Без цвета, пока сам не выберешь: проект стоит как обычный Claude, цвет появляется только после того,
+        как ты выбрал тему в его окне.</li>
     </ul>
   </div>
-  <div class="q"><b>2. Сколько ручек?</b>
+  <div class="q"><b>2. Анимация меню</b>
     <ul>
-      <li class="rec"><i>Три</i> (рекомендую): цвет, акцент, сила + тёмная/светлая.</li>
+      <li class="rec"><i>Без анимации</i> (рекомендую): сейчас делаем только новое положение — слева от кнопки.</li>
+      <li>Вспышка у кнопки: искра летит от жёлтой к меню за 0,12 с. Дёшево, но это не «меню вылетает»,
+        и перед каждым меню будет маленькая пауза.</li>
+      <li>Своё меню целиком — настоящий вылет и влёт, но это <b>отдельный воркфлоу</b>: переписывается всё меню.</li>
+    </ul>
+  </div>
+  <div class="q"><b>3. Сколько ручек в редакторе</b>
+    <ul>
+      <li class="rec"><i>Три</i> (рекомендую): цвет, акцент, сила + переключатель тёмная/светлая.</li>
       <li>Пять: плюс шрифт и размер текста — тогда одна панель настраивает вообще всё окно. Шрифт при этом будет
         выпадающим списком, а не ползунком: семейств сотни, ползунком их не листают.</li>
-      <li>Шесть цветов вручную (вариант В) — отдельно и позже.</li>
-    </ul>
-  </div>
-  <div class="q"><b>3. Держать читаемость силой?</b>
-    <ul>
-      <li class="rec"><i>Да</i> (рекомендую): текст и акцент всегда подтягиваются по контрасту — испортить нельзя.</li>
-      <li>Нет: добавить галку «без ограничений», можно сделать чёрное на чёрном.</li>
-    </ul>
-  </div>
-  <div class="q"><b>4. Запоминать положение ползунков?</b>
-    <ul>
-      <li class="rec"><i>Да</i> (рекомендую): в файле тем появится строчка с ручками — «Изменить» откроет тему ровно там,
-        где оставил. У тем из готового списка ручек в файле не будет: их панель подберёт по цветам и честно напишет
-        «подобрал» — иначе «Изменить» молча перекрасил бы такую тему.</li>
-      <li>Нет: подбирать ручки по цветам каждый раз (сдвиг на пару градусов и процентов).</li>
-    </ul>
-  </div>
-  <div class="q"><b>5. Крестик на панели — это что?</b>
-    <ul>
-      <li class="rec"><i>Отмена</i> (рекомендую): окно возвращает прежний цвет, ничего не сохраняется.</li>
-      <li>Сохранить молча — но тогда случайное закрытие перезапишет тему.</li>
-    </ul>
-  </div>
-  <div class="q"><b>6. Красить только это окно?</b>
-    <ul>
-      <li class="rec"><i>Да</i> (рекомендую): пока крутишь — красится окно, из которого открыл. «Всем окнам» — как и раньше, отдельным пунктом после сохранения.</li>
-      <li>Красить сразу все окна — рябит в глазах.</li>
     </ul>
   </div>
 </div>
 
-<p class="note">Всё, что видно выше, — Swift и меню приложения. Страницу Claude (inject.js) и лоадер трогать не нужно вовсе,
-значит «Поставить снова» команде не понадобится: тема уезжает в окно тем же способом, что и готовые темы из списка.<br>
-Ещё одно, чтобы не удивляло: правишь свою тему — перекрашивается то окно, где правишь. Другие окна, где стоит эта же тема,
-подхватят новый цвет, когда выберешь её там заново.</p>
+<div class="old">
+  <b>Уже решено (если не скажешь иного, идём так):</b> панель, а не ползунки в меню · читаемость держим силой,
+  испортить тему нельзя · положение ручек запоминается, «Изменить» открывает тему ровно там, где оставил ·
+  крестик на панели = «Отмена» · красим только то окно, из которого открыл.
+</div>
+
+<p class="note">Всё, что выше, — приложение и его меню. Страницу Claude и патч трогать не нужно вовсе,
+значит «Поставить снова» команде не понадобится.<br>
+Ещё одно, чтобы не удивляло: правишь свою тему — перекрашивается то окно, где правишь. Другие окна, где стоит
+эта же тема, подхватят новый цвет, когда выберешь её там заново.</p>
 
 <script>
 (function(){
@@ -330,7 +536,7 @@
 
   function palette(hue, light, force, shift){
     force = Math.min(Math.max(force,0),1);
-    var ah = norm(hue + shift), bg, side, panel, fg, muted, acc, l;
+    var ah = norm(hue + (shift || 0)), bg, side, panel, fg, muted, acc, l;
     if (light){
       l = 96 - 4*force;
       bg = capped({h:hue, s:Math.min(60, 40+20*force), l:l});
@@ -349,6 +555,14 @@
     return { accent:hex(acc), background:hex(bg), foreground:hex(fg), sidebar:hex(side),
              panel:hex(panel), muted:hex(muted),
              tc:contrast(fg,bg), ac:contrast(acc,bg) };
+  }
+
+  // ——— цвет из имени папки: тот же FNV-1a, что уедет в Swift ———
+  function hueForName(name){
+    var h = 14695981039346656037n, prime = 1099511628211n, mask = (1n << 64n) - 1n;
+    var bytes = new TextEncoder().encode(String(name).toLowerCase());
+    for (var i = 0; i < bytes.length; i++){ h = ((h ^ BigInt(bytes[i])) * prime) & mask; }
+    return Number(h % 360n);
   }
 
   var light = false;
@@ -388,6 +602,27 @@
     el("sw").innerHTML = out;
   }
 
+  // мини-окна проектов с авто-цветом
+  function projectWindows(){
+    var list = ["Trelvis", "PimpMyClaude", "Dictatorik", "VkusnoffKz"];
+    var box = el("autoWins");
+    if (!box) return;
+    var out = "";
+    for (var i = 0; i < list.length; i++){
+      var name = list[i], hue = hueForName(name), p = palette(hue, false, 0.5, 0);
+      out += '<div class="pw" style="background:' + p.background + '">' +
+             '<div class="pt" style="background:' + p.sidebar + ';color:' + p.foreground + '">' +
+             '<span class="dotm r" style="width:7px;height:7px"></span>' +
+             '<span class="dotm y" style="width:7px;height:7px"></span>' +
+             '<span style="margin-left:3px">' + name + ' · ' + hue + '°</span></div>' +
+             '<div class="pb"><div class="ps" style="background:' + p.sidebar + '"></div>' +
+             '<div class="pm" style="color:' + p.muted + '">' +
+             '<span class="pl" style="width:64px;background:' + p.panel + '"></span><br>' +
+             '<span class="pl" style="width:44px;background:' + p.accent + '"></span></div></div></div>';
+    }
+    box.innerHTML = out;
+  }
+
   el("hue").addEventListener("input", draw);
   el("acc").addEventListener("input", draw);
   el("str").addEventListener("input", draw);
@@ -396,6 +631,7 @@
   el("bLight").addEventListener("click", function(){ light = true;
     el("bLight").className = "on"; el("bDark").className = ""; draw(); });
   draw();
+  projectWindows();
 })();
 </script>
 

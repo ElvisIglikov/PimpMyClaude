@@ -80,9 +80,10 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
 
 ## Сборка, гейт, релиз
 
-- `cd app && swift build && swift test` (85 тестов). JS: `node --check claude-patch/inject.js` + скретч-тесты в
-  scratchpad сессии (`theme-store-test.mjs`, `theme-css-test.mjs`, `progress-test.mjs`, `progress-dom-test.mjs`,
-  `workflow-insert-test.mjs`) — они не в репозитории; новый чат их не найдёт, при необходимости просить агента написать.
+- **`bash tools/test.sh`** — один прогон всего (WF24): `node --test tests/` (10 наборов, 122 проверки; страница гоняется в
+  `node:vm` через люк `globalThis.__myclaudeTest` и стаб DOM `tests/dom.mjs`, путь к файлу — `MYCLAUDE_INJECT`) + сторожевые
+  grep-проверки inject.js + `swift test` (87). Красное = гейт не проходит. Чеклист гейта и «проверка на своём Маке» для
+  команды — `docs/CHECKLIST.md`.
 - `tools/bundle.sh release` → `app/.build/PimpMyClaude.app` (Developer ID). **Подмена без простоя:** сначала bundle,
   потом `pkill -f PimpMyClaude.app/Contents/MacOS; rm -rf /Applications/PimpMyClaude.app; ditto …; open …` — Элвис
   дважды ловил «минус не работает», когда приложение лежало во время сборки.
@@ -146,7 +147,6 @@ WF1–3 (03.09) ручка/меню/⌘Q в Hammerspoon → WF4 PimpMyClaude.app
 - StatusFeed: подсказка полоски со сводками только там, где есть `~/_ElvisProjects` (`projectsRoot` в claude.json);
   при 9+ проектах хвост списка по алфавиту отбрасывается (32 КБ).
 - Lua-модули в `hammerspoon/` — только источник логики, тем/полоски не знают; README про них честно говорит.
-- Скретч-тесты JS живут вне репозитория (см. выше).
 - Задачи в Trelvis #5312–#5343 закрыты агентом, ждут проверки Элвиса.
 
 ## Кто чем владеет при параллельных батчах (правило одного писателя)
