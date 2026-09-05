@@ -7,6 +7,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { loadInject, loadInner } from "./load.mjs";
 
+// Команда «нового окна» асинхронная и запускается «в фон» (newWindowStart), так
+// что после отправки события даём микрозадачам добежать до первой охраны.
+const drain = () => new Promise(resolve => setImmediate(resolve));
+
 const command = (extra = {}) => ({
   id: "n1", action: "new-window", at: "now", scope: "window", title: "Claude",
   x: 100, y: 200, text: "Привет", ...extra,
@@ -48,9 +52,10 @@ test("домашний экран узнаётся по пути и полю в�
 });
 
 test("стор popout признаётся только с popoutWindows и openPopout", () => {
-  const { inner, win } = loadInner({ href: "https://claude.ai/epitaxy/local_abc" });
+  const loaded = loadInner({ href: "https://claude.ai/epitaxy/local_abc" });
+  const { inner } = loaded;
   // Map обязана быть из ТОГО ЖЕ реалма: страница проверяет instanceof Map.
-  const makeMap = () => win.eval("new Map()");
+  const makeMap = () => loaded.run("new Map()");
   assert.equal(inner.newWindowStoreOk({ getState: () => ({ popoutWindows: makeMap(), openPopout: () => {} }) }), true);
   assert.equal(inner.newWindowStoreOk({ getState: () => ({ popoutWindows: makeMap() }) }), false, "нет openPopout");
   assert.equal(inner.newWindowStoreOk({ getState: () => ({ openPopout: () => {} }) }), false, "нет popoutWindows");
@@ -70,14 +75,17 @@ test("битая команда до работы не доходит", async ()
     ["координаты строками", command({ x: "100", y: "200" })],
     ["координаты не пришли", command({ x: undefined, y: undefined })],
   ]) {
-    assert.equal(await loaded.inner.runNewWindowCommand(detail), false, what);
+    loaded.dom.command(detail);
+    await drain();
     assert.equal(loaded.api.status().newWindow.state, "bad-command", what);
+    assert.equal(loaded.api.status().newWindow.busy, undefined, `${what}: кнопка не занята`);
   }
 });
 
 test("папка — только абсолютный путь", async () => {
   const loaded = loadInject({ href: "https://claude.ai/epitaxy/local_abc", title: "Claude" });
-  assert.equal(await loaded.inner.runNewWindowCommand(command({ folder: "относительный/путь" })), false);
+  loaded.dom.command(command({ folder: "относительный/путь" }));
+  await drain();
   const mark = loaded.api.status().newWindow;
   assert.equal(mark.state, "bad-command");
   assert.equal(mark.step, "folder", "видно, на чём споткнулись");
@@ -85,24 +93,48 @@ test("папка — только абсолютный путь", async () => {
 
 test("второй клик, пока идёт первый, метится busy", async () => {
   const loaded = loadInject({ href: "https://claude.ai/epitaxy/local_abc", title: "Claude" });
-  // Первый запуск уходит искать стор (его на пустой странице нет) и остаётся
-  // занятым; второй обязан отбиться сразу.
-  loaded.inner.runNewWindowCommand(command()).catch(() => {});
+  // Кнопку первый запуск занимает СИНХРОННО, до первого await, — поэтому второй
+  // клик проверяем тем же ходом, не давая первому добежать.
+  loaded.dom.command(command());
   assert.equal(loaded.api.status().newWindow.busy, true, "первый запуск занял кнопку");
-  assert.equal(await loaded.inner.runNewWindowCommand(command({ id: "n2" })), false);
-  assert.equal(loaded.api.status().newWindow.state, "busy");
+  assert.equal(loaded.api.status().newWindow.runs, 1);
+  loaded.dom.command(command({ id: "n2" }));
+  assert.equal(loaded.api.status().newWindow.state, "busy", "второй «Привет» в второй чат никому не нужен");
+  assert.equal(loaded.api.status().newWindow.runs, 1, "второй запуск не начинался");
+  await drain();
+  assert.equal(loaded.api.status().newWindow.busy, false, "первый запуск кнопку отпустил");
 });
 
 test("команду берёт только главное окно", async () => {
   const popup = loadInject({ href: "about:blank", title: "Второе окно" });
-  assert.equal(await popup.inner.runNewWindowCommand(command({ title: "Второе окно" })), false);
+  popup.dom.command(command({ title: "Второе окно" }));
+  await drain();
   assert.equal(popup.api.status().newWindow, null, "подчинённое окно даже не помечает запуск");
 });
 
 test("адресация окна: поле match сверяется с путём страницы", async () => {
   const loaded = loadInject({ href: "https://claude.ai/epitaxy/local_f44e46bb", title: "Claude", hasFocus: false });
-  assert.equal(await loaded.inner.runNewWindowCommand(command({ match: "/epitaxy/local_zzz", x: "нет" })), false);
+  loaded.dom.command(command({ match: "/epitaxy/local_zzz", x: "нет" }));
+  await drain();
   assert.equal(loaded.api.status().newWindow, null, "чужой путь — команда не наша, метки нет");
-  assert.equal(await loaded.inner.runNewWindowCommand(command({ match: "/epitaxy/local_f44e46bb", text: "" })), false);
+  loaded.dom.command(command({ match: "/epitaxy/local_f44e46bb", text: "" }));
+  await drain();
   assert.equal(loaded.api.status().newWindow.state, "bad-command", "свой путь — команда наша, отбили по контракту");
+});
+
+test("попап «В отдельное окно» отвечает плашкой, а не молчанием", async () => {
+  const popup = loadInject({ href: "about:blank", title: "Второе окно" });
+  popup.dom.command({ id: "p1", action: "popout-window", at: "now", scope: "window", title: "Второе окно", x: 10, y: 20 });
+  await drain();
+  const mark = popup.api.status().newWindow;
+  assert.equal(mark.state, "already", "чат уже в отдельном окне");
+  assert.equal(mark.step, "popout");
+  assert.ok(popup.document.body.textContent.includes("уже в отдельном окне"), "плашка показана");
+});
+
+test("popout проверяет контракт команды раньше, чем показывает плашку", async () => {
+  const popup = loadInject({ href: "about:blank", title: "Второе окно" });
+  popup.dom.command({ id: "p2", action: "popout-window", at: "now", scope: "window", title: "Второе окно", x: "10", y: "20" });
+  await drain();
+  assert.equal(popup.api.status().newWindow.state, "bad-command", "строки вместо чисел — это битая команда");
 });

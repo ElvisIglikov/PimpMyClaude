@@ -9,6 +9,11 @@
 //   loadInject({ html?, geometry?, storage? }) → { win, api, inner, counters }
 // где win — окно-стаб, api — window.__myclaude, inner — объект из тестового
 // люка inject.js, counters — счётчики подписок, наблюдателей и таймеров.
+//
+// Как гонять: `tools/test.sh --js` или `node --test` из корня репозитория.
+// `node --test tests/` на node 26 НЕ работает (каталог он пытается загрузить
+// как модуль) — путь к каталогу заменяется списком файлов: `node --test
+// tests/*.test.mjs`.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -56,9 +61,12 @@ export const loadInject = ({
   return {
     win,
     dom,
+    document: dom.document,
     parts,
-    api: win.__myclaude,
-    inner,
+    // api и inner — свойства-геттеры: после второго прогона инжекта (reload)
+    // объект в окне новый, и снимок здесь врал бы.
+    get api() { return win.__myclaude; },
+    get inner() { return inner; },
     counters: dom.counters,
     version,
     error,
@@ -71,7 +79,10 @@ export const loadInject = ({
       catch (thrown) { return { version: null, error: thrown, inner }; }
       return { version: again, error: null, inner, api: win.__myclaude };
     },
-    get innerNow() { return inner; },
+    // Выполнить код В КОНТЕКСТЕ страницы: значения из чужого реалма (Map,
+    // Promise) страница проверяет через instanceof, и такие объекты обязаны
+    // родиться там же, где живёт inject.js.
+    run: code => vm.runInContext(code, win),
   };
 };
 

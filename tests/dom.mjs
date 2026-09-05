@@ -107,7 +107,9 @@ export const createDom = ({
   viewport = { width: 1200, height: 800 },
   hasFocus = true,
 } = {}) => {
-  const counters = { listeners: 0, observers: 0, timers: 0, intervals: 0, rafs: 0, sheets: 0 };
+  // sheets считается на лету: тема, шрифт и размер живут конструируемыми
+  // таблицами (adoptedStyleSheets), и их число — тот же счётчик утечки.
+  const counters = { listeners: 0, observers: 0, timers: 0, intervals: 0, rafs: 0 };
   const timers = new Map();
   let timerSeq = 1;
 
@@ -439,6 +441,11 @@ export const createDom = ({
     dispatchEvent(event) { return fireListeners(document, makeEvent(event)); },
   });
 
+  Object.defineProperty(counters, "sheets", {
+    enumerable: true,
+    get: () => document.adoptedStyleSheets.length,
+  });
+
   class CSSStyleSheet {
     constructor() { this.cssText = ""; }
     replaceSync(text) { this.cssText = String(text); }
@@ -482,12 +489,21 @@ export const createDom = ({
     else counters.timers -= 1;
   };
 
+  // Node нужен одной проверке в разделе 9 (`node instanceof Node`): свой класс
+  // узлам стаба не родня, поэтому опознаём их по nodeType.
+  const Node = class {};
+  Object.defineProperty(Node, Symbol.hasInstance, {
+    value: value => Boolean(value && typeof value === "object" && "nodeType" in value),
+  });
+
+  // Встроенные объекты языка (Map, JSON, Promise…) в песочницу НЕ кладём: у
+  // контекста vm они свои, а хостовые ломали бы `instanceof Map` в разборе
+  // стора popout (раздел 12б). Кладём только то, чего у контекста нет.
   const win = {
     console,
-    JSON, Math, Date, Number, String, Object, Array, Boolean, Set, Map, WeakMap, WeakSet,
-    RegExp, Error, TypeError, Promise, Symbol, Intl, URL, URLSearchParams,
-    parseFloat, parseInt, isNaN, isFinite, encodeURIComponent, decodeURIComponent, structuredClone,
+    URL,
     document,
+    Node,
     location: {
       href,
       pathname: (() => { try { return new URL(href).pathname; } catch { return href; } })(),
@@ -568,6 +584,8 @@ export const createDom = ({
     queryAll: selector => document.querySelectorAll(selector),
     // Число живых таймеров нужного вида.
     count: kind => [...timers.values()].filter(item => item.kind === kind).length,
+    // Их номера — по порядку постановки: тику живых цветов достаётся последний.
+    ids: kind => [...timers.entries()].filter(([, item]) => item.kind === kind).map(([id]) => id),
     // Прогнать один таймер по id или все таймеры вида.
     fire: id => timers.get(id)?.fn(),
     fireKind: kind => {
