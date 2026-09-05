@@ -1,0 +1,25 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf20-2026-09-04.md",
+  "project": "⚪PimpMyClaude",
+  "status": "идёт",
+  "trelvis": "#5382 #5416 #5419",
+  "branch": "wf20",
+  "tag": "wf20-start",
+  "script_path": null,
+  "run_id": null,
+  "orchestrator": "Fable 5.1 high; все агенты Opus max",
+  "decision": "по рекомендациям (слово Элвиса 18:15 «почему остановился» = продолжать)",
+  "next_steps": [
+    "волна: E1 → E2 → D → V",
+    "гейт: tools/test.sh, bundle → swap, живые проверки (меню слева, авто-цвет, панель)",
+    "коммит, слияние; далее WF17/21/22/23"
+  ],
+  "log": [
+    {
+      "at": "2026-09-05T18:20:00+05:00",
+      "who": "оркестратор",
+      "what": "ветка wf20 от main после WF24; запуск волны"
+    }
+  ],
+  "watchdog": "watchdog-pimpmyclaude-0409"
+}
