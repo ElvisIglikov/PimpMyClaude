@@ -1,7 +1,7 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf24-2026-09-04.md",
   "project": "⚪PimpMyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "trelvis": "#5386",
   "branch": "wf24",
   "tag": "wf24-start",
@@ -24,6 +24,11 @@
       "at": "2026-09-05T17:40:00+05:00",
       "who": "оркестратор",
       "what": "волна ok: люк, 9 наборов (113 проверок), tools/test.sh (87 Swift), CHECKLIST; verify: блокер — нет теста идемпотентности → фикс-батч; находка 2 (файлы WF24 попали в коммит aa96cde планa WF20) — принята, историю не переписываем"
+    },
+    {
+      "at": "2026-09-05T18:00:00+05:00",
+      "who": "оркестратор",
+      "what": "фикс-батч: tests/idempotent.test.mjs (9 проверок, отрицательный контроль краснеет); tools/test.sh зелёный: 10 наборов / 122 проверки + 87 Swift. README/AGENTS дописаны. Финиш"
     }
   ],
   "watchdog": "watchdog-pimpmyclaude-0409",
