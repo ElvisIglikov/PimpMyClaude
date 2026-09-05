@@ -38,7 +38,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf19-a-1";
+  const VERSION = "wf24-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -4763,6 +4763,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   };
   window.__myclaude = api;
   track(() => { if (window.__myclaude === api) { try { delete window.__myclaude; } catch { window.__myclaude = undefined; } } });
+
+  // Тестовый люк: в бою этой функции нет, объект даже не собирается.
+  // Ставит её только tests/load.mjs, чтобы дотянуться до чистых функций замыкания.
+  // Глушителя ошибок здесь нет намеренно: переименовали функцию — люк обязан кричать, а не отдавать тестам undefined.
+  if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ themeCss, epitaxyCss, fontCss, sizeCss,
+    frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
+    chatKey, sessionKey, themeKey, legacyKey, mapEntry, entryLayer, readThemeMap, writeThemeMap, liveRing, livePalette,
+    parseProgressText, progressShares, statusLines, statusFeedLines, statusKey, runWorkflowCommand, newWindowSegment,
+    newWindowSessionId, newWindowAtHome, newWindowStoreOk });
 
   // Всё, что ниже, трогает живую страницу и может бросить на неготовой
   // разметке. Такое падение не должно оставлять в окне зомби: установка

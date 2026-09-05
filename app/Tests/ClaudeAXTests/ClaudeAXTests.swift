@@ -2501,6 +2501,92 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(sent, 1)
     }
 
+    // MARK: - Сверки, которые до WF24 держались только на глазах
+
+    /// Радиус рамки по версии macOS — через константы `LiveStyle`, а не через числа (решение 6.1 плана WF24):
+    /// «26 → 15» гейт ещё может подвинуть, а «13–15 → 10» и есть автоматическая половина проверки
+    /// на старых системах — своей машины с ними у нас нет.
+    func testFrameRadiusMatchesMacOSMajor() throws {
+        for major in [13, 14, 15] {
+            XCTAssertEqual(LiveStyle.frameRadius(majorVersion: major), LiveStyle.legacyFrameRadius,
+                           "macOS \(major): угол окна 10–11 pt, строке в claude.css там взяться неоткуда")
+        }
+        XCTAssertEqual(LiveStyle.legacyFrameRadius, 10)
+        XCTAssertEqual(LiveStyle.frameRadius(majorVersion: LiveStyle.modernMacOSVersion - 1),
+                       LiveStyle.legacyFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(majorVersion: LiveStyle.modernMacOSVersion),
+                       LiveStyle.modernFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(majorVersion: 26), LiveStyle.modernFrameRadius)
+        XCTAssertNotEqual(LiveStyle.modernFrameRadius, LiveStyle.legacyFrameRadius,
+                          "порог по версии перестал что-либо менять")
+
+        // Необязательный ключ frameRadius живого claude.json перебивает мажор; мусор и значения вне 0…40 — мимо.
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":12}", majorVersion: 15), 12)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":0}", majorVersion: 26), 0)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":\(LiveStyle.maxFrameRadius + 1)}",
+                                             majorVersion: 15), LiveStyle.legacyFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":-1}", majorVersion: 15),
+                       LiveStyle.legacyFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":\"толще\"}", majorVersion: 26),
+                       LiveStyle.modernFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "не json", majorVersion: 15), LiveStyle.legacyFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(config: nil, majorVersion: 15), LiveStyle.legacyFrameRadius)
+
+        // Инлайн-радиус самой рамки в inject.js — та же десятка: на macOS 13–15 угол ровный
+        // без единой строки в claude.css. Именно это и просим глазами подтвердить у команды.
+        let inject = try String(contentsOf: ClaudeAXTests.injectURL, encoding: .utf8)
+        let marker = "const WINDOW_FRAME_RADIUS = "
+        guard let found = inject.range(of: marker) else {
+            return XCTFail("в inject.js не нашлась константа «\(marker)»")
+        }
+        XCTAssertEqual(Int(inject[found.upperBound...].prefix { $0.isNumber }), LiveStyle.legacyFrameRadius,
+                       "рамка в inject.js рисуется не тем радиусом, который ждёт macOS 13–15")
+    }
+
+    /// Команда в Swift ↔ ветка разбора в inject.js (решение 9 плана WF24, находка К1 критика).
+    /// Полного равенства нет и не будет: часть команд исполняет только AX, часть пишется мимо enum —
+    /// отсюда два списка-исключения. **Дополняет тот, кто добавляет команду.**
+    func testCommandContractMatchesInjectJS() throws {
+        let axOnly: Set<ClaudeCommand> = [.newChat, .arrange, .show]    // исполняет AX, ветки в JS нет
+        let pageOnly: Set<String> = ["theme", "status", "live-colors"]  // пишутся мимо enum
+        // `theme`/`status` складывают ClaudeActions и StatusFeed, `live-colors` (WF18) — LiveColors.swift:
+        // команда уходит строкой, enum ради неё не расширяли.
+
+        let inject = try String(contentsOf: ClaudeAXTests.injectURL, encoding: .utf8)
+        let branches = Set(ClaudeAXTests.commandBranches(in: inject))
+        XCTAssertFalse(branches.isEmpty, "в inject.js не нашлось ни одной ветки if (action === \"…\")")
+
+        for command in ClaudeCommand.allCases where !axOnly.contains(command) {
+            XCTAssertTrue(branches.contains(command.rawValue),
+                          "команда «\(command.rawValue)» есть в Swift, а ветки в inject.js нет: "
+                          + "допиши разбор в разделе 15 или внеси команду в axOnly")
+        }
+        let known = Set(ClaudeCommand.allCases.map { $0.rawValue })
+        for branch in branches.sorted() where !pageOnly.contains(branch) {
+            XCTAssertTrue(known.contains(branch),
+                          "ветка «\(branch)» в inject.js без команды в ClaudeCommand: "
+                          + "заведи команду или внеси ветку в pageOnly")
+        }
+    }
+
+    /// Боевой inject.js из репозитория — тот самый файл, что уезжает в Claude (кладёт tools/bundle.sh).
+    private static let injectURL = repositoryRoot
+        .appendingPathComponent("claude-patch", isDirectory: true)
+        .appendingPathComponent("inject.js")
+
+    /// Ветки разбора команды: все `if (action === "…")` файла (раздел 15). Скобка в примете
+    /// обязательна — без неё в список попадает `typeof detail?.action === "string"` парой строк выше.
+    private static func commandBranches(in text: String) -> [String] {
+        var found: [String] = []
+        var rest = Substring(text)
+        while let marker = rest.range(of: "(action === \"") {
+            let tail = rest[marker.upperBound...]
+            if let end = tail.firstIndex(of: "\"") { found.append(String(tail[..<end])) }
+            rest = tail
+        }
+        return found
+    }
+
     /// Наведение на пункт без popUp: так его зовёт AppKit — через делегата подменю.
     private func highlight(_ menu: NSMenu, _ item: NSMenuItem?) {
         guard let delegate = menu.delegate else {
