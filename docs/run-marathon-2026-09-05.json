@@ -53,8 +53,13 @@
       "at": "2026-09-06T00:40:00+05:00",
       "who": "оркестратор",
       "what": "WF20 финиш и слит в main; макеты WF32/33/21/22/28 готовы, отправлены Элвису; дальше — планирование WF29/30/31/34/35 (без интерфейса)"
+    },
+    {
+      "at": "2026-09-06T00:55:00+05:00",
+      "who": "оркестратор",
+      "what": "волна планирования WF29/30/31/34/35: планировщик → критик → правки, 15 агентов Opus max; дальше кодинг по очереди 29 → 34 → 31 → 30 → 35"
     }
   ],
-  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-wave1-wf20-gate-and-mockups-wf_1c7c429d-d1f.js",
-  "run_id": "wf_1c7c429d-d1f"
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-plans-wf29-35-wf_f4da27fc-c54.js",
+  "run_id": "wf_f4da27fc-c54"
 }
