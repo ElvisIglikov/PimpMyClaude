@@ -7,6 +7,21 @@
   "tag": "wf29-start",
   "watchdog": "watchdog-pimpmyclaude-0509",
   "orchestrator": "Fable 5.1 high; все агенты Opus max",
-  "next_steps": ["волна 1 A∥B → волна 2 V∥D → фикс по V → гейт по плану (п. 0–11), слияние в main --no-ff"],
-  "log": [{"at": "2026-09-06T04:50:00+05:00", "who": "оркестратор", "what": "ветка wf29 от main 8141014; чужой probe.js заменён на пустышку; замер CPU до — в scratchpad; запуск волны"}]
+  "next_steps": [
+    "волна 1 A∥B → волна 2 V∥D → фикс по V → гейт по плану (п. 0–11), слияние в main --no-ff"
+  ],
+  "log": [
+    {
+      "at": "2026-09-06T04:50:00+05:00",
+      "who": "оркестратор",
+      "what": "ветка wf29 от main 8141014; чужой probe.js заменён на пустышку; замер CPU до — в scratchpad; запуск волны"
+    },
+    {
+      "at": "2026-09-06T04:55:00+05:00",
+      "who": "оркестратор",
+      "what": "WF29 кодинг запущен: A∥B → V∥D → фикс → V2 (Opus max)"
+    }
+  ],
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-wf29-code-wf_2165cdb2-c95.js",
+  "run_id": "wf_2165cdb2-c95"
 }
