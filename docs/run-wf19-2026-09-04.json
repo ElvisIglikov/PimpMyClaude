@@ -1,7 +1,7 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf19-2026-09-04.md",
   "project": "⚪PimpMyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "trelvis": "#5383",
   "branch": "wf19",
   "tag": "wf19-start",
@@ -19,6 +19,11 @@
       "at": "2026-09-05T02:50:00+05:00",
       "who": "оркестратор",
       "what": "ветка wf19 от main после WF18; запуск волны (первая попытка 02:55 отбита недоступным классификатором)"
+    },
+    {
+      "at": "2026-09-05T11:50:00+05:00",
+      "who": "оркестратор",
+      "what": "A-js, A-swift (85 тестов), D; verify fix-needed по докам и шву mainWindowMatch — внесено на гейте (TEAM.md, ClaudeAXController); п. 5 (title:\"\" запас) отменён — match достаточно; живьём ⌥⌘N → ok/back:row с match. Бандл подменён. Финиш"
     }
   ],
   "watchdog": "watchdog-pimpmyclaude-0409"

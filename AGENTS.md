@@ -68,6 +68,8 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
   память `myclaude-live-v1` (localStorage, общая — крутёж живёт и без приложения) и `myclaude-live-phase-v1`
   (sessionStorage по окну, `{key: sessionKey(), phase}`; фаза запирается по первому настоящему заголовку, новый `titles`
   пересчитывает). `ClaudeCommand` не расширяется — команда пишется строкой (`LiveColors.swift`).
+- WF19: в `size` половина может быть `null` — снимает только её (`{"answer":null}`), `"size":null` снимает обе; `new-window`/`popout-window`
+  получили необязательное `match` после `title` (главное окно) — работают с любого окна; попап на `popout-window` — плашка «уже в окне».
 - Старые: `cashout` (title), `collapse`, `expand`, `scroll`.
 - Хранилище тем на странице: localStorage `myclaude-themes-v1` — карта `{ключ: {theme, font, size, frame}}`, ключи
   `chat:<заголовок>` (тема на чат), `main` (главное окно), `*` (всем); sessionStorage `myclaude-theme-v1` по окну
@@ -78,7 +80,7 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
 
 ## Сборка, гейт, релиз
 
-- `cd app && swift build && swift test` (82 теста). JS: `node --check claude-patch/inject.js` + скретч-тесты в
+- `cd app && swift build && swift test` (85 тестов). JS: `node --check claude-patch/inject.js` + скретч-тесты в
   scratchpad сессии (`theme-store-test.mjs`, `theme-css-test.mjs`, `progress-test.mjs`, `progress-dom-test.mjs`,
   `workflow-insert-test.mjs`) — они не в репозитории; новый чат их не найдёт, при необходимости просить агента написать.
 - `tools/bundle.sh release` → `app/.build/PimpMyClaude.app` (Developer ID). **Подмена без простоя:** сначала bundle,
@@ -141,11 +143,8 @@ WF1–3 (03.09) ручка/меню/⌘Q в Hammerspoon → WF4 PimpMyClaude.app
 
 - Живой «Снять → Поставить» Swift-патчером на Маке Элвиса и на чистом пользователе macOS; отзыв первого из команды.
 - Поведение обновлений Claude (Squirrel/ShipIt) после ad-hoc подписи — не проверено; TEAM.md обещает «Поставить снова».
-- Сброс только одной половины размера («Как у Claude» снимает обе); галка окна не видит запись «всем окнам»
-  (тема/шрифт/размер/рамка); тумблер рамки живёт только в «Тема ▸» (нет каталога тем — нет тумблера).
 - StatusFeed: подсказка полоски со сводками только там, где есть `~/_ElvisProjects` (`projectsRoot` в claude.json);
   при 9+ проектах хвост списка по алфавиту отбрасывается (32 КБ).
-- «Ещё раз» после «Случайно» повторяет схему (память), первое «Случайно» после автопокраски — тёмное.
 - Lua-модули в `hammerspoon/` — только источник логики, тем/полоски не знают; README про них честно говорит.
 - Скретч-тесты JS живут вне репозитория (см. выше).
 - Задачи в Trelvis #5312–#5343 закрыты агентом, ждут проверки Элвиса.
