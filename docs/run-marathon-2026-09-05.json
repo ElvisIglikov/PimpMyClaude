@@ -78,8 +78,13 @@
       "at": "2026-09-06T09:45:00+05:00",
       "who": "оркестратор",
       "what": "WF34 слит в main (124877a); WF31 кодинг запущен: A∥B → D → V → фикс → V2"
+    },
+    {
+      "at": "2026-09-06T10:45:00+05:00",
+      "who": "оркестратор",
+      "what": "WF31 слит в main (21d0752), пуш main/веток/тегов по слову Элвиса; WF35 кодинг запущен: A∥B → D∥V → фикс → V2. WF30 ждёт окна: разведка дёргает главное окно Claude"
     }
   ],
-  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-wf31-code-wf_d3f8ace1-387.js",
-  "run_id": "wf_d3f8ace1-387"
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-wf35-code-wf_905d920c-0fc.js",
+  "run_id": "wf_905d920c-0fc"
 }
