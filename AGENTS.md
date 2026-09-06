@@ -125,9 +125,9 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
 
 ## Сборка, гейт, релиз
 
-- **`bash tools/test.sh`** — один прогон всего (WF24): `node --test tests/` (12 наборов, 142 проверки; страница гоняется в
+- **`bash tools/test.sh`** — один прогон всего (WF24): `node --test tests/` (14 наборов, 163 проверки; страница гоняется в
   `node:vm` через люк `globalThis.__myclaudeTest` и стаб DOM `tests/dom.mjs`, путь к файлу — `MYCLAUDE_INJECT`) + сторожевые
-  grep-проверки inject.js + `swift test` (121). Красное = гейт не проходит. Чеклист гейта и «проверка на своём Маке» для
+  grep-проверки inject.js + `swift test` (129). Красное = гейт не проходит. Чеклист гейта и «проверка на своём Маке» для
   команды — `docs/CHECKLIST.md`.
 - `tools/bundle.sh release` → `app/.build/PimpMyClaude.app` (Developer ID). **Подмена без простоя:** сначала bundle,
   потом `pkill -f PimpMyClaude.app/Contents/MacOS; rm -rf /Applications/PimpMyClaude.app; ditto …; open …` — Элвис
@@ -154,6 +154,10 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
   Fable как субагент только в крайнем случае с пометкой в run-файле.
 - Хоткеи только Carbon `RegisterEventHotKey` (NSEvent-монитор не глотает ⌘Q и просит Input Monitoring); в меню
   клавиши через `keyEquivalent` (AppKit рисует справа серым, порядок системный ⌥⌘). ⌘⌥W — клавиша Claude, не наша.
+- Примерка в меню (WF31): `PreviewMenuDelegate.shared` с паузой 0,5 с (`defaultDelay`, `MinimizeMenu.swift`) — любое новое
+  меню вешает его же и зовёт `cancel()` при закрытии; новый класс тестов, трогающий меню, обязан в `setUp` поставить мгновенное
+  расписание (образец `ClaudeAXTests.setUp`). «Мои темы» ставят и примеряют только цвет; страница держит `previewLayers` —
+  примерка одного слоя возвращает непокрытые слои.
 - `NSApp.activate(ignoringOtherApps: true)` перед `popUp` обязателен (кооперативный activate на macOS 14+ не работает —
   подменю закрывалось).
 - Разрешений у приложения два: Accessibility и «Управление приложениями» (App Management); уведомления — третье,

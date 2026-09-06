@@ -422,15 +422,15 @@ final class ClaudeActions {
         return fields
     }
 
-    /// Своя тема — одна команда со всеми сохранёнными слоями.
+    /// Своя тема ставит РОВНО палитру — один слой, как любой другой пункт списка цветов
+    /// (решение 2.1 плана WF31, задача #5453: «когда я цвета выбираю, не надо мне из темы
+    /// Пудра показывать шрифты»). Шрифт, кегль и рамка в `my-themes.json` по-прежнему
+    /// хранятся (`saveMyTheme` пишет их все), но выбираются своими списками — правило одно
+    /// и без исключений: список цветов меняет цвет. Так же с WF15 живёт цвет проекта
+    /// (`ProjectPaint.view`), и панель «Своя тема» теперь ставит ровно то, что крутила.
     @discardableResult
     func apply(myTheme: MyTheme, scope: String, window: AXUIElement?) -> Bool {
-        // Слоя, которого в паре нет, своя тема не трогает: из «Всем окнам» иначе снялись бы
-        // шрифты (размеры, рамки) всех окон.
-        applyTheme(scope: scope, theme: .set(myTheme.theme),
-                   font: myTheme.font.map { Layer.set($0) } ?? .keep,
-                   size: myTheme.size.map { SizeLayer($0) } ?? .keep,
-                   frame: myTheme.frame ? .set(true) : .keep, window: window)
+        applyTheme(scope: scope, theme: .set(myTheme.theme), window: window)
     }
 
     /// «Сохранить как мою тему…»: набор из темы этого окна и последних шрифта, размера и рамки.
@@ -579,13 +579,12 @@ final class ClaudeActions {
         sendPreview(true, theme: theme.map { Layer.set($0) } ?? .reset, font: .keep, window: window)
     }
 
-    /// Своя тема примеряется набором, как и закрепляется: цвет + шрифт + размер + рамка
-    /// (чего в паре нет, того примерка не трогает).
+    /// Своя тема примеряется тем же одним слоем, каким и ставится (решение 2.1 плана WF31):
+    /// примерка становится неотличима от примерки темы каталога с тем же id. Правило WF8
+    /// «примерка = то, что получишь» запрещает разводить наведение и клик.
     @discardableResult
     func preview(myTheme: MyTheme, window: AXUIElement?) -> Bool {
-        sendPreview(true, theme: .set(myTheme.theme), font: myTheme.font.map { Layer.set($0) } ?? .keep,
-                    size: myTheme.size.map { SizeLayer($0) } ?? .keep,
-                    frame: myTheme.frame ? .set(true) : .keep, window: window)
+        previewTheme(myTheme.theme, window: window)
     }
 
     /// То же для шрифта; `nil` — «Системный (как у Claude)».

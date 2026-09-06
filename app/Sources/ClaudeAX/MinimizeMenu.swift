@@ -83,6 +83,8 @@ final class MinimizeMenu: NSObject {
         // Панель редактора уходит вместе с меню — и уносит с собой `endPreview` (решение 1.3
         // плана WF20): иначе окно осталось бы в цвете ползунка навсегда.
         ThemeEditor.current?.close()
+        // И отложенная примерка наведения (план WF31): ждать её больше некому.
+        PreviewMenuDelegate.shared.cancel()
     }
 
     var isRunning: Bool { timer != nil }
@@ -288,6 +290,10 @@ final class MinimizeMenu: NSObject {
                                         area: Screens.mainUsableFrame)
         let origin = Screens.flip(point: point)
         menu.popUp(positioning: nil, at: origin, in: nil)
+        // Меню закрылось — отложенная примерка (пауза наведения, план WF31) отменяется
+        // СИНХРОННО и до проверки ниже: иначе она докрасила бы окно уже после `endPreview`
+        // и оставила его в чужом цвете до смены чата.
+        PreviewMenuDelegate.shared.cancel()
         menuOpen = false
         // Ушли из меню, ничего не выбрав, — вернуть окну сохранённое. Синхронно, сразу после
         // popUp: замыкания выбора отложены на ход вперёд, и «конец предпросмотра», посланный
@@ -1004,15 +1010,74 @@ final class MinimizeMenu: NSObject {
 }
 
 /// Наведение на пункт подменю тем и шрифтов — предпросмотр (план WF8 п. 2): окно красится
-/// сразу, ничего не запоминая. Что примерять, знает сам пункт (`BlockMenuItem.preview`),
-/// поэтому делегат без состояния и один на все меню — заодно снимается вопрос времени жизни:
-/// `NSMenu.delegate` — слабая ссылка. Заголовки секций, разделители и пункты с подменю
-/// примерок не имеют: наведение на них предпросмотр не трогает.
+/// не сразу, а после паузы (`defaultDelay`, задача #5452 и план WF31) — проехал мышью мимо,
+/// и ничего не произошло. Что примерять, знает сам пункт (`BlockMenuItem.preview`), а делегат
+/// помнит РОВНО одно: чью примерку он сейчас ждёт. Подсветка сменилась или меню закрылось —
+/// отложенная примерка отменяется поколением и не выстрелит уже никогда.
+/// Делегат по-прежнему один на все меню (`shared`) — `NSMenu.delegate` слабая ссылка, а
+/// состояние обязано пережить любое из них; отсюда же требование к будущим «меню»-воркфлоу:
+/// вешать этот делегат и звать `cancel()`, когда меню закрылось.
+/// Заголовки секций, разделители и пункты с подменю примерок не имеют: наведение на них
+/// отменяет отложенное и своего ничего не ставит.
+/// Расписание — `DispatchQueue.main.asyncAfter`, а НЕ `Timer.scheduledTimer`: меню крутится
+/// в `NSEventTrackingRunLoopMode`, и таймер в режиме `.default` во время трекинга не сработает
+/// (тот же довод у `SliderMenuView`). В тестах расписание подставляется (`schedule`).
 final class PreviewMenuDelegate: NSObject, NSMenuDelegate {
     static let shared = PreviewMenuDelegate()
 
+    /// Сколько курсор должен простоять на пункте, прежде чем окно перекрасится (задача #5452:
+    /// «нужно секундочку подождать… только при долгом удержании просмотр»). К этой выдержке
+    /// на экране прибавляется доставка — лоадер читает `command.json` раз в 500 мс, — поэтому
+    /// честное «остановился → цвет» выходит 0,5…1,0 с. Тюнится только здесь.
+    static let defaultDelay: TimeInterval = 0.5
+
+    /// Боевое расписание вынесено в константу, чтобы `tearDown` тестов вернул его на место.
+    static let liveSchedule: (TimeInterval, @escaping () -> Void) -> Void = { wait, block in
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: block)
+    }
+
+    var delay = PreviewMenuDelegate.defaultDelay
+    /// Подставляется в тестах — как `schedule` у `ThemeEditorModel` и `CommandChannel`.
+    var schedule = PreviewMenuDelegate.liveSchedule
+
+    private weak var pendingMenu: NSMenu?
+    private weak var pendingItem: NSMenuItem?
+    private var generation = 0
+
     func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
-        (item as? BlockMenuItem)?.preview?()
+        // «Подсветки нет» из ЧУЖОГО меню отложенную примерку не отменяет: родительское меню
+        // гасит свою подсветку, пока мышь ушла в подменю, — иначе примерка не случилась бы
+        // никогда (наведение на «🎨 Цвет ▸» открывает подменю и гасит подсветку родителя).
+        if item == nil, let pending = pendingMenu, pending !== menu { return }
+        // Тот же пункт (дрожь руки) таймер не перезапускает — иначе пауза не кончилась бы.
+        if let item = item, item === pendingItem, pendingMenu === menu { return }
+        generation &+= 1
+        guard let preview = (item as? BlockMenuItem)?.preview else {
+            pendingMenu = nil
+            pendingItem = nil
+            return
+        }
+        pendingMenu = menu
+        pendingItem = item
+        let mine = generation
+        schedule(delay) { [weak self] in
+            guard let self = self, self.generation == mine else { return }
+            preview()
+        }
+    }
+
+    /// Закрылось ТО меню, в котором мы ждём: подсветке уже некуда двигаться, отменяем сами —
+    /// иначе весь класс «примерка выстрелила в закрытое подменю» держался бы только на
+    /// `cancel()` после `popUp`.
+    func menuDidClose(_ menu: NSMenu) {
+        if menu === pendingMenu { cancel() }
+    }
+
+    /// Меню закрылось (выбором или мимо) — отложенная примерка отменяется.
+    func cancel() {
+        generation &+= 1
+        pendingMenu = nil
+        pendingItem = nil
     }
 }
 
