@@ -1,0 +1,12 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf35-2026-09-06.md",
+  "project": "⚪PimpMyClaude",
+  "status": "идёт",
+  "trelvis": "#5473",
+  "branch": "wf35",
+  "tag": "wf35-start",
+  "watchdog": "watchdog-pimpmyclaude-0509",
+  "orchestrator": "Fable 5.1 high; все агенты Opus max",
+  "next_steps": ["волна 1 A∥B → волна 2 D∥V → фикс → V2 → гейт (test.sh, cp inject, bundle, подмена; перезапуск Claude для решения 8 — Элвис), слияние в main"],
+  "log": [{"at": "2026-09-06T10:40:00+05:00", "who": "оркестратор", "what": "ветка wf35 от main 21d0752 (после WF31); WF30 отложен: его разведка дёргает главное окно Claude, Элвис за клавиатурой — спросить, когда"}]
+}
