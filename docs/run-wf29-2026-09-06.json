@@ -1,14 +1,14 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf29-2026-09-06.md",
   "project": "⚪PimpMyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "trelvis": "#5448 #5455",
   "branch": "wf29",
   "tag": "wf29-start",
   "watchdog": "watchdog-pimpmyclaude-0509",
   "orchestrator": "Fable 5.1 high; все агенты Opus max",
   "next_steps": [
-    "волна 1 A∥B → волна 2 V∥D → фикс по V → гейт по плану (п. 0–11), слияние в main --no-ff"
+    "хвосты: row сайдбара null в главном окне (myChatId только по пути); status.json 7,5 МБ — вес файлов лоадера (перепатч); поле chat только у theme"
   ],
   "log": [
     {
@@ -25,6 +25,11 @@
       "at": "2026-09-06T08:52:00+05:00",
       "who": "оркестратор",
       "what": "волны 1–2 готовы (test.sh зелёный: 142 JS + 121 Swift), V: fix-needed; фикс и V2 упали лимитом (сброс 08:50) — коммит и resume"
+    },
+    {
+      "at": "2026-09-06T09:15:00+05:00",
+      "who": "оркестратор",
+      "what": "гейт: inject wf29-a-1 живьём, карта чатов (main + 4 попапа по id), приложение 1.4.0 (8) подменено, канал probe взят (chats-…), попапы покрашены по проектам по id (VkusnoffKz yellow, TrelvisCom blue, Dictator своя, Pimp pink), CPU 1,3 %. Нашёл: тумблер «Цвет по проекту» был выключен (projectPaintEnabled=0) и стояла тема «всем окнам» violet — оба глушили покраску; включил тумблер, снял «всем окнам». row у главного окна = null (строка сайдбара не найдена) — хвост. Слияние в main."
     }
   ],
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-wf29-code-wf_2165cdb2-c95.js",
