@@ -41,7 +41,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf34-a-1";
+  const VERSION = "wf31-b-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1079,11 +1079,14 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
 
   // previewing — окно сейчас показывает предпросмотр (мышь ведут по подменю), и
   // в хранилище лежит не то, что на экране: см. runThemeCommand.
+  // previewLayers — какие именно слои сейчас примерены (WF31, #5453): новая
+  // примерка возвращает из хранилища те из них, которых в ней нет, — цвет
+  // всегда смотрится с УСТАНОВЛЕННЫМ шрифтом, а шрифт с установленным цветом.
   // chatKey — заголовок, под который окно уже покрашено: сторож (watchChatTitle)
   // сверяет его с нынешним и на смене чата перекрашивает окно. pending — выбор,
   // сделанный до появления заголовка: дописываем его, когда ключ чата появится.
   const themeState = {
-    theme: null, source: null, font: null, fontSource: null, previewing: false,
+    theme: null, source: null, font: null, fontSource: null, previewing: false, previewLayers: [],
     size: null, sizeSource: null, frame: false, frameSource: null,
     chatKey: null, chatTimer: 0, chatObserver: null, pending: null, pendingUntil: 0,
   };
@@ -1440,6 +1443,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const endPreviewExcept = committedLayers => {
     if (!themeState.previewing) return;
     themeState.previewing = false;
+    themeState.previewLayers = [];
     const rest = THEME_LAYERS.filter(layer => !committedLayers.includes(layer));
     if (rest.length) restoreTheme(true, rest);
   };
@@ -1484,8 +1488,16 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // Предпросмотр всегда адресован одному окну, scope тут не при чём.
     if (detail.preview === true) {
       if (Object.keys(layers).length === 0 || !addressed(detail)) return false;
+      // Новая примерка перекрывает прежнюю (WF31, #5453): слои, которые примерялись
+      // до неё и в эту команду не попали, возвращаются из хранилища. Иначе проезд по
+      // «🔤 Шрифт ▸» оставлял бы чужой шрифт на всех цветах, мимо которых мышь пойдёт
+      // дальше. Возврат стоит ПОСЛЕ guard нарочно: команда, адресованная ЧУЖОМУ окну,
+      // наши слои не трогает вовсе.
+      const rest = themeState.previewLayers.filter(layer => !(layer in layers));
+      if (rest.length) restoreTheme(true, rest);
       applyLayers(layers, "preview");
       themeState.previewing = true;
+      themeState.previewLayers = Object.keys(layers);
       return true;
     }
     // Конец предпросмотра: меню закрылось, ничего не выбрав. Оба слоя
@@ -1494,6 +1506,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       if (!addressed(detail)) return false;
       restoreTheme(true);
       themeState.previewing = false;
+      themeState.previewLayers = [];
       return true;
     }
     if (Object.keys(layers).length === 0) return false;
@@ -4898,7 +4911,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // страница отбирает сама. И до отмены примерки: гасить её здесь незачем.
     if (action === "live-colors") { try { runLiveCommand(detail); } catch {} return; }
     // Любая другая команда из меню закрывает примерку: меню ушло, выбора темы не было.
-    if (themeState.previewing) { try { restoreTheme(true); themeState.previewing = false; } catch {} }
+    if (themeState.previewing) {
+      try { restoreTheme(true); themeState.previewing = false; themeState.previewLayers = []; } catch {}
+    }
     // «Новое окно» и «В отдельное окно» — ДО проверки поля ввода: композер
     // страница дожидается сама (после ⌘N он ещё не тот, что в state.editor), и
     // команда не должна умирать молча на окне без поля. Обе адресованы одному

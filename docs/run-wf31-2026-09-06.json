@@ -1,0 +1,33 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf31-2026-09-06.md",
+  "project": "⚪PimpMyClaude",
+  "status": "финиш",
+  "trelvis": "#5452 #5453",
+  "branch": "wf31",
+  "tag": "wf31-start",
+  "watchdog": "watchdog-pimpmyclaude-0509",
+  "orchestrator": "Fable 5.1 high; все агенты Opus max",
+  "decision": "Вопрос плана (своя тема ставит только цвет) решён по слову Элвиса 05.09 23:20 «цвет выбирается со стандартным шрифтом, который сейчас стоит» — часть 2 батча A делаем; набор одним нажатием вернётся отдельным пунктом «Мои темы ▸» после макета (сказать Элвису)",
+  "next_steps": [
+    "волна 1 A∥B → D → V → фикс → V2 → гейт (test.sh, доказательство паузы, cp inject, bundle, подмена), слияние в main"
+  ],
+  "log": [
+    {
+      "at": "2026-09-06T09:42:00+05:00",
+      "who": "оркестратор",
+      "what": "ветка wf31 от main 124877a (после WF34); запуск волны"
+    },
+    {
+      "at": "2026-09-06T09:45:00+05:00",
+      "who": "оркестратор",
+      "what": "WF34 слит в main (124877a); WF31 кодинг запущен: A∥B → D → V → фикс → V2"
+    },
+    {
+      "at": "2026-09-06T10:35:00+05:00",
+      "who": "оркестратор",
+      "what": "гейт: test.sh зелёный (163 JS + 129 Swift), inject wf31-b-1 живьём, приложение подменено. Шаг 0 (asyncAfter в трекинге меню) живьём мышью НЕ гонял — Элвис за клавиатурой; опора на AppKit: главная очередь обслуживается в common modes, куда входит NSEventTrackingRunLoopMode. Остаточный риск — проверить Элвису наведением на «Мои темы». Слияние в main."
+    }
+  ],
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-wf31-code-wf_d3f8ace1-387.js",
+  "run_id": "wf_d3f8ace1-387"
+}

@@ -213,11 +213,13 @@ enum MenuModel {
     static let deleteMyThemeTitle = "Удалить мою тему"
     static let deleteMyThemeIcon = "🗑"
     static let myThemeNamePrompt = "Имя своей темы"
-    static let myThemeNameHint = "Тема, шрифт и размер запомнятся парой. "
-        + "Имя как у сохранённой — спрошу, перезаписать ли."
+    /// Строка честная (решение 2.5 плана WF31): в файл `my-themes.json` по-прежнему уходят
+    /// цвет, шрифт и размер, а ставится из своей темы только цвет.
+    static let myThemeNameHint = "Запомню цвет, шрифт и размер, но ставиться будет только цвет — "
+        + "шрифт и размер выбираются отдельно. Имя как у сохранённой — спрошу, перезаписать ли."
     static let myThemeSaveButton = "Сохранить"
     static let myThemeCancelButton = "Отмена"
-    static let myThemeEmptyAlert = "Сначала выбери тему — её и запомню вместе со шрифтом."
+    static let myThemeEmptyAlert = "Сначала выбери тему — её цвет и запомню."
     /// Имя занято своей темой — перезапись только после подтверждения (критик В2 плана WF14):
     /// иначе «Фиолетовая → Сохранить» на втором окне молча затрёт сохранённую раньше.
     static let myThemeOverwriteButton = "Перезаписать"

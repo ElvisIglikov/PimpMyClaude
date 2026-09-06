@@ -12,9 +12,40 @@ private final class MemoryDefaults: ThemeDefaults {
     func removeObject(forKey key: String) { values.removeValue(forKey: key) }
 }
 
+/// Ловушка расписания примерок (план WF31): отложенные блоки складываются сюда, а тест
+/// выполняет их сам — ждать полсекунды и крутить run loop незачем.
+private final class PendingPreviews {
+    var blocks: [(wait: TimeInterval, run: () -> Void)] = []
+
+    func runAll() {
+        let all = blocks
+        blocks = []
+        all.forEach { $0.run() }
+    }
+}
+
 /// Только чистая логика: раскладка «Расставить», клавиши меню и формат command.json.
 /// Живой AX (окна Claude, авто-Allow, popUp) проверяется руками на гейте.
 final class ClaudeAXTests: XCTestCase {
+    /// `PreviewMenuDelegate.shared` — синглтон, и с плана WF31 у него есть состояние: пауза
+    /// перед примеркой. Мгновенное расписание ставим ВСЕМ тестам этого класса, иначе
+    /// отложенный блок без прокрутки run loop не выполнится и hover-тесты покраснеют.
+    /// Правило на будущее: любой НОВЫЙ класс тестов, который трогает меню, обязан сделать
+    /// то же самое сам.
+    override func setUp() {
+        super.setUp()
+        PreviewMenuDelegate.shared.schedule = { _, block in block() }
+    }
+
+    /// Синглтон возвращается на место экземплярными полями: `defaultDelay` — `static let`,
+    /// её менять запрещено (иначе сторож константы теряет смысл).
+    override func tearDown() {
+        PreviewMenuDelegate.shared.schedule = PreviewMenuDelegate.liveSchedule
+        PreviewMenuDelegate.shared.delay = PreviewMenuDelegate.defaultDelay
+        PreviewMenuDelegate.shared.cancel()
+        super.tearDown()
+    }
+
     // Десять команд: восемь исходных плюс «Новое окно» и «Вынести этот чат в окно» (план WF13).
     func testSkeleton() { XCTAssertEqual(ClaudeCommand.allCases.count, 10) }
 
@@ -601,6 +632,8 @@ final class ClaudeAXTests: XCTestCase {
             applied.append((scope: scope, theme: theme.value?.id, font: font.value?.id,
                             keep: self.keptLayers(theme, font, size, frame)))
         }
+        // Меню зовёт `applyMyTheme` заглушкой — состав слоёв своей темы проверяют
+        // `testMyThemeAppliesOnlyPalette` и `testMyThemePreviewsOnlyPalette`, а не меню.
         config.applyMyTheme = { scope, my in
             applied.append((scope: scope, theme: my.id, font: my.font?.id, keep: ""))
         }
@@ -760,6 +793,8 @@ final class ClaudeAXTests: XCTestCase {
     func testHoverPreviewsThemeAndFont() throws {
         // План WF8 п. 2: наведение примеряет слой — и только в списках окна. Свои темы
         // переехали на уровень «Оформление ▸», значит делегат нужен и на нём (план п. 10).
+        // С плана WF31 примерка отложена на `defaultDelay` — здесь её выполняет мгновенное
+        // расписание из `setUp`, а саму паузу проверяют тесты ниже.
         var previews: [String] = []
         var applied = 0
         var config = menuConfig()
@@ -804,6 +839,237 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(previews, [])
         // И ничего не закрепляют.
         XCTAssertEqual(applied, 0)
+    }
+
+    // MARK: - пауза перед примеркой (план WF31, задача #5452)
+
+    /// Меню с записью примерок: «🎨 Оформление ▸» и его списки цветов и шрифтов.
+    private func previewMenus(_ record: @escaping (String) -> Void) throws
+        -> (appearance: NSMenu, color: NSMenu, font: NSMenu) {
+        var config = menuConfig()
+        config.previewTheme = { record("тема:" + ($0?.id ?? "—")) }
+        config.previewFont = { record("шрифт:" + ($0?.id ?? "—")) }
+        config.previewMyTheme = { record("тема:" + $0.id) }
+        let menu = MinimizeMenu.build(config: config)
+        let appearance = try XCTUnwrap(menu.items.first { $0.title == MenuModel.appearanceTitle }?.submenu)
+        let color = try XCTUnwrap(appearance.items.first { $0.title == MenuModel.colorTitle }?.submenu)
+        let font = try XCTUnwrap(appearance.items.first { $0.title == MenuModel.fontTitle }?.submenu)
+        return (appearance, color, font)
+    }
+
+    /// Подменяет делегату расписание ловушкой; мгновенное вернёт `tearDown`.
+    private func capturePreviewSchedule() -> PendingPreviews {
+        let pending = PendingPreviews()
+        PreviewMenuDelegate.shared.schedule = { wait, block in pending.blocks.append((wait, block)) }
+        return pending
+    }
+
+    func testPreviewWaitsBeforePainting() throws {
+        var previews: [String] = []
+        let menus = try previewMenus { previews.append($0) }
+        let pending = capturePreviewSchedule()
+        let violet = try XCTUnwrap(menus.color.items.first { $0.title == "Фиолетовая" })
+
+        highlight(menus.color, violet)
+        // Само наведение окно не красит: сначала курсор обязан постоять на пункте.
+        XCTAssertEqual(previews, [])
+        XCTAssertEqual(pending.blocks.count, 1)
+        XCTAssertEqual(pending.blocks.first?.wait, PreviewMenuDelegate.defaultDelay)
+
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:violet"])
+
+        // Тот же пункт второй раз (дрожь руки) второго блока не планирует и заново не красит.
+        highlight(menus.color, violet)
+        XCTAssertEqual(pending.blocks.count, 0)
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:violet"])
+    }
+
+    func testPreviewCancelledWhenHighlightMovesOn() throws {
+        var previews: [String] = []
+        let menus = try previewMenus { previews.append($0) }
+        let pending = capturePreviewSchedule()
+
+        // Быстрый проход: «Фиолетовая» → «Моя тёплая» (секция МОИ ТЕМЫ) → «Арктика».
+        highlight(menus.color, try XCTUnwrap(menus.color.items.first { $0.title == "Фиолетовая" }))
+        highlight(menus.appearance, try XCTUnwrap(menus.appearance.items.first { $0.title == "Моя тёплая" }))
+        highlight(menus.color, try XCTUnwrap(menus.color.items.first { $0.title == "Арктика" }))
+        XCTAssertEqual(pending.blocks.count, 3)
+
+        // Выполняются все три блока, красит РОВНО последний: прежние сняты поколением.
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:arctic"])
+    }
+
+    func testPreviewCancelledByNonPreviewItem() throws {
+        var previews: [String] = []
+        let menus = try previewMenus { previews.append($0) }
+        let pending = capturePreviewSchedule()
+        let violet = try XCTUnwrap(menus.color.items.first { $0.title == "Фиолетовая" })
+
+        // Заголовок секции, разделитель, пункт с подменю, «Сохранить как мою тему…» и пустая
+        // подсветка ТОГО ЖЕ меню: отложенное отменяют, своей примерки не делают.
+        let stoppers: [(menu: NSMenu, item: NSMenuItem?)] = [
+            (menus.color, menus.color.items.first { $0.title == MenuModel.darkThemesHeader }),
+            (menus.color, menus.color.items.first { $0.isSeparatorItem }),
+            (menus.appearance, menus.appearance.items.first { $0.title == MenuModel.colorTitle }),
+            (menus.appearance, menus.appearance.items.first { $0.title == MenuModel.saveMyThemeTitle }),
+            (menus.color, nil),
+        ]
+        for stopper in stoppers {
+            highlight(menus.color, violet)
+            XCTAssertEqual(pending.blocks.count, 1)
+            highlight(stopper.menu, stopper.item)
+            pending.runAll()
+            XCTAssertEqual(previews, [], "не отменил «\(stopper.item?.title ?? "пусто")»")
+        }
+    }
+
+    func testParentMenuNilKeepsSubmenuPreview() throws {
+        var previews: [String] = []
+        let menus = try previewMenus { previews.append($0) }
+        let pending = capturePreviewSchedule()
+
+        // Мышь ушла в подменю цветов — родительское «Оформление ▸» гасит СВОЮ подсветку.
+        highlight(menus.color, try XCTUnwrap(menus.color.items.first { $0.title == "Фиолетовая" }))
+        highlight(menus.appearance, nil)
+        pending.runAll()
+        // Отложенная примерка обязана выжить: иначе на живом AppKit она не случалась бы вовсе.
+        XCTAssertEqual(previews, ["тема:violet"])
+    }
+
+    func testPreviewCancelledWhenMenuCloses() throws {
+        var previews: [String] = []
+        let menus = try previewMenus { previews.append($0) }
+        let pending = capturePreviewSchedule()
+        let violet = try XCTUnwrap(menus.color.items.first { $0.title == "Фиолетовая" })
+
+        // Меню закрылось раньше, чем истекла пауза (`cancel()` после `popUp` и в `stop()`).
+        highlight(menus.color, violet)
+        PreviewMenuDelegate.shared.cancel()
+        pending.runAll()
+        XCTAssertEqual(previews, [])
+
+        // `menuDidClose` гасит только СВОЁ меню: закрылось чужое — примерка ждёт дальше.
+        highlight(menus.color, violet)
+        PreviewMenuDelegate.shared.menuDidClose(menus.font)
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:violet"])
+
+        // А закрылось то, в котором ждём, — отменяем сами.
+        highlight(menus.color, try XCTUnwrap(menus.color.items.first { $0.title == "Арктика" }))
+        PreviewMenuDelegate.shared.menuDidClose(menus.color)
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:violet"])
+    }
+
+    func testPreviewDelayIsHalfSecond() {
+        // Число — слово Элвиса (#5452: «нужно секундочку подождать… только при долгом
+        // удержании просмотр»), а не вкус агента. Тюнится ровно этой константой.
+        XCTAssertEqual(PreviewMenuDelegate.defaultDelay, 0.5)
+        XCTAssertEqual(PreviewMenuDelegate().delay, PreviewMenuDelegate.defaultDelay)
+    }
+
+    // MARK: - своя тема ставит только палитру (план WF31, задача #5453)
+
+    /// Своя тема со всеми слоями — ровно такая «Пудра» и подменяла окну шрифт и кегль.
+    private func loadedMyTheme() -> MyTheme {
+        MyTheme(id: "user-1757000000000", name: "Пудра", type: "light",
+                palette: catalog()[1].palette, font: ClaudeAXTests.monoFont,
+                size: Size(answer: 20, question: 13), frame: true)
+    }
+
+    /// Тело команды без `id` и времени: у двух записей они разные, сравнивать нечего.
+    private static func commandTail(_ text: String) -> String {
+        guard let scope = text.range(of: ",\"scope\":") else { return text }
+        return String(text[scope.lowerBound...])
+    }
+
+    /// Файл исходника рядом с тестами: `app/Tests/ClaudeAXTests/…` → `app/Sources/ClaudeAX/…`.
+    private static func sourceFile(_ name: String) -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/ClaudeAX/\(name)")
+    }
+
+    /// Тело метода по началу его объявления — от `{` до закрывающей строки `    }`.
+    private static func functionBody(after head: String, in source: String) -> String? {
+        guard let start = source.range(of: head),
+              let open = source.range(of: "{", range: start.upperBound..<source.endIndex),
+              let close = source.range(of: "\n    }", range: open.upperBound..<source.endIndex)
+        else { return nil }
+        return String(source[open.upperBound..<close.lowerBound])
+    }
+
+    /// Канал и действия на временной папке — образец из теста живых цветов.
+    private func actionsOnDisk(dir: URL, now: @escaping () -> Date) -> ClaudeActions {
+        let actions = ClaudeActions(app: ClaudeApp(),
+                                    commands: CommandChannel(path: dir.appendingPathComponent("command.json"),
+                                                             now: now, schedule: { _, _ in }),
+                                    themes: [], fonts: [],
+                                    themeStore: ThemeStore(defaults: MemoryDefaults()),
+                                    myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")),
+                                    autoPaintStore: AutoPaintStore(defaults: MemoryDefaults()),
+                                    liveColorsStore: LiveColorsStore(defaults: MemoryDefaults()))
+        actions.clock = now
+        return actions
+    }
+
+    func testMyThemeAppliesOnlyPalette() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("command.json")
+        // Таймер не нужен: между записями часы двигаем сами, зазор канала выдержан.
+        var now = Date(timeIntervalSince1970: 1_757_000_000)
+        let actions = actionsOnDisk(dir: dir, now: { now })
+        let my = loadedMyTheme()
+        let gap = CommandChannel.minInterval + 0.1
+        func body() throws -> String { try String(contentsOf: file, encoding: .utf8) }
+
+        // И у окна, и у «Всем окнам ▸ → Цвет ▸» — команда с одним слоем, палитрой.
+        for scope in [MenuModel.themeScopeWindow, MenuModel.themeScopeAll] {
+            XCTAssertTrue(actions.apply(myTheme: my, scope: scope, window: nil))
+            let mine = try body()
+            // Эталон строится тут же: новое поле контракта появится в обоих телах разом.
+            now += gap
+            XCTAssertTrue(actions.applyTheme(scope: scope, theme: .set(my.theme), font: .keep,
+                                             size: .keep, frame: .keep, window: nil))
+            XCTAssertEqual(ClaudeAXTests.commandTail(mine), ClaudeAXTests.commandTail(try body()))
+            XCTAssertTrue(mine.contains("\"theme\":{\"id\":\"\(my.id)\""), mine)
+            XCTAssertFalse(mine.contains("\"font\""), mine)
+            XCTAssertFalse(mine.contains("\"size\""), mine)
+            XCTAssertFalse(mine.contains("\"frame\""), mine)
+            now += gap
+        }
+    }
+
+    func testMyThemePreviewsOnlyPalette() throws {
+        // Примерка своей темы обязана стать неотличимой от примерки темы каталога с тем же id.
+        // Записать её файлом в тесте нельзя: `sendPreview` требует AX-заголовка окна, а живой
+        // AX здесь не поднимается (шапка файла; так же устроен ProjectTests.swift:1029).
+        // Поэтому проверяем то, что видно: обе функции ведут себя на одном окне одинаково,
+        // и ни в одной из двух функций своей темы не осталось слоёв шрифта, размера и рамки.
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let now = Date(timeIntervalSince1970: 1_757_000_000)
+        let actions = actionsOnDisk(dir: dir, now: { now })
+        let my = loadedMyTheme()
+
+        XCTAssertEqual(actions.preview(myTheme: my, window: nil),
+                       actions.previewTheme(my.theme, window: nil))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("command.json").path))
+
+        let source = try String(contentsOf: ClaudeAXTests.sourceFile("ClaudeActions.swift"), encoding: .utf8)
+        for head in ["func preview(myTheme:", "func apply(myTheme:"] {
+            let body = try XCTUnwrap(ClaudeAXTests.functionBody(after: head, in: source), head)
+            XCTAssertTrue(body.contains("theme"), head + body)
+            for layer in ["font", "size", "frame"] {
+                XCTAssertFalse(body.contains(layer), head + body)
+            }
+        }
     }
 
     /// Слой размера словами: «16/—» — ответам 16, вопросы не трогаем; «∅» — половину снимаем;
