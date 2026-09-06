@@ -20,6 +20,11 @@
       "at": "2026-09-06T04:55:00+05:00",
       "who": "оркестратор",
       "what": "WF29 кодинг запущен: A∥B → V∥D → фикс → V2 (Opus max)"
+    },
+    {
+      "at": "2026-09-06T08:52:00+05:00",
+      "who": "оркестратор",
+      "what": "волны 1–2 готовы (test.sh зелёный: 142 JS + 121 Swift), V: fix-needed; фикс и V2 упали лимитом (сброс 08:50) — коммит и resume"
     }
   ],
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-wf29-code-wf_2165cdb2-c95.js",

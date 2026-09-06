@@ -89,7 +89,10 @@ final class ChatProbe {
     /// Чужой скрипт, которого не касались дольше — брошенный: канал забираем.
     static let foreignStale: TimeInterval = 600
     /// Ответ главного окна старше — берём чат из `status.json` (решение 8 плана WF29).
-    static let mainChatSeconds: TimeInterval = 60
+    /// Держать его дольше круга нельзя (находка 1 проверки WF29): переключили чат в главном
+    /// окне — `status.json` знает об этом через 2 с, а карта probe обновится в лучшем случае
+    /// через `askInterval`, и всё это время окно стояло бы в цвете прошлого проекта.
+    static let mainChatSeconds: TimeInterval = 10
     /// Стор попапов на странице работает: `self:null` при нём значит «чат не определён»,
     /// а не «спросить некого» (решение 9 плана WF29).
     static let storeOK = "ok"
@@ -143,7 +146,7 @@ final class ChatProbe {
     /// Ответы последнего круга; карта несвежая — пусто.
     var pages: [ChatPage] { isFresh ? answers : [] }
 
-    /// Чат главного окна по ответу самой страницы. Ответ старше минуты не годится — пусть
+    /// Чат главного окна по ответу самой страницы. Протухший ответ не годится — пусть
     /// решает `status.json` (решение 8 плана WF29). Тем же правилом покраска смотрит на свою
     /// карту (`ProjectPaint.targets()`), поэтому оно одно и живёт в `isRecent`.
     var mainChat: String? {
@@ -157,8 +160,9 @@ final class ChatProbe {
     }
 
     /// Чат попапа по AX-заголовку окна. Заголовок пустой или заглушка — nil (такой носит
-    /// и главное окно, и безымянный попап); два окна с ОДНИМ заголовком назвали разные
-    /// чаты — тоже nil: лучше не покрасить, чем покрасить чужим цветом.
+    /// и главное окно, и безымянный попап); заголовок носят два окна — тоже nil, и неважно,
+    /// назвали они разные чаты или второе не назвало ничего: лучше не покрасить, чем
+    /// покрасить чужим цветом.
     func chat(forTitle title: String) -> String? { ChatProbe.chat(forTitle: title, in: pages) }
 
     /// То же правило чистой функцией: её же вешает `ClaudeAXController` через `chat(forTitle:)`,
@@ -169,7 +173,10 @@ final class ChatProbe {
         var found: String?
         for page in pages where page.kind == .popout
             && page.title.trimmingCharacters(in: .whitespacesAndNewlines) == wanted {
-            guard let chat = page.chat else { continue }
+            // Страница с тем же заголовком, которая себя не назвала, — тоже ничья
+            // (находка 4 проверки WF29): иначе ручной выбор темы в неопознанном окне уехал
+            // бы в проект соседнего окна-однофамильца.
+            guard let chat = page.chat else { return nil }
             if let known = found, known != chat { return nil }
             found = chat
         }

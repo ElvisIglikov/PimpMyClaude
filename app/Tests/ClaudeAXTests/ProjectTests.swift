@@ -1491,6 +1491,20 @@ final class ProjectTests: XCTestCase {
         rig.paint.tick()
         XCTAssertEqual(rig.sent.count, 2)
         XCTAssertEqual(rig.sent.last?.theme.value?.id, "indigo")
+        // Протухает он быстрее, чем приходит следующий круг (находка 1 проверки WF29): иначе
+        // после смены чата в главном окне цвет прошлого проекта держался бы до минуты.
+        XCTAssertLessThanOrEqual(ChatProbe.mainChatSeconds, ChatProbe.askInterval)
+
+        // Страница назвала чат, которого индекс не знает: папки НЕТ — и к папке чата из
+        // `status.json` мы не откатываемся (находка 2 проверки WF29, задача #5455).
+        rig.clock.advance(1)
+        rig.pages = [rig.page(.main, "local_zz", "Свежий чат")]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 3)
+        let unknown = try XCTUnwrap(rig.sent.last)
+        XCTAssertEqual(unknown.key, "main")
+        XCTAssertNil(unknown.theme.value, "в главное окно уехал цвет чужого проекта")
+        XCTAssertEqual(PaintRig.layers(unknown), "T", "слой прошлого проекта снят, нового нет")
     }
 
     /// Тест 29 плана (хвост WF20, находка 5): панель «Своя тема» держит окно КЛЮЧОМ, а не
@@ -1533,6 +1547,18 @@ final class ProjectTests: XCTestCase {
         rig.clock.advance()
         rig.paint.tick()
         XCTAssertEqual(rig.sent.count, 1, "старая сверка по заголовку перестала работать")
+
+        // Главное окно попадает в цели ДВАЖДЫ: ключом `main` и своим настоящим заголовком —
+        // `paintableTitles()` отдаёт заголовки всех окон, включая главное. Ключ защищает
+        // только первую цель, дубль `w:` держится заголовком (находка 3 проверки WF29).
+        rig.pages = []
+        rig.titles = ["PimpMyClaude"]
+        ClaudeActions.themeEditorTitle = "PimpMyClaude"
+        ClaudeActions.themeEditorKey = rig.paint.windowKey(forTitle: "PimpMyClaude")
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.map { $0.key }, ["main"],
+                       "тик погасил примерку через дубль окна по заголовку")
     }
 
     /// Тест 30 плана: ключ на окно ровно ОДИН. Появился id — отпечаток переезжает вместе

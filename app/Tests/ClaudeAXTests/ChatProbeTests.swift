@@ -317,6 +317,16 @@ final class ChatProbeTests: XCTestCase {
             ChatPage(kind: .popout, chat: "local_z9", title: "Один чат", store: "ok", at: clock.now),
             ChatPage(kind: .popout, chat: "local_z9", title: "Один чат", store: "ok", at: clock.now),
         ]), "local_z9")
+        // Заголовок носят два окна, а id назвало только одно — тоже ничья (находка 4
+        // проверки WF29): иначе ручной выбор темы в неопознанном окне уехал бы в чужой проект.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Двойник", in: [
+            ChatPage(kind: .popout, chat: "local_z9", title: "Двойник", store: "ok", at: clock.now),
+            ChatPage(kind: .popout, chat: nil, title: "Двойник", store: "ok", at: clock.now),
+        ]))
+        XCTAssertNil(ChatProbe.chat(forTitle: "Двойник", in: [
+            ChatPage(kind: .popout, chat: nil, title: "Двойник", store: "none", at: clock.now),
+            ChatPage(kind: .popout, chat: "local_z9", title: "Двойник", store: "ok", at: clock.now),
+        ]))
         // Главное окно по заголовку не адресуется вовсе — только `match` (критик Б1 плана WF15).
         XCTAssertNil(ChatProbe.chat(forTitle: "PimpMyClaude", in: [
             ChatPage(kind: .main, chat: "local_a1", title: "PimpMyClaude", store: "ok", at: clock.now),

@@ -234,16 +234,18 @@ final class ProjectPaint {
         let pages = chatPages()
         if let main = index.mainWindow() {
             // Свежий ответ страницы сильнее адреса из status.json (решение 8 плана WF29);
-            // ответ старше минуты не в счёт — пусть решает лоадер. Расхождение видно в statusText.
+            // протухший не в счёт — пусть решает лоадер. Расхождение видно в statusText.
             let answer = pages.first { $0.kind == .main && ChatProbe.isRecent($0, at: now()) }
             // Назвала страница свой чат — он и решает, даже если индекс такого чата не знает:
-            // подставить сюда чат из status.json значило бы покрасить окно цветом чужого
-            // проекта, а это ровно то, на что Элвис пожаловался в #5455.
+            // тогда папки просто НЕТ. Откатиться на чат из status.json значило бы покрасить
+            // окно цветом чужого проекта — ровно то, на что Элвис пожаловался в #5455
+            // (находка 2 проверки WF29: `session.map(…) ?? main.folder` откат как раз давал).
             let named = answer?.chat
-            let session = named == nil ? main.session : named.flatMap { index.session(for: $0) }
+            let folder = named == nil
+                ? main.folder
+                : named.flatMap { index.session(for: $0) }.map(index.folder(of:))
             out.append(ProjectTarget(key: ProjectPaint.mainKey, match: main.match, chat: nil,
-                                     title: ProjectPaint.mainWindowTitle,
-                                     folder: session.map(index.folder(of:)) ?? main.folder))
+                                     title: ProjectPaint.mainWindowTitle, folder: folder))
         }
         var seen = Set<String>()
         // Окна, о которых страница уже сказала всё: по заголовку их больше не ищем.
@@ -331,11 +333,21 @@ final class ProjectPaint {
 
     /// Окном владеет панель «Своя тема»? Сверяем КЛЮЧОМ окна (находка 5 проверки WF20):
     /// у цели главного окна стоит заглушка «Claude», а панель видит настоящий заголовок чата —
-    /// сверка по заголовку не сходилась, и тик гасил примерку. Ключа нет (панель открыта там,
-    /// где резолвер не повешен) — сверяем заголовком, как до WF29.
+    /// сверка по заголовку не сходилась, и тик гасил примерку.
+    ///
+    /// Заголовок при этом остаётся ВТОРОЙ половиной сверки (находка 3 проверки WF29):
+    /// `paintableTitles()` отдаёт заголовки всех окон, включая главное, поэтому у главного
+    /// окна целей две — `main` и `w:<настоящий заголовок>`; ключ защищает первую, заголовок —
+    /// вторую. Он же работает, когда ключа нет вовсе (панель открыта там, где резолвер
+    /// не повешен), — как до WF29.
     static func ownedByEditor(_ target: ProjectTarget) -> Bool {
-        if let key = ClaudeActions.themeEditorKey { return key == target.key }
-        return ClaudeActions.themeEditorTitle == target.title
+        // Пустой заголовок в сверке не участвует: у панели это состояние «нет заголовка —
+        // нет примерки» (`ThemeEditor.drawStatus`), а целей без заголовка бывает несколько.
+        if let title = ClaudeActions.themeEditorTitle, !title.isEmpty, title == target.title {
+            return true
+        }
+        guard let key = ClaudeActions.themeEditorKey else { return false }
+        return key == target.key
     }
 
     /// Вид проекта: `.pimpmyclaude.json` из папки, а его нет (или он пуст, или битый) —
