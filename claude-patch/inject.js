@@ -41,7 +41,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf29-a-1";
+  const VERSION = "wf34-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -404,9 +404,9 @@
     const to = rgbOf(right);
     return hexOf(from.map((value, index) => value + (to[index] - value) * ratio));
   };
-  // Переменные Claude хранят не цвет, а HSL-триплет «H S% L%»: страница сама
-  // подставляет его в hsl(...) и добавляет прозрачность.
-  const hslTriple = color => {
+  // Разбор цвета на части: тон 0…360, насыщенность и светлота долями 0…1.
+  // Отсюда же растёт hslTriple — вывод у него обязан остаться прежним побайтно.
+  const hslParts = color => {
     const [red, green, blue] = rgbOf(color).map(value => value / 255);
     const max = Math.max(red, green, blue);
     const min = Math.min(red, green, blue);
@@ -421,7 +421,67 @@
       else hue = 60 * ((red - green) / delta + 4);
     }
     if (hue < 0) hue += 360;
+    return [hue, saturation, lightness];
+  };
+  // Переменные Claude хранят не цвет, а HSL-триплет «H S% L%»: страница сама
+  // подставляет его в hsl(...) и добавляет прозрачность.
+  const hslTriple = color => {
+    const [hue, saturation, lightness] = hslParts(color);
     return `${hue.toFixed(3)} ${(saturation * 100).toFixed(3)}% ${(lightness * 100).toFixed(3)}%`;
+  };
+  const hexFromHsl = (hue, saturation, lightness) => {
+    const turn = ((hue % 360) + 360) % 360;
+    const sat = Math.max(0, Math.min(1, saturation));
+    const light = Math.max(0, Math.min(1, lightness));
+    const chroma = (1 - Math.abs(2 * light - 1)) * sat;
+    const second = chroma * (1 - Math.abs(((turn / 60) % 2) - 1));
+    const shift = light - chroma / 2;
+    const [red, green, blue] = turn < 60 ? [chroma, second, 0]
+      : turn < 120 ? [second, chroma, 0]
+      : turn < 180 ? [0, chroma, second]
+      : turn < 240 ? [0, second, chroma]
+      : turn < 300 ? [second, 0, chroma]
+      : [chroma, 0, second];
+    return hexOf([(red + shift) * 255, (green + shift) * 255, (blue + shift) * 255]);
+  };
+  // Яркость и контраст по WCAG: подсветка кода обязана читаться и в тёмных, и в
+  // светлых темах, а «на глаз» это не проверить — считаем числом (#5365).
+  const luminance = color => {
+    const [red, green, blue] = rgbOf(color).map(value => {
+      const channel = value / 255;
+      return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  };
+  const contrastRatio = (left, right) => {
+    const first = luminance(left);
+    const second = luminance(right);
+    return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+  };
+  // Дотянуть цвет до читаемости, НЕ трогая тон и насыщенность: двигаем только
+  // светлоту шагом в процент прочь от фона. Так оттенки One Dark остаются
+  // узнаваемыми. Контраст уже достаточен — отдаём цвет как есть, без обратного
+  // хода hex → hsl → hex (иначе дрожал бы последний знак). Цели не достигли —
+  // отдаём лучшего из перепробованных, включая исходный: хуже, чем было, не
+  // возвращаем никогда.
+  const readableOn = (color, background, target) => {
+    const start = normalizeHex(color, "#000000");
+    const under = normalizeHex(background, "#000000");
+    if (contrastRatio(start, under) >= target) return start;
+    const [hue, saturation, lightness] = hslParts(start);
+    const step = luminance(under) < 0.5 ? 0.01 : -0.01;
+    let best = start;
+    let bestRatio = contrastRatio(start, under);
+    let level = lightness;
+    for (let index = 0; index < 100; index += 1) {
+      level += step;
+      if (level < 0 || level > 1) break;
+      const candidate = hexFromHsl(hue, saturation, level);
+      const ratio = contrastRatio(candidate, under);
+      if (ratio > bestRatio) { best = candidate; bestRatio = ratio; }
+      if (ratio >= target) return candidate;
+    }
+    return best;
   };
 
   // Тема приходит снаружи (command.json) и из хранилища, то есть текстом, за
@@ -457,6 +517,10 @@
     const surface2 = mixHex(background, foreground, light ? 0.05 : 0.075);
     const border = mixHex(accent, background, 0.72);
     const accentHot = mixHex(accent, foreground, 0.20);
+    // Палитра кода считается ОДИН раз и раздаётся всем, кому нужна: блокам кода,
+    // подсветке, инлайну и просмотрщику диффов — иначе коробки в одном окне
+    // разъезжаются по цвету (#5365).
+    const code = codePalette({ type: theme.type, background, foreground, accent });
     return `/* PimpMyClaude · тема ${themeText(theme.name, "Тема")} · порт ElvisOS */
 ${THEME_ROOT_SELECTOR} {
   color-scheme: ${theme.type} !important;
@@ -589,7 +653,8 @@ html, body, #root, .dframe-root, .dframe-content, [class*="dframe-content"] { ba
 .dframe-sidebar, [class*="dframe-sidebar"], [data-testid*="sidebar"] { background-color: ${sidebar} !important; background-image: none !important; }
 ::selection { color: ${background} !important; background: ${accent} !important; }
 input, textarea, select, [contenteditable="true"] { caret-color: ${accent} !important; }
-${epitaxyCss({ type: theme.type, background, foreground, accent, panel, muted })}`;
+${epitaxyCss({ type: theme.type, background, foreground, accent, panel, muted, code })}
+${codeCss(code)}`;
   };
 
   // Окна Claude Code (Epitaxy) держат свою палитру на .epitaxy-root: серая шкала
@@ -601,8 +666,11 @@ ${epitaxyCss({ type: theme.type, background, foreground, accent, panel, muted })
     light: [0, 0.04, 0.06, 0.1, 0.16, 0.25, 0.5, 0.8, 0.9, 1],
     dark: [0, 0.04, 0.08, 0.12, 0.16, 0.25, 0.48, 0.7, 0.8, 1],
   };
-  const epitaxyCss = ({ type, background, foreground, accent, panel, muted }) => {
+  const epitaxyCss = ({ type, background, foreground, accent, panel, muted, code }) => {
     const light = type === "light";
+    // Палитру кода даёт themeCss, чтобы диффы и блоки кода были одного цвета.
+    // Позвали без неё (старые тесты, прямой вызов) — считаем сами.
+    const codeColors = code ?? codePalette({ type, background, foreground, accent });
     const lightEnd = light ? background : foreground;
     const darkEnd = light ? foreground : background;
     const grayScale = EPITAXY_GRAY_LEVELS
@@ -617,7 +685,6 @@ ${epitaxyCss({ type: theme.type, background, foreground, accent, panel, muted })
     const zScale = zColors.map((color, index) => `  --z${index}: ${color} !important;`).join("\n");
     const promptBorder = mixHex(accent, background, 0.55);
     const promptFocusBorder = mixHex(accent, background, 0.32);
-    const codeBg = mixHex(panel, background, 0.25);
     return `/* Claude Code · Epitaxy */
 .epitaxy-root, [data-mode="dark"] .epitaxy-root, [data-mode="light"] .epitaxy-root {
 ${grayScale}
@@ -653,16 +720,98 @@ ${zScale}
 .epitaxy-root [data-theme="claude"] { --accent-brand: ${hslTriple(accent)} !important; }
 /* Блоки кода — <diffs-container> с shadow DOM: наши таблицы стилей внутрь не
    попадают, зато его цвета — переменные хоста и схема light-dark(). Без этого
-   блок остаётся чёрным на любой теме (#5365). Фон — между панелью и страницей,
-   текст — цвет темы; схема — по типу темы, чтобы подсветка синтаксиса взяла
-   свой светлый/тёмный набор. */
+   блок остаётся чёрным на любой теме (#5365). Фон — общая подложка кода (в
+   светлых темах старый замес от панели давал почти белое и коробка сливалась
+   со страницей), текст — цвет темы; схема — по типу темы, чтобы подсветка
+   синтаксиса взяла свой светлый/тёмный набор. */
 .epitaxy-root diffs-container, diffs-container {
   color-scheme: ${light ? "light" : "dark"} !important;
-  --diffs-light-bg: ${codeBg} !important;
-  --diffs-dark-bg: ${codeBg} !important;
+  --diffs-light-bg: ${codeColors.surface} !important;
+  --diffs-dark-bg: ${codeColors.surface} !important;
   --diffs-light: ${foreground} !important;
   --diffs-dark: ${foreground} !important;
 }
+`;
+  };
+
+  // Блоки кода (#5365). Подсветка у Claude — highlight.js «One Dark»: числа
+  // зашиты в его таблицу, светлого набора нет вовсе, и коробка остаётся чёрной
+  // при любой теме, а в светлых темах токены на ней не читаются (строка давала
+  // контраст 1,65). Держим привычные оттенки One Dark — по цвету читают код, —
+  // но подтягиваем светлоту под нашу подложку: тон и насыщенность не трогаем.
+  const ONE_DARK_TOKENS = {
+    comment: "#5c6370", keyword: "#c678dd", name: "#e06c75", literal: "#56b6c2",
+    string: "#98c379", number: "#d19a66", title: "#61aeee", builtin: "#e6c07b",
+  };
+  // Комментарий приглушён намеренно: на 4,5 он стал бы таким же ярким, как код,
+  // и подсветка потеряла бы смысл.
+  const CODE_CONTRAST = 4.5;
+  const CODE_COMMENT_CONTRAST = 3.5;
+  const codePalette = ({ type, background, foreground, accent }) => {
+    const light = type === "light";
+    const base = THEME_FALLBACK[light ? "light" : "dark"];
+    const page = normalizeHex(background, base.background);
+    const ink = normalizeHex(foreground, base.foreground);
+    const brand = normalizeHex(accent, base.accent);
+    // Подложка считается от пары фон↔текст, а НЕ от панели: у всех девяти
+    // светлых тем panel = #ffffff, и коробка на нём пропала бы. Такой замес даёт
+    // «полочку» чуть светлее страницы в тёмной теме и чуть темнее — в светлой.
+    const surface = mixHex(page, ink, light ? 0.06 : 0.09);
+    const tokens = {};
+    for (const [group, color] of Object.entries(ONE_DARK_TOKENS)) {
+      tokens[group] = readableOn(color, surface, group === "comment" ? CODE_COMMENT_CONTRAST : CODE_CONTRAST);
+    }
+    return {
+      surface,
+      // Своя рамка коробки: акцент, уведённый к фону. Рамка цитаты берётся
+      // готовой var(--cds-border) — второй константы для неё тут нет.
+      border: mixHex(brand, page, 0.62),
+      ink,
+      // Чип считаем против той же подложки: alpha-1 у Claude — те же 5 % сдвига
+      // от фона, а одна опорная поверхность на весь код предсказуемее.
+      chipInk: readableOn(brand, surface, CODE_CONTRAST),
+      tokens,
+    };
+  };
+
+  // Превью артефактов Claude прикрывает у себя ровно один background у pre —
+  // наши чернила, рамка и восемь токенов туда бы попали, и код на «белой бумаге»
+  // превью стал бы нечитаемым. Поэтому каждое наше правило кода выключает себя
+  // внутри превью само: хвост приписывается к КАЖДОМУ селектору списка.
+  const CODE_NOT_PREVIEW = ":not(:is(.artifact-markdown-preview, .channel-artifact-markdown-preview) *)";
+  const outsidePreview = list => list.split(",").map(part => `${part.trim()}${CODE_NOT_PREVIEW}`).join(", ");
+  // Селекторы групп — дословно из таблиц Claude (разведка WF34), порядок как в
+  // его файле. Правила без цвета (курсив, жирный, подчёркивание) не трогаем.
+  const CODE_TOKEN_SELECTORS = {
+    comment: ".hljs-comment, .hljs-quote",
+    keyword: ".hljs-doctag, .hljs-formula, .hljs-keyword",
+    name: ".hljs-deletion, .hljs-name, .hljs-section, .hljs-selector-tag, .hljs-subst",
+    literal: ".hljs-literal",
+    string: ".hljs-addition, .hljs-attribute, .hljs-meta .hljs-string, .hljs-regexp, .hljs-string",
+    number: ".hljs-attr, .hljs-number, .hljs-selector-attr, .hljs-selector-class, .hljs-selector-pseudo, .hljs-template-variable, .hljs-type, .hljs-variable",
+    title: ".hljs-bullet, .hljs-link, .hljs-meta, .hljs-selector-id, .hljs-symbol, .hljs-title",
+    builtin: ".hljs-built_in, .hljs-class .hljs-title, .hljs-title.class_",
+  };
+  const codeCss = code => {
+    const tokens = Object.entries(CODE_TOKEN_SELECTORS)
+      .map(([group, selector]) => `${outsidePreview(selector)} { color: ${code.tokens[group]} !important; }`)
+      .join("\n");
+    // Инлайн-код красится ТРЕМЯ код-только переменными Claude, а не своими
+    // фонами: у него развешаны исключения (чип в ссылке, ячейка th, таблица,
+    // вложенный код) — любое наше правило фона их затопчет. Прямое правило ниже
+    // нужно старому рендеру, который --cds-* не читает вовсе, и служит
+    // страховкой полю ввода, где переменная объявлена ближе к элементу.
+    return `/* Блоки кода, подсветка и инлайн — из палитры темы (#5365) */
+${THEME_ROOT_SELECTOR} {
+  --cds-prose-code-color: ${code.chipInk} !important;
+  --code-chip-ink: ${code.chipInk} !important;
+  --cds-editor-code-ink: ${code.chipInk} !important;
+}
+${outsidePreview("pre, .hljs, code.hljs, .code-block__code")} { background: ${code.surface} !important; color: ${code.ink} !important; }
+${outsidePreview("pre")} { border: 0.5px solid ${code.border} !important; }
+${tokens}
+${outsidePreview(".ReactMarkdown code, div.ProseMirror > p > code")} { color: ${code.chipInk} !important; }
+${outsidePreview(".epitaxy-markdown blockquote")} { border-left-color: var(--cds-border) !important; }
 `;
   };
 
@@ -5054,6 +5203,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Глушителя ошибок здесь нет намеренно: переименовали функцию — люк обязан кричать, а не отдавать тестам undefined.
   if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ themeCss, epitaxyCss, fontCss, sizeCss,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
+    codeCss, codePalette, contrastRatio, readableOn,
     chatKey, sessionKey, themeKey, legacyKey, mapEntry, entryLayer, readThemeMap, writeThemeMap, liveRing, livePalette,
     parseProgressText, progressShares, statusLines, statusFeedLines, statusKey, runWorkflowCommand, newWindowSegment,
     newWindowSessionId, newWindowAtHome, newWindowStoreOk, setModuleImporter, newWindowScanStores,
