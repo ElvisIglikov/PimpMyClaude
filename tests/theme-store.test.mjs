@@ -56,14 +56,27 @@ test("«всем окнам» — последний уровень", () => {
   assert.equal(api.status().theme.source, "all");
 });
 
-test("заголовки-заглушки ключом чата не становятся", () => {
+test("заголовки-заглушки ключом чата по ИМЕНИ не становятся", () => {
   for (const stub of ["Claude", "New chat", "Новый чат", "  claude  "]) {
     const { inner, api } = loadInner({ title: stub });
-    assert.equal(inner.chatKey(), null, stub);
-    // У главного окна остаётся ключ окна, у подчинённого — ничего.
-    assert.equal(inner.themeKey(), "main", stub);
-    assert.equal(api.status().chatKey, null, stub);
+    assert.equal(inner.chatTitleKey(), null, stub);
+    // WF35: у безымянного чата есть id, и ключ по нему законен — выбранный в
+    // таком чате цвет обязан остаться, когда имя появится.
+    assert.equal(inner.chatIdKey(), "id:local_test", stub);
+    assert.equal(inner.chatKey(), "id:local_test", stub);
+    assert.equal(inner.themeKey(), "id:local_test", stub);
+    assert.equal(api.status().chatKey, "id:local_test", stub);
   }
+});
+
+test("id чата неизвестен — ключом остаётся имя, у заглушки ключа чата нет вовсе", () => {
+  const named = loadInner({ title: "Trelvis", href: "https://claude.ai/new" });
+  assert.equal(named.inner.chatIdKey(), null, "путь без local_ id не даёт");
+  assert.equal(named.inner.chatKey(), "chat:Trelvis");
+  assert.equal(named.inner.themeKey(), "chat:Trelvis");
+  const stub = loadInner({ title: "Claude", href: "https://claude.ai/new" });
+  assert.equal(stub.inner.chatKey(), null);
+  assert.equal(stub.inner.themeKey(), "main", "у главного окна остаётся ключ окна");
 });
 
 test("запись старого образца w:<заголовок> читается как запись чата", () => {
@@ -177,11 +190,11 @@ test("writeThemeMap пустой картой убирает ключ целик
   assert.equal(loaded.win.localStorage.getItem(MAP_KEY), null);
 });
 
-test("выбор в безымянном чате в chat: не пишется — только main и сессия", () => {
+test("выбор в безымянном чате в chat: не пишется — только id, main и сессия", () => {
   const loaded = loadInject({ title: "Claude" });
   loaded.dom.command({ id: "5", action: "theme", at: "now", scope: "window", title: "Claude", theme: theme("цвет") });
   const stored = readMap(loaded.win);
-  assert.deepEqual(Object.keys(stored), ["main"], "ключа чата нет");
+  assert.deepEqual(Object.keys(stored), ["id:local_test", "main"], "ключа по ИМЕНИ нет");
   assert.equal(JSON.parse(loaded.win.sessionStorage.getItem(SESSION_KEY)).key, "main");
 });
 

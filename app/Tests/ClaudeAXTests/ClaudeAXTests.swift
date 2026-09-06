@@ -3260,9 +3260,11 @@ final class ClaudeAXTests: XCTestCase {
     /// отсюда два списка-исключения. **Дополняет тот, кто добавляет команду.**
     func testCommandContractMatchesInjectJS() throws {
         let axOnly: Set<ClaudeCommand> = [.newChat, .arrange, .show]    // исполняет AX, ветки в JS нет
-        let pageOnly: Set<String> = ["theme", "status", "live-colors"]  // пишутся мимо enum
-        // `theme`/`status` складывают ClaudeActions и StatusFeed, `live-colors` (WF18) — LiveColors.swift:
-        // команда уходит строкой, enum ради неё не расширяли.
+        // пишутся мимо enum
+        let pageOnly: Set<String> = ["theme", "status", "live-colors", "themes-restore"]
+        // `theme`/`status` складывают ClaudeActions и StatusFeed, `live-colors` (WF18) — LiveColors.swift,
+        // `themes-restore` (WF35) — WindowThemeStore: команда уходит строкой, enum ради неё
+        // не расширяли (это не пункт меню и не слот хоткея).
 
         let inject = try String(contentsOf: ClaudeAXTests.injectURL, encoding: .utf8)
         let branches = Set(ClaudeAXTests.commandBranches(in: inject))

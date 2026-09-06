@@ -67,6 +67,9 @@ struct ChatProbeFiles {
 /// Тумблер «🗂 Цвет по проекту» выключен — канала не касаемся совсем: probe нужен ровно
 /// покраске (риск 11 плана WF29).
 ///
+/// WF35 добавил к ответу ОДНО поле — `themes`, карту тем страницы: файл `window-themes.json`
+/// догоняет ею правду, второго probe-скрипта под это не заводится (решение 3 плана WF35).
+///
 /// Класс не потокобезопасен — живёт на главной очереди, вместе с общим тиком 2 с.
 final class ChatProbe {
     static let scriptName = "probe.js"
@@ -96,6 +99,10 @@ final class ChatProbe {
     /// Стор попапов на странице работает: `self:null` при нём значит «чат не определён»,
     /// а не «спросить некого» (решение 9 плана WF29).
     static let storeOK = "ok"
+    /// Карту тем берём только у страницы claude.ai (решение 3 плана WF35): probe лоадер гоняет
+    /// во ВСЕХ страницах, и артефакт на чужом origin вернул бы ПУСТУЮ карту — а пустая карта
+    /// значит «Элвис снял всё сам» и чистит файл.
+    static let claudeOrigin = "https://claude.ai/"
 
     /// Кто держит канал — для строки диагностики.
     private enum Channel: String {
@@ -128,6 +135,12 @@ final class ChatProbe {
     private var foreignStamp: String?
     private var channel: Channel = .own
     private var started = false
+    /// Карта тем последнего круга (решение 3 плана WF35): её забирает `WindowThemeStore`,
+    /// и забирает ровно один раз.
+    private var freshThemes: [String: WindowThemeEntry]?
+    /// Приложение только что писало зеркало тем — повод спросить страницы (решение 3 плана
+    /// WF35). Разовый: снимается первым же вопросом.
+    private var mirrored = false
 
     init(files: ChatProbeFiles = .onDisk(), now: @escaping () -> Date = Date.init,
          random: @escaping () -> Int = { Int.random(in: 0...9999) }) {
@@ -183,6 +196,20 @@ final class ChatProbe {
         return found
     }
 
+    /// Карта тем страницы из последнего круга (`localStorage["myclaude-themes-v1"]`, решение 3
+    /// плана WF35). Отдаётся ОДИН раз: файл догоняет правду ровно на том круге, где она пришла.
+    /// nil — поля `themes` в круге не было вовсе (главное окно claude.ai не ответило), и это
+    /// не то же самое, что пустая карта.
+    func takeThemes() -> [String: WindowThemeEntry]? {
+        defer { freshThemes = nil }
+        return freshThemes
+    }
+
+    /// Приложение записало зеркало тем: ближайший круг обязан спросить страницы, иначе файл
+    /// догонял бы правду только зеркалом (решение 3 плана WF35). Пол частоты канала при этом
+    /// остаётся прежним — шторма не будет.
+    func noteMirror() { mirrored = true }
+
     /// Строка для `statusText`: канал / сколько страниц ответило / сколько назвали свой чат.
     var status: String {
         "\(channel.rawValue)/\(answers.count)/\(answers.filter { $0.chat != nil }.count)"
@@ -210,12 +237,14 @@ final class ChatProbe {
         titles = sorted
         revision = indexRevision
         started = true
+        mirrored = false
         if unknown { askedAt = at }
     }
 
     /// Есть ли повод спросить (решение 3 плана WF29): первый тик, изменился набор окон,
     /// изменился состав чатов, есть неопознанное окно и спрашивали давно, канал освободился.
-    /// Плюс два тормоза: пол частоты и незакрытый круг.
+    /// Четвёртый повод добавил WF35: приложение писало зеркало тем, и файл обязан догнать
+    /// правду страницы. Плюс два тормоза: пол частоты и незакрытый круг.
     private func reason(titles: [String], revision: Int, unknown: Bool, at: Date) -> Bool {
         // Прошлый круг не закрыт и ещё не потерян — второй не начинаем: старый ответ
         // затёр бы свежий (критик В2 плана WF29).
@@ -223,6 +252,7 @@ final class ChatProbe {
            at.timeIntervalSince(wrote) < ChatProbe.answerTimeout { return false }
         if let wrote = lastWriteAt, at.timeIntervalSince(wrote) < ChatProbe.askInterval { return false }
         if !started { return true }
+        if mirrored { return true }
         if titles != self.titles { return true }
         if revision != self.revision { return true }
         if channel == .busy { return true }
@@ -247,10 +277,13 @@ final class ChatProbe {
         guard let stamp = files.resultInfo(), stamp != resultStamp else { return }
         resultStamp = stamp
         guard let nonce = pendingNonce else { return }
-        let fresh = ChatProbe.parse(files.readResult(), nonce: nonce, at: at)
-        guard !fresh.isEmpty else { return }
+        let fresh = ChatProbe.parseAnswer(files.readResult(), nonce: nonce, at: at)
+        guard !fresh.pages.isEmpty else { return }
         // Чужие страницы (артефакты, панель браузера) в карте не нужны — их там четыре пятых.
-        answers = fresh.filter { $0.kind != .other }
+        answers = fresh.pages.filter { $0.kind != .other }
+        // Карта тем ждёт своего читателя (`WindowThemeStore.absorb`); поля не было — nil,
+        // и файл в этом круге не трогают вовсе.
+        freshThemes = fresh.themes
         answeredAt = at
         pendingNonce = nil
     }
@@ -337,18 +370,37 @@ final class ChatProbe {
     /// Берутся только записи со СВОИМ `nonce` — иначе поздно завершившийся прошлый круг
     /// или ответ агентского скрипта попал бы в карту; записи с `error` пропускаются.
     static func parse(_ data: Data?, nonce: String, at: Date) -> [ChatPage] {
+        parseAnswer(data, nonce: nonce, at: at).pages
+    }
+
+    /// То же, но вместе с картой тем (решение 3 плана WF35). Файл весит мегабайты — разбираем
+    /// его один раз и за один проход.
+    ///
+    /// Поле `themes` берём ТОЛЬКО из ответа страницы `https://claude.ai/…`: probe лоадер гоняет
+    /// во всех страницах подряд (`isClaudePage`, `Loader.swift`), и артефакт на чужом origin
+    /// вернул бы пустую карту — а пустая карта позже в поколении чистит файл. Попапы
+    /// (`about:blank`) поле не шлют вовсе. `themes` без карты (не объект) — тоже не ответ.
+    static func parseAnswer(_ data: Data?, nonce: String, at: Date)
+        -> (pages: [ChatPage], themes: [String: WindowThemeEntry]?) {
         guard let data = data,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let list = root["results"] as? [[String: Any]] else { return [] }
-        return list.compactMap { entry in
+              let list = root["results"] as? [[String: Any]] else { return ([], nil) }
+        var pages: [ChatPage] = []
+        var themes: [String: WindowThemeEntry]?
+        for entry in list {
             guard let result = entry["result"] as? [String: Any],
-                  (result["nonce"] as? String) == nonce else { return nil }
+                  (result["nonce"] as? String) == nonce else { continue }
             let kind = ChatPage.Kind(rawValue: (result["kind"] as? String) ?? "") ?? .other
             let title = (result["title"] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return ChatPage(kind: kind, chat: chatId(result["self"] as? String), title: title,
-                            store: (result["store"] as? String) ?? "", at: at)
+            if themes == nil, let raw = result["themes"] as? [String: Any],
+               let url = entry["url"] as? String, url.hasPrefix(claudeOrigin) {
+                themes = WindowThemeStore.map(from: raw)
+            }
+            pages.append(ChatPage(kind: kind, chat: chatId(result["self"] as? String), title: title,
+                                  store: (result["store"] as? String) ?? "", at: at))
         }
+        return (pages, themes)
     }
 
     /// id чата из ответа страницы. Сито то же, что у адреса страницы в `ProjectIndex.page(url:)`:

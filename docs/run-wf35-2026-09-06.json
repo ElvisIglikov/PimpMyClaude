@@ -1,0 +1,32 @@
+{
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf35-2026-09-06.md",
+  "project": "⚪PimpMyClaude",
+  "status": "финиш",
+  "trelvis": "#5473",
+  "branch": "wf35",
+  "tag": "wf35-start",
+  "watchdog": "watchdog-pimpmyclaude-0509",
+  "orchestrator": "Fable 5.1 high; все агенты Opus max",
+  "next_steps": [
+    "волна 1 A∥B → волна 2 D∥V → фикс → V2 → гейт (test.sh, cp inject, bundle, подмена; перезапуск Claude для решения 8 — Элвис), слияние в main"
+  ],
+  "log": [
+    {
+      "at": "2026-09-06T10:40:00+05:00",
+      "who": "оркестратор",
+      "what": "ветка wf35 от main 21d0752 (после WF31); WF30 отложен: его разведка дёргает главное окно Claude, Элвис за клавиатурой — спросить, когда"
+    },
+    {
+      "at": "2026-09-06T10:45:00+05:00",
+      "who": "оркестратор",
+      "what": "WF31 слит в main (21d0752), пуш main/веток/тегов по слову Элвиса; WF35 кодинг запущен: A∥B → D∥V → фикс → V2. WF30 ждёт окна: разведка дёргает главное окно Claude"
+    },
+    {
+      "at": "2026-09-06T11:00:00+05:00",
+      "who": "оркестратор",
+      "what": "гейт: test.sh зелёный (187 JS + 143 Swift), inject wf35-a-1 живьём, приложение подменено (второй open после -600), зеркало window-themes.json появилось: 10 ключей (chat: + id:). Решение 8 (возврат после перезапуска Claude) живьём не проверено — нужен перезапуск Claude Элвисом. Слияние в main."
+    }
+  ],
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-wf35-code-wf_905d920c-0fc.js",
+  "run_id": "wf_905d920c-0fc"
+}
