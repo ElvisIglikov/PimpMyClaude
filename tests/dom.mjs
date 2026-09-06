@@ -106,6 +106,12 @@ export const createDom = ({
   session = {},
   viewport = { width: 1200, height: 800 },
   hasFocus = true,
+  // Окно-родитель для попапа (WF29, раздел 12в): попап about:blank спрашивает
+  // свой чат у window.opener.__myclaude. Тест кладёт сюда либо окно второго
+  // стенда (loadInject(...).win — тогда у родителя настоящий __myclaude из
+  // боевого файла), либо любой объект-заглушку, либо ничего: без opener окно
+  // ведёт себя как первое окно браузера.
+  opener = null,
 } = {}) => {
   // sheets считается на лету: тема, шрифт и размер живут конструируемыми
   // таблицами (adoptedStyleSheets), и их число — тот же счётчик утечки.
@@ -561,6 +567,7 @@ export const createDom = ({
     clearInterval: id => timerDrop(id),
     alert() {}, focus() {}, blur() {}, close() {},
     open: () => null,
+    opener: opener ?? null,
     __timers: timers,
     __counters: counters,
   };
@@ -596,6 +603,14 @@ export const createDom = ({
       }
     },
     command: detail => win.dispatchEvent({ type: "myclaude-command", detail }),
+    // Адреса модулей для поиска стора (раздел 12б inject.js): их берут из
+    // link[rel=modulepreload]. Читается СВОЙСТВО link.href, а не атрибут, —
+    // поэтому ставим именно свойство, как это делает браузер.
+    modules: (...urls) => urls.map(url => {
+      const link = head.add("link", { attrs: { rel: "modulepreload", href: String(url) } });
+      link.href = String(url);
+      return link;
+    }),
     sheets: () => document.adoptedStyleSheets.map(sheet => sheet.cssText).join("\n"),
     // Композер Claude Code: рамка поля, редактор .ProseMirror и строка модели —
     // ровно то дерево, которое ищут findEditor/findShell/findComposerBlock.

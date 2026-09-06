@@ -46,6 +46,9 @@ private final class PaintRig {
     var notices: [String] = []
     /// Запись команды не удалась (диск, права): покраска должна попробовать снова.
     var writes = true
+    /// Что страницы ответили в последнем круге probe (план WF29): «какой во мне чат».
+    /// Пусто — карта несвежая, и покраска попапов идёт старым путём, по заголовку.
+    var pages: [ChatPage] = []
 
     init(box: URL) {
         self.box = box
@@ -69,9 +72,20 @@ private final class PaintRig {
         paint.isMenuOpen = { [unowned self] in self.menuOpen }
         paint.lastMenuCommand = { [unowned self] in self.lastMenuCommand }
         paint.showNotice = { [unowned self] text in self.notices.append(text) }
+        // Ровно та же проводка, что живьём вешает ClaudeAXController на ChatProbe.
+        paint.chatPages = { [unowned self] in self.pages }
+        paint.chatForTitle = { [unowned self] title in
+            ChatProbe.chat(forTitle: title, in: self.pages)
+        }
     }
 
     func folder(_ name: String) -> URL { root.appendingPathComponent(name, isDirectory: true) }
+
+    /// Ответ страницы: `at` — по часам стенда, чтобы протухание ответа было проверяемым.
+    func page(_ kind: ChatPage.Kind, _ chat: String?, _ title: String,
+              store: String = ChatProbe.storeOK) -> ChatPage {
+        ChatPage(kind: kind, chat: chat, title: title, store: store, at: clock.now)
+    }
 
     /// Слои последней ушедшей команды: «t» — тема, «f» — шрифт, «s» — размер, «r» — рамка;
     /// заглавная буква — слой сняли (`null`).
@@ -1233,5 +1247,397 @@ final class ProjectTests: XCTestCase {
         XCTAssertNil(bare.items.first { $0.title == MenuModel.projectColorTitle })
         XCTAssertEqual(Array(bare.items.map { $0.isSeparatorItem ? "—" : $0.title }.suffix(3)),
                        ["—", MenuModel.autoPaintTitle, MenuModel.liveColorsTitle])
+    }
+
+    // MARK: - чат окна вместо заголовка (план WF29, задачи #5448 и #5455)
+
+    /// Тест 20 плана: номер состава чатов растёт от смены папки, имени и набора чатов —
+    /// и НЕ растёт от того, что Claude переписал файл сессии с новым `lastFocusedAt`
+    /// (иначе probe уходил бы почти на каждом тике, критик Б1 плана WF29).
+    func testProjectIndexRevisionGrowsOnCwdChange() {
+        let box = makeTemp()
+        let root = box.appendingPathComponent("_ElvisProjects", isDirectory: true)
+        let sessions = box.appendingPathComponent("sessions", isDirectory: true)
+        let clock = Clock()
+        let pimp = root.appendingPathComponent("PimpMyClaude", isDirectory: true)
+        let dictatorik = root.appendingPathComponent("Dictatorik", isDirectory: true)
+        makeFolder(pimp, marker: ".git")
+        makeFolder(dictatorik, marker: "AGENTS.md")
+        putSession(sessions, id: "local_a1", title: "PimpMyClaude", cwd: pimp, at: 3000)
+        let index = ProjectIndex(sessionsDirectory: sessions,
+                                 statusURL: box.appendingPathComponent("status.json"),
+                                 projectsRoot: root, home: box, now: { clock.now })
+
+        let first = index.revision
+        XCTAssertGreaterThan(first, 0, "первый разбор индекса — уже состав")
+        clock.advance()
+        XCTAssertEqual(index.revision, first, "ничего не менялось")
+
+        // Файл сессии Claude переписывает непрерывно: в 04:10 пять файлов имели mtime 03:51–03:52.
+        putSession(sessions, id: "local_a1", title: "PimpMyClaude", cwd: pimp, at: 4000)
+        clock.advance()
+        XCTAssertEqual(index.revision, first, "перезапись файла — не смена состава")
+
+        // «Change directory» прямо в Claude (задача #5448): у чата другая папка.
+        putSession(sessions, id: "local_a1", title: "PimpMyClaude", cwd: dictatorik, at: 4000)
+        clock.advance()
+        XCTAssertEqual(index.revision, first + 1)
+
+        // Чат переименовали.
+        putSession(sessions, id: "local_a1", title: "Всё сначала", cwd: dictatorik, at: 4000)
+        clock.advance()
+        XCTAssertEqual(index.revision, first + 2)
+
+        // Открыли новый чат.
+        putSession(sessions, id: "local_b2", title: "Dictatoric", cwd: dictatorik, at: 5000)
+        clock.advance()
+        XCTAssertEqual(index.revision, first + 3)
+    }
+
+    /// Тест 21 плана: попап красится видом СВОЕЙ папки, даже когда его заголовка нет в индексе
+    /// вовсе. Живой случай #5455: «Bro Flow продолжение» — это чат VkusnoffKz, переименованный
+    /// уже после выноса в окно, и по заголовку он не находится.
+    func testProjectPaintPaintsPopoutByChatId() throws {
+        let rig = makeRig()
+        rig.store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(ProjectTests.indigo)),
+                        to: rig.folder("PimpMyClaude"))
+        rig.store.write(ProjectSettings(name: "Dictatorik", theme: .set(ProjectTests.arctic)),
+                        to: rig.folder("Dictatorik"))
+        rig.titles = ["Bro Flow продолжение"]
+        rig.pages = [rig.page(.main, "local_a1", "PimpMyClaude"),
+                     rig.page(.popout, "local_b2", "Bro Flow продолжение")]
+        XCTAssertNil(rig.index.folder(forTitle: "Bro Flow продолжение"),
+                     "старый путь такого окна не находил вовсе — в этом и была задача #5455")
+
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.map { $0.key }, ["main", "c:local_b2"])
+        let popout = try XCTUnwrap(rig.sent.last)
+        XCTAssertEqual(popout.chat, "local_b2")
+        XCTAssertNil(popout.match, "попап адресуется чатом, а не путём главного окна")
+        XCTAssertEqual(popout.title, "Bro Flow продолжение")
+        XCTAssertEqual(popout.theme.value?.id, "arctic", "цвет своего проекта, а не соседнего")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/1")
+
+        // Второй тик молчит: отпечаток на месте.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2)
+    }
+
+    /// Тест 22 плана (сторож #5455): страница ответила, стор у неё рабочий, а чат назвать
+    /// не смогла — окно «не определён». Ни команды, ни отпечатка, и папка главного окна
+    /// не подставляется НИКОГДА.
+    func testProjectPaintNeverFallsBackToMainFolder() throws {
+        let rig = makeRig()
+        rig.store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(ProjectTests.indigo)),
+                        to: rig.folder("PimpMyClaude"))
+        rig.titles = ["Разговор ни о чём"]
+        rig.pages = [rig.page(.main, "local_a1", "PimpMyClaude"),
+                     rig.page(.popout, nil, "Разговор ни о чём")]
+
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.map { $0.key }, ["main"], "попап обычного чата покрасили чужим цветом")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/1/0")
+
+        // И выбор темы в таком окне остаётся местным — в чужой файл он не уезжает.
+        rig.paint.noteManualChoice(title: "Разговор ни о чём", theme: .set(ProjectTests.arctic),
+                                   font: .keep, size: .keep, frame: .keep)
+        XCTAssertEqual(rig.store.settings(in: rig.folder("PimpMyClaude"))?.theme.value?.id, "indigo")
+        XCTAssertNil(rig.store.settings(in: rig.folder("Dictatorik")))
+    }
+
+    /// Тест 23 плана (сторож против регресса решения 9): карта несвежая или стора на странице
+    /// нет — попапы красятся по-старому, заголовком. Так окно, которое красится сегодня,
+    /// не перестанет краситься, если стор не найдётся.
+    func testProjectPaintFallsBackToTitleWhenProbeCold() throws {
+        let rig = makeRig()
+        rig.titles = ["Dictatoric"]
+        rig.pages = []
+
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.map { $0.key }, ["main", "w:Dictatoric"])
+        XCTAssertNil(try XCTUnwrap(rig.sent.last).chat, "без ответа страницы поля chat в команде нет")
+
+        // Страница ответила, но стор у неё не работает — «не определён» это не значит,
+        // и заголовок остаётся единственным, что у нас есть.
+        rig.pages = [rig.page(.popout, nil, "Dictatoric", store: "none")]
+        rig.store.write(ProjectSettings(name: "Dictatorik", theme: .set(ProjectTests.arctic)),
+                        to: rig.folder("Dictatorik"))
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 3)
+        XCTAssertEqual(rig.sent.last?.key, "w:Dictatoric")
+        XCTAssertEqual(rig.sent.last?.theme.value?.id, "arctic")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/0")
+    }
+
+    /// Тест 24 плана (сторож #5448): у чата попапа сменилась папка — окно перекрашивается
+    /// само, отдельного слежения за «Change directory» никто не пишет.
+    func testProjectPaintRepaintsOnCwdChange() throws {
+        let rig = makeRig()
+        rig.store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(ProjectTests.indigo)),
+                        to: rig.folder("PimpMyClaude"))
+        rig.titles = ["Bro Flow продолжение"]
+        rig.pages = [rig.page(.popout, "local_b2", "Bro Flow продолжение")]
+
+        rig.paint.tick()
+        let first = try XCTUnwrap(rig.sent.last)
+        XCTAssertEqual(first.key, "c:local_b2")
+        XCTAssertEqual(first.theme.value?.id, "project-\(AutoPaint.hue(forName: "Dictatorik"))",
+                       "у Dictatorik файла нет — авто-цвет по имени папки")
+
+        // Элвис нажал «Change directory»: Claude переписал файл сессии, папка стала другой.
+        putSession(rig.sessions, id: "local_b2", title: "Dictatoric",
+                   cwd: rig.folder("PimpMyClaude"), at: 2000)
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 3, "цвет не поехал за папкой (задача #5448)")
+        XCTAssertEqual(rig.sent.last?.key, "c:local_b2")
+        XCTAssertEqual(rig.sent.last?.theme.value?.id, "indigo")
+    }
+
+    /// Тест 25 плана: ключ `c:<id>` переживает переименование окна — повторной команды нет.
+    func testProjectPaintKeepsMarkAcrossTitleRename() throws {
+        let rig = makeRig()
+        rig.titles = ["Bro Flow продолжение"]
+        rig.pages = [rig.page(.popout, "local_b2", "Bro Flow продолжение")]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2)
+
+        rig.titles = ["Bro Flow ещё раз"]
+        rig.pages = [rig.page(.popout, "local_b2", "Bro Flow ещё раз")]
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2, "переименование окна — не повод красить его заново")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/1")
+    }
+
+    /// Тест 26 плана: побайтный порядок полей команды — scope, title, match, chat, preview,
+    /// затем слои. Поле `chat` встаёт сразу после `match`, как `match` встал после `title`.
+    func testProjectThemePayloadCarriesChat() {
+        let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow,
+                                               title: "Bro Flow продолжение",
+                                               chat: "local_c4abc832",
+                                               theme: .set(ProjectTests.indigo), font: .keep,
+                                               size: .keep, frame: .keep)
+        XCTAssertEqual(CommandChannel.payload(action: "theme", fields: fields, id: "1-0001",
+                                              at: Date(timeIntervalSince1970: 0)),
+                       "{\"id\":\"1-0001\",\"action\":\"theme\",\"at\":\"1970-01-01T00:00:00Z\","
+                       + "\"scope\":\"window\",\"title\":\"Bro Flow продолжение\","
+                       + "\"chat\":\"local_c4abc832\","
+                       + "\"theme\":{\"id\":\"indigo\",\"name\":\"Индиго\",\"type\":\"dark\","
+                       + "\"palette\":{\"accent\":\"#7c8cff\",\"background\":\"#171a2b\","
+                       + "\"foreground\":\"#e8e9f5\",\"sidebar\":\"#12142230\",\"panel\":\"#1e2238\","
+                       + "\"muted\":\"#9aa0c0\"}}}")
+        // Чат окна неизвестен — поля в команде НЕТ вовсе, всё как до WF29.
+        let plain = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: "Dictatoric",
+                                              theme: .reset, font: .keep)
+        XCTAssertEqual(CommandChannel.payload(action: "theme", fields: plain, id: "1-0001",
+                                              at: Date(timeIntervalSince1970: 0)),
+                       "{\"id\":\"1-0001\",\"action\":\"theme\",\"at\":\"1970-01-01T00:00:00Z\","
+                       + "\"scope\":\"window\",\"title\":\"Dictatoric\",\"theme\":null}")
+        // И порядок при обоих полях: match идёт первым, chat за ним (вместе их не шлют).
+        let both = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: "",
+                                             match: "/epitaxy/local_a1", chat: "local_a1",
+                                             preview: true, theme: .reset, font: .keep)
+        XCTAssertEqual(both.map { $0.key }, ["scope", "title", "match", "chat", "preview", "theme"])
+    }
+
+    /// Тест 27 плана: ручной выбор в окне попапа ложится в файл ЕГО проекта, а не в проект
+    /// главного окна; заголовок-ничья не пишет никуда.
+    func testManualChoiceWritesToChatFolder() throws {
+        let rig = makeRig()
+        rig.pages = [rig.page(.main, "local_a1", "PimpMyClaude"),
+                     rig.page(.popout, "local_b2", "Bro Flow продолжение")]
+
+        rig.paint.noteManualChoice(title: "Bro Flow продолжение", theme: .set(ProjectTests.arctic),
+                                   font: .keep, size: .keep, frame: .keep)
+        XCTAssertEqual(rig.store.settings(in: rig.folder("Dictatorik"))?.theme.value?.id, "arctic")
+        XCTAssertNil(rig.store.settings(in: rig.folder("PimpMyClaude")),
+                     "выбор в попапе уехал в проект главного окна")
+        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("Dictatorik")])
+
+        // Два окна с одним заголовком назвали РАЗНЫЕ чаты — не пишем никуда.
+        rig.notices = []
+        rig.pages = [rig.page(.popout, "local_b2", "Двойник"),
+                     rig.page(.popout, "local_a1", "Двойник")]
+        rig.paint.noteManualChoice(title: "Двойник", theme: .set(ProjectTests.indigo), font: .keep,
+                                   size: .keep, frame: .keep)
+        XCTAssertEqual(rig.store.settings(in: rig.folder("Dictatorik"))?.theme.value?.id, "arctic")
+        XCTAssertNil(rig.store.settings(in: rig.folder("PimpMyClaude")))
+        XCTAssertTrue(rig.notices.isEmpty, "молча выходим: выбор остаётся местным")
+    }
+
+    /// Тест 28 плана: чат главного окна берётся из ответа самой страницы, а ответ старше
+    /// минуты уступает адресу из `status.json` (решение 8 плана WF29).
+    func testMainChatPrefersPageAnswer() throws {
+        let rig = makeRig()
+        rig.store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(ProjectTests.indigo)),
+                        to: rig.folder("PimpMyClaude"))
+        rig.store.write(ProjectSettings(name: "Dictatorik", theme: .set(ProjectTests.arctic)),
+                        to: rig.folder("Dictatorik"))
+        // Лоадер говорит «local_a1», страница — «local_b2»: право за страницей.
+        rig.pages = [rig.page(.main, "local_b2", "Dictatoric")]
+
+        rig.paint.tick()
+        let first = try XCTUnwrap(rig.sent.last)
+        XCTAssertEqual(first.key, "main")
+        XCTAssertEqual(first.match, "/epitaxy/local_a1", "адресуется главное окно по-прежнему путём")
+        XCTAssertNil(first.chat)
+        XCTAssertEqual(first.theme.value?.id, "arctic")
+
+        // Ответ протух — верим лоадеру.
+        rig.clock.advance(ChatProbe.mainChatSeconds + 1)
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2)
+        XCTAssertEqual(rig.sent.last?.theme.value?.id, "indigo")
+        // Протухает он быстрее, чем приходит следующий круг (находка 1 проверки WF29): иначе
+        // после смены чата в главном окне цвет прошлого проекта держался бы до минуты.
+        XCTAssertLessThanOrEqual(ChatProbe.mainChatSeconds, ChatProbe.askInterval)
+
+        // Страница назвала чат, которого индекс не знает: папки НЕТ — и к папке чата из
+        // `status.json` мы не откатываемся (находка 2 проверки WF29, задача #5455).
+        rig.clock.advance(1)
+        rig.pages = [rig.page(.main, "local_zz", "Свежий чат")]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 3)
+        let unknown = try XCTUnwrap(rig.sent.last)
+        XCTAssertEqual(unknown.key, "main")
+        XCTAssertNil(unknown.theme.value, "в главное окно уехал цвет чужого проекта")
+        XCTAssertEqual(PaintRig.layers(unknown), "T", "слой прошлого проекта снят, нового нет")
+    }
+
+    /// Тест 29 плана (хвост WF20, находка 5): панель «Своя тема» держит окно КЛЮЧОМ, а не
+    /// заголовком. У главного окна в цели покраски стоит заглушка «Claude», и примерка
+    /// с настоящим заголовком чата гасилась ближайшим тиком.
+    func testThemeEditorOwnershipByWindowKey() throws {
+        let rig = makeRig()
+        rig.store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(ProjectTests.indigo)),
+                        to: rig.folder("PimpMyClaude"))
+        defer {
+            ClaudeActions.themeEditorTitle = nil
+            ClaudeActions.themeEditorKey = nil
+        }
+
+        // Главное окно показывает чат «PimpMyClaude» — именно так его видит AX.
+        XCTAssertEqual(rig.paint.windowKey(forTitle: "PimpMyClaude"), ProjectPaint.mainKey)
+        ClaudeActions.themeEditorTitle = "PimpMyClaude"
+        ClaudeActions.themeEditorKey = rig.paint.windowKey(forTitle: "PimpMyClaude")
+        rig.paint.tick()
+        XCTAssertTrue(rig.sent.isEmpty, "тик погасил примерку в главном окне")
+
+        // Панель закрыли — отпечаток не протух, окно красится ближайшим тиком.
+        ClaudeActions.themeEditorTitle = nil
+        ClaudeActions.themeEditorKey = nil
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
+
+        // Ключи остальных окон: опознанное — по чату, неопознанное — по заголовку,
+        // безымянное и заглушка — само главное окно.
+        rig.pages = [rig.page(.popout, "local_b2", "Bro Flow продолжение")]
+        XCTAssertEqual(rig.paint.windowKey(forTitle: "Bro Flow продолжение"), "c:local_b2")
+        XCTAssertEqual(rig.paint.windowKey(forTitle: "Разговор ни о чём"), "w:Разговор ни о чём")
+        XCTAssertEqual(rig.paint.windowKey(forTitle: " "), ProjectPaint.mainKey)
+        XCTAssertEqual(rig.paint.windowKey(forTitle: ProjectPaint.mainWindowTitle),
+                       ProjectPaint.mainKey)
+
+        // Ключа нет вовсе (резолвер не повешен) — сверка идёт по заголовку, как до WF29.
+        ClaudeActions.themeEditorTitle = "Bro Flow продолжение"
+        rig.titles = ["Bro Flow продолжение"]
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1, "старая сверка по заголовку перестала работать")
+
+        // Главное окно попадает в цели ДВАЖДЫ: ключом `main` и своим настоящим заголовком —
+        // `paintableTitles()` отдаёт заголовки всех окон, включая главное. Ключ защищает
+        // только первую цель, дубль `w:` держится заголовком (находка 3 проверки WF29).
+        rig.pages = []
+        rig.titles = ["PimpMyClaude"]
+        ClaudeActions.themeEditorTitle = "PimpMyClaude"
+        ClaudeActions.themeEditorKey = rig.paint.windowKey(forTitle: "PimpMyClaude")
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.map { $0.key }, ["main"],
+                       "тик погасил примерку через дубль окна по заголовку")
+    }
+
+    /// Тест 30 плана: ключ на окно ровно ОДИН. Появился id — отпечаток переезжает вместе
+    /// со слоями и лишней команды нет; потерялся — переезжает обратно, но вид уходит заново
+    /// заголовком (команда с полем `chat` могла и не дойти до страницы).
+    func testProjectPaintMovesMarkBetweenKeys() throws {
+        let rig = makeRig()
+        rig.titles = ["Dictatoric"]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.map { $0.key }, ["main", "w:Dictatoric"])
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/0")
+
+        // probe принёс id того же окна.
+        rig.pages = [rig.page(.popout, "local_b2", "Dictatoric")]
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2, "переезд ключа не должен слать команду заново")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/1", "на окно завели второй отпечаток")
+
+        // id потерялся: страница перезапустила инжект, стор пропал, канал занял агент.
+        rig.pages = []
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 3)
+        XCTAssertEqual(rig.sent.last?.key, "w:Dictatoric")
+        XCTAssertNil(rig.sent.last?.chat)
+        XCTAssertEqual(PaintRig.layers(try XCTUnwrap(rig.sent.last)), "t",
+                       "вид уезжает заново, уже заголовком")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/0")
+    }
+
+    /// Тест 31 плана (решение 7а): `status.json` разбирается по отпечатку, а не на каждом
+    /// вызове. Живьём он весит мегабайты, а `mainWindow()` зовут дважды за тик.
+    func testProjectIndexCachesStatusParse() throws {
+        let box = makeTemp()
+        let root = box.appendingPathComponent("_ElvisProjects", isDirectory: true)
+        let sessions = box.appendingPathComponent("sessions", isDirectory: true)
+        let status = box.appendingPathComponent("status.json")
+        makeFolder(root.appendingPathComponent("PimpMyClaude"), marker: ".git")
+        putSession(sessions, id: "local_a1", title: "PimpMyClaude",
+                   cwd: root.appendingPathComponent("PimpMyClaude"), at: 3000)
+        putStatus(status, urls: ["https://claude.ai/epitaxy/local_a1"])
+        let index = ProjectIndex(sessionsDirectory: sessions, statusURL: status, projectsRoot: root,
+                                 home: box)
+        var reads = 0
+        index.readStatus = { url in
+            reads += 1
+            return try? Data(contentsOf: url)
+        }
+
+        XCTAssertEqual(index.mainWindow()?.match, "/epitaxy/local_a1")
+        XCTAssertEqual(reads, 1)
+        _ = index.mainWindow()
+        _ = index.mainWindow()
+        XCTAssertEqual(reads, 1, "файл на 3,9 МБ разбирается заново на каждом вызове")
+
+        // Лоадер переписал файл — отпечаток другой, разбираем заново.
+        putStatus(status, urls: ["about:blank", "https://claude.ai/epitaxy/local_b2"])
+        XCTAssertEqual(index.mainWindow()?.match, "/epitaxy/local_b2")
+        XCTAssertEqual(reads, 2)
+    }
+
+    /// Тест 32 плана (хвост WF20, находка 3): файл `.pimpmyclaude.json`, который не читается
+    /// как UTF-8, считается БИТЫМ. Раньше он отвечал «не битый», и «Как у Claude» сносила
+    /// чужой файл целиком.
+    func testProjectSettingsBrokenOnNonUtf8() throws {
+        let rig = makeRig()
+        let pimp = rig.folder("PimpMyClaude")
+        let bytes = Data([0xff, 0xfe, 0x00, 0x81, 0x7b])
+        try bytes.write(to: rig.store.url(in: pimp))
+
+        XCTAssertTrue(rig.store.isBroken(in: pimp), "файл не прочли — значит и трогать его нельзя")
+        XCTAssertNil(rig.store.settings(in: pimp))
+
+        // «Как у Claude» в окне этого проекта: последний слой снят, файл удалять нельзя.
+        rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle, theme: .reset, font: .keep,
+                                   size: .keep, frame: .keep)
+        XCTAssertEqual(try Data(contentsOf: rig.store.url(in: pimp)), bytes, "битый файл снесли")
+        XCTAssertEqual(rig.notices, [MenuModel.projectBroken("PimpMyClaude")])
+        XCTAssertTrue(rig.store.registry().isEmpty)
     }
 }

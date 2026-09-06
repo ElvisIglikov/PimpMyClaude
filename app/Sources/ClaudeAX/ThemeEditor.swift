@@ -102,7 +102,7 @@ final class ThemeEditor: NSObject, NSWindowDelegate {
         panel.setFrameOrigin(NSPoint(x: top.x, y: top.y - panel.frame.height))
 
         MinimizeMenu.editorOpen = true
-        ClaudeActions.themeEditorTitle = AX.string(window, kAXTitleAttribute)
+        markOwnership()
         draw()
         panel.orderFrontRegardless()
         panel.makeKey()
@@ -118,8 +118,17 @@ final class ThemeEditor: NSObject, NSWindowDelegate {
     /// не залипает. Заодно освежаем заголовок: им адресуются и примерка, и молчание проекта.
     private func watch() {
         guard AX.value(window, kAXRoleAttribute) != nil else { return close() }
-        ClaudeActions.themeEditorTitle = AX.string(window, kAXTitleAttribute)
+        markOwnership()
         drawStatus()
+    }
+
+    /// Кем занято окно под панелью: заголовком (его читают примерка и плашки) и КЛЮЧОМ
+    /// покраски (находка 5 проверки WF20). Ключ живёт вместе с заголовком: чат в главном
+    /// окне переключают, и заголовок с ним меняется.
+    private func markOwnership() {
+        let title = AX.string(window, kAXTitleAttribute)
+        ClaudeActions.themeEditorTitle = title
+        ClaudeActions.themeEditorKey = ClaudeActions.windowKeyForTitle?(title ?? "")
     }
 
     // MARK: - выходы

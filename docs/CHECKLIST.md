@@ -51,9 +51,15 @@ open /Applications/PimpMyClaude.app
 «Поставить» в приложении закрывает Claude и с ним чат оркестратора — на Маке Элвиса это делает он сам.
 Агент правит только живой `inject.js`: лоадер перечитывает его по mtime, перезапуск не нужен.
 
+**Канал `probe.js` с WF29 общий: им пользуется и приложение** (спрашивает страницы, какой в них чат —
+`ChatProbe.swift`). Правило владения: **пользуешься probe.js на гейте — приложение уступает** (свой скрипт
+оно не пишет, карта чатов замирает, попапы красятся по старому пути — по заголовку); **закончил — удали
+`probe.js`**, приложение заберёт канал обратно за 5–10 с. Кто держит канал сейчас, видно по первой строке файла.
+
 ```bash
 SUP=~/Library/Application\ Support/MyClaude
 cp claude-patch/inject.js "$SUP/inject.js"
+head -1 "$SUP/probe.js" 2>/dev/null            # «// myclaude-chats v1 …» — канал держит приложение; файла нет — свободен
 printf '%s\n' 'window.__myclaude?.status?.() ?? "инжекта нет"' > "$SUP/probe.js"
 sleep 3                                        # probe исполняется раз в 2 с, когда файл изменился
 python3 -m json.tool "$SUP/probe-result.json" | head -60
@@ -61,8 +67,10 @@ python3 -m json.tool "$SUP/probe-result.json" | head -60
 
 - [ ] `status().version` — метка этой волны (например `wf24-a-1`), а не прошлой: файл доехал.
 - [ ] В `status()` живы поля, которые волна трогала: `theme` / `font` / `size` / `frame`, `progress`,
-      `workflow`, `newWindow`, `live`, `chatKey`, `sessionKey`.
+      `workflow`, `newWindow`, `live`, `chat`, `chatKey`, `sessionKey`.
 - [ ] `window.__myclaudeFailure` пуст (иначе установка упала и откатилась сама — смотреть причину).
+- [ ] Чужой `probe.js` от прошлой разведки убран ДО старта гейта (`rm "$SUP/probe.js"`): при нём приложение
+      молчит первые 10 минут, и гейт зря ждёт карту чатов.
 
 ### 1.5. Живой двойной инжект (обязательно, тестами не заменяется)
 
@@ -105,6 +113,9 @@ sleep 3; python3 -m json.tool "$SUP/probe-result.json"
       `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 - [ ] Слияние ветки `wfN` в `main` — `--no-ff`.
 - [ ] Сторож-крон снят (проверить списком), в папке планов ни одного чужого `run-*.json` в статусе `идёт`.
+- [ ] **`probe.js` удалён** (`rm "$SUP/probe.js"`) — канал возвращён приложению: через 5–10 с `head -1 "$SUP/probe.js"`
+      снова показывает `// myclaude-chats v1 …`, а в `statusText` строка `chats=own/<страниц>/<опознано>`.
+      Оставленный агентский скрипт замораживает карту чатов, и попапы красятся по заголовку, как до WF29.
 - [ ] Задачи в 🟣Trelvis закрыты (`agent-complete ID --actor fable`) — но только те, что реально проверены.
 
 ---

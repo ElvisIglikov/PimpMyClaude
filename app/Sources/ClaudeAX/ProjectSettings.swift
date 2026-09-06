@@ -262,10 +262,13 @@ final class ProjectSettingsStore {
     /// в нём чужие ключи и чужая работа, а мы его даже не прочли (находка 1 проверки WF20 —
     /// «🧹 Всё как у Claude» сносила битый файл целиком). Файла нет и пустой файл битыми
     /// не считаются: первый удалять нечего, второй `merged` разбирает как «настроек не было».
+    ///
+    /// Файл есть, а прочесть его как UTF-8 не вышло — тоже БИТЫЙ (хвост WF20, находка 3):
+    /// раньше такой отвечал «не битый», и `noteManualChoice` сносил чужой файл целиком.
     func isBroken(in folder: URL) -> Bool {
         let url = self.url(in: folder)
-        guard fileManager.fileExists(atPath: url.path),
-              let old = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        guard fileManager.fileExists(atPath: url.path) else { return false }
+        guard let old = try? String(contentsOf: url, encoding: .utf8) else { return true }
         return ProjectSettings.merged(file: old, settings: ProjectSettings()) == nil
     }
 

@@ -58,8 +58,18 @@
       "at": "2026-09-06T00:55:00+05:00",
       "who": "оркестратор",
       "what": "волна планирования WF29/30/31/34/35: планировщик → критик → правки, 15 агентов Opus max; дальше кодинг по очереди 29 → 34 → 31 → 30 → 35"
+    },
+    {
+      "at": "2026-09-06T03:52:00+05:00",
+      "who": "оркестратор",
+      "what": "лимит сессии в 01:20 (сброс 03:50): планы WF29/31/34/35 написаны, критики и WF30 упали; resume по run_id"
+    },
+    {
+      "at": "2026-09-06T04:55:00+05:00",
+      "who": "оркестратор",
+      "what": "WF29 кодинг запущен: A∥B → V∥D → фикс → V2 (Opus max)"
     }
   ],
-  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-plans-wf29-35-wf_f4da27fc-c54.js",
-  "run_id": "wf_f4da27fc-c54"
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-wf29-code-wf_2165cdb2-c95.js",
+  "run_id": "wf_2165cdb2-c95"
 }

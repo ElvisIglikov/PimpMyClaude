@@ -388,8 +388,13 @@ final class ClaudeActions {
     /// поля нет — всё как было, заголовком; поле есть — страница сверяет `location.pathname`
     /// и заголовок не смотрит вовсе. Им адресуется главное окно: его заголовок — заглушка
     /// «Claude», и по ней команда ушла бы веером всем безымянным попапам (критик Б1 плана WF15).
+    /// `chat` — необязательная адресация ПО ЧАТУ окна (`local_<uuid>`, план WF29): страница
+    /// сверяет id со своим и заголовок не смотрит вовсе. Им адресуются вынесенные в окно чаты:
+    /// их заголовок — снимок имени чата на момент выноса, и после переименования он
+    /// с индексом не сходится (задача #5455). Поле уходит только той странице, которая сама
+    /// назвала свой id в последнем круге probe; вместе с `match` не посылается никогда.
     static func themeFields(scope: String, title: String, match: String? = nil,
-                            preview: Bool? = nil,
+                            chat: String? = nil, preview: Bool? = nil,
                             theme: Layer<Theme>, font: Layer<Font>,
                             size: SizeLayer = .keep,
                             frame: Layer<Bool> = .keep) -> [(key: String, value: CommandValue)] {
@@ -398,6 +403,7 @@ final class ClaudeActions {
             (key: "title", value: .string(title)),
         ]
         if let match = match { fields.append((key: "match", value: .string(match))) }
+        if let chat = chat { fields.append((key: "chat", value: .string(chat))) }
         if let preview = preview { fields.append((key: "preview", value: .bool(preview))) }
         return fields + layerFields(theme: theme, font: font, size: size, frame: frame)
     }
@@ -455,12 +461,23 @@ final class ClaudeActions {
     /// панель одна на приложение — отсюда и статик, как у `ThemeEditor.current`.
     static var themeEditorTitle: String?
 
+    /// То же окно, но КЛЮЧОМ покраски (`main` / `c:<id>` / `w:<заголовок>`, находка 5 проверки
+    /// WF20): заголовок для сверки не годится — у цели главного окна стоит заглушка «Claude»,
+    /// а панель видит настоящий заголовок чата, и тик гасил примерку. Ставит `ThemeEditor`
+    /// вместе с заголовком; nil — резолвер не повешен, сверка идёт по-старому.
+    static var themeEditorKey: String?
+
+    /// Ключ окна по его заголовку — резолвер покраски (`ProjectPaint.windowKey(forTitle:)`).
+    /// Вешает `ClaudeAXController`; в сборке без покраски и в тестах его нет.
+    static var windowKeyForTitle: ((String) -> String)?
+
     /// Панель закрылась: флаг снят, и отложенный крутёж живых цветов уезжает на страницу
     /// (находка 4 проверки WF20). Пока панель была открыта, `sendLiveColors` его только
     /// запоминал — приложение считало живые цвета включёнными, а страница ничего не крутила
     /// до перезапуска. Зовёт `ThemeEditor.finish()`, и только он.
     func finishThemeEditor() {
         ClaudeActions.themeEditorTitle = nil
+        ClaudeActions.themeEditorKey = nil
         _ = resendLiveColors()
     }
 
@@ -531,8 +548,10 @@ final class ClaudeActions {
         if !frame.isKeep { lastAppliedFrame = frame.value == true }
         // Ручной выбор в окне проекта — это и есть вид проекта (решение 3.2 плана WF20).
         // Только `scope:"window"`: «всем окнам» проект не перебивает вовсе, а примерка
-        // и «Раскрасить по кругу» сюда не доходят.
-        guard scope != MenuModel.themeScopeAll else { return }
+        // и «Раскрасить по кругу» сюда не доходят. Сверка именно «равно окну», а не «не равно
+        // всем» (находка 6 проверки WF20): третий scope, который однажды появится, ушёл бы
+        // в файл проекта молча.
+        guard scope == MenuModel.themeScopeWindow else { return }
         onWindowViewChanged?(title, theme, font, windowSize, frame)
     }
 
@@ -822,6 +841,7 @@ final class ClaudeActions {
         guard !command.isEmpty else { return false }
         let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow,
                                                title: command.title, match: command.match,
+                                               chat: command.chat,
                                                theme: command.theme, font: command.font,
                                                size: SizeLayer(command.size), frame: command.frame)
         return commands.write(action: "theme", fields: fields)
