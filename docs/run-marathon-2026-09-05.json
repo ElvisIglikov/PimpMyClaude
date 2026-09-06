@@ -83,6 +83,11 @@
       "at": "2026-09-06T10:45:00+05:00",
       "who": "оркестратор",
       "what": "WF31 слит в main (21d0752), пуш main/веток/тегов по слову Элвиса; WF35 кодинг запущен: A∥B → D∥V → фикс → V2. WF30 ждёт окна: разведка дёргает главное окно Claude"
+    },
+    {
+      "at": "2026-09-06T11:02:00+05:00",
+      "who": "оркестратор",
+      "what": "WF35 слит в main. Без Элвиса дальше нечего: WF30 ждёт окна для разведки, WF32/33/21/22/28 ждут букв по макетам, WF17/25/27 — после них. Ревизия Fable по WF29 — ждёт «да»."
     }
   ],
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-wf35-code-wf_905d920c-0fc.js",
