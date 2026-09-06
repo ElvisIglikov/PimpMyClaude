@@ -24,7 +24,10 @@
 // поле ввода текст запуска и НЕ отправляет его (раздел «12а»). Команды
 // new-window и popout-window открывают чат отдельным окном — новый (⌘N от
 // приложения, папка проекта, первое сообщение, отправка, имя чата и его цвет
-// вперёд) или уже открытый (раздел «12б»). Команда live-colors катит окно по
+// вперёд) или уже открытый (раздел «12б»). Страница ещё и говорит, КАКОЙ в ней
+// чат: window.__myclaude.chats() отдаёт id чата этой страницы и карту попапов,
+// попап спрашивает его у окна-родителя (раздел «12в»), а команда theme может
+// адресовать окно этим id — полем chat. Команда live-colors катит окно по
 // цветовому кругу: цвет считается на странице от стенных часов, палитры
 // приходят кольцом опорных точек (раздел «2в»).
 //
@@ -38,7 +41,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf20-g-2";
+  const VERSION = "wf29-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1253,8 +1256,21 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // сильнее заголовка: у главного окна на вкладке Claude Code заголовок —
   // заглушка «Claude», и такой же носят безымянные попапы, так что команда
   // по заголовку ушла бы веером им всем. Поля нет — поведение прежнее.
+  // Необязательное поле chat (WF29) адресует окно ID ЧАТА и стоит МЕЖДУ match и
+  // заголовком: у попапа путь — "blank", и match ему бесполезен, а заголовок он
+  // носит снимком имени чата на момент выноса в окно — чат с тех пор могли
+  // переименовать, и по заголовку окно не опознаётся вовсе (задача #5455).
+  // Свой id страница знает синхронно (myChatId(), раздел 12в): главное окно —
+  // из пути, попап — из кэша ответа родителя. Команда приходит событием, ждать
+  // промиса ей нечем; id неизвестен — команда не наша, и приложение пришлёт её
+  // заголовком на следующем тике. Лучше не покраситься, чем покраситься чужим
+  // проектом. match и chat разом приложение не шлёт никогда.
   const addressed = detail => {
     if (typeof detail.match === "string") return location.pathname === detail.match;
+    if (typeof detail.chat === "string") {
+      const id = myChatId();
+      return Boolean(detail.chat) && id === detail.chat;
+    }
     const title = typeof detail.title === "string" ? detail.title.trim() : "";
     return title ? (document.title || "").trim() === title : document.hasFocus();
   };
@@ -3755,6 +3771,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     } catch {}
     return urls;
   };
+  // Сиденье импортёра модулей. В бою — тот же самый import(), байт в байт; в
+  // стенде тестов его подменяют через люк (setModuleImporter). Иначе скан в
+  // тестах не проверить вовсе: tests/load.mjs гоняет файл через
+  // vm.runInContext БЕЗ опции importModuleDynamically, живой import() там
+  // бросает ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, а бросок молча съедает
+  // catch на каждый адрес — скан не нашёл бы ничего никогда и «импортов ровно
+  // столько же» считать было бы нечем (план WF29, решение 4).
+  let moduleImporter = url => import(url);
+  const setModuleImporter = fn => { moduleImporter = typeof fn === "function" ? fn : url => import(url); };
   // Обход модулей общий на оба стора раздела (попапы и папка проекта): проход
   // один и тот же, разный только предикат.
   const newWindowScanStores = async (token, ok) => {
@@ -3762,7 +3787,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       if (!newWindowLive(token)) return null;
       let chunk = null;
       // Каждый import в своём try: чужой модуль вправе упасть на исполнении.
-      try { chunk = await import(url); } catch { continue; }
+      try { chunk = await moduleImporter(url); } catch { continue; }
       try {
         for (const key of Object.keys(chunk)) {
           const value = chunk[key];
@@ -4310,6 +4335,210 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Обе команды асинхронные: отказ промиса не должен всплывать в консоль страницы.
   const newWindowStart = (run, detail) => { try { run(detail).catch(() => {}); } catch {} };
 
+  // ---- 12в. Кто этот чат ---------------------------------------------------
+  // Приложение красит окно цветом ПРОЕКТА, а проект берёт из папки чата. До
+  // WF29 окно опознавалось заголовком — и три попапа из четырёх у Элвиса не
+  // опознавались вовсе: заголовок попапа это снимок имени чата на момент выноса
+  // в окно, а чаты с тех пор переименованы (задача #5455; setPopoutTitle Claude
+  // при переименовании не зовёт). Отсюда правило: чат окна называет САМА
+  // страница, а приложение только спрашивает.
+  //
+  // Кто как узнаёт свой чат:
+  //   главное окно (claude.ai) — хвост location.pathname (/epitaxy/local_<id>);
+  //   попап (about:blank, своего адреса у него нет) — спрашивает окно-родителя:
+  //     window.opener.__myclaude.popoutChat(<заголовок>). У claude.ai есть стор
+  //     с картой popoutWindows: <id чата> → {title,…}, где title — ровно то, что
+  //     стоит в document.title попапа. Стор ищется поведенчески, тот же, что у
+  //     «Нового окна» (раздел 12б), и тем же кэшем.
+  //   чужая страница (data:, file:, localhost) — молчит первой же строкой:
+  //     лоадер шлёт probe.js во ВСЕ страницы, а их у Claude больше сорока.
+  //
+  // Спрашивает приложение через probe.js (канал лоадера): скрипт зовёт
+  // window.__myclaude.chats({scan, nonce}), ответ ложится в probe-result.json.
+  // Своих таймеров, подписок и наблюдателей раздел не заводит НИ ОДНОГО —
+  // лоадер перечитывает файл по mtime и гоняет его в том же окне снова, и
+  // каждая подписка здесь стала бы зомби (раздел 0).
+  const CHAT_ID_KEY = "myclaude-chat-v1";
+  // Карта попапов свежа полминуты: чаще круга probe она всё равно не нужна, а
+  // скан исполняет чужие модули (раздел 12б).
+  const CHATS_MAP_TTL_MS = 30000;
+  // Активную строку сайдбара кладём отдельным полем — ТОЛЬКО для сверки на
+  // гейте: data-selected чужой атрибут claude.ai, «focused» может значить не
+  // «показан», и поведение на нём не строится (план WF29, решение 5).
+  const CHAT_ROW_SELECTOR = '[data-selected="focused"][data-row-key], [data-selected="focused"] [data-row-key]';
+
+  // Карта попапов и её возраст живут в замыкании: спрашиваем стор только по
+  // просьбе приложения, между кругами отдаём кэш. store — чем кончился
+  // последний вызов chats(), его же показывает status().chat.
+  const chatsState = { map: null, at: 0, store: null };
+  // Идущий скан: на него садятся все, кто попросил, пока он не кончился.
+  let chatsScanInFlight = null;
+
+  const chatKind = () => (!themable ? "other" : isMainWindow() ? "main" : "popout");
+  // Путь чужой страницы наружу не отдаём: у артефакта это data:-адрес целиком,
+  // а такие уже раздули probe-result.json до 3,9 МБ (разведка плана, п. 1).
+  const chatPath = () => (themable ? location.pathname : "");
+  const chatRowId = () => {
+    if (!isMainWindow()) return null;
+    try {
+      const node = document.querySelector(CHAT_ROW_SELECTOR);
+      // Ключи строк — code:local_<uuid> / chat:<uuid>, нам нужен хвост.
+      const id = String(node?.getAttribute?.("data-row-key") ?? "").split(":").pop() ?? "";
+      return id.startsWith("local_") ? id : null;
+    } catch { return null; }
+  };
+
+  // Ответ родителя переживает перезапуск инжекта: лоадер перечитывает файл по
+  // mtime (каждый гейт после cp, каждое обновление приложения), и замыкание при
+  // этом умирает. Команда с полем chat приходит событием и ждать промиса не
+  // может — с пустым кэшем попап отверг бы её, а отпечаток в приложении был бы
+  // уже записан, и окно осталось бы некрашеным. sessionStorage у попапа свой на
+  // окно (about:blank унаследовал origin claude.ai) — так же живут
+  // myclaude-theme-v1 и myclaude-live-phase-v1. Запись годна, пока заголовок
+  // окна равен сохранённому: сменился — спросим родителя заново.
+  const readChatId = () => {
+    try {
+      const raw = sessionStorage.getItem(CHAT_ID_KEY);
+      if (raw == null) return null;
+      const record = JSON.parse(raw);
+      const id = typeof record?.id === "string" ? record.id : "";
+      const title = typeof record?.title === "string" ? record.title : "";
+      if (!id.startsWith("local_") || title !== windowTitle()) return null;
+      return id;
+    } catch { return null; }
+  };
+  const writeChatId = id => {
+    try { sessionStorage.setItem(CHAT_ID_KEY, JSON.stringify({ id, title: windowTitle() })); } catch {}
+  };
+
+  // Синхронный ответ «какой чат в этом окне» — им пользуется addressed().
+  const myChatId = () => {
+    if (!themable) return null;
+    if (isMainWindow()) return newWindowSessionId() || null;
+    return readChatId();
+  };
+
+  // Карта попапов из стора: [{id, title}]. null — стор ответить не смог (упал
+  // или отдал не Map); пустой список — попапов нет, и это тоже ответ.
+  const chatsMap = store => {
+    try {
+      const value = store?.getState?.();
+      const map = value?.popoutWindows;
+      if (!(map instanceof Map)) return null;
+      const out = [];
+      for (const [id, record] of map) {
+        const key = typeof id === "string" ? id : "";
+        if (!key) continue;
+        out.push({ id: key, title: String(record?.title ?? "").trim() });
+      }
+      return out;
+    } catch { return null; }
+  };
+  const chatsNeedScan = () => !chatsState.map || Date.now() - chatsState.at > CHATS_MAP_TTL_MS;
+  // Одновременные просьбы (четыре попапа спросили родителя разом) складываются
+  // в ОДИН скан: промис держится в замыкании, остальные ждут его. Токен берём
+  // ТЕКУЩИЙ и не увеличиваем — начался прогон «Нового окна», скан бросит работу
+  // сам, и мы честно скажем "busy", оставив прежнюю карту.
+  const chatsScan = () => {
+    if (chatsScanInFlight) return chatsScanInFlight;
+    const token = newWindowToken;
+    const run = (async () => {
+      let store = null;
+      try { store = await newWindowFindStore(token); } catch { store = null; }
+      if (!newWindowLive(token)) return "busy";
+      if (!store) return "none";
+      const map = chatsMap(store);
+      if (!map) return "none";
+      chatsState.map = map;
+      chatsState.at = Date.now();
+      return "ok";
+    })();
+    chatsScanInFlight = run.then(
+      result => { chatsScanInFlight = null; return result; },
+      () => { chatsScanInFlight = null; return "none"; },
+    );
+    return chatsScanInFlight;
+  };
+
+  // Ответ попапу: id чата с ТАКИМ заголовком. Ноль совпадений или два и больше
+  // — null: лучше «не определён», чем чужой проект. Заглушки («Claude», «New
+  // chat») в сопоставлении не участвуют вовсе — их носят разные чаты во всех
+  // окнах разом.
+  const popoutChat = async (title, opts) => {
+    try {
+      const want = typeof title === "string" ? title.trim() : "";
+      if (!want || THEME_TITLE_STUBS.has(want.toLowerCase())) return null;
+      // Карта попапов есть только у главного окна; спрашивать попап незачем.
+      if (!isMainWindow()) return null;
+      if (opts?.scan === true && chatsNeedScan()) await chatsScan();
+      const hits = (chatsState.map ?? []).filter(item => item.title === want);
+      return hits.length === 1 ? hits[0].id : null;
+    } catch { return null; }
+  };
+
+  // Попап спрашивает родителя. Кэш — раньше вопроса: он и дешевле, и переживает
+  // перезапуск инжекта. "ok" значит «канал сработал», даже если id не нашёлся
+  // (это и есть «не определён», приложение такое окно не красит вовсе); "none"
+  // — спросить было некого, и приложение падает на старый путь по заголовку.
+  const chatsAsk = async scan => {
+    const title = windowTitle();
+    if (!title || THEME_TITLE_STUBS.has(title.toLowerCase())) return { id: null, store: "none" };
+    const cached = readChatId();
+    if (cached) return { id: cached, store: "cache" };
+    try {
+      const parent = window.opener;
+      const ask = parent?.__myclaude?.popoutChat;
+      if (typeof ask !== "function") return { id: null, store: "none" };
+      const answered = await ask.call(parent.__myclaude, title, { scan: scan === true });
+      const id = typeof answered === "string" && answered.startsWith("local_") ? answered : null;
+      if (id) writeChatId(id);
+      return { id, store: "ok" };
+    } catch { return { id: null, store: "none" }; }
+  };
+
+  // Ответ probe.js. Контракт (план WF29, решение 4) — побайтно:
+  //   {v, nonce, kind, self, path, row, title, popouts:[{id,title}], store, at}
+  // store: "ok" — спросили стор/родителя, "cache" — из карты в замыкании,
+  // "busy" — идёт «Новое окно», "none" — спросить не вышло, "skip" — не наша
+  // страница. Функция НИКОГДА не бросает: probe ждёт объект, а не исключение.
+  const chats = async opts => {
+    const nonce = typeof opts?.nonce === "string" ? opts.nonce : null;
+    const scan = opts?.scan === true;
+    const answer = (kind, self, store, popouts) => ({
+      v: 1,
+      nonce,
+      kind,
+      self: self ?? null,
+      path: chatPath(),
+      row: chatRowId(),
+      title: windowTitle(),
+      popouts: popouts ?? [],
+      store,
+      at: Date.now(),
+    });
+    try {
+      const kind = chatKind();
+      if (kind === "other") {
+        chatsState.store = "skip";
+        return answer(kind, null, "skip");
+      }
+      if (kind === "popout") {
+        const found = await chatsAsk(scan);
+        chatsState.store = found.store;
+        return answer(kind, found.id, found.store);
+      }
+      // Главное окно: свой id берётся из пути и вопроса не требует, а скан нужен
+      // ради карты попапов — и только когда карты нет или она старше TTL.
+      let store = chatsState.map ? "cache" : "none";
+      if (scan && chatsNeedScan()) store = await chatsScan();
+      chatsState.store = store;
+      return answer(kind, myChatId(), store, (chatsState.map ?? []).map(item => ({ id: item.id, title: item.title })));
+    } catch {
+      chatsState.store = "none";
+      return answer(chatKind(), null, "none");
+    }
+  };
+
   // ---- 13. Прокрутка ленты ------------------------------------------------
   // Команда «Прокрутить»: поставить ленту разговора на последнее сообщение.
   // В отличие от collapse/expand она адресована ВСЕМ окнам сразу, поэтому
@@ -4685,6 +4914,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     dispose,
     setStage,
     get stage() { return state.stage; },
+    // Раздел 12в. chats() зовёт probe.js приложения (ответ — промис), а
+    // popoutChat() зовёт ПОПАП у своего родителя через window.opener.
+    chats,
+    popoutChat,
     // Для probe.js на гейте: видно, приехал ли инжект, применились ли стили
     // (CSP) и нашлось ли поле.
     status: () => ({
@@ -4743,6 +4976,19 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       // запуск, на каком он шаге, какая сессия уехала в окно, занята ли кнопка
       // и как вернулось главное окно.
       newWindow: state.newWindow ? { ...state.newWindow } : null,
+      // Кто этот чат (раздел 12в) — синхронный слепок, ТОЛЬКО из кэша: скана
+      // status() не запускает и промиса не отдаёт. self — id чата этой
+      // страницы, popouts — сколько записей в карте попапов, store — чем
+      // кончился последний chats(), at — когда снята карта.
+      chat: {
+        kind: chatKind(),
+        self: myChatId(),
+        path: chatPath(),
+        row: chatRowId(),
+        popouts: chatsState.map ? chatsState.map.length : 0,
+        store: chatsState.store,
+        at: chatsState.at || null,
+      },
       // Ключ чата, под которым окно хранит тему (раздел 2а): у главного окна он
       // меняется вместе с разговором, а у безымянного чата его нет вовсе.
       chatKey: chatKey(),
@@ -4810,7 +5056,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     chatKey, sessionKey, themeKey, legacyKey, mapEntry, entryLayer, readThemeMap, writeThemeMap, liveRing, livePalette,
     parseProgressText, progressShares, statusLines, statusFeedLines, statusKey, runWorkflowCommand, newWindowSegment,
-    newWindowSessionId, newWindowAtHome, newWindowStoreOk });
+    newWindowSessionId, newWindowAtHome, newWindowStoreOk, setModuleImporter, newWindowScanStores,
+    chatKind, chatPath, chatRowId, myChatId, readChatId, writeChatId, chatsMap, chatsScan, popoutChat, chats });
 
   // Всё, что ниже, трогает живую страницу и может бросить на неготовой
   // разметке. Такое падение не должно оставлять в окне зомби: установка

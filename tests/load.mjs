@@ -10,6 +10,11 @@
 // где win — окно-стаб, api — window.__myclaude, inner — объект из тестового
 // люка inject.js, counters — счётчики подписок, наблюдателей и таймеров.
 //
+// Необязательный opener (WF29) — окно-родитель попапа: попап about:blank
+// спрашивает свой чат у window.opener.__myclaude.popoutChat. Родителя стенд не
+// выдумывает: тест поднимает вторым loadInject настоящее главное окно и
+// передаёт сюда его .win, так что попап зовёт тот же боевой файл.
+//
 // Как гонять: `tools/test.sh --js` или `node --test` из корня репозитория.
 // `node --test tests/` на node 26 НЕ работает (каталог он пытается загрузить
 // как модуль) — путь к каталогу заменяется списком файлов: `node --test
@@ -31,11 +36,13 @@ export const loadInject = ({
   title = "",
   href = "https://claude.ai/epitaxy/local_test",
   hasFocus = true,
+  opener = null,
 } = {}) => {
   const dom = createDom({
     title,
     href,
     hasFocus,
+    opener,
     local: storage.local ?? {},
     session: storage.session ?? {},
     viewport: geometry.viewport ?? { width: 1200, height: 800 },

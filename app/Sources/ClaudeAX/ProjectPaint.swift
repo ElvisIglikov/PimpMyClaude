@@ -4,10 +4,15 @@ import Foundation
 /// Уходит обычной командой `theme` (`scope:"window"`) — нового действия WF15 не заводит,
 /// добавляется лишь необязательное поле `match` (решение 1 плана WF15).
 struct ProjectPaintCommand: Equatable {
-    /// Ключ окна в памяти отпечатков: `main` у главного окна, `w:<заголовок>` у попапа.
+    /// Ключ окна в памяти отпечатков: `main` у главного окна, `c:<id чата>` у опознанного
+    /// попапа, `w:<заголовок>` у неопознанного.
     let key: String
     /// Поле `match` — путь страницы главного окна (`/epitaxy/local_…`); nil — адресуем заголовком.
     let match: String?
+    /// Поле `chat` — id чата (`local_<uuid>`, план WF29): страница сверяет его со своим и
+    /// заголовок не смотрит вовсе. Уходит только той странице, которая сама назвала свой id
+    /// в последнем круге probe; nil — адресуем по-старому, заголовком.
+    let chat: String?
     /// Поле `title` — заголовок попапа. У главного окна пустой: адресует `match`, а запись
     /// страница всё равно ключует своим `document.title` (у неё это `main`).
     let title: String
@@ -33,12 +38,16 @@ struct ProjectPaintCommand: Equatable {
 
 /// Окно, которое красит проект.
 struct ProjectTarget: Equatable {
-    /// Ключ памяти окна — те же ключи, что у страницы в sessionStorage: `main` / `w:<заголовок>`.
-    /// Он ОБЯЗАН пережить смену чата в главном окне: иначе смена папки прошла бы незамеченной,
-    /// и цвет прошлого проекта остался бы на окне навсегда (критик Б2 плана WF15).
+    /// Ключ памяти окна: `main` у главного окна, `c:<id чата>` у окна, которое само назвало
+    /// свой чат, `w:<заголовок>` у остальных. Ключ на окно ровно ОДИН — при появлении и потере
+    /// id отпечаток переезжает (решение 9 плана WF29). У главного окна он ОБЯЗАН пережить
+    /// смену чата: иначе смена папки прошла бы незамеченной, и цвет прошлого проекта остался
+    /// бы на окне навсегда (критик Б2 плана WF15).
     let key: String
-    /// Путь страницы для поля `match` (главное окно); nil — попап, адресуем заголовком.
+    /// Путь страницы для поля `match` (главное окно); nil — попап, адресуем заголовком или `chat`.
     let match: String?
+    /// id чата окна для поля `chat`; nil — окно себя не назвало, адресуем заголовком.
+    let chat: String?
     /// AX-заголовок окна: им адресуется попап и им же ключуется память ручного выбора
     /// (`ThemeStore`, `autoPaintedThemes`). У главного окна на вкладке Claude Code это
     /// заглушка «Claude» — адресовать по ней нельзя (её носят и безымянные попапы).
@@ -83,6 +92,9 @@ final class ProjectPaint {
     static let brokenPrefix = "broken:"
     static let mainKey = "main"
     static let windowPrefix = "w:"
+    /// Окно, которое само назвало свой чат (план WF29): ключ переживает переименование окна —
+    /// переименовали попап, а команды повторной нет.
+    static let chatPrefix = "c:"
     /// Заголовок главного окна на вкладке Claude Code — заглушка (probe 04.09, п. 4 плана):
     /// команду по ней не адресуем, а память ручного выбора ключуется именно ею.
     static let mainWindowTitle = "Claude"
@@ -93,6 +105,8 @@ final class ProjectPaint {
     /// Отпечаток окна: какой проект на нём стоит и какие слои поставил.
     private struct Mark: Equatable {
         let match: String?
+        /// id чата окна: им же уходит снятие слоёв, когда покраску выключают.
+        let chat: String?
         let title: String
         /// Путь папки проекта; пусто — папку не знаем.
         let folder: String
@@ -114,6 +128,13 @@ final class ProjectPaint {
 
     /// Заголовки окон Claude на экране — те же, что берёт «Раскрасить по кругу».
     var windowTitles: () -> [String] = { [] }
+    /// Что страницы ответили в последнем круге probe (план WF29): «какой во мне чат».
+    /// Карта несвежая (канал занят агентом, приложение только стартовало) — пусто, и покраска
+    /// попапов уходит на старый путь по заголовку. В `init` канал НЕ лезет: `ProjectPaint`
+    /// собирают напрямую тесты, и новый параметр сломал бы им сборку (критик В6 плана WF29).
+    var chatPages: () -> [ChatPage] = { [] }
+    /// Чат попапа по AX-заголовку окна: ничья по заголовку и заглушки — nil.
+    var chatForTitle: (String) -> String? = { _ in nil }
     /// Отправка команды; false — не записалась, попробуем на следующем тике.
     var send: (ProjectPaintCommand) -> Bool = { _ in false }
     /// Окно красила «Раскрасить по кругу» — она сильнее проекта (критик Б3 плана WF15).
@@ -158,7 +179,7 @@ final class ProjectPaint {
     /// Снять всё, что поставил проект, и забыть отпечатки.
     private func clear() {
         for (key, mark) in marks.sorted(by: { $0.key < $1.key }) where !mark.layers.isEmpty {
-            _ = send(ProjectPaintCommand(key: key, match: mark.match,
+            _ = send(ProjectPaintCommand(key: key, match: mark.match, chat: mark.chat,
                                          title: mark.match == nil ? mark.title : "",
                                          theme: undo(mark, ProjectSettings.themeKey),
                                          font: undo(mark, ProjectSettings.fontKey),
@@ -191,27 +212,61 @@ final class ProjectPaint {
     }
 
     /// Строка для `statusText` приложения (живая проверка на гейте): тумблер, папка главного
-    /// окна и сколько окон покрашено проектом.
+    /// окна, сколько окон покрашено проектом и сколько из них опознано по чату.
     var status: String {
         let folder = index.mainWindow()?.folder?.lastPathComponent ?? "—"
-        return "\(enabled ? "on" : "off")/\(folder)/\(marks.values.filter { !$0.layers.isEmpty }.count)"
+        let painted = marks.values.filter { !$0.layers.isEmpty }.count
+        let known = marks.keys.filter { $0.hasPrefix(ProjectPaint.chatPrefix) }.count
+        return "\(enabled ? "on" : "off")/\(folder)/\(painted)/\(known)"
     }
 
-    /// Окна с известной папкой: главное — по адресу страницы из `status.json` лоадера,
-    /// попапы — по AX-заголовку через индекс чатов. Заголовок пустой, заглушка или найденный
-    /// в РАЗНЫХ папках папки не даёт (решение 2 плана WF15) — такое окно не красим вовсе.
+    /// Окна с известной папкой. Главное — по адресу страницы из `status.json` лоадера, но чат
+    /// ему даёт сама страница, если ответила (решение 8 плана WF29). Попапы — по ответам
+    /// страниц: назвала страница свой чат, и папка берётся по id, а не по заголовку (задача
+    /// #5455: заголовок попапа — снимок имени чата на момент выноса в окно, после
+    /// переименования он с индексом не сходится).
+    ///
+    /// Страница ответила, стор у неё рабочий, а чат назвать не смогла — окно «не определён»:
+    /// команды нет, отпечаток не трогаем и папку главного окна не подставляем НИКОГДА.
+    /// Ответа нет вовсе (канал занят, стор не нашёлся) — работает старый путь по заголовку.
     private func targets() -> [ProjectTarget] {
         var out: [ProjectTarget] = []
+        let pages = chatPages()
         if let main = index.mainWindow() {
-            out.append(ProjectTarget(key: ProjectPaint.mainKey, match: main.match,
-                                     title: ProjectPaint.mainWindowTitle, folder: main.folder))
+            // Свежий ответ страницы сильнее адреса из status.json (решение 8 плана WF29);
+            // ответ старше минуты не в счёт — пусть решает лоадер. Расхождение видно в statusText.
+            let answer = pages.first { $0.kind == .main && ChatProbe.isRecent($0, at: now()) }
+            // Назвала страница свой чат — он и решает, даже если индекс такого чата не знает:
+            // подставить сюда чат из status.json значило бы покрасить окно цветом чужого
+            // проекта, а это ровно то, на что Элвис пожаловался в #5455.
+            let named = answer?.chat
+            let session = named == nil ? main.session : named.flatMap { index.session(for: $0) }
+            out.append(ProjectTarget(key: ProjectPaint.mainKey, match: main.match, chat: nil,
+                                     title: ProjectPaint.mainWindowTitle,
+                                     folder: session.map(index.folder(of:)) ?? main.folder))
         }
         var seen = Set<String>()
+        // Окна, о которых страница уже сказала всё: по заголовку их больше не ищем.
+        var answered = Set<String>()
+        for page in pages where page.kind == .popout {
+            let clean = page.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let chat = page.chat else {
+                // «Не определён» — только когда стор на странице рабочий: иначе спросить было
+                // некого, и заголовок остаётся единственным, что у нас есть.
+                if page.store == ChatProbe.storeOK, !clean.isEmpty { answered.insert(clean) }
+                continue
+            }
+            guard seen.insert(ProjectPaint.chatPrefix + chat).inserted else { continue }
+            if !clean.isEmpty { answered.insert(clean) }
+            out.append(ProjectTarget(key: ProjectPaint.chatPrefix + chat, match: nil, chat: chat,
+                                     title: clean, folder: index.folder(for: chat)))
+        }
         for title in windowTitles() {
             let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !clean.isEmpty, seen.insert(clean).inserted,
+            guard !clean.isEmpty, !answered.contains(clean),
+                  seen.insert(ProjectPaint.windowPrefix + clean).inserted,
                   let folder = index.folder(forTitle: clean) else { continue }
-            out.append(ProjectTarget(key: ProjectPaint.windowPrefix + clean, match: nil,
+            out.append(ProjectTarget(key: ProjectPaint.windowPrefix + clean, match: nil, chat: nil,
                                      title: clean, folder: folder))
         }
         return out
@@ -220,6 +275,7 @@ final class ProjectPaint {
     /// Одно окно: сверить отпечаток, при надобности послать команду и запомнить, что послали.
     @discardableResult
     private func paint(_ target: ProjectTarget) -> Bool {
+        moveMark(to: target)
         let wanted = self.wanted(in: target.folder)
         let folder = target.folder?.standardizedFileURL.path ?? ""
         let digest = wanted?.digest ?? ""
@@ -234,7 +290,7 @@ final class ProjectPaint {
         // Панель «Своя тема» владеет примеркой этого окна (решение 1.6 плана WF20): обычная
         // команда `theme` погасила бы её на странице, и ползунок остался бы без цвета.
         // Отпечаток не трогаем — закроют панель, и ближайший тик покрасит окно как обычно.
-        guard ClaudeActions.themeEditorTitle != target.title else { return false }
+        guard !ProjectPaint.ownedByEditor(target) else { return false }
         return commit(self.command(for: target, settings: wanted?.settings, previous: previous),
                       to: target, folder: folder, digest: digest)
     }
@@ -245,9 +301,41 @@ final class ProjectPaint {
     private func commit(_ command: ProjectPaintCommand, to target: ProjectTarget, folder: String,
                         digest: String) -> Bool {
         if !command.isEmpty, !send(command) { return false }
-        marks[target.key] = Mark(match: target.match, title: target.title, folder: folder,
-                                 digest: digest, layers: command.setLayers)
+        marks[target.key] = Mark(match: target.match, chat: target.chat, title: target.title,
+                                 folder: folder, digest: digest, layers: command.setLayers)
         return true
+    }
+
+    /// Ключ на окно ровно ОДИН (решение 9 плана WF29). Появился id — отпечаток ПЕРЕЕЗЖАЕТ
+    /// из `w:<заголовок>` в `c:<id>` вместе со слоями; потерялся (страница перезапустила
+    /// инжект, стор пропал, канал занят) — обратно. Заведи мы второй отпечаток, окно на каждом
+    /// переходе получало бы полную команду заново, а слои прошлого ключа никто бы не снимал.
+    ///
+    /// Назад `digest` обнуляем нарочно: команда с полем `chat` могла уйти в никуда — отпечаток
+    /// пишется сразу после постановки в очередь, а не после того, как страница команду взяла.
+    /// Потеряла страница id — ближайший тик пришлёт вид заново, уже заголовком.
+    private func moveMark(to target: ProjectTarget) {
+        guard target.key != ProjectPaint.mainKey, marks[target.key] == nil,
+              !target.title.isEmpty else { return }
+        let byChat = target.key.hasPrefix(ProjectPaint.chatPrefix)
+        let old: String? = byChat
+            ? ProjectPaint.windowPrefix + target.title
+            : marks.keys.sorted().first { $0.hasPrefix(ProjectPaint.chatPrefix)
+                && marks[$0]?.title == target.title }
+        guard let key = old, let mark = marks[key] else { return }
+        marks[key] = nil
+        marks[target.key] = Mark(match: target.match, chat: target.chat, title: target.title,
+                                 folder: mark.folder, digest: byChat ? mark.digest : "",
+                                 layers: mark.layers)
+    }
+
+    /// Окном владеет панель «Своя тема»? Сверяем КЛЮЧОМ окна (находка 5 проверки WF20):
+    /// у цели главного окна стоит заглушка «Claude», а панель видит настоящий заголовок чата —
+    /// сверка по заголовку не сходилась, и тик гасил примерку. Ключа нет (панель открыта там,
+    /// где резолвер не повешен) — сверяем заголовком, как до WF29.
+    static func ownedByEditor(_ target: ProjectTarget) -> Bool {
+        if let key = ClaudeActions.themeEditorKey { return key == target.key }
+        return ClaudeActions.themeEditorTitle == target.title
     }
 
     /// Вид проекта: `.pimpmyclaude.json` из папки, а его нет (или он пуст, или битый) —
@@ -274,7 +362,8 @@ final class ProjectPaint {
     private func command(for target: ProjectTarget, settings: ProjectSettings?,
                          previous: Mark?) -> ProjectPaintCommand {
         let want = settings ?? ProjectSettings()
-        return ProjectPaintCommand(key: target.key, match: target.match, title: target.commandTitle,
+        return ProjectPaintCommand(key: target.key, match: target.match, chat: target.chat,
+                                   title: target.commandTitle,
                                    theme: layer(want.theme, previous, ProjectSettings.themeKey),
                                    font: layer(want.font, previous, ProjectSettings.fontKey),
                                    size: layer(want.size, previous, ProjectSettings.sizeKey),
@@ -328,8 +417,8 @@ final class ProjectPaint {
         // всегда (файл или авто-цвет).
         marks = marks.mapValues { mark in
             guard mark.folder == path else { return mark }
-            return Mark(match: mark.match, title: mark.title, folder: mark.folder, digest: "",
-                        layers: mark.layers)
+            return Mark(match: mark.match, chat: mark.chat, title: mark.title, folder: mark.folder,
+                        digest: "", layers: mark.layers)
         }
         if settings.isEmpty {
             // Битый файл не удаляем (находка 1 проверки WF20): разобрать его мы не смогли,
@@ -357,8 +446,8 @@ final class ProjectPaint {
         // незачем. Отпечаток берём ТОТ, что посчитает ближайший тик: иначе на битом файле
         // (вид проекта остался авто-цветом) тик тут же перекрасил бы окно.
         guard let target = target(for: title) else { return }
-        marks[target.key] = Mark(match: target.match, title: target.title, folder: path,
-                                 digest: wanted(in: folder)?.digest ?? "",
+        marks[target.key] = Mark(match: target.match, chat: target.chat, title: target.title,
+                                 folder: path, digest: wanted(in: folder)?.digest ?? "",
                                  layers: ProjectPaint.setLayers(settings))
     }
 
@@ -405,20 +494,42 @@ final class ProjectPaint {
         guard !clean.isEmpty, clean != ProjectPaint.mainWindowTitle else {
             return index.mainWindow()?.folder
         }
+        // Сперва чат окна (план WF29): по нему папка верна и после переименования чата,
+        // а заголовок попапа — снимок имени на момент выноса в окно.
+        if let chat = chatForTitle(clean), let folder = index.folder(for: chat) { return folder }
         return index.folder(forTitle: clean)
     }
 
-    /// Как адресовать окно под кнопкой: попап — своим заголовком, безымянное окно — путём
-    /// страницы главного окна.
+    /// Как адресовать окно под кнопкой: назвало свой чат — полем `chat`, иначе попап — своим
+    /// заголовком, а безымянное окно — путём страницы главного окна.
     private func target(for title: String) -> ProjectTarget? {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let chat = chatForTitle(clean), let folder = index.folder(for: chat) {
+            return ProjectTarget(key: ProjectPaint.chatPrefix + chat, match: nil, chat: chat,
+                                 title: clean, folder: folder)
+        }
         if let folder = index.folder(forTitle: clean) {
-            return ProjectTarget(key: ProjectPaint.windowPrefix + clean, match: nil, title: clean,
-                                 folder: folder)
+            return ProjectTarget(key: ProjectPaint.windowPrefix + clean, match: nil, chat: nil,
+                                 title: clean, folder: folder)
         }
         guard let main = index.mainWindow() else { return nil }
-        return ProjectTarget(key: ProjectPaint.mainKey, match: main.match,
+        return ProjectTarget(key: ProjectPaint.mainKey, match: main.match, chat: nil,
                              title: ProjectPaint.mainWindowTitle, folder: main.folder)
+    }
+
+    /// Ключ окна по AX-заголовку — тот же резолвер, что и у целей покраски. Им панель
+    /// «Своя тема» помечает, каким окном владеет (находка 5 проверки WF20): у главного окна
+    /// заголовок бывает настоящим заголовком чата, а в цели покраски стоит заглушка «Claude».
+    func windowKey(forTitle title: String) -> String {
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, clean != ProjectPaint.mainWindowTitle else {
+            return ProjectPaint.mainKey
+        }
+        if let main = index.mainWindow()?.session?.title, main == clean {
+            return ProjectPaint.mainKey
+        }
+        if let chat = chatForTitle(clean) { return ProjectPaint.chatPrefix + chat }
+        return ProjectPaint.windowPrefix + clean
     }
 
     // MARK: - чистая часть (её же гоняют тесты)

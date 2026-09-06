@@ -99,6 +99,28 @@ final class ProjectIndex {
     private var entries: [String: Entry] = [:]
     private var loadedAt: Date?
     private var loaded: [ProjectSession] = []
+    /// Состав чатов кортежами `(sessionId, cwd, title)` и его номер.
+    private var shape: [String] = []
+    private var revisionValue = 0
+    /// Разобранный `status.json` и его отпечаток: файл весит мегабайты (в нём `url` каждой
+    /// страницы вместе с `data:`-адресами артефактов), а спрашивают его дважды за тик —
+    /// разбирать его каждый раз незачем (решение 7а плана WF29).
+    private var pagesStamp: String?
+    private var pagesCache: [Page] = []
+
+    /// Чтение диагностики лоадера — сиденьем, чтобы тест мог посчитать, сколько раз файл
+    /// правда прочли (`Data(contentsOf:)` мимо `FileManager` не подменить).
+    var readStatus: (URL) -> Data? = { try? Data(contentsOf: $0) }
+
+    /// Номер состава чатов: растёт, когда изменился набор `(sessionId, cwd, title)` — то есть
+    /// чат появился, пропал, переименовался или сменил папку («Change directory», задача #5448).
+    /// Полное равенство `ProjectSession` для этого не годится: в него входит `lastFocusedAt`,
+    /// который Claude переписывает непрерывно, и канал probe уходил бы почти на каждом тике
+    /// (критик Б1 плана WF29). Обращение перечитывает индекс, как и `sessions`.
+    var revision: Int {
+        reloadIfNeeded()
+        return revisionValue
+    }
 
     /// Что известно об открытых чатах, свежие первыми. Обращение перечитывает индекс, если
     /// с прошлого раза прошло больше `reloadInterval`.
@@ -208,7 +230,7 @@ final class ProjectIndex {
     /// (решение 2 п. 3 плана WF15).
     func mainWindow() -> MainWindow? {
         reloadIfNeeded()
-        let pages = ProjectIndex.pages(try? Data(contentsOf: statusURL))
+        let pages = statusPages()
         guard !pages.isEmpty else { return nil }
         if pages.count == 1, let page = pages.first {
             let session = self.session(for: page.sessionId)
@@ -248,9 +270,27 @@ final class ProjectIndex {
         entries = fresh
         let updated = fresh.values.map { $0.session }
             .sorted { $0.lastFocusedAt > $1.lastFocusedAt }
+        // Состав считаем ДО выхода: порядок в `updated` задаёт `lastFocusedAt`, а он меняется
+        // сам по себе — состав от этого прежний.
+        let shape = ProjectIndex.shape(of: updated)
+        if shape != self.shape {
+            self.shape = shape
+            revisionValue += 1
+        }
         guard updated != loaded else { return false }
         loaded = updated
         return true
+    }
+
+    /// Страницы из диагностики лоадера — по отпечатку файла (решение 7а плана WF29).
+    /// `mainWindow()` зовут дважды за тик (`ProjectPaint.targets()` и `ProjectPaint.status`),
+    /// а `status.json` весит мегабайты: без кэша это два разбора такого файла каждые 2 с.
+    private func statusPages() -> [Page] {
+        let stamp = ProjectIndex.stamp(of: statusURL)
+        if let known = pagesStamp, known == stamp { return pagesCache }
+        pagesStamp = stamp
+        pagesCache = ProjectIndex.pages(readStatus(statusURL))
+        return pagesCache
     }
 
     private func reloadIfNeeded() {
@@ -260,6 +300,13 @@ final class ProjectIndex {
     }
 
     // MARK: - чистая часть (её же гоняют тесты)
+
+    /// Состав чатов для номера `revision`: по кортежу на чат, в порядке, который не зависит
+    /// от того, в какой чат смотрели последним.
+    static func shape(of sessions: [ProjectSession]) -> [String] {
+        sessions.map { "\($0.sessionId)\u{1}\($0.cwd.standardizedFileURL.path)\u{1}\($0.title)" }
+            .sorted()
+    }
 
     static func isStub(_ title: String) -> Bool {
         titleStubs.contains(title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
@@ -293,9 +340,20 @@ final class ProjectIndex {
 
     /// Отпечаток файла для кэша: время правки и размер.
     static func stamp(of url: URL) -> String {
-        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-        let at = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
-        return "\(at):\(values?.fileSize ?? 0)"
+        let info = fileInfo(of: url)
+        return "\(info?.modified.timeIntervalSince1970 ?? 0):\(info?.size ?? 0)"
+    }
+
+    /// Время правки и размер файла; nil — файла нет. Спрашиваем у СВЕЖЕГО `URL`: значения
+    /// ресурсов кэшируются внутри объекта, и у долгоживущей ссылки (а `statusURL` и пути
+    /// канала probe живут всё время работы приложения) mtime навсегда остался бы тем, каким
+    /// был при первом обращении — кэш разбора никогда бы не протухал.
+    static func fileInfo(of url: URL) -> (modified: Date, size: Int)? {
+        let fresh = URL(fileURLWithPath: url.path)
+        guard let values = try? fresh.resourceValues(forKeys: [.contentModificationDateKey,
+                                                              .fileSizeKey]),
+              let at = values.contentModificationDate else { return nil }
+        return (at, values.fileSize ?? 0)
     }
 
     /// Разбор файла сессии. Без `sessionId` или `cwd` запись бесполезна — папку она не даёт.

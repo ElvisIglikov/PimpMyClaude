@@ -25,8 +25,14 @@ public final class ClaudeAXController: ClaudeAXControlling {
     /// Цвет проекта (план WF15): своего таймера у покраски нет — она тикает вместе с
     /// watchdog'ом, раз в 2 с (критик М2).
     private let projectPaint: ProjectPaint
+    /// Канал probe (план WF29): страницы сами говорят, какой в них чат. Тикает на том же
+    /// таймере и молчит, пока выключен тумблер «🗂 Цвет по проекту».
+    private let chatProbe = ChatProbe()
 
     private var observers: [NSObjectProtocol] = []
+    /// Заголовки окон, снятые в этом тике: их читает и канал probe, и покраска — второй
+    /// обход AX за те же 2 с не нужен.
+    private var tickTitles: [String]?
     private var watchdog: Timer?
     private var started = false
     private var claudeFrontmost = false
@@ -55,7 +61,20 @@ public final class ClaudeAXController: ClaudeAXControlling {
         // Цвет проекта: папку окна знает ProjectIndex, красит та же команда `theme`, а память
         // приложения покраска не трогает — галки ставит только ручной выбор (план WF15).
         projectPaint.send = { [weak self] command in self?.actions.applyProject(command) ?? false }
-        projectPaint.windowTitles = { [weak self] in self?.actions.paintableTitles() ?? [] }
+        projectPaint.windowTitles = { [weak self] in
+            guard let self = self else { return [] }
+            return self.tickTitles ?? self.actions.paintableTitles()
+        }
+        // Какой чат в окне, знает сама страница (план WF29): без этого попап красится по
+        // заголовку, а заголовок попапа — снимок имени чата на момент выноса в окно (#5455).
+        // Связь сиденьями, а не через `init`: `ProjectPaint` собирают напрямую тесты.
+        chatProbe.isEnabled = { [weak self] in self?.projectPaint.enabled ?? false }
+        projectPaint.chatPages = { [weak self] in self?.chatProbe.pages ?? [] }
+        projectPaint.chatForTitle = { [weak self] title in self?.chatProbe.chat(forTitle: title) }
+        // Ключ окна для панели «Своя тема» (находка 5 проверки WF20).
+        ClaudeActions.windowKeyForTitle = { [weak self] title in
+            self?.projectPaint.windowKey(forTitle: title) ?? ProjectPaint.windowPrefix + title
+        }
         // Себя нет — считаем окно занятым и молчим: лучше не покрасить, чем покрасить лишнее.
         projectPaint.isWindowBusy = { [weak self] title in
             self?.actions.isWindowAutoPainted(title: title) ?? true
@@ -123,7 +142,12 @@ public final class ClaudeAXController: ClaudeAXControlling {
             self.isAccessibilityTrusted = AX.isTrusted
             self.refreshHotkeys()
             // Цвет проекта — на этом же таймере, своего заводить не надо (критик М2 плана WF15).
+            // Сперва канал probe: покраска берёт из него, какой чат в каком окне.
+            self.tickTitles = self.actions.paintableTitles()
+            self.chatProbe.tick(windowTitles: self.tickTitles ?? [],
+                                indexRevision: self.index.revision)
             self.projectPaint.tick()
+            self.tickTitles = nil
         }
         RunLoop.main.add(watchdog, forMode: .common)
         self.watchdog = watchdog
@@ -190,7 +214,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         menu=\(minimizeMenuEnabled)/\(menu.isRunning) menus=\(menu.shows) \
         blockQuit=\(blockQuitEnabled) blocks=\(blockedQuits) hotkeys=\(hotkeys.count) \
         status=\(statusFeed.isRunning)/\(statusFeed.projectCount)/\(statusFeed.sentCount) \
-        project=\(projectPaint.status) live=\(liveColorsStatus) \
+        project=\(projectPaint.status) chats=\(chatProbe.status) live=\(liveColorsStatus) \
         lastCommand=\(actions.lastCommand)
         """
     }
