@@ -1,7 +1,7 @@
 {
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf31-2026-09-06.md",
   "project": "⚪PimpMyClaude",
-  "status": "идёт",
+  "status": "финиш",
   "trelvis": "#5452 #5453",
   "branch": "wf31",
   "tag": "wf31-start",
@@ -21,6 +21,11 @@
       "at": "2026-09-06T09:45:00+05:00",
       "who": "оркестратор",
       "what": "WF34 слит в main (124877a); WF31 кодинг запущен: A∥B → D → V → фикс → V2"
+    },
+    {
+      "at": "2026-09-06T10:35:00+05:00",
+      "who": "оркестратор",
+      "what": "гейт: test.sh зелёный (163 JS + 129 Swift), inject wf31-b-1 живьём, приложение подменено. Шаг 0 (asyncAfter в трекинге меню) живьём мышью НЕ гонял — Элвис за клавиатурой; опора на AppKit: главная очередь обслуживается в common modes, куда входит NSEventTrackingRunLoopMode. Остаточный риск — проверить Элвису наведением на «Мои темы». Слияние в main."
     }
   ],
   "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/4ac1f818-c441-4d2f-825d-653335da5ba3/workflows/scripts/pimpmyclaude-wf31-code-wf_d3f8ace1-387.js",
