@@ -28,6 +28,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
     /// Канал probe (план WF29): страницы сами говорят, какой в них чат. Тикает на том же
     /// таймере и молчит, пока выключен тумблер «🗂 Цвет по проекту».
     private let chatProbe = ChatProbe()
+    /// Темы окон на диске (план WF35, задача #5473): переустановка Claude стирает localStorage
+    /// страниц, и все окна становились серыми. Файл живёт рядом с `command.json`.
+    private let windowThemes = WindowThemeStore()
 
     private var observers: [NSObjectProtocol] = []
     /// Заголовки окон, снятые в этом тике: их читает и канал probe, и покраска — второй
@@ -54,7 +57,20 @@ public final class ClaudeAXController: ClaudeAXControlling {
         actions.onWarning = { [weak self] text in self?.hud.show(text, seconds: 2.5) }
         // «🪟 Новое окно» держит плашку дольше: работа идёт до 40 с (план WF13).
         actions.onNotice = { [weak self] text, seconds in self?.hud.show(text, seconds: seconds) }
-        app.onRestart = { [weak self] in self?.menu.clearCache() }
+        // Claude перезапустился — вместе с ним умер localStorage страниц: темы, цвет проекта
+        // и живые цвета жили только там (решение 8 плана WF35). Кэш прямоугольников кнопки
+        // «Свернуть» тоже стал мусором (грабли claude_minimize_menu.lua).
+        app.onRestart = { [weak self] in
+            guard let self = self else { return }
+            self.menu.clearCache()
+            // Новое поколение: три попытки возврата тем и снова «первый пустой ответ probe
+            // значит переустановку».
+            self.windowThemes.beginGeneration()
+            // Отпечатки покраски стали враньём — окна голые, а мы считаем их покрашенными.
+            self.projectPaint.forget()
+            // Крутёж живых цветов страница тоже забыла.
+            self.actions.resendLiveColors()
+        }
         // Сводки перечитываются и по таймеру, и когда меню вот-вот всплывёт (решение 2 WF9).
         menu.onWillShow = { [weak self] in self?.statusFeed.refresh() }
 
@@ -71,6 +87,13 @@ public final class ClaudeAXController: ClaudeAXControlling {
         chatProbe.isEnabled = { [weak self] in self?.projectPaint.enabled ?? false }
         projectPaint.chatPages = { [weak self] in self?.chatProbe.pages ?? [] }
         projectPaint.chatForTitle = { [weak self] title in self?.chatProbe.chat(forTitle: title) }
+        // Темы на диске (план WF35): зеркало закрепляющих команд и повод спросить probe.
+        // Главное окно опознаётся тем же резолвером, что и цели покраски: у него ключ `main`.
+        actions.windowThemes = windowThemes
+        actions.onThemeRecorded = { [weak self] in self?.chatProbe.noteMirror() }
+        windowThemes.isMainWindowTitle = { [weak self] title in
+            self?.projectPaint.windowKey(forTitle: title) == ProjectPaint.mainKey
+        }
         // Ключ окна для панели «Своя тема» (находка 5 проверки WF20).
         ClaudeActions.windowKeyForTitle = { [weak self] title in
             self?.projectPaint.windowKey(forTitle: title) ?? ProjectPaint.windowPrefix + title
@@ -133,6 +156,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
         // плана WF18): окна могли открыться, пока приложение не работало, и список заголовков
         // в них устарел. Выключены — команды нет вовсе.
         actions.resendLiveColors()
+        // Поколение возврата тем (решение 5 плана WF35): приложение только что поднялось,
+        // и Claude мог за это время переустановиться.
+        windowThemes.beginGeneration()
         observeActivation()
         claudeFrontmost = app.isFrontmost
         refreshHotkeys()
@@ -146,6 +172,15 @@ public final class ClaudeAXController: ClaudeAXControlling {
             self.tickTitles = self.actions.paintableTitles()
             self.chatProbe.tick(windowTitles: self.tickTitles ?? [],
                                 indexRevision: self.index.revision)
+            // Карта тем страницы приезжает тем же кругом probe (решение 3 плана WF35):
+            // файл догоняет ею правду, а зеркало остаётся страховкой на время, пока канал
+            // занят агентом на гейте.
+            self.windowThemes.absorb(page: self.chatProbe.takeThemes(), at: Date())
+            // Возврат после переустановки Claude: одна команда на все окна, не больше трёх
+            // за поколение (решение 5 плана WF35).
+            self.windowThemes.restoreTick(titles: self.tickTitles ?? [], at: Date()) { fields in
+                self.actions.sendThemesRestore(fields: fields)
+            }
             self.projectPaint.tick()
             self.tickTitles = nil
         }
@@ -214,8 +249,8 @@ public final class ClaudeAXController: ClaudeAXControlling {
         menu=\(minimizeMenuEnabled)/\(menu.isRunning) menus=\(menu.shows) \
         blockQuit=\(blockQuitEnabled) blocks=\(blockedQuits) hotkeys=\(hotkeys.count) \
         status=\(statusFeed.isRunning)/\(statusFeed.projectCount)/\(statusFeed.sentCount) \
-        project=\(projectPaint.status) chats=\(chatProbe.status) live=\(liveColorsStatus) \
-        lastCommand=\(actions.lastCommand)
+        project=\(projectPaint.status) chats=\(chatProbe.status) themes=\(windowThemes.status) \
+        live=\(liveColorsStatus) lastCommand=\(actions.lastCommand)
         """
     }
 

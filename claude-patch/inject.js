@@ -11,13 +11,16 @@
 // высоту, клик — свернуть/вернуть, двойной клик — во всю высоту окна. Плюс
 // команды из приложения (событие window "myclaude-command"): collapse, expand,
 // cashout, scroll, theme, status, workflow, new-window, popout-window,
-// live-colors. И сокращает время под сообщениями («3 minutes ago» → «3 min
-// ago»). Команда
+// live-colors, themes-restore. И сокращает время под сообщениями («3 minutes
+// ago» → «3 min ago»). Команда
 // theme несёт четыре слоя — цвет по
 // палитре из claude-patch/themes.json, шрифт, размер текста сообщений и
 // неоновую рамку окна (раздел «2а. Слои чата»): тема живёт на ЧАТЕ
-// (ключ `chat:<заголовок>`), у главного окна есть ещё и своя — она и остаётся,
-// когда открыт новый чат; всё переживает перезапуск Claude. На нижней кромке
+// (ключ `id:<id чата>`, имя чата — тень для окон без известного id), у главного
+// окна есть ещё и своя — она и остаётся,
+// когда открыт новый чат; всё переживает перезапуск Claude, а команда
+// themes-restore возвращает слои и после переустановки Claude, когда
+// localStorage стирается целиком (копию карты держит приложение). На нижней кромке
 // рамки поля ввода рисуется полоса прогресса марафона воркфлоу по строке
 // состояния из последнего ответа — по сегменту на воркфлоу, с подсказкой из
 // сводки, присланной командой status (раздел «2б»). Команда workflow кладёт в
@@ -41,7 +44,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf31-b-1";
+  const VERSION = "wf35-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -310,6 +313,13 @@
   // заголовка (watchChatTitle): страница при этом не перезагружается, и другого
   // признака у смены разговора нет.
   //
+  // С WF35 чат опознаётся не именем, а ID (`id:local_<uuid>`, раздел 12в): имя
+  // Элвис меняет, id — нет, и переименование разговора больше не теряет цвет.
+  // Имя осталось тенью — под ним живут окна, которые своего id ещё не знают
+  // (попап в первые секунды). Вся карта при этом умирает вместе с переустановкой
+  // Claude, поэтому её копию держит приложение и присылает командой
+  // themes-restore (см. runThemesRestoreCommand).
+  //
   // Тема — конструируемая таблица стилей (adoptedStyleSheets) с переменными
   // Claude, собранная из палитры шести цветов. Порт ElvisOS/Resources/claude-theme-manager.mjs
   // (хелперы normalizeHex/rgb/mix/hslTriple и generateThemeCss), урезанный:
@@ -330,6 +340,10 @@
   // запись подчинённого окна, "*": запись для всех }. localStorage у окон общий.
   const THEME_MAP_KEY = "myclaude-themes-v1";
   const THEME_ALL_KEY = "*";
+  // Кэш ответа родителя про свой чат (раздел 12в). Константа стоит ЗДЕСЬ, а не
+  // в самом разделе: её читает chatIdKey (раздел 2а) уже на инжекте, а раздел
+  // 12в лежит ниже по файлу — его `const`-ы к тому мгновению ещё в TDZ.
+  const CHAT_ID_KEY = "myclaude-chat-v1";
   // Сторож заголовка: подчинённое окно («Open in new window») живёт на
   // about:blank и получает заголовок позже, чем выполняется инжект, а в главном
   // окне заголовок меняется на каждом чате. План просит опрос раз в секунду —
@@ -947,12 +961,21 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // первой же записи переносятся (контракт WF9). Ключ СЕССИИ, в отличие от
   // ключей карты, всегда оконный (`main`/`w:<заголовок>`): сессия обязана
   // пережить смену чата в окне (см. sessionKey).
+  // WF35 добавил к этому `id:<id чата>` и сделал его ГЛАВНЫМ ключом чата:
+  // приоритет по слою `id:` → `chat:` → сессия → `main` → `*`, пишутся оба
+  // ключа чата разом, а первое совпадение копирует старую запись на `id:`
+  // (migrateChatKey). Старую запись не удаляем: по ней ещё живут окна, которые
+  // своего id не знают.
   // Красим только окна Claude: claude.ai (главное) и about:blank («Open in new
   // window»). Артефакты, браузерная панель (data:) и file: — не наши.
   const themable = /^(https:\/\/claude\.ai\/|about:blank)/.test(location.href);
   const THEME_MAIN_KEY = "main";
   const THEME_CHAT_PREFIX = "chat:";
   const THEME_LEGACY_PREFIX = "w:";
+  // WF35: главный ключ чата — его id (`id:local_<uuid>`), а не имя. Имя чата
+  // Элвис меняет, id — нет, и после переименования ключ `chat:<старое имя>`
+  // больше никем не читался: окно теряло цвет (пункт 20 списка 05.09).
+  const THEME_ID_PREFIX = "id:";
   const isMainWindow = () => themable && location.href.includes("claude.ai");
   // Заголовки-заглушки. Пока у разговора нет имени, окно зовётся «Claude» или
   // «New chat», и такой заголовок носят РАЗНЫЕ чаты во всех окнах разом. Ключа
@@ -963,12 +986,29 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const windowTitle = () => (document.title || "").trim();
   // Заголовка ещё нет (about:blank сразу после открытия) — ключа чата нет, ждём
   // его (см. watchChatTitle).
-  const chatKey = () => {
+  const chatTitleKey = () => {
     if (!themable) return null;
     const title = windowTitle();
     if (!title || THEME_TITLE_STUBS.has(title.toLowerCase())) return null;
     return `${THEME_CHAT_PREFIX}${title}`;
   };
+  // Ключ по id чата (WF35). Проверка themable стоит явно, а не достаётся от
+  // myChatId: раздел 12в про ключи темы ничего не обещает, а чужая страница
+  // (артефакт, браузерная панель) не должна давать ключа вовсе. Заголовок-
+  // заглушка при известном id ключом ТЕПЕРЬ становится — у безымянного чата
+  // тоже есть id, и выбранный в нём цвет обязан остаться, когда имя появится.
+  // Осечка myChatId (раздел 12в лежит ниже, источники id у него чужие) не должна
+  // уносить с собой всю тему окна: id неизвестен — работаем по имени чата, ровно
+  // как деградирует адресация WF29.
+  const chatIdKey = () => {
+    if (!themable) return null;
+    let id = null;
+    try { id = myChatId(); } catch { id = null; }
+    return typeof id === "string" && id ? `${THEME_ID_PREFIX}${id}` : null;
+  };
+  // Действующий ключ чата: id сильнее имени, имя — тень для окон, которые своего
+  // id ещё не знают (попап в первые секунды: карту попапов наполняет probe).
+  const chatKey = () => chatIdKey() ?? chatTitleKey();
   // Ключ СЕССИИ — по окну, а не по чату: главное окно `main`, подчинённое
   // `w:<заголовок>` (его заголовок при жизни окна не меняется). Сессия обязана
   // пережить смену чата: с ключом чата этот слой умирал бы на каждом ⌘N, а
@@ -1037,6 +1077,25 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const legacy = legacyKey(key);
     return legacy != null && map[legacy] !== undefined ? themeEntry(map[legacy]) : null;
   };
+  // Запись ЭТОГО чата: сперва по id, потом по имени (WF35). Порядок и есть
+  // приоритет `id:` → `chat:` — им пользуются все три места чтения карты.
+  const chatEntry = map => mapEntry(map, chatIdKey()) ?? mapEntry(map, chatTitleKey());
+  // Первое совпадение переносит запись имени на id — КОПИЕЙ, старую оставляем:
+  // по ней ещё живёт окно, которое своего id не знает (попап в первые секунды,
+  // непропатченная страница). Зовётся трижды: на инжекте, в syncChatTheme (у
+  // попапа id появляется ПОЗЖЕ инжекта) и первой строкой writeLayers — иначе
+  // запись `id:` создалась бы с одним слоем и навсегда закрыла бы более полную
+  // тень `chat:`, а остальные слои чата пропали бы с экрана.
+  const migrateChatKey = () => {
+    const idKey = chatIdKey();
+    if (!idKey) return;
+    const map = readThemeMap();
+    if (map[idKey] !== undefined) return;
+    const entry = mapEntry(map, chatTitleKey());
+    if (!entry || Object.keys(entry).length === 0) return;
+    map[idKey] = entry;
+    writeThemeMap(map);
+  };
 
   // Годится ли сессия этому окну. Свой ключ у неё оконный (`main`/`w:<заголовок>`),
   // но в живых окнах лежат записи и от wf9-a-1, где ключом был чат. Принимаем и
@@ -1047,8 +1106,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (typeof stored !== "string" || stored === "") return false;
     const key = sessionKey();
     if (key && stored === key) return true;
-    const chat = chatKey();
-    if (chat && stored === chat) return true;
+    // Ключей чата теперь два (WF35), и принимать надо ОБА: сессии, записанные до
+    // обновления, лежат под именем чата, свежие — под id. Признай мы только один,
+    // окна Элвиса разово потеряли бы слой сессии.
+    for (const chat of [chatIdKey(), chatTitleKey()]) if (chat && stored === chat) return true;
     return stored === THEME_MAIN_KEY && isMainWindow();
   };
   // Запись привязана к ключу окна: окно «Open in new window» — попап, и по
@@ -1237,9 +1298,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     for (const layer of THEME_LAYERS) if (layer in layers) applyLayer(layer, layers[layer], source);
   };
 
-  // Порядок восстановления у КАЖДОГО слоя свой: запись чата (`chat:<заголовок>`)
-  // → своя сессия окна → у главного окна запись окна (`main`) → запись «для
-  // всех». Чат стоит ПЕРВЫМ нарочно: сессия у окна одна на все разговоры, и
+  // Порядок восстановления у КАЖДОГО слоя свой: запись чата (`id:<id>`, а нет её
+  // — `chat:<заголовок>`; см. chatEntry) → своя сессия окна → у главного окна
+  // запись окна (`main`) → запись «для всех». Чат стоит ПЕРВЫМ нарочно: сессия у
+  // окна одна на все разговоры, и
   // стоя выше она перекрывала бы цвет чата, в который окно только что вернулось
   // (разбор критика, п. 2). Тема у окна своя, а шрифт общий — законная пара,
   // поэтому слои и разведены. Явный сброс («none») сильнее следующего уровня и
@@ -1251,7 +1313,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (!themable) return true;
     const session = readSessionEntry();
     const map = readThemeMap();
-    const chat = mapEntry(map, chatKey());
+    const chat = chatEntry(map);
     // Запись окна берёт только главное окно: у подчинённого своего `main` нет,
     // и чужой он не касается.
     const own = isMainWindow() ? mapEntry(map, THEME_MAIN_KEY) : null;
@@ -1277,7 +1339,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (!themable) return null;
     const map = readThemeMap();
     const chain = [
-      mapEntry(map, chatKey()),
+      chatEntry(map),
       readSessionEntry(),
       isMainWindow() ? mapEntry(map, THEME_MAIN_KEY) : null,
       themeEntry(map[THEME_ALL_KEY]),
@@ -1313,14 +1375,21 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // помнило цвет и не теряло его на новом чате. У безымянного чата ключа нет
   // (chatKey отдаёт null на заголовках-заглушках), и выбор ложится только в
   // `main` да в сессию — иначе он достался бы всем безымянным чатам разом.
+  // WF35: пока id известен, пишем ОБА ключа чата — id главный, имя остаётся
+  // тенью для окон, которые id ещё не знают.
   const writeKeys = () => {
     const keys = [];
-    const chat = chatKey();
-    if (chat) keys.push(chat);
+    const id = chatIdKey();
+    if (id) keys.push(id);
+    const title = chatTitleKey();
+    if (title) keys.push(title);
     if (isMainWindow()) keys.push(THEME_MAIN_KEY);
     return keys;
   };
   const writeLayers = layers => {
+    // Перенос ДО записи обязателен: setMapLayers начинает с mapEntry(map, key),
+    // и без переноса запись `id:` родилась бы с одним слоем этой команды.
+    migrateChatKey();
     const keys = writeKeys();
     if (keys.length) {
       const map = readThemeMap();
@@ -1361,7 +1430,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Элвиса; разбор критика, п. 3). Полное восстановление тут не годится — оно
   // перекрасило бы окно из `main`/«для всех» на каждом новом чате.
   const applyChatEntry = () => {
-    const entry = mapEntry(readThemeMap(), chatKey());
+    const entry = chatEntry(readThemeMap());
     if (!entry) return;
     for (const layer of THEME_LAYERS) {
       const value = entryLayer(entry, layer);
@@ -1379,6 +1448,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // Сначала дописываем несохранённый выбор: иначе восстановление затрёт на
     // экране только что выбранную тему.
     flushPendingLayers();
+    // У попапа id приезжает ПОЗЖЕ инжекта (карту попапов наполняет probe), и без
+    // этого вызова перенос записи на `id:` в попапе не случился бы никогда.
+    try { migrateChatKey(); } catch {}
     try { applyChatEntry(); } catch {}
   };
   const watchChatTitle = () => {
@@ -1546,10 +1618,78 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     return true;
   };
 
+  // Возврат тем после переустановки Claude (WF35). Переустановка стирает
+  // localStorage страниц — вместе с ним умирает вся карта тем, и пять окон
+  // Элвиса становятся серыми (#5473). Копию карты держит приложение в файле
+  // ~/Library/Application Support/MyClaude/window-themes.json и присылает её
+  // одной командой на все окна:
+  //   {id, action:"themes-restore", at, scope:"all", entries:{<ключ>:{theme?,font?,size?,frame?}}}
+  // Страница НЕ заменяет свою память присланной, а ДОЛИВАЕТ недостающие слои:
+  // так команда идемпотентна (память цела — не меняется ни байта), и спрашивать
+  // окно «ты пуста?» не нужно вовсе. Явный сброс приезжает маркером "none" и
+  // остаётся сбросом — «Как у Claude» переживает переустановку наравне с цветом.
+  const RESTORE_KEY_LIMIT = 200;
+  const RESTORE_KEY_MAX_LENGTH = 200;
+  // Ключ из чужих рук: только наши пять видов и без пустого хвоста у префикса.
+  const restoreKeyOk = key => {
+    if (typeof key !== "string" || !key.length || key.length > RESTORE_KEY_MAX_LENGTH) return false;
+    if (key === THEME_ALL_KEY || key === THEME_MAIN_KEY) return true;
+    for (const prefix of [THEME_ID_PREFIX, THEME_CHAT_PREFIX, THEME_LEGACY_PREFIX]) {
+      if (key.startsWith(prefix)) return key.length > prefix.length;
+    }
+    return false;
+  };
+  // Слой из чужих рук: "none"/null — сброс, значение — через ту же нормализацию,
+  // что и команда меню; мусор равен отсутствию слоя.
+  const restoreLayer = (entry, layer) => {
+    if (!(layer in entry)) return undefined;
+    const raw = entry[layer];
+    if (raw === "none" || raw == null) return "none";
+    return LAYER_NORMALIZE[layer](raw) ?? undefined;
+  };
+  const restoreState = { at: 0, keys: 0, merged: 0, painted: false };
+  const runThemesRestoreCommand = detail => {
+    if (!themable || !detail || typeof detail !== "object") return false;
+    const entries = detail.entries;
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) return false;
+    const map = readThemeMap();
+    let keys = 0;
+    let merged = 0;
+    for (const [key, value] of Object.entries(entries)) {
+      if (keys >= RESTORE_KEY_LIMIT) break;
+      if (!restoreKeyOk(key)) continue;
+      const incoming = themeEntry(value);
+      keys += 1;
+      const current = mapEntry(map, key);
+      const entry = current ? { ...current } : {};
+      let added = 0;
+      for (const layer of THEME_LAYERS) {
+        // Всё, что у страницы уже есть, не трогаем вовсе — в том числе "none".
+        if (current && layer in current) continue;
+        const next = restoreLayer(incoming, layer);
+        if (next === undefined) continue;
+        entry[layer] = next;
+        added += 1;
+      }
+      if (!added) continue;
+      map[key] = entry;
+      merged += added;
+    }
+    if (merged) writeThemeMap(map);
+    restoreState.at = now();
+    restoreState.keys = keys;
+    restoreState.merged = merged;
+    // Экран трогаем, только если он наш: примерка мышью и живые цвета показывают
+    // не то, что в хранилище, и перекраска сбила бы их обоих.
+    restoreState.painted = !themeState.previewing && !liveState.on;
+    if (restoreState.painted) { try { restoreTheme(false); } catch {} }
+    return true;
+  };
+
   // Осечка темы не должна утащить за собой ручку: раздел стоит выше её
   // постройки, и без этой обёртки любое падение на неготовой разметке оставило
   // бы окно вовсе без полоски.
-  try { restoreTheme(); watchChatTitle(); } catch {}
+  try { migrateChatKey(); restoreTheme(); watchChatTitle(); } catch {}
 
   // ---- 2б. Полоса прогресса воркфлоу --------------------------------------
   // Тонкая светящаяся линия на нижней кромке рамки поля ввода: насколько прошёл
@@ -3879,13 +4019,16 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   });
   const newWindowSleep = ms => new Promise(resolve => { newWindowLater(resolve, ms); });
 
-  const newWindowSegment = path => String(path ?? "").split("/").filter(Boolean).pop() ?? "";
+  // Объявления, а не стрелки в `const`: обе функции нужны ключу темы по id чата
+  // (chatIdKey, раздел 2а) уже на инжекте, а он стоит ВЫШЕ по файлу — `const` к
+  // тому мгновению ещё в TDZ, а объявление поднимается (WF35).
+  function newWindowSegment(path) { return String(path ?? "").split("/").filter(Boolean).pop() ?? ""; }
   // Открытый чат Claude Code — /epitaxy/local_<uuid>. Всё прочее (обычный чат
   // claude.ai, домашний экран) сессии popout не даёт.
-  const newWindowSessionId = () => {
+  function newWindowSessionId() {
     const id = newWindowSegment(location.pathname);
     return id.startsWith("local_") ? id : "";
-  };
+  }
   const newWindowAtHome = () =>
     location.pathname === NEW_WINDOW_HOME_PATH && Boolean(document.querySelector(NEW_WINDOW_INPUT_SELECTOR));
   // Ключи строк сайдбара — chat:<uuid> / code:… / local_…, поэтому ищем по концу.
@@ -4520,7 +4663,6 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Своих таймеров, подписок и наблюдателей раздел не заводит НИ ОДНОГО —
   // лоадер перечитывает файл по mtime и гоняет его в том же окне снова, и
   // каждая подписка здесь стала бы зомби (раздел 0).
-  const CHAT_ID_KEY = "myclaude-chat-v1";
   // Карта попапов свежа полминуты: чаще круга probe она всё равно не нужна, а
   // скан исполняет чужие модули (раздел 12б).
   const CHATS_MAP_TTL_MS = 30000;
@@ -4558,7 +4700,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // окно (about:blank унаследовал origin claude.ai) — так же живут
   // myclaude-theme-v1 и myclaude-live-phase-v1. Запись годна, пока заголовок
   // окна равен сохранённому: сменился — спросим родителя заново.
-  const readChatId = () => {
+  // Объявление, а не стрелка: readChatId зовёт chatIdKey (раздел 2а) на инжекте,
+  // то есть ВЫШЕ этой строки — `const` там был бы ещё в TDZ (WF35).
+  function readChatId() {
     try {
       const raw = sessionStorage.getItem(CHAT_ID_KEY);
       if (raw == null) return null;
@@ -4568,17 +4712,19 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       if (!id.startsWith("local_") || title !== windowTitle()) return null;
       return id;
     } catch { return null; }
-  };
+  }
   const writeChatId = id => {
     try { sessionStorage.setItem(CHAT_ID_KEY, JSON.stringify({ id, title: windowTitle() })); } catch {}
   };
 
-  // Синхронный ответ «какой чат в этом окне» — им пользуется addressed().
-  const myChatId = () => {
+  // Синхронный ответ «какой чат в этом окне» — им пользуются addressed() и ключ
+  // темы chatIdKey (раздел 2а). Объявление, а не стрелка: chatIdKey зовёт его на
+  // инжекте, а инжект проходит раздел 2а раньше этой строки (WF35).
+  function myChatId() {
     if (!themable) return null;
     if (isMainWindow()) return newWindowSessionId() || null;
     return readChatId();
-  };
+  }
 
   // Карта попапов из стора: [{id, title}]. null — стор ответить не смог (упал
   // или отдал не Map); пустой список — попапов нет, и это тоже ответ.
@@ -4658,26 +4804,41 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     } catch { return { id: null, store: "none" }; }
   };
 
+  // Карта тем в ответ probe (WF35): по ней приложение держит на диске копию
+  // хранилища окон и возвращает её после переустановки Claude. Отдаёт её ТОЛЬКО
+  // главное окно: лоадер гоняет probe.js во ВСЕХ страницах (их у Claude больше
+  // сорока), а карта на origin одна — иначе каждая страница вернула бы её КОПИЮ
+  // (ответ и без того весит мегабайты), а артефакт на чужом origin вернул бы
+  // ПУСТУЮ карту и подсунул бы приложению ложное «Элвис снял всё сам».
+  const chatsThemes = () => (isMainWindow() ? readThemeMap() : null);
+
   // Ответ probe.js. Контракт (план WF29, решение 4) — побайтно:
   //   {v, nonce, kind, self, path, row, title, popouts:[{id,title}], store, at}
+  // WF35 дописывает в ХВОСТ необязательное themes (карта тем главного окна):
+  // контракт выше остаётся побайтно прежним, а «поля нет» приложение отличает
+  // от «карта пуста».
   // store: "ok" — спросили стор/родителя, "cache" — из карты в замыкании,
   // "busy" — идёт «Новое окно», "none" — спросить не вышло, "skip" — не наша
   // страница. Функция НИКОГДА не бросает: probe ждёт объект, а не исключение.
   const chats = async opts => {
     const nonce = typeof opts?.nonce === "string" ? opts.nonce : null;
     const scan = opts?.scan === true;
-    const answer = (kind, self, store, popouts) => ({
-      v: 1,
-      nonce,
-      kind,
-      self: self ?? null,
-      path: chatPath(),
-      row: chatRowId(),
-      title: windowTitle(),
-      popouts: popouts ?? [],
-      store,
-      at: Date.now(),
-    });
+    const answer = (kind, self, store, popouts) => {
+      const themes = chatsThemes();
+      return {
+        v: 1,
+        nonce,
+        kind,
+        self: self ?? null,
+        path: chatPath(),
+        row: chatRowId(),
+        title: windowTitle(),
+        popouts: popouts ?? [],
+        store,
+        at: Date.now(),
+        ...(themes ? { themes } : {}),
+      };
+    };
     try {
       const kind = chatKind();
       if (kind === "other") {
@@ -4910,6 +5071,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // всем окнам разом (scope:"all"), поля ввода ей не нужно, а своё окно
     // страница отбирает сама. И до отмены примерки: гасить её здесь незачем.
     if (action === "live-colors") { try { runLiveCommand(detail); } catch {} return; }
+    // «Возврат тем» (scope:"all", WF35) — по тем же доводам и ДО отмены примерки:
+    // команда приезжает сама, по часам приложения, а не из меню, и гасить ею
+    // подменю под рукой у Элвиса нельзя.
+    if (action === "themes-restore") { try { runThemesRestoreCommand(detail); } catch {} return; }
     // Любая другая команда из меню закрывает примерку: меню ушло, выбора темы не было.
     if (themeState.previewing) {
       try { restoreTheme(true); themeState.previewing = false; themeState.previewLayers = []; } catch {}
@@ -5153,8 +5318,17 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         store: chatsState.store,
         at: chatsState.at || null,
       },
-      // Ключ чата, под которым окно хранит тему (раздел 2а): у главного окна он
-      // меняется вместе с разговором, а у безымянного чата его нет вовсе.
+      // Возврат тем (WF35): когда приезжала команда themes-restore, сколько
+      // ключей приняли, сколько слоёв долили и красилось ли окно (примерка и
+      // живые цвета красить запрещают).
+      restore: {
+        at: restoreState.at || null,
+        keys: restoreState.keys,
+        merged: restoreState.merged,
+        painted: restoreState.painted,
+      },
+      // Ключ чата, под которым окно хранит тему (раздел 2а): у главного окна это
+      // id разговора (`id:local_…`), а пока id неизвестен — его имя.
       chatKey: chatKey(),
       // Ключ сессии — по ОКНУ: `main` у главного, `w:<заголовок>` у подчинённого.
       sessionKey: sessionKey(),
@@ -5219,7 +5393,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ themeCss, epitaxyCss, fontCss, sizeCss,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     codeCss, codePalette, contrastRatio, readableOn,
-    chatKey, sessionKey, themeKey, legacyKey, mapEntry, entryLayer, readThemeMap, writeThemeMap, liveRing, livePalette,
+    chatKey, chatIdKey, chatTitleKey, chatEntry, migrateChatKey, sameSessionKey, restoreKeyOk, chatsThemes,
+    sessionKey, themeKey, legacyKey, mapEntry, entryLayer, readThemeMap, writeThemeMap, liveRing, livePalette,
     parseProgressText, progressShares, statusLines, statusFeedLines, statusKey, runWorkflowCommand, newWindowSegment,
     newWindowSessionId, newWindowAtHome, newWindowStoreOk, setModuleImporter, newWindowScanStores,
     chatKind, chatPath, chatRowId, myChatId, readChatId, writeChatId, chatsMap, chatsScan, popoutChat, chats });

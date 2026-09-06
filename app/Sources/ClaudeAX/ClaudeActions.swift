@@ -61,6 +61,13 @@ final class ClaudeActions {
     /// Стенные часы: `epoch` живых цветов считается в тех же миллисекундах, что `Date.now()`
     /// страницы. Подставляются в тестах.
     var clock: () -> Date = Date.init
+    /// Темы окон на диске (план WF35): зеркало закрепляющих команд `theme`. Живьём вешает
+    /// `ClaudeAXController`; nil — зеркала нет вовсе (в тестах и в сборке без него), и ни один
+    /// файл в `Application Support` не трогается.
+    var windowThemes: WindowThemeStore?
+    /// Зеркало записано — повод спросить страницы (решение 3 плана WF35): без него файл
+    /// догонял бы правду только зеркалом. Вешает `ClaudeAXController` на `ChatProbe.noteMirror`.
+    var onThemeRecorded: (() -> Void)?
 
     /// Что это приложение применило последним — из этого делается «моя тема» (план п. 4).
     /// Сброс слоя обнуляет: «Как у Claude» + «Сохранить как мою тему…» сохранять нечего.
@@ -368,6 +375,7 @@ final class ClaudeActions {
             let fields = ClaudeActions.themeFields(scope: scope, title: title, theme: theme,
                                                    font: font, size: size, frame: frame)
             guard self.commands.write(action: "theme", fields: fields) else { return false }
+            self.recordTheme(fields: fields)
             self.remember(scope: scope, title: title, theme: theme, font: font, size: size, frame: frame)
             return true
         }
@@ -692,7 +700,10 @@ final class ClaudeActions {
         for (title, theme) in zip(titles, themes) {
             let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: title,
                                                    theme: .set(theme), font: .keep)
-            commands.write(action: "theme", fields: fields)
+            // Вторая точка зеркала (решение 2 плана WF35): «Раскрасить по кругу» пишет команду
+            // напрямую, мимо applyTheme, — и без этой строки её цвета не пережили бы
+            // переустановку Claude.
+            if commands.write(action: "theme", fields: fields) { recordTheme(fields: fields) }
             // Галку в «Тема» снимаем: цвет у окна теперь сгенерированный, а старая отметка
             // показывала бы тему каталога, которой на окне уже нет (план п. 4).
             themeStore.setWindowTheme(nil, title: title)
@@ -843,7 +854,33 @@ final class ClaudeActions {
                                                chat: command.chat,
                                                theme: command.theme, font: command.font,
                                                size: SizeLayer(command.size), frame: command.frame)
-        return commands.write(action: "theme", fields: fields)
+        guard commands.write(action: "theme", fields: fields) else { return false }
+        recordTheme(fields: fields)
+        return true
+    }
+
+    // MARK: - темы на диске (план WF35)
+
+    /// Зеркало закрепляющей команды `theme` в `window-themes.json` — ЕДИНСТВЕННАЯ точка входа
+    /// на все три места, откуда приложение пишет такую команду (`applyTheme`, «Раскрасить
+    /// по кругу», цвет проекта). Ключи считаются по тем же полям, что ушли в команду, —
+    /// второй реализации `writeKeys` в Swift нет (решение 2 плана WF35).
+    ///
+    /// Примерка (`sendPreview`) сюда не приходит вовсе, а команду с полем `preview` хранилище
+    /// отбрасывает и само: примерка это экран, а не выбор.
+    private func recordTheme(fields: [(key: String, value: CommandValue)]) {
+        guard let store = windowThemes else { return }
+        store.record(fields: fields)
+        // Файл обязан догнать правду страницы: выбор темы поводом спросить probe не является,
+        // и без этого сигнала самолечение решения 3 не работало бы вовсе.
+        onThemeRecorded?()
+    }
+
+    /// Возврат тем после переустановки Claude: одна команда `themes-restore` на все окна
+    /// (решение 4 плана WF35). Поля собирает `WindowThemeStore`, шлёт — общий канал, очередью.
+    @discardableResult
+    func sendThemesRestore(fields: [(key: String, value: CommandValue)]) -> Bool {
+        commands.write(action: WindowThemeStore.restoreAction, fields: fields)
     }
 
     /// Заголовки окон Claude на экране — те же, что берёт «Раскрасить по кругу»: без
