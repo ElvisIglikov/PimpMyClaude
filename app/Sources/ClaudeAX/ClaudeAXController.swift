@@ -100,6 +100,23 @@ public final class ClaudeAXController: ClaudeAXControlling {
         windowThemes.isMainWindowTitle = { [weak self] title in
             self?.projectPaint.windowKey(forTitle: title) == ProjectPaint.mainKey
         }
+        // «Обкэшить» из попапа (план WF37, #5575): тем же резолвером решается, бить ли ⌘N
+        // на месте или рождать новое окно рядом — заголовок главного окна бывает и именем
+        // чата, и заглушкой «Claude», по нему одному эти два окна не различить.
+        actions.isMainWindowTitle = { [weak self] title in
+            self?.projectPaint.windowKey(forTitle: title) == ProjectPaint.mainKey
+        }
+        actions.chatForTitle = { [weak self] title in self?.chatProbe.chat(forTitle: title) }
+        // Проект чата: папку знает индекс Claude Code, и новое окно родится в ней — с именем,
+        // цветом и записью в `projects.json`, как у пункта «🪟 Новое окно ▸ проект».
+        actions.projectForChat = { [weak self] chat in
+            // Папки нет на диске — проект не отдаём: цепочка встала бы молча, «Здесь же»
+            // честнее (проверка WF37, находка 6; то же сито, что у recentProjects).
+            guard let self = self, let folder = self.index.folder(for: chat),
+                  ProjectIndex.isDirectory(folder) else { return nil }
+            return Project(folder: folder, name: folder.lastPathComponent,
+                           lastFocusedAt: self.index.session(for: chat)?.lastFocusedAt ?? 0)
+        }
         // Ключ окна для панели «Своя тема» (находка 5 проверки WF20).
         ClaudeActions.windowKeyForTitle = { [weak self] title in
             self?.projectPaint.windowKey(forTitle: title) ?? ProjectPaint.windowPrefix + title

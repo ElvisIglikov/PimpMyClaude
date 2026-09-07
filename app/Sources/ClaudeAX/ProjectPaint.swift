@@ -219,12 +219,23 @@ final class ProjectPaint {
     }
 
     /// Строка для `statusText` приложения (живая проверка на гейте): тумблер, папка главного
-    /// окна, сколько окон покрашено проектом и сколько из них опознано по чату.
+    /// окна, сколько окон покрашено проектом, сколько из них опознано по чату и папка чипа
+    /// на домашнем экране (план WF37 C2) — по ней на гейте видно, откуда взялся цвет.
     var status: String {
         let folder = index.mainWindow()?.folder?.lastPathComponent ?? "—"
         let painted = marks.values.filter { !$0.layers.isEmpty }.count
         let known = marks.keys.filter { $0.hasPrefix(ProjectPaint.chatPrefix) }.count
-        return "\(enabled ? "on" : "off")/\(folder)/\(painted)/\(known)"
+        let home = homeFolder(in: chatPages())?.lastPathComponent ?? "—"
+        return "\(enabled ? "on" : "off")/\(folder)/\(painted)/\(known)/home:\(home)"
+    }
+
+    /// Папка домашнего экрана: свежий ответ ГЛАВНОГО окна с путём `/epitaxy` и папкой чипа —
+    /// и подъём к корню проекта, потому что чип может показывать подпапку (риск 5 плана WF37).
+    /// Ответа нет, он протух, путь другой или папки в нём нет — nil, и красить нечем.
+    private func homeFolder(in pages: [ChatPage]) -> URL? {
+        guard ChatProbe.isMainAtHome(pages, at: now()),
+              let path = pages.last(where: { $0.kind == .main })?.folder else { return nil }
+        return index.root(of: URL(fileURLWithPath: path, isDirectory: true))
     }
 
     /// Окна с известной папкой. Главное — по адресу страницы из `status.json` лоадера, но чат
@@ -252,6 +263,12 @@ final class ProjectPaint {
                 ? main.folder
                 : named.flatMap { index.session(for: $0) }.map(index.folder(of:))
             out.append(ProjectTarget(key: ProjectPaint.mainKey, match: main.match, chat: nil,
+                                     title: ProjectPaint.mainWindowTitle, folder: folder))
+        } else if let folder = homeFolder(in: pages) {
+            // Домашний экран (план WF37 C2, задача #5576): сессии нет вовсе, и папку окна
+            // знает только сама страница — по чипу над пустым полем. Адресуем окно путём
+            // `/epitaxy`: заголовок там заглушка «Claude», и её носят безымянные попапы.
+            out.append(ProjectTarget(key: ProjectPaint.mainKey, match: ChatProbe.homePath, chat: nil,
                                      title: ProjectPaint.mainWindowTitle, folder: folder))
         }
         var seen = Set<String>()

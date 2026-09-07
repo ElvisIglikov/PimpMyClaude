@@ -250,6 +250,13 @@ final class ProjectIndex {
                            fileManager: fileManager)
     }
 
+    /// То же для ПАПКИ без чата: чип домашнего экрана показывает выбор для будущего чата, и
+    /// это может быть подпапка проекта (план WF37 C2) — поднимаемся к корню теми же приметами.
+    func root(of folder: URL) -> URL {
+        ProjectFolder.root(for: folder, projectsRoot: projectsRoot, home: home,
+                           fileManager: fileManager)
+    }
+
     // MARK: - чтение индекса
 
     /// Перечитать индекс. Возвращает, изменился ли состав чатов: покраске это повод оглядеться.

@@ -1,0 +1,50 @@
+{
+ "project": "⚪PimpMyClaude",
+ "workflow": "WF37 «Ремонт Пимпа»",
+ "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf37-2026-09-07.md",
+ "fixtures": "/Users/elvis/_ElvisProjects/PimpMyClaude/tests/fixtures/cashout/",
+ "branch": "wf37",
+ "tag": "wf37-start",
+ "status": "финиш",
+ "started": "2026-09-07T18:09:00+05:00",
+ "watchdog": "watchdog-pimpmyclaude-wf37",
+ "orchestrator": "Fable 5.1 xhigh (чат «PimpMyClaude баги и улучшения», local_facfb20c)",
+ "models": "критик Opus max (сделано), кодинг Opus max ×2, проверка Opus max ×1; цифр баланса нет → клетки Fable на Opus max",
+ "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/fff36f1e-9e69-4044-8f51-947c72df8f04/workflows/scripts/pimpmyclaude-wf37-wave1-wf_64e24501-229.js",
+ "run_id": "wf_64e24501-229",
+ "resumes": 0,
+ "reconnaissance": "часть A (новое окно без хода модели) НЕ разведана — ждёт слова Элвиса «сейчас»; волна 1 идёт без части A (B + C)",
+ "batches": {
+  "P": {
+   "what": "страница: B2 Обкэшить по transfer/to/title, C1 folder в chats() на домашнем экране; тесты cashout/new-window/chat-id; README",
+   "model": "Opus 5 max",
+   "status": "готово"
+  },
+  "S": {
+   "what": "Swift: B1 cashoutRoute + сиденья + transfer у new-window, C2 ChatPage.path/folder + targets на домашнем экране, C3 homeInterval; тесты; CHECKLIST",
+   "model": "Opus 5 max",
+   "status": "готово"
+  },
+  "V": {
+   "what": "проверка по диффу wf37-start..HEAD → docs/verify-wf37-2026-09-07.md",
+   "model": "Opus 5 max",
+   "status": "готово"
+  },
+  "A": {
+   "what": "часть A после разведки (мини-волна P2+S2)",
+   "model": "Opus 5 max",
+   "status": "ждёт разведки (отдельная мини-волна, run-wf37a)"
+  }
+ },
+ "next_steps": [
+  "разведка части A при Элвисе («сейчас») → мини-волна P2+S2 (run-wf37a)",
+  "проверки Элвиса: Обкэшить в попапе → новое окно; ⌘N → домашний экран → смена чипа → цвет"
+ ],
+ "journal": [
+  "18:09 · старт: ветка wf37, тег wf37-start, эталоны tests/fixtures/cashout, сторож, волна 1 (P ∥ S)",
+  "18:40 · волна 1 → P: inject.js B2+C1, 18 тестов (205 JS); S: B1+C2+C3, 14 тестов (179 Swift); V: зелёно, 6 мелочей → коммиты fa9ca04, d599476, 5b006c4",
+  "18:47 · гейт: 4 мелочи проверки починены (скан стора, повтор раз в минуту, папка null при «Новом окне», /epitaxy у главного на домашнем экране, папка на диске) → 70a0db9; tools/test.sh зелёный; inject.js живой wf37-p-1; сборка 1.4.0 (8) подменена без простоя",
+  "18:50 · живьём: cashout по chat взят попапом VkusnoffKz 2 (status().cashout to:pending); хвосты → Trelvis #5592–#5595; слияние в main, push; сторож снят"
+ ],
+ "watchdog_cron_id": "1c87c6d3 (23 * * * *)"
+}

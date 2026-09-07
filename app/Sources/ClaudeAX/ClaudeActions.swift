@@ -33,6 +33,16 @@ enum Layer<Value> {
 
 extension Layer: Equatable where Value: Equatable {}
 
+/// Куда идёт «Обкэшить» (план WF37, часть B1): главное окно обкэшивается на месте (команда,
+/// потом ⌘N), а вынесенный в окно чат рождает НОВОЕ окно рядом — ⌘N из попапа исполняет
+/// главное окно Claude, и до WF37 «Обкэшить» в попапе сбивал чат Элвиса в главном окне (#5575).
+enum CashoutRoute: Equatable {
+    case main
+    /// Попап: `chat` — id его чата, если страница сама назвала его в круге probe; nil —
+    /// адресуем заголовком, как до WF37.
+    case popout(chat: String?)
+}
+
 /// Семь действий меню и хоткеев — порт `claude_minimize_menu.lua`.
 /// Страничные (`collapse`, `expand`, `scroll`, `cashout`) уходят в command.json,
 /// оконные (`newChat`, `arrange`, `show`) делаются нативно.
@@ -138,10 +148,80 @@ final class ClaudeActions {
             // Заголовок нужен, чтобы страница поняла «это я»: окно «Open in new window»
             // (about:blank) может не считать себя в фокусе (грабли 03.09).
             let title = AX.string(window, kAXTitleAttribute) ?? ""
-            self.commands.write(action: "cashout", extra: ["title": title])
-            self.after(self.cashoutNewChatDelay) { self.newChat(window) }
+            switch ClaudeActions.cashoutRoute(title: title,
+                                              isMainTitle: self.isMainWindowTitle(title),
+                                              knownChat: self.chatForTitle(title)) {
+            case .main:
+                // Как и было по смыслу, только адрес точнее: путь страницы главного окна
+                // (`match`) не даст команде уйти веером безымянным попапам (критик Б1 WF15).
+                // Домашний экран (пути чата нет) адресуется путём `/epitaxy`: заголовком
+                // «Claude» команду взял бы и безымянный попап (проверка WF37, находка 4).
+                self.commands.write(action: "cashout",
+                                    fields: ClaudeActions.cashoutFields(
+                                        title: title, match: self.mainWindowMatch() ?? ChatProbe.homePath))
+                self.after(self.cashoutNewChatDelay) { self.newChat(window) }
+            case .popout(let chat):
+                // ⌘N из попапа исполняет ГЛАВНОЕ окно — вместо него рождаем новое окно рядом
+                // и просим страницу перенести отложенный ответ туда (план WF37 B1, #5575).
+                self.commands.write(action: "cashout",
+                                    fields: ClaudeActions.cashoutFields(title: title, chat: chat))
+                self.after(self.cashoutNewChatDelay) { self.cashoutNewWindow(from: window, chat: chat) }
+            }
         }
     }
+
+    /// Развилка «Обкэшить» чистой функцией: окон и AX тут нет, поэтому её гоняют тесты
+    /// (критик, важно 3 плана WF37). Верим ТОЛЬКО резолверу главного окна: заглушка «Claude»
+    /// сама по себе главным окном не делает — её носит и безымянный попап (#5534), а у
+    /// главного окна с названным чатом заголовок и вовсе имя чата (критик, блокер 3).
+    static func cashoutRoute(title: String, isMainTitle: Bool, knownChat: String?) -> CashoutRoute {
+        guard !isMainTitle else { return .main }
+        return .popout(chat: knownChat)
+    }
+
+    /// «Обкэшить» из попапа: новое окно рядом тем же путём, что «🪟 Новое окно ▸ проект» —
+    /// имя чата по проекту, слои и авто-цвет, запись в `projects.json`. Проекта не знаем
+    /// (чат неизвестен или его нет в индексе) — «Здесь же», но всё равно с переносом.
+    /// Точка ставится сама (`popoutOrigin` от рамки попапа — уступ от окна, где нажали).
+    private func cashoutNewWindow(from window: AXUIElement, chat: String?) {
+        let project = chat.flatMap { projectForChat($0) }
+        if let project = project { onProjectUsed?(project) }
+        newWindow(window, project: project, transfer: true)
+    }
+
+    /// Поля команды после id, action, at: scope, title, match?, chat? (контракт части B плана
+    /// WF37, эталоны `tests/fixtures/cashout/cashout-*.json`). Главному окну уходит `match`
+    /// (домашний экран — путь `/epitaxy`), попапу — `chat`, и никогда наоборот.
+    static func cashoutFields(title: String, match: String? = nil,
+                              chat: String? = nil) -> [(key: String, value: CommandValue)] {
+        var fields: [(key: String, value: CommandValue)] = [
+            (key: "scope", value: .string(MenuModel.themeScopeWindow)),
+            (key: "title", value: .string(title)),
+        ]
+        if let match = match { fields.append((key: "match", value: .string(match))) }
+        if let chat = chat { fields.append((key: "chat", value: .string(chat))) }
+        return fields
+    }
+
+    /// Это главное окно Claude? Живьём вешает `ClaudeAXController` тем же резолвером, что
+    /// и цели покраски (`ProjectPaint.windowKey(forTitle:) == mainKey`): у главного окна
+    /// заголовок бывает и заглушкой «Claude», и настоящим именем чата, и различить их
+    /// по одному заголовку нельзя. Без контроллера остаётся правило до WF37 — заглушка
+    /// и пустой заголовок значат главное окно.
+    var isMainWindowTitle: (String) -> Bool = { ClaudeActions.isMainWindowTitle($0) }
+
+    static func isMainWindowTitle(_ title: String) -> Bool {
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return clean.isEmpty || clean == ProjectPaint.mainWindowTitle
+    }
+
+    /// Чат окна по AX-заголовку — карта probe (план WF29). Живьём вешает контроллер;
+    /// карта несвежая или тумблер «🗂 Цвет по проекту» выключен — nil, и попап адресуется
+    /// заголовком, как до WF37.
+    var chatForTitle: (String) -> String? = { _ in nil }
+    /// Проект чата: папка из индекса Claude Code. Живьём вешает контроллер; nil — папки
+    /// не знаем, и новое окно откроется «Здесь же».
+    var projectForChat: (String) -> Project? = { _ in nil }
 
     // MARK: - Workflow (решение 3 плана WF9)
 
@@ -186,8 +266,11 @@ final class ClaudeActions {
     /// (страница должна успеть запомнить, где стояло главное окно), и только потом ⌘N.
     /// Окно адресуется AX-заголовком, как «Обкэшить»; пустой заголовок страница понимает
     /// как «окно в фокусе».
+    /// `transfer` (план WF37 B1) ставит только ветка «Обкэшить»: страница по нему штампует
+    /// отложенный ответ донора на НОВЫЙ чат. ⌥⌘N, «▸ проект», «Здесь же» и канал «Пимп»
+    /// поля не пишут никогда.
     private func newWindow(_ window: AXUIElement?, project: Project? = nil,
-                           origin fixed: (x: Int, y: Int)? = nil) {
+                           origin fixed: (x: Int, y: Int)? = nil, transfer: Bool = false) {
         // Точку могли задать снаружи (место «x,y» канала «Пимп», план WF36) — тогда окно
         // родится там же, где его просили, и двигать его потом не придётся.
         let origin = fixed ?? ClaudeActions.popoutOrigin(near: window.flatMap { AX.frame($0) })
@@ -217,6 +300,7 @@ final class ClaudeActions {
                                 fields: ClaudeActions.newWindowFields(title: title, match: match,
                                                                       x: origin.x, y: origin.y,
                                                                       text: text, folder: folder, name: name,
+                                                                      transfer: transfer ? true : nil,
                                                                       theme: layers.theme, font: layers.font,
                                                                       size: layers.size, frame: layers.frame))
             self.after(self.newWindowKeyDelay) { self.newChat(window) }
@@ -318,8 +402,10 @@ final class ClaudeActions {
     /// как в WF13. Слои — по правилам команды `theme`: `.keep` в JSON нет вовсе, `.reset` — null.
     /// `match` — путь страницы главного окна, как у команды `theme`: поля нет — адресуем
     /// заголовком, как раньше.
+    /// `transfer` — необязательное поле ветки «Обкэшить» (план WF37): стоит ПОСЛЕ `name` и
+    /// ПЕРЕД слоями, значение только `true`; у остальных путей поля нет вовсе.
     static func newWindowFields(title: String, match: String? = nil, x: Int, y: Int, text: String,
-                                folder: String = "", name: String = "",
+                                folder: String = "", name: String = "", transfer: Bool? = nil,
                                 theme: Layer<Theme> = .keep, font: Layer<Font> = .keep,
                                 size: Layer<Size> = .keep,
                                 frame: Layer<Bool> = .keep) -> [(key: String, value: CommandValue)] {
@@ -333,6 +419,7 @@ final class ClaudeActions {
                    (key: "text", value: .string(text)),
                    (key: "folder", value: .string(folder)),
                    (key: "name", value: .string(name))]
+        if let transfer = transfer { fields.append((key: "transfer", value: .bool(transfer))) }
         return fields + layerFields(theme: theme, font: font, size: SizeLayer(size), frame: frame)
     }
 

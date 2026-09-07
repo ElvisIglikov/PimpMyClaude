@@ -1589,6 +1589,141 @@ final class ClaudeAXTests: XCTestCase {
                                                      autoColor: nil).theme.value?.id, "violet")
     }
 
+    // MARK: - «Обкэшить» из попапа (план WF37, часть B1, задачи #5575 и #5535)
+
+    /// Эталоны контракта лежат в репозитории: `tests/fixtures/cashout/`, путь — от #filePath,
+    /// как у канала «Пимп». Их читают ОБА батча волны, и байты у них одни на двоих.
+    private static func cashoutFixture(_ name: String) throws -> String {
+        try String(contentsOf: repositoryRoot
+            .appendingPathComponent("tests/fixtures/cashout/\(name)"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static let cashoutID = "1756900000123-0042"
+    private static let cashoutAt = Date(timeIntervalSince1970: 1_756_900_000)
+    private static let cashoutMainMatch = "/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74"
+    private static let cashoutPopoutChat = "local_4dae798d-aed9-42d7-bd1b-3631eb360c07"
+
+    /// Главное окно с ОТКРЫТЫМ названным чатом носит имя чата, а не заглушку «Claude»
+    /// (критик, блокер 3): различает их только резолвер, и развилка верит ему одному.
+    func testCashoutRouteMainByResolver() {
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "PimpMyClaude", isMainTitle: true,
+                                                  knownChat: nil), .main)
+        // Заголовка нет вовсе (без доверия Accessibility) — тоже главное окно, как до WF37.
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "", isMainTitle: true, knownChat: nil), .main)
+        // Резолвер сильнее карты probe: у главного окна чат есть, а ⌘N всё равно бьёт на месте.
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "PimpMyClaude", isMainTitle: true,
+                                                  knownChat: "local_a1"), .main)
+        // Запасное правило без контроллера: заглушка и пустой заголовок значат главное окно.
+        XCTAssertTrue(ClaudeActions.isMainWindowTitle("Claude"))
+        XCTAssertTrue(ClaudeActions.isMainWindowTitle("  "))
+        XCTAssertFalse(ClaudeActions.isMainWindowTitle("VkusnoffKz 2"))
+    }
+
+    /// Заглушка заголовка сама по себе главным окном не делает: её носит и безымянный попап
+    /// (#5534). Сказал резолвер «не главное» — это попап, и адресуется он заголовком.
+    func testCashoutRouteStubTitleUnknownIsPopout() {
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "Claude", isMainTitle: false,
+                                                  knownChat: nil), .popout(chat: nil))
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "VkusnoffKz 2", isMainTitle: false,
+                                                  knownChat: nil), .popout(chat: nil))
+    }
+
+    /// Попап назвал свой чат в круге probe — команда уходит полем `chat`, и заголовок
+    /// страница не смотрит вовсе (переименование чата адрес больше не сбивает, #5455).
+    func testCashoutRoutePopoutKnownChat() {
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "VkusnoffKz 2", isMainTitle: false,
+                                                  knownChat: ClaudeAXTests.cashoutPopoutChat),
+                       .popout(chat: ClaudeAXTests.cashoutPopoutChat))
+    }
+
+    /// Побайтно с эталоном: главное окно — scope, title, match.
+    func testCashoutPayloadMain() throws {
+        let body = CommandChannel.payload(
+            action: ClaudeCommand.cashout.rawValue,
+            fields: ClaudeActions.cashoutFields(title: "PimpMyClaude",
+                                                match: ClaudeAXTests.cashoutMainMatch),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt)
+        XCTAssertEqual(body, try ClaudeAXTests.cashoutFixture("cashout-main.json"))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(json["scope"] as? String, "window")
+        XCTAssertNil(json["chat"], "главному окну поле chat не шлётся никогда")
+    }
+
+    /// На домашнем экране пути у главного окна нет — адрес прежний, заголовком (риск 7 плана).
+    func testCashoutPayloadMainHome() throws {
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.cashout.rawValue,
+            fields: ClaudeActions.cashoutFields(title: "Claude", match: ChatProbe.homePath),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt),
+                       try ClaudeAXTests.cashoutFixture("cashout-main-home.json"))
+    }
+
+    /// Побайтно с эталоном: попап — scope, title, chat; id чата неизвестен — только заголовок,
+    /// и `match` попапу не уходит ни в том, ни в другом случае.
+    func testCashoutPayloadPopoutChat() throws {
+        let body = CommandChannel.payload(
+            action: ClaudeCommand.cashout.rawValue,
+            fields: ClaudeActions.cashoutFields(title: "VkusnoffKz 2",
+                                                chat: ClaudeAXTests.cashoutPopoutChat),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt)
+        XCTAssertEqual(body, try ClaudeAXTests.cashoutFixture("cashout-popout.json"))
+        XCTAssertFalse(body.contains("\"match\""), "попапу путь главного окна не шлётся никогда")
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.cashout.rawValue,
+            fields: ClaudeActions.cashoutFields(title: "VkusnoffKz 2"),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt),
+                       try ClaudeAXTests.cashoutFixture("cashout-popout-title.json"))
+    }
+
+    /// Контракт `new-window` с переносом (критик, блокер 2): `transfer:true` стоит ПОСЛЕ
+    /// `name` и ПЕРЕД слоями. Побайтно с эталонами — их же читает батч страницы.
+    func testNewWindowPayloadWithTransfer() throws {
+        let violet = catalog()[0]
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "VkusnoffKz 2",
+                                                  match: ClaudeAXTests.cashoutMainMatch,
+                                                  x: 586, y: 303, text: MenuModel.newWindowText,
+                                                  folder: "/Users/elvis/_ElvisProjects/VkusnoffKz",
+                                                  name: "VkusnoffKz 3", transfer: true,
+                                                  theme: .set(violet),
+                                                  size: .set(Size(answer: 16)), frame: .set(true)),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt),
+                       try ClaudeAXTests.cashoutFixture("new-window-transfer.json"))
+        // Проекта нет («Здесь же») — папка и имя пустые, а перенос всё равно нужен.
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "VkusnoffKz 2",
+                                                  match: ClaudeAXTests.cashoutMainMatch,
+                                                  x: 586, y: 303, text: MenuModel.newWindowText,
+                                                  transfer: true),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt),
+                       try ClaudeAXTests.cashoutFixture("new-window-transfer-plain.json"))
+    }
+
+    /// Сторож: поле ставит ТОЛЬКО ветка «Обкэшить». ⌥⌘N, «▸ проект», «Здесь же» и канал
+    /// «Пимп» шлют прежний контракт WF16 — тот же байт в байт, но без `transfer`.
+    func testNewWindowPayloadWithoutTransferUnchanged() throws {
+        let plain = CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "VkusnoffKz 2",
+                                                  match: ClaudeAXTests.cashoutMainMatch,
+                                                  x: 586, y: 303, text: MenuModel.newWindowText),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt)
+        XCTAssertFalse(plain.contains("\"transfer\""))
+        XCTAssertEqual(plain, try ClaudeAXTests.cashoutFixture("new-window-transfer-plain.json")
+            .replacingOccurrences(of: ",\"transfer\":true", with: ""))
+        // И у команды со слоями поля нет тоже — иначе перенос уехал бы в чужое окно.
+        let violet = catalog()[0]
+        XCTAssertFalse(CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "", x: 0, y: 0, text: "Проект",
+                                                  folder: "/tmp/Проект", name: "Проект",
+                                                  theme: .set(violet)),
+            id: "1-0001", at: Date(timeIntervalSince1970: 0)).contains("transfer"))
+    }
+
     /// Сторож (критик В2 плана WF16 — повтор блокера Б1 из WF14): подменю не должно стоить
     /// клавиши ⌥⌘N. Carbon-хоткеи регистрируются перебором `MenuModel.entries` (id = индекс+1),
     /// поэтому `.newWindow` обязан остаться в списке И на своём месте; рисуется клавиша на
