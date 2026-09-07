@@ -4,8 +4,8 @@
   "chat": "Полоска статуса проекта (Пимп), session local_e12ecb16-bd3f-41c5-9fa7-047b866ea3d6, Fable xhigh",
   "watchdog": "watchdog-pimpmyclaude-0809 (крон в чате, 23 минута каждого часа)",
   "branch": "wf21 (от main, тег wf21-start на 209a988)",
-  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/f6f9e7b8-8fcb-41d3-a050-fb31d82c492d/workflows/scripts/wf21-wave1-wf_cab454a5-1ab.js",
-  "run_id": "wf_cab454a5-1ab",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/f6f9e7b8-8fcb-41d3-a050-fb31d82c492d/workflows/scripts/wf41-wave2-wf_f7b78c96-d99.js",
+  "run_id": "wf_f7b78c96-d99",
   "status": "идёт",
   "resumes": 0,
   "balance": "цифр лимитов нет → считаем, что Fable обгоняет: критик Fable high, макет Opus max, проверка Opus max",
@@ -28,11 +28,12 @@
     "02:20 · лимит Элвиса сброшен; коммиты ad0a22d 78e953e b94344d 49d7e3c + гейт; сборка 1.4.0 (8) с WF21; Диктатор (чат «Dictator») отчитался: #5538 уже починен со 109, всё остановлено до ревизора; чат «Dictator 2» ждёт от Элвиса «Ревизор» на Fable max — трогать не велено",
     "02:35 · сборка 1.4.0 (8) с WF21 установлена без простоя, живой inject.js wf21-a-1",
     "02:40–03:15 · живой прогон: «5»/«4»/«5×2» отвечали too-small, а лента увезла окна на второй монитор — NSScreen.main (экран активного окна) был SOTSU; Элвис проснулся и увидел. Починено: Screens.usableFrame(holding:) — сетка по экрану, где стоят окна (a303318), Swift 190; сборка переставлена; «5 в ряд» живьём: два окна по 294 на ноутбуке, лента вернула. Задача #5684 на «окон нет» сразу после переезда",
-    "03:25 · эталоны WF41 написаны (arrange-order, layouts, layout-save, layout-restore, projects-status, layouts.json + README); волна 2 запускается"
+    "03:25 · эталоны WF41 написаны (arrange-order, layouts, layout-save, layout-restore, projects-status, layouts.json + README); волна 2 запускается",
+    "03:30 · волна 2 запущена (wf_f7b78c96-d99); WF21 закрыт в Trelvis (#5393 #5392 ждут проверки Элвиса)"
   ],
   "critic": {
     "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/f6f9e7b8-8fcb-41d3-a050-fb31d82c492d/workflows/scripts/wf21-critic-wf_abda5f6d-e24.js",
     "run_id": "wf_abda5f6d-e24"
   },
-  "wave": "1 (A Swift · B CLI · E страница), Opus max ×3, запущена 01:33"
+  "wave": "2 (C Swift · D CLI), Opus max ×2, запущена 03:30; волна 1 — wf_cab454a5-1ab (финиш)"
 }
