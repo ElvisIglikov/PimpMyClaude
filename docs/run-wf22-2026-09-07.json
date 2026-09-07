@@ -10,8 +10,8 @@
  "watchdog": "watchdog-pimpmyclaude-wf22",
  "orchestrator": "Fable 5.1 xhigh (чат «PimpMyClaude баги и улучшения», local_facfb20c)",
  "models": "критик Opus max (сделано), макет Fable xhigh (сделано), кодинг Opus max ×2, проверка Opus max",
- "script_path": null,
- "run_id": null,
+ "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/fff36f1e-9e69-4044-8f51-947c72df8f04/workflows/scripts/pimpmyclaude-wf22-wave1-wf_988d13a9-6b2.js",
+ "run_id": "wf_988d13a9-6b2",
  "resumes": 0,
  "batches": {
   "P": {
@@ -37,5 +37,6 @@
  ],
  "journal": [
   "19:46 · старт: ветка wf22, тег, сторож, волна 1 (P ∥ S) по плану после критика; карточка по умолчанию 3A"
- ]
+ ],
+ "watchdog_cron_id": "03e16a37 (41 * * * *)"
 }
