@@ -29,6 +29,8 @@ test("образец «готово»: без «WF» и без проценто�
 
 test("значки ✋ и 🛑 читаются как «жду» и «упал»", () => {
   assert.equal(parse("✋🟢[Dictatorik](audit/status.md) · WF 4 из 7 · 50%✋").state, "wait");
+  assert.equal(parse("⚠️⚪[PimpMyClaude](docs/status.md) · WF 3 из 5 · жду⚠️").state, "wait",
+    "⚠️ — тот же «жду» (правило AGENTS.md 08.09)");
   assert.equal(parse("🛑🔵[VkusnoffKz](audit/status.md) · WF 1 из 3 · 40%🛑").state, "fail");
 });
 

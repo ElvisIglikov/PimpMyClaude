@@ -245,7 +245,7 @@ final class StatusFeed {
         let size: (Set<Int>) -> Int = { chosen in
             joinedSize(head + chosen.sorted().flatMap { Array(lines[blocks[$0]]) })
         }
-        // Живые блоки (💭 ✋ 🛑 в заголовке) едут ВСЕГДА, сколько бы запланированных ни стояло
+        // Живые блоки (💭 ✋/⚠️ 🛑 в заголовке) едут ВСЕГДА, сколько бы запланированных ни стояло
         // после них: на настоящем status.md идущий 22-й блок с 19 плановыми следом срез с
         // начала отрезал бы ровно его (хвост батча S, гейт WF22). Потом — хвост блоков подряд.
         var chosen = Set<Int>()
@@ -262,7 +262,7 @@ final class StatusFeed {
 
     /// Живой блок: идёт, ждёт Элвиса или упал — то, ради чего сводку и шлют.
     static func isLiveHeading(_ line: String) -> Bool {
-        isWorkflowHeading(line) && ["💭", "✋", "🛑"].contains { line.contains($0) }
+        isWorkflowHeading(line) && ["💭", "✋", "⚠", "🛑"].contains { line.contains($0) }
     }
 
     /// Размер строк, склеенных переводом строки, в байтах.
