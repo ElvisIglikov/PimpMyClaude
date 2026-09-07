@@ -10,8 +10,8 @@
  "watchdog": "watchdog-pimpmyclaude-wf37",
  "orchestrator": "Fable 5.1 xhigh (чат «PimpMyClaude баги и улучшения», local_facfb20c)",
  "models": "критик Opus max (сделано), кодинг Opus max ×2, проверка Opus max ×1; цифр баланса нет → клетки Fable на Opus max",
- "script_path": null,
- "run_id": null,
+ "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/fff36f1e-9e69-4044-8f51-947c72df8f04/workflows/scripts/pimpmyclaude-wf37-wave1-wf_64e24501-229.js",
+ "run_id": "wf_64e24501-229",
  "resumes": 0,
  "reconnaissance": "часть A (новое окно без хода модели) НЕ разведана — ждёт слова Элвиса «сейчас»; волна 1 идёт без части A (B + C)",
  "batches": {
@@ -43,5 +43,6 @@
  ],
  "journal": [
   "18:09 · старт: ветка wf37, тег wf37-start, эталоны tests/fixtures/cashout, сторож, волна 1 (P ∥ S)"
- ]
+ ],
+ "watchdog_cron_id": "1c87c6d3 (23 * * * *)"
 }
