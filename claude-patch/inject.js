@@ -48,7 +48,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf22-p-1";
+  const VERSION = "wf22-q-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -2124,10 +2124,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     "border-radius": "999px", padding: "1px 10px", "font-size": "12px", "font-weight": "650",
     "border-width": "1px", "border-style": "solid", "white-space": "nowrap",
   });
-  // «О чём» — три строки с настоящим троеточием (line-clamp), а не обрезка по
-  // буквам: длинная строка в узком окне иначе съедает всю карточку.
+  // «О чём» — не длиннее PROGRESS_CARD_ABOUT_MAX знаков (progressClip) и двух
+  // строк (line-clamp): длинная строка в узком окне иначе съедает всю карточку.
   const progressCardAbout = cardNode(progressCard, {
-    "margin-top": "5px", display: "-webkit-box", "-webkit-line-clamp": "3",
+    "margin-top": "5px", display: "-webkit-box", "-webkit-line-clamp": "2",
     "-webkit-box-orient": "vertical", overflow: "hidden",
   });
   const progressCardMeta = cardNode(progressCard, { "margin-top": "4px", "font-size": "12px" });
@@ -2278,6 +2278,16 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Потолок ширины карточки: в широком окне она остаётся такой же компактной, как в
   // узком (слово Элвиса 07.09 22:50).
   const PROGRESS_CARD_MAX_WIDTH = 400;
+  // Поля карточки короткие, по числу знаков (слово Элвиса 08.09): «о чём» не
+  // длиннее двух строк, чтобы время, шаги и четыре этапа влезали всегда.
+  const PROGRESS_CARD_ABOUT_MAX = 90;
+  const progressClip = (text, max) => {
+    const line = String(text ?? "").replace(/\s+/g, " ").trim();
+    if (line.length <= max) return line;
+    const cut = line.slice(0, max - 1);
+    const space = cut.lastIndexOf(" ");
+    return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:·—-]+$/, "")}…`;
+  };
   const progressBlockFill = (block) => {
     if (!block) return null;
     if (block.state === "done") return 100;
@@ -2558,8 +2568,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const skin = PROGRESS_CARD_SKIN[progressDark() ? "dark" : "light"];
     const tone = skin[PROGRESS_CARD_TONES[word] ?? "run"];
     const title = block ? `Workflow ${block.number ?? number}` : `Воркфлоу ${number}`;
-    const where = block ? "в проекте" : `из ${info.of} · этот чат`;
-    const about = block ? (block.about || "—") : "сводки нет";
+    // «В проекте» на карточке не пишется (слово Элвиса 08.09): номер из сводки
+    // говорит сам за себя, подпись остаётся только у чата без сводки.
+    const where = block ? "" : `из ${info.of} · этот чат`;
+    const about = block ? progressClip(block.about || "—", PROGRESS_CARD_ABOUT_MAX) : "сводки нет";
     const meta = block
       ? [block.time, block.steps ? `шаги ${block.steps.done} из ${block.steps.total}` : ""].filter(Boolean).join(" · ")
       : "";
@@ -2582,6 +2594,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       // Только textContent: сводка приходит снаружи, и разметки в ней быть не должно.
       progressCardTitle.textContent = title;
       progressCardWhere.textContent = where;
+      progressCardWhere.hidden = where === "";
       // Слово Элвиса 07.09 22:50: бейдж называет этап — «идёт кодинг», «ждёт тебя».
       const pill = word === "идёт" && stages.now >= 0 ? `идёт ${stages.rows[stages.now].label}`
         : (word === "ждёт" ? "ждёт тебя" : word);

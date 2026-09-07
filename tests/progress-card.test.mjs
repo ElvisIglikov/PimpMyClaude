@@ -117,7 +117,7 @@ test("клик по идущему сегменту открывает карт�
   assert.equal(shown(loaded), true, "клик по сегменту открыл карточку");
   const text = card(loaded).textContent;
   assert.match(text, /Workflow 37/, "номер СВОЙ, из сводки проекта, а не третий по чату");
-  assert.match(text, /в проекте/, "и сказано, что счёт проектный");
+  assert.doesNotMatch(text, /в проекте/, "«в проекте» не пишется (слово Элвиса 08.09)");
   assert.match(text, /💭 идёт/);
   assert.match(text, /полоска v3/, "«о чём» на месте");
   assert.match(text, /18:09 → 18:50 · 25 мин/, "время на месте");
