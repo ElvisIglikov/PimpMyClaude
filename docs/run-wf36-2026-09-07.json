@@ -1,0 +1,41 @@
+{
+  "project": "⚪PimpMyClaude",
+  "workflow": "WF36 «Пимп, открой окно»",
+  "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf36-2026-09-07.md",
+  "branch": "wf36",
+  "tag": "wf36-start",
+  "status": "идёт",
+  "started": "2026-09-07T16:30:00+05:00",
+  "watchdog": "watchdog-pimpmyclaude-wf36",
+  "orchestrator": "Fable 5.1 high (chat PimpMyClaude, local_5265171a)",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/277407dd-6b93-48cc-b938-ea5d2195a94f/workflows/scripts/pimpmyclaude-wf36-code-wf_042f384f-18e.js",
+  "run_id": "wf_042f384f-18e",
+  "batches": {
+    "A": {
+      "what": "страница + CLI + скилл + доки",
+      "model": "Opus 5 max",
+      "status": "идёт"
+    },
+    "B": {
+      "what": "Swift: PimpChannel, place, авто-цвет, ProjectsStore, bundle",
+      "model": "Opus 5 max",
+      "status": "идёт"
+    }
+  },
+  "next_steps": [
+    "дождаться A и B, закоммитить каждый батч с моделью и эффортом",
+    "гейт: bash tools/test.sh, bundle → подмена /Applications без простоя, install-skill.sh, живой pimp.py из чата",
+    "verify: Opus max контракт Swift↔Python по фикстурам; Fable high сделано vs план",
+    "слияние --no-ff в main, agent-complete #5531 #5544 #5451, снять сторож, статус финиш"
+  ],
+  "log": [
+    {
+      "at": "2026-09-07T16:25",
+      "what": "план после критика закоммичен (1ef67f1), ветка wf36, тег wf36-start, фикстуры контракта tests/fixtures/pimp"
+    },
+    {
+      "at": "2026-09-07T16:33",
+      "what": "волна запущена: батчи A и B параллельно, Opus max (Workflow w7hoke1u6)"
+    }
+  ]
+}
