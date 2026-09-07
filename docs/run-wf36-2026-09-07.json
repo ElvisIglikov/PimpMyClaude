@@ -4,7 +4,7 @@
   "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf36-2026-09-07.md",
   "branch": "wf36",
   "tag": "wf36-start",
-  "status": "идёт",
+  "status": "финиш",
   "started": "2026-09-07T16:30:00+05:00",
   "watchdog": "watchdog-pimpmyclaude-wf36",
   "orchestrator": "Fable 5.1 high (chat PimpMyClaude, local_5265171a)",
@@ -23,9 +23,7 @@
     }
   },
   "next_steps": [
-    "дождаться verify, починить реальное, закоммитить",
-    "слияние --no-ff в main, пуш (разрешение Элвиса 07.09 16:35 «на всё»)",
-    "agent-complete #5531 #5544 #5451; CronDelete bc14d923; статус финиш; status.md"
+    "дальше по слову Элвиса: #5447 «Привет» без Fable (WF30 ч.1), #5555 голосовой Пимп, #5548 список фоновых задач"
   ],
   "log": [
     {
@@ -47,6 +45,14 @@
     {
       "at": "2026-09-07T16:48",
       "what": "verify Fable high запущен (Workflow wpegjjj2o, wf_b040110b-45b)"
+    },
+    {
+      "at": "2026-09-07T17:05",
+      "what": "verify Fable high: чинить — from главного окна по чату, Dictator в примерах, доки → 8311d3d (165 Swift); хвосты → Trelvis #5556–#5560"
+    },
+    {
+      "at": "2026-09-07T17:20",
+      "what": "слияние --no-ff в main 0e6a8ca, пуш main/wf36/тег; приложение у Элвиса — сборка 8311d3d; задачи #5531 #5544 #5451 #5541 закрыты; крон bc14d923 снят"
     }
   ]
 }
