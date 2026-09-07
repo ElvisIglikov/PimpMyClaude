@@ -109,7 +109,8 @@ python3 -m json.tool "$SUP/probe-result.json" | head -60
 
 ### 1.4б. Канал «Пимп» живьём (WF36)
 
-Приложение запущено, Claude открыт хотя бы одним окном. Каталог канала — `$SUP/pimp/`.
+Приложение запущено, Claude открыт хотя бы одним окном. Каталог канала — `$SUP/pimp/`; в `statusText` есть `pimp=<запросов/ошибок>`.
+Из ГЛАВНОГО окна (заголовок-заглушка «Claude») `open <проект> --at below` обязан вернуть `fromResolved:true` — окно `from` ищется по чату.
 
 ```bash
 bash tools/install-skill.sh                    # симлинк ~/.claude/skills/pimp → репозиторий, идемпотентно

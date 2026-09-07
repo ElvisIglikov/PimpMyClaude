@@ -14,19 +14,18 @@
     "A": {
       "what": "страница + CLI + скилл + доки",
       "model": "Opus 5 max",
-      "status": "идёт"
+      "status": "готово"
     },
     "B": {
       "what": "Swift: PimpChannel, place, авто-цвет, ProjectsStore, bundle",
       "model": "Opus 5 max",
-      "status": "идёт"
+      "status": "готово"
     }
   },
   "next_steps": [
-    "дождаться A и B, закоммитить каждый батч с моделью и эффортом",
-    "гейт: bash tools/test.sh, bundle → подмена /Applications без простоя, install-skill.sh, живой pimp.py из чата",
-    "verify: Opus max контракт Swift↔Python по фикстурам; Fable high сделано vs план",
-    "слияние --no-ff в main, agent-complete #5531 #5544 #5451, снять сторож, статус финиш"
+    "дождаться verify, починить реальное, закоммитить",
+    "слияние --no-ff в main, пуш (разрешение Элвиса 07.09 16:35 «на всё»)",
+    "agent-complete #5531 #5544 #5451; CronDelete bc14d923; статус финиш; status.md"
   ],
   "log": [
     {
@@ -36,6 +35,18 @@
     {
       "at": "2026-09-07T16:33",
       "what": "волна запущена: батчи A и B параллельно, Opus max (Workflow w7hoke1u6)"
+    },
+    {
+      "at": "2026-09-07T16:37",
+      "what": "батчи A и B готовы → коммиты e168011, 84c9322; tools/test.sh зелёный 187 JS + 20 Py + 163 Swift"
+    },
+    {
+      "at": "2026-09-07T16:40",
+      "what": "гейт: приложение подменено, скилл поставлен, живьём pimp.py projects/windows/open Dictator --at right — окно открылось цветным; баг: рамки ставились без позиции → правка setFrame с повтором (2c3443f), 164 Swift"
+    },
+    {
+      "at": "2026-09-07T16:48",
+      "what": "verify Fable high запущен (Workflow wpegjjj2o, wf_b040110b-45b)"
     }
   ]
 }

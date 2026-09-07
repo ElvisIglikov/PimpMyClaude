@@ -216,7 +216,11 @@ public final class ClaudeAXController: ClaudeAXControlling {
         if let session = index.mainWindow()?.session, session.title == clean {
             return session.sessionId
         }
-        return chatProbe.chat(forTitle: clean)
+        if let popout = chatProbe.chat(forTitle: clean) { return popout }
+        // Главное окно носит заглушку «Claude», а не имя чата (гейт WF36, живой результат
+        // `fromResolved:false` на запрос из главного окна): чат берём из индекса.
+        if ProjectIndex.isStub(clean) { return index.mainWindow()?.session?.sessionId }
+        return nil
     }
 
     /// Обратный ход: в каком окне чат `from` (поле запроса). Заголовок главного окна берём

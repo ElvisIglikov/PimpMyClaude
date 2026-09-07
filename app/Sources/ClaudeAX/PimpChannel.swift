@@ -167,7 +167,10 @@ final class PimpChannel {
     private struct Job {
         let id: String
         let place: PimpPlace
-        /// Заголовок окна `from` — по нему окно ищется заново в момент расстановки.
+        /// Окно `from`: номер Quartz (стабилен, пока окно живо) и заголовок на случай,
+        /// если номер пропал (гейт WF36: главное окно носит заглушку «Claude», а заголовок
+        /// его чата из индекса с ней не совпадает — искать надо по чату, потом по заголовку).
+        let fromId: CGWindowID?
         let fromTitle: String?
         var fromResolved: Bool
         /// Окна Claude ДО запроса: новое — то, номера которого здесь нет.
@@ -348,13 +351,14 @@ final class PimpChannel {
         // Окно `from` ищем СРАЗУ: не нашли — «под этим» честно вырождается в «справа»
         // (у субагента переменной чата нет вовсе, п. 1 «Что выяснено»).
         let fromTitle = request.from.isEmpty ? nil : seats.titleForChat(request.from)
-        let resolved = fromTitle.flatMap { PimpChannel.window(title: $0, in: windows) } != nil
+        let fromWindow = PimpChannel.window(chat: request.from, title: fromTitle, in: windows)
+        let resolved = fromWindow != nil
         var place = request.place
         if !resolved, place == .below || place == .above { place = .right }
         var origin: (x: Int, y: Int)?
         if case .point(let x, let y) = place { origin = (x: x, y: y) }
-        job = Job(id: id, place: place, fromTitle: fromTitle, fromResolved: resolved,
-                  before: Set(windows.map { $0.id }), startedAt: at)
+        job = Job(id: id, place: place, fromId: fromWindow?.id, fromTitle: fromTitle,
+                  fromResolved: resolved, before: Set(windows.map { $0.id }), startedAt: at)
         seats.openNewWindow(project, origin)
     }
 
@@ -386,8 +390,7 @@ final class PimpChannel {
         case .below, .above:
             // Окно `from` могло закрыться, пока шли 40 с, — тогда «под этим» вырождается
             // в «справа», ровно как при неизвестном чате, и это видно по `fromResolved`.
-            guard let title = job.fromTitle,
-                  let target = PimpChannel.window(title: title, in: windows),
+            guard let target = PimpChannel.window(id: job.fromId, title: job.fromTitle, in: windows),
                   target.id != window.id else {
                 job.fromResolved = false
                 frame = row(.right, window: window, in: windows) ?? frame
@@ -503,6 +506,23 @@ final class PimpChannel {
 
     /// Окно по заголовку: заголовок носят двое (главное окно и безымянный попап зовутся
     /// одинаково) — окна нет, лучше не двигать, чем двигать чужое.
+    /// Окно `from` по чату (главный путь: чат окна считает приложение — индекс для главного
+    /// окна, карта probe для попапов), затем по заголовку из `titleForChat`.
+    static func window(chat: String, title: String?, in windows: [PimpWindow]) -> PimpWindow? {
+        let wanted = chat.trimmingCharacters(in: .whitespaces)
+        if !wanted.isEmpty {
+            let byChat = windows.filter { $0.chat == wanted }
+            if byChat.count == 1 { return byChat[0] }
+        }
+        return title.flatMap { window(title: $0, in: windows) }
+    }
+
+    /// Окно `from` в момент расстановки: по номеру Quartz, потом по заголовку.
+    static func window(id: CGWindowID?, title: String?, in windows: [PimpWindow]) -> PimpWindow? {
+        if let id = id, let found = windows.first(where: { $0.id == id }) { return found }
+        return title.flatMap { window(title: $0, in: windows) }
+    }
+
     static func window(title: String, in windows: [PimpWindow]) -> PimpWindow? {
         let wanted = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return nil }

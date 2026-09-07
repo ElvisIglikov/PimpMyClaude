@@ -487,6 +487,36 @@ final class PimpChannelTests: XCTestCase {
         XCTAssertEqual(rig.window(1)?.frame, CGRect(x: 0, y: 34, width: 490, height: 859))
     }
 
+    /// Гейт WF36: главное окно носит заглушку «Claude», заголовок его чата из индекса
+    /// («PimpMyClaude») с ней не совпадает — окно `from` находится по ЧАТУ.
+    func testPimpChannelFindsMainWindowByChatNotTitle() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.projects = [PimpChannelTests.project("Dictator")]
+        rig.windows = [
+            PimpWindow(id: 1, title: "Вкуснофф", frame: CGRect(x: 0, y: 34, width: 735, height: 859)),
+            PimpWindow(id: 2, title: "Claude", chat: "local_main",
+                       frame: CGRect(x: 735, y: 34, width: 735, height: 859)),
+        ]
+        rig.titles = ["local_main": "PimpMyClaude"]
+        let channel = makeChannel(rig, in: box)
+
+        write(request("510-0001", action: "new-window", at: rig.now, from: "local_main",
+                      extra: ",\"project\":\"Dictator\",\"place\":\"below\""),
+              id: "510-0001", in: box)
+        channel.tick()
+        rig.advance(3)
+        rig.windows.append(PimpWindow(id: 4, title: "Dictator",
+                                      frame: CGRect(x: 120, y: 120, width: 900, height: 700)))
+        channel.tick()
+
+        let answer = try XCTUnwrap(result("510-0001", in: box))
+        XCTAssertEqual(answer["ok"] as? Bool, true)
+        XCTAssertEqual(answer["fromResolved"] as? Bool, true)
+        XCTAssertEqual(rig.window(2)?.frame, CGRect(x: 735, y: 34, width: 735, height: 429))
+        XCTAssertEqual(rig.window(4)?.frame, CGRect(x: 735, y: 463, width: 735, height: 430))
+    }
+
     func testPimpChannelFallsBackToRightWithoutChat() throws {
         let box = makeTemp()
         let rig = PimpRig()
