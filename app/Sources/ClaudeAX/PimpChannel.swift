@@ -660,7 +660,8 @@ final class PimpChannel {
                 // Окна нет: чат закрыт совсем или страница ответила `chat-missing`. Ячейка
                 // остаётся пустой, новый чат вместо старого не заводим (#5455).
                 job.waiting = nil
-                job.missing.append(step.title)
+                // У новых чатов старый заголовок не «пропал» — его и не открывали (README WF41).
+                if !job.fresh { job.missing.append(step.title) }
                 beat(job.id)
             } else {
                 restore = job
@@ -670,8 +671,8 @@ final class PimpChannel {
         while !job.queue.isEmpty {
             let step = job.queue.removeFirst()
             guard let frame = step.frame else {
-                // Места у записи не было — возвращать некуда, так и говорим.
-                if !job.fresh { job.missing.append(step.title) }
+                // Места у записи не было (окно стояло вне сетки) — возвращать некуда:
+                // окно остаётся где стоит, и «пропавшим» его не зовём (verify гейта 2).
                 continue
             }
             // Тот же чат уже на экране — просто ставим окно в ячейку. У «новых чатов»

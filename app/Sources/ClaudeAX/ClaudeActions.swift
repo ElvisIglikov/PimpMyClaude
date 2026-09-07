@@ -447,7 +447,9 @@ final class ClaudeActions {
     /// Имя шлём всегда: у названного чата заголовок окна берётся из него.
     func popoutChat(chat: String, name: String, origin: (x: Int, y: Int)) {
         commands.write(action: ClaudeCommand.popoutWindow.rawValue,
-                       fields: ClaudeActions.popoutWindowFields(title: "", match: mainWindowMatch(),
+                       // Главное окно на домашнем экране пути в индексе не имеет — тогда
+                       // адрес `/epitaxy`, как у «Обкэшить» (WF37); без match команду не взял бы никто.
+                       fields: ClaudeActions.popoutWindowFields(title: "", match: mainWindowMatch() ?? ChatProbe.homePath,
                                                                 x: origin.x, y: origin.y,
                                                                 chat: chat, name: name))
     }

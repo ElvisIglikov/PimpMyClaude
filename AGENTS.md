@@ -163,6 +163,19 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
   title:name})` без навигации; нет — строка сайдбара → вынос → обязательный `newWindowBack`; не нашёлся —
   `status().newWindow.state = "chat-missing"`, нового чата нет. Приложению (WF41): `chat` как адрес этой команде не
   слать, `name` слать всегда. Скилл: «расставь» = `--layout last`, «как сейчас» = `row`.
+- **Окна словами (WF41, 08.09)**: эталоны `tests/fixtures/pimp/*` и README там (раздел WF41) — контракт побайтно. `arrange` +
+  `order` после `layout` (папки: путь или имя; `PimpChannel.order(of:by:base:)`: названные первыми, опознанные за ними,
+  без папки — в хвост; ответ `unknown`, `missing` после `skipped` ТОЛЬКО при `order`). `layouts`, `layout-save`
+  (`LayoutsStore.swift` → `layouts.json` рядом с `projects.json`, лимит 30; снимок `snapshot`, ячейка по рамке с допуском 2 pt;
+  неопознанный чат → `chat-unknown`, файл не пишется; главное окно — `chat:"main"`), `layout-restore` (`RestoreJob` — очередь по
+  одному окну, после каждого перезапись `<id>.taken` — heartbeat, CLI ждёт от его mtime; открытый чат → рамка (`placed`), закрытый →
+  `ClaudeActions.popoutChat` = `popout-window` с `chat`+`name` после `y`, адрес только `match` главного окна, ждём новое окно 15 с
+  (`opened`), нет — ячейка пустая и заголовок в `missing`, нового чата НЕТ; `fresh:true` — `new-window` по папкам, 40 с на окно).
+  `projects` + `status:true` → `chats` и `state` («N воркфлоу · M готово · Сейчас: …» из `docs/status.md`/`audit/status.md`,
+  разбор `PimpChannel.state(_:)`, StatusFeed не тронут). Меню: «🗂 Раскладки ▸» в «⋯ Ещё ▸» (сохранить с именем, у каждой —
+  вернуть те же чаты / новые чаты / удалить). Скилл: «Вкуснофф первым…» → `--order`, «запомни раскладку как…» → `layout save`,
+  «открой окна, как стояли» → `layout restore`, «какие проекты и что в них» → `projects --status`. Зависимость: чаты попапов
+  известны только при включённом «🗂 Цвет по проекту» и свободном `probe.js` — иначе `chat-unknown`/окна считаются закрытыми.
 - **`cashout` (WF37)**: `{…,"scope":"window","title":<AX>,"match"?:<путь главного окна>,"chat"?:<id чата>}`, порядок
   `scope, title, match?, chat?`; главному окну уходит `match` (на домашнем экране — `"/epitaxy"`), попапу — `chat`
   (если страница назвала свой id в карте probe; иначе только заголовок), никогда наоборот. Страница адресует через

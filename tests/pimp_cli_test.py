@@ -234,7 +234,7 @@ class PimpCliTest(unittest.TestCase):
     def test_busy(self):
         done = self.call("open", "Dictator", result=fixture("busy.result.json"))
         self.assertEqual(done.returncode, 1)
-        self.assertEqual(done.stdout.strip(), "Пимп занят — открывает предыдущее окно")
+        self.assertEqual(done.stdout.strip(), "Пимп занят — открывает или возвращает окна")
 
     def test_bad_request(self):
         done = self.call("arrange", result=fixture("bad.result.json"))
