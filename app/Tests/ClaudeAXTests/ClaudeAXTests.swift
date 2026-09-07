@@ -49,6 +49,20 @@ final class ClaudeAXTests: XCTestCase {
     // Десять команд: восемь исходных плюс «Новое окно» и «Вынести этот чат в окно» (план WF13).
     func testSkeleton() { XCTAssertEqual(ClaudeCommand.allCases.count, 10) }
 
+    /// Экран для «Расставить» — тот, где стоят окна, а не тот, где активное окно (08.09):
+    /// большинство центров, ничья — первый, ни одного попадания — первый (меню-бар).
+    func testScreensPickFollowsWindows() {
+        let laptop = CGRect(x: 0, y: 0, width: 1470, height: 956)
+        let tall = CGRect(x: -1060, y: -419, width: 1060, height: 1696)
+        let onLaptop = CGRect(x: 10, y: 40, width: 700, height: 800)
+        let onTall = CGRect(x: -900, y: 100, width: 500, height: 800)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [onLaptop, onLaptop, onTall]), 0)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [onTall, onTall, onLaptop]), 1)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [onLaptop, onTall]), 0)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: []), 0)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [CGRect(x: 5000, y: 5000, width: 10, height: 10)]), 0)
+    }
+
     // MARK: - «Расставить»
 
     func testColumnsKeepOneRowWhileCellsAreWideEnough() {

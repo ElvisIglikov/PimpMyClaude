@@ -1040,8 +1040,8 @@ final class ClaudeActions {
     /// («4» при пяти окнах), — хвост порядка не трогаем вовсе, окна стоят где стояли.
     func arrange(mode: ArrangeLayout.Mode) {
         let windows = app.visibleWindows()
-        guard !windows.isEmpty, let area = Screens.mainUsableFrame else { return }
         let frames = windows.map { AX.frame($0) ?? .zero }
+        guard !windows.isEmpty, let area = Screens.usableFrame(holding: frames) else { return }
         let order = ArrangeLayout.order(of: frames)
         let cells = ArrangeLayout.frames(count: order.count, in: area, mode: mode,
                                          minCellWidth: cellWidth())
@@ -1054,7 +1054,8 @@ final class ClaudeActions {
     /// Влезает ли раскладка на главный экран (ячейка не уже `minWindowWidth`): по этому
     /// плитка в меню гаснет, а канал «Пимп» отвечает `too-small`. Экрана не знаем — не мешаем.
     func arrangeFits(_ mode: ArrangeLayout.Mode) -> Bool {
-        guard let area = Screens.mainUsableFrame else { return true }
+        let frames = app.visibleWindows().compactMap { AX.frame($0) }
+        guard let area = Screens.usableFrame(holding: frames) else { return true }
         return ArrangeLayout.fits(mode, in: area, minCellWidth: cellWidth())
     }
 
@@ -1119,7 +1120,8 @@ final class ClaudeActions {
         -> (placed: [(id: CGWindowID, title: String, frame: CGRect)], skipped: Int) {
         let windows = pimpWindows()
         let ordered = ids.compactMap { id in windows.first { $0.id == id } }
-        guard !ordered.isEmpty, let area = Screens.mainUsableFrame else { return ([], 0) }
+        guard !ordered.isEmpty,
+              let area = Screens.usableFrame(holding: ordered.map { $0.frame }) else { return ([], 0) }
         let cells = ArrangeLayout.frames(count: ordered.count, in: area, mode: mode,
                                          minCellWidth: cellWidth())
         var out: [(id: CGWindowID, title: String, frame: CGRect)] = []

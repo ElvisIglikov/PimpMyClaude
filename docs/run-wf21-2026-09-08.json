@@ -10,9 +10,9 @@
   "resumes": 0,
   "balance": "цифр лимитов нет → считаем, что Fable обгоняет: критик Fable high, макет Opus max, проверка Opus max",
   "next_steps": [
-    "волна 1 идёт (wf_cab454a5-1ab): дождаться A, B, E → гейт 1: bash tools/test.sh, сверка по диффу, verify Opus max, коммиты по батчам, сборка без простоя (bundle → pkill → ditto → open), живой inject.js",
-    "после гейта 1: эталоны WF41 (arrange+order, layouts, layout-save, layout-restore, projects+status) → волна 2 (C Swift, D CLI) → гейт 2",
-    "финиш: слияние wf21 в main --no-ff, пуш, status.md, Trelvis (#5393 #5392 после гейта 1; #5619 #5620 #5621 #5398 после гейта 2), крон снять"
+    "установить сборку без простоя (bundle → pkill → rm → ditto → open), живой inject.js wf21-a-1, живой прогон pimp.py arrange --layout 5 / row",
+    "эталоны WF41 (arrange+order, layouts, layout-save, layout-restore, projects+status) → волна 2 (C Swift, D CLI) → гейт 2 (тесты, verify, коммиты, сборка)",
+    "финиш: слияние wf21 в main --no-ff, пуш, status.md, Trelvis (#5393 #5392 закрыть после установки; #5619 #5620 #5621 #5398 после гейта 2), крон снять"
   ],
   "journal": [
     "01:05 · Элвис: буквы по старому макету (1Б; 4/5/5×2 + как сейчас; 3А 4А 5А), «давай дожмём», голосом — в первую очередь, макет переделать по HTML.md; спать",
@@ -23,7 +23,10 @@
     "01:25 · Элвис: «делаем, как ты хочешь» (вариант А), только Пимп в этом чате, сторож, воркфлоу на ночь; соседние чаты не трогать",
     "01:27 · критик Fable high: «запускать после правок» — 3 блокера (projects --status, chat-unknown у layout-save, контракт WF41 побайтно + heartbeat), 12 важно; всё внесено в план 01:30; макет: «Переименовать» убран, обмен — следующий шаг",
     "01:31 · эталоны WF21 (arrange.result.json + README), ветка wf21, тег wf21-start; коммиты 209a988 800f4b6 4d69339",
-    "01:33 · волна 1 запущена: A Swift, B CLI, E страница (Opus max)"
+    "01:33 · волна 1 запущена: A Swift, B CLI, E страница (Opus max)",
+    "01:57 · волна 1 готова: A Swift 189 (+4), B CLI 24 (+4), E JS 225 (+3); отчёты в журнале Workflow wf_cab454a5-1ab",
+    "02:10 · verify Opus max (wf_e70e885c-465): блокеров нет, 6 «важно» → правки гейта: «на главном экране» в строке arrange, fits по высоте (360), busy на запасном пути popout, «Экран мал…», TEAM.md, VERSION wf21-a-1; полный прогон зелёный (первый прогон дал fail 1 в JS, повтор зелёный — задача на флейк)",
+    "02:20 · лимит Элвиса сброшен; коммиты ad0a22d 78e953e b94344d 49d7e3c + гейт; сборка 1.4.0 (8) с WF21; Диктатор (чат «Dictator») отчитался: #5538 уже починен со 109, всё остановлено до ревизора; чат «Dictator 2» ждёт от Элвиса «Ревизор» на Fable max — трогать не велено"
   ],
   "critic": {
     "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/f6f9e7b8-8fcb-41d3-a050-fb31d82c492d/workflows/scripts/wf21-critic-wf_abda5f6d-e24.js",
