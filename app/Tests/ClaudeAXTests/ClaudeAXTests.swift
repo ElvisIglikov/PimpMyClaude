@@ -1568,6 +1568,25 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(ClaudeActions.newWindowLayers(project: ProjectSettings(name: "Проект"),
                                                      window: window).size.value, Size(answer: 16))
         XCTAssertTrue(ClaudeActions.newWindowLayers(project: nil, window: ProjectSettings()).isEmpty)
+
+        // Авто-цвет проекта в команде (план WF36 п. 4): файла у папки нет — окно рождается
+        // цветом ПАПКИ, а не соседнего чата, и не ждёт, пока до него доберётся ProjectPaint.
+        let auto = AutoPaint.projectTheme(folderName: "Dictator")
+        let byName = ClaudeActions.newWindowLayers(project: nil, window: window, autoColor: auto)
+        XCTAssertEqual(byName.theme.value?.id, auto.id)
+        XCTAssertEqual(byName.size.value, Size(answer: 16), "остальные слои — от окна-источника")
+        // Тему окна-источника авто-цвет перебивает: иначе окно откроется чужим цветом
+        // и перекрасится через такты.
+        let painted = ProjectSettings(theme: .set(violet), size: .set(Size(answer: 16)))
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: nil, window: painted,
+                                                     autoColor: auto).theme.value?.id, auto.id)
+        // Свой вид проекта сильнее авто-цвета — он и есть выбор Элвиса.
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: project, window: window,
+                                                     autoColor: auto).theme.value?.id, "violet")
+        // Тумблер «🗂 Цвет по проекту» выключен (или задан вид «всем окнам») — авто-цвета нет
+        // вовсе, и всё ведёт себя ровно как до WF36.
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: nil, window: painted,
+                                                     autoColor: nil).theme.value?.id, "violet")
     }
 
     /// Сторож (критик В2 плана WF16 — повтор блокера Б1 из WF14): подменю не должно стоить
