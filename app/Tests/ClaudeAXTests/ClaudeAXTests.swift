@@ -1929,21 +1929,25 @@ final class ClaudeAXTests: XCTestCase {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        func put(_ project: String, _ folder: String, _ text: String) throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        func put(_ project: String, _ folder: String, _ text: String, at moment: Date = Date()) throws {
             let dir = root.appendingPathComponent(project).appendingPathComponent(folder)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try Data(text.utf8).write(to: dir.appendingPathComponent(StatusFeed.statusFileName))
+            let url = dir.appendingPathComponent(StatusFeed.statusFileName)
+            try Data(text.utf8).write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: moment], ofItemAtPath: url.path)
         }
-        try put("PimpMyClaude", "docs", "# ⚪PimpMyClaude")
-        try put("PimpMyClaude", "work", "не эта")        // docs идёт первым
-        try put("Audited", "audit", "# аудит")
-        try put("Empty", "docs", "   \n")                 // пустая сводка не едет
+        try put("PimpMyClaude", "docs", "# ⚪PimpMyClaude", at: now)
+        try put("PimpMyClaude", "work", "не эта", at: now)        // docs идёт первым
+        try put("Audited", "audit", "# аудит", at: now.addingTimeInterval(-3600))
+        try put("Empty", "docs", "   \n", at: now)                 // пустая сводка не едет
         try FileManager.default.createDirectory(at: root.appendingPathComponent("NoStatus/src"),
                                                 withIntermediateDirectories: true)
 
         let projects = StatusFeed.scan(root: root)
-        XCTAssertEqual(projects.map { $0.name }, ["Audited", "PimpMyClaude"]) // по алфавиту
-        XCTAssertEqual(projects.last?.text, "# ⚪PimpMyClaude")
+        // Свежие первыми (WF22): алфавит («Audited») уступает времени правки status.md.
+        XCTAssertEqual(projects.map { $0.name }, ["PimpMyClaude", "Audited"])
+        XCTAssertEqual(projects.first?.text, "# ⚪PimpMyClaude")
         // Папки проектов нет — ничего не читаем.
         XCTAssertTrue(StatusFeed.scan(root: root.appendingPathComponent("нет")).isEmpty)
 
@@ -1968,11 +1972,12 @@ final class ClaudeAXTests: XCTestCase {
         let slice = StatusFeed.slice(text)
         XCTAssertLessThanOrEqual(slice.utf8.count, StatusFeed.limit)
         XCTAssertTrue(slice.hasPrefix(head), slice)
-        // Режем по границе блока: последний блок в срезе — целый, следующего нет вовсе.
-        XCTAssertTrue(slice.hasSuffix("- строка сводки"), String(slice.suffix(40)))
+        // Режем с НАЧАЛА (WF22): шапка остаётся, из блоков едут ПОСЛЕДНИЕ и целыми.
+        XCTAssertTrue(slice.hasSuffix("- строка сводки\n"), String(slice.suffix(40)))
         let kept = (1...9).filter { slice.contains("\($0)️⃣ Workflow") }
-        XCTAssertEqual(kept, Array(1...kept.count))
         XCTAssertGreaterThan(kept.count, 1)
+        XCTAssertEqual(kept, Array((10 - kept.count)...9)) // хвост подряд, без дыр
+        XCTAssertFalse(slice.contains("1️⃣ Workflow"), slice) // голова отрезана
 
         // Влезает целиком — не трогаем ни байта.
         XCTAssertEqual(StatusFeed.slice(head + block(1)), head + block(1))
@@ -1985,6 +1990,144 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertFalse(StatusFeed.isWorkflowHeading("1. Workflow"))
         XCTAssertFalse(StatusFeed.isWorkflowHeading("- строка сводки"))
         XCTAssertFalse(StatusFeed.isWorkflowHeading(""))
+    }
+
+    func testStatusFeedCompactKeepsHeadAndBlocks() {
+        let text = """
+        # ⚪PimpMyClaude
+        обновлено 19:40
+
+        4 воркфлоу
+        2 готово
+        3,5 ч потрачено
+
+        1️⃣ Workflow ✅ готово
+        - о чём: одна строка простыми словами
+        - шаги 2 из 2
+        - 00:17 → 01:20 · 1 ч
+        - планирование · я · Fable high
+        - проверка · 🔴 **Fable max**
+
+        2️⃣ Workflow 💭 идёт
+        - о чём: полоска
+        - шаги 1 из 3
+        - 13:05 → закончит примерно в 13:50 · идёт 25 мин
+        - кодинг · 2 агента · Opus max 💭
+
+        Сейчас: идёт кодинг.
+        Ждёт Элвиса: буква по макету.
+        """
+        // Шапка целиком, заголовки блоков и четыре вида строк — остальное за бортом.
+        XCTAssertEqual(StatusFeed.compact(text).components(separatedBy: "\n"), [
+            "# ⚪PimpMyClaude",
+            "обновлено 19:40",
+            "4 воркфлоу",
+            "2 готово",
+            "3,5 ч потрачено",
+            "1️⃣ Workflow ✅ готово",
+            "- о чём: одна строка простыми словами",
+            "- шаги 2 из 2",
+            "- 00:17 → 01:20 · 1 ч",
+            "- планирование · я · Fable high",
+            "- проверка · 🔴 **Fable max**",
+            "2️⃣ Workflow 💭 идёт",
+            "- о чём: полоска",
+            "- шаги 1 из 3",
+            "- 13:05 → закончит примерно в 13:50 · идёт 25 мин",
+            "- кодинг · 2 агента · Opus max 💭",
+        ])
+        XCTAssertLessThan(StatusFeed.compact(text).utf8.count, text.utf8.count)
+        // Посторонний пункт блока не едет, а шапка остаётся любой строкой.
+        XCTAssertEqual(StatusFeed.compact("# ⚪Проект\nпримечание\n1️⃣ Workflow\n- план: docs/plan.md\n- шаги 1 из 2"),
+                       "# ⚪Проект\nпримечание\n1️⃣ Workflow\n- шаги 1 из 2")
+        // Сжатие идемпотентно: сжатую сводку можно сжать ещё раз без потерь.
+        XCTAssertEqual(StatusFeed.compact(StatusFeed.compact(text)), StatusFeed.compact(text))
+        XCTAssertTrue(StatusFeed.isTailLine("Ждёт Элвиса: буква"))
+        XCTAssertTrue(StatusFeed.startsWithClock("13:05 → 13:50"))
+        XCTAssertFalse(StatusFeed.startsWithClock("шаги 1 из 3"))
+    }
+
+    func testStatusFeedCutsFromStart() {
+        func keys(_ number: Int) -> String { String(number).map { "\($0)\u{FE0F}\u{20E3}" }.joined() }
+        func block(_ index: Int) -> String {
+            let state = index == 40 ? "💭 идёт" : "✅ готово"
+            return "\(keys(index)) Workflow \(state)\n"
+                + "- о чём: строка про воркфлоу номер \(index)\n"
+                + "- шаги 2 из 2\n"
+                + "- 00:17 → 01:20 · 1 ч\n"
+                + String(repeating: "- кодинг · 2 агента · Opus max\n", count: 6)
+        }
+        let head = "# ⚪PimpMyClaude\nобновлено 19:40\n40 воркфлоу\n"
+        let text = head + (1...40).map(block).joined()
+        XCTAssertGreaterThan(text.utf8.count, StatusFeed.limit)
+
+        let slice = StatusFeed.slice(text)
+        XCTAssertLessThanOrEqual(slice.utf8.count, StatusFeed.limit)
+        // Шапка на месте, а из блоков доехали последние — идущий 40-й в том числе.
+        XCTAssertTrue(slice.hasPrefix(head), String(slice.prefix(80)))
+        XCTAssertTrue(slice.contains("\(keys(40)) Workflow 💭 идёт"), String(slice.suffix(200)))
+        let kept = slice.components(separatedBy: "\n").filter { StatusFeed.isWorkflowHeading($0) }
+        XCTAssertGreaterThan(kept.count, 1)
+        XCTAssertLessThan(kept.count, 40) // голова файла отрезана
+        let all = (1...40).map { "\(keys($0)) Workflow " + ($0 == 40 ? "💭 идёт" : "✅ готово") }
+        XCTAssertEqual(kept, Array(all.suffix(kept.count))) // ровно хвост, без дыр
+        // Блок доезжает целым: у последнего заголовка все его строки на месте.
+        XCTAssertTrue(slice.hasSuffix(block(40)), String(slice.suffix(60)))
+    }
+
+    func testStatusFeedOrderByMtime() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        func put(_ project: String, _ folder: String, _ text: String, minutesAgo: Double) throws {
+            let dir = root.appendingPathComponent(project).appendingPathComponent(folder)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent(StatusFeed.statusFileName)
+            try Data(text.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: now.addingTimeInterval(-minutesAgo * 60)], ofItemAtPath: url.path)
+        }
+        try put("Старый", "docs", "# 🟣Старый", minutesAgo: 90)
+        try put("Свежий", "docs", "# ⚪Свежий", minutesAgo: 1)
+        try put("Средний", "audit", "# 🟠Средний", minutesAgo: 30)
+        // Свежие первыми — иначе 32 КБ достаются голове алфавита, а живой проект отваливается.
+        XCTAssertEqual(StatusFeed.scan(root: root).map { $0.name }, ["Свежий", "Средний", "Старый"])
+        // Одинаковое время — по имени: порядок не пляшет от обхода каталога.
+        try put("Бета", "docs", "# 🟢Бета", minutesAgo: 1)
+        try put("Альфа", "docs", "# 🔵Альфа", minutesAgo: 1)
+        XCTAssertEqual(StatusFeed.scan(root: root).map { $0.name },
+                       ["Альфа", "Бета", "Свежий", "Средний", "Старый"])
+    }
+
+    func testStatusFeedDigestOrderIndependent() {
+        let pimp = StatusProject(name: "PimpMyClaude", text: "# ⚪PimpMyClaude\n1️⃣ Workflow ✅")
+        let skil = StatusProject(name: "SkilZZZ", text: "# 💤SkilZZZ")
+        // Порядок пляшет от «потрогали файл» — та же сводка не должна ехать заново.
+        XCTAssertEqual(StatusFeed.digest([pimp, skil]), StatusFeed.digest([skil, pimp]))
+        // Содержимое поменялось — хэш другой.
+        XCTAssertNotEqual(StatusFeed.digest([pimp, skil]),
+                          StatusFeed.digest([pimp, StatusProject(name: "SkilZZZ", text: "!")]))
+        // Проект пропал или добавился — тоже другой.
+        XCTAssertNotEqual(StatusFeed.digest([pimp, skil]), StatusFeed.digest([pimp]))
+    }
+
+    func testStatusFeedTotalLimitStillHolds() {
+        XCTAssertEqual(StatusFeed.limit, 6 * 1024)
+        XCTAssertEqual(StatusFeed.totalLimit, 32 * 1024)
+        let heavy = { (name: String) in
+            StatusProject(name: name,
+                          text: String(repeating: "- кодинг · 2 агента · Opus max\n", count: 200))
+        }
+        let many = (1...20).map { heavy("Проект \($0)") }
+        let capped = StatusFeed.cap(many)
+        XCTAssertLessThanOrEqual(StatusFeed.payloadSize(capped), StatusFeed.totalLimit)
+        XCTAssertGreaterThan(capped.count, 0)
+        XCTAssertLessThan(capped.count, many.count)
+        // Отбрасывается хвост списка — свежие проекты идут первыми и доезжают.
+        XCTAssertEqual(capped.map { $0.name }, many.prefix(capped.count).map { $0.name })
+        // Влезают все — не трогаем ни байта.
+        XCTAssertEqual(StatusFeed.cap(Array(many.prefix(2))), Array(many.prefix(2)))
     }
 
     // MARK: - мои темы
