@@ -21,6 +21,12 @@ const command = (extra = {}) => ({
   id: "n1", action: "new-window", at: "now", scope: "window", title: "Claude",
   x: 100, y: 200, text: "Привет", ...extra,
 });
+// «В отдельное окно», порядок ключей по контракту: scope, title, match?, x, y,
+// с WF41 — chat?, name?.
+const popout = (extra = {}) => ({
+  id: "p1", action: "popout-window", at: "now", scope: "window", title: "Claude",
+  x: 100, y: 200, ...extra,
+});
 
 test("newWindowSegment берёт последний кусок пути", () => {
   const { inner } = loadInner({ href: "https://claude.ai/epitaxy/local_abc" });
@@ -143,6 +149,84 @@ test("popout проверяет контракт команды раньше, ч
   popup.dom.command({ id: "p2", action: "popout-window", at: "now", scope: "window", title: "Второе окно", x: "10", y: "20" });
   await drain();
   assert.equal(popup.api.status().newWindow.state, "bad-command", "строки вместо чисел — это битая команда");
+});
+
+// ---- Названный чат (WF41) ---------------------------------------------------
+// Главное окно выносит в окно ЧУЖОЙ разговор — тот, что сейчас не открыт («Вернуть
+// эти чаты» ставит по ячейкам то, чего на экране нет). Стор попапов настоящий по
+// форме (Map из реалма страницы + openPopout), но приезжает подставным импортёром:
+// боевой import() в vm бросает (приём tests/chat-id.test.mjs).
+const withStore = (loaded, { ready = true } = {}) => {
+  const box = { ready, calls: [] };
+  const value = { popoutWindows: loaded.run("new Map()"), openPopout: options => box.calls.push(options) };
+  const store = () => {};
+  store.getState = () => value;
+  loaded.dom.modules("https://claude.ai/assets/v1/chunk-1.js");
+  loaded.inner.setModuleImporter(() => Promise.resolve(box.ready ? { Store: store } : {}));
+  return box;
+};
+// Сайдбар: строка чата открывает его в главном окне — ровно это делает клик.
+const sidebar = (dom, rows) => {
+  const list = dom.document.body.add("div", { attrs: { "data-testid": "sidebar-recents" } });
+  const made = {};
+  for (const [id, title] of rows) {
+    const row = list.add("div", { attrs: { "data-row-key": `code:${id}` }, text: title });
+    row.addEventListener("click", () => { dom.window.location.pathname = `/epitaxy/${id}`; });
+    made[id] = row;
+  }
+  return made;
+};
+
+test("названный чат выносится сразу стором, и главное окно на него не уходит", async () => {
+  const loaded = loadInject({
+    href: "https://claude.ai/epitaxy/local_mine", title: "Claude",
+    html: dom => sidebar(dom, [["local_mine", "Чат Элвиса"]]),
+  });
+  const store = withStore(loaded);
+  // Команда адресована заголовком, а chat называет ЧУЖОЙ разговор: адресом это
+  // поле у popout-window не бывает, иначе окно решило бы, что команда не его.
+  loaded.dom.command(popout({ chat: "local_gone", name: "Утро · Вкуснофф" }));
+  await drain();
+  assert.equal(loaded.api.status().newWindow.state, "ok");
+  assert.equal(store.calls.length, 1, "окно открыли ровно одно");
+  assert.equal(store.calls[0].sessionId, "local_gone", "вынесли названный чат, а не свой");
+  assert.equal(store.calls[0].title, "Утро · Вкуснофф", "заголовок окна — имя из команды");
+  assert.equal(store.calls[0].initialPosition.x, 100);
+  assert.equal(store.calls[0].initialPosition.y, 200);
+  assert.equal(loaded.win.location.pathname, "/epitaxy/local_mine", "чат Элвиса остался на месте");
+});
+
+test("стора нет — чат открывается строкой сайдбара, и главное окно возвращается", async () => {
+  const loaded = loadInject({
+    href: "https://claude.ai/epitaxy/local_mine", title: "Claude",
+    html: dom => sidebar(dom, [["local_mine", "Чат Элвиса"], ["local_gone", "Утро · Вкуснофф"]]),
+  });
+  const store = withStore(loaded, { ready: false });
+  // Чанк со стором догружается вместе с открытым разговором — в этом и смысл
+  // запасного пути.
+  loaded.parts.local_gone.addEventListener("click", () => { store.ready = true; });
+  loaded.dom.command(popout({ chat: "local_gone", name: "Утро · Вкуснофф" }));
+  await drain();
+  const mark = loaded.api.status().newWindow;
+  assert.equal(mark.state, "ok");
+  assert.equal(store.calls.length, 1);
+  assert.equal(store.calls[0].sessionId, "local_gone");
+  assert.equal(mark.back, "row", "возврат — строкой сайдбара");
+  assert.equal(loaded.win.location.pathname, "/epitaxy/local_mine", "чат Элвиса вернулся в главное окно");
+});
+
+test("чат не нашёлся — окна нет, и нового чата тоже", async () => {
+  const loaded = loadInject({
+    href: "https://claude.ai/epitaxy", title: "Claude",
+    html: dom => sidebar(dom, [["local_mine", "Чат Элвиса"]]),
+  });
+  const store = withStore(loaded, { ready: false });
+  loaded.dom.command(popout({ chat: "local_gone", name: "Утро · Вкуснофф" }));
+  await drain();
+  assert.equal(loaded.api.status().newWindow.state, "chat-missing",
+    "домашний экран без своего чата команду с chat всё равно берёт");
+  assert.equal(store.calls.length, 0, "пустая ячейка честнее подмены");
+  assert.equal(loaded.win.location.pathname, "/epitaxy", "главное окно не сдвинулось");
 });
 
 // ---- Перенос «Обкэшить» (WF37) ---------------------------------------------

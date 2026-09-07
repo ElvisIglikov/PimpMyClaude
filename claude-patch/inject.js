@@ -27,7 +27,8 @@
 // поле ввода текст запуска и НЕ отправляет его (раздел «12а»). Команды
 // new-window и popout-window открывают чат отдельным окном — новый (⌘N от
 // приложения, папка проекта, первое сообщение, отправка, имя чата и его цвет
-// вперёд) или уже открытый (раздел «12б»). Страница ещё и говорит, КАКОЙ в ней
+// вперёд), уже открытый или названный по id, которого в окне сейчас нет
+// (поле chat, WF41; раздел «12б»). Страница ещё и говорит, КАКОЙ в ней
 // чат: window.__myclaude.chats() отдаёт id чата этой страницы, карту попапов и
 // папку чипа домашнего экрана, попап спрашивает свой id у окна-родителя
 // (раздел «12в»), а команда theme может
@@ -48,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf22-r-1";
+  const VERSION = "wf41-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -5142,17 +5143,26 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     }
   };
 
-  // Команда «В отдельное окно», контракт WF13: {id, action:"popout-window", at,
-  // scope:"window", title, x, y}. Тот же стор и тот же openPopout, только по уже
+  // Команда «В отдельное окно», контракт WF13, с WF41 — необязательные chat и
+  // name ПОСЛЕ y: {id, action:"popout-window", at, scope:"window", title,
+  // match?, x, y, chat?, name?}. Тот же стор и тот же openPopout, только по уже
   // открытому чату — мгновенно и без сообщения.
+  //
+  // Поле chat называет ЧУЖОЙ разговор: главное окно выносит его в отдельное
+  // окно, к себе не открывая (так «Вернуть эти чаты» расставляет по ячейкам то,
+  // чего на экране нет). Здесь это ГРУЗ команды, а не адрес: у addressed() поле
+  // chat значит «эта страница и есть тот чат» (WF29), и команда на закрытый
+  // разговор не досталась бы никому — адрес считаем без него.
   //
   // Отказы у неё видимые, все три (WF19): нет чата (домашний экран /epitaxy —
   // в адресе нет local_<uuid>), окно уже попап и стор не нашёлся. Молчащий пункт
-  // читается как сломанный — тот же довод, что у плашек «Нового окна».
+  // читается как сломанный — тот же довод, что у плашек «Нового окна». У
+  // названного чата плашки нет: команду шлёт не рука Элвиса, а приложение, и
+  // ответ ему — состояние chat-missing, из которого выйдет пустая ячейка.
   const runPopoutCommand = async detail => {
     // Отвечаем только на страницах Claude: в оболочке (file://…/main_window), на
     // логине и в браузерной панели плашке делать нечего.
-    if (!themable || !addressed(detail)) return false;
+    if (!themable || !addressed({ ...detail, chat: null })) return false;
     // Координаты — числа, а не строки (разбор у runNewWindowCommand).
     const x = detail?.x;
     const y = detail?.y;
@@ -5170,7 +5180,12 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       return false;
     }
     const token = newWindowToken;
-    const id = newWindowSessionId();
+    const chat = typeof detail?.chat === "string" ? detail.chat.trim() : "";
+    // Имя режем так же, как строка сайдбара (newWindowRowTitle), — заголовок
+    // окна и ключ темы обязаны совпасть.
+    const name = typeof detail?.name === "string" ? detail.name.trim().slice(0, 200) : "";
+    // Назвали чат — выносим его, не назвали — разговор этого окна, как в WF13.
+    const id = chat || newWindowSessionId();
     // Запись в state.newWindow одна на оба пункта: она про ПОСЛЕДНИЙ запуск
     // раздела. Признак занятости чужого прогона мы не трогаем — вынести
     // текущий чат можно и пока «Новое окно» ещё ждёт свою сессию.
@@ -5180,21 +5195,69 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       newWindowNote(NEW_WINDOW_NOTE_CHAT);
       return false;
     }
+    // Заголовок будущего окна считаем поздно, перед самым openPopout: строка
+    // сайдбара могла дорисоваться за время поиска стора. У названного чата
+    // windowTitle() не годится вовсе — это имя ДРУГОГО, открытого сейчас
+    // разговора, и окно уехало бы с чужим именем.
+    const popoutTitle = () => (chat
+      ? (name || newWindowRowTitle(newWindowRow(id)))
+      : (newWindowRowTitle(newWindowRow(id)) || windowTitle()));
     const store = await newWindowFindStore(token);
     if (!state.alive) return false;
-    if (!store) {
+    if (store) {
+      try { newWindowOpenPopout(store, id, popoutTitle(), x, y); }
+      catch (error) {
+        newWindowMark({ state: "popout-failed", error: newWindowError(error) });
+        newWindowNote(NEW_WINDOW_NOTE_POPOUT);
+        return false;
+      }
+      newWindowMark({ state: "ok" });
+      return true;
+    }
+    if (!chat) {
       newWindowMark({ state: "no-store" });
       newWindowNote(NEW_WINDOW_NOTE_POPOUT);
       return false;
     }
-    try { newWindowOpenPopout(store, id, newWindowRowTitle(newWindowRow(id)) || windowTitle(), x, y); }
-    catch (error) {
-      newWindowMark({ state: "popout-failed", error: newWindowError(error) });
-      newWindowNote(NEW_WINDOW_NOTE_POPOUT);
-      return false;
+    // Запасной путь (WF41): стор ищется по загруженным чанкам, а на домашнем
+    // экране чанка чата может и не быть. Тогда открываем названный разговор его
+    // же строкой сайдбара — это штатная навигация приложения, после неё чанк
+    // есть, — и выносим уже текущий чат. Строки нет или чат по ней не открылся:
+    // окна НЕ будет (chat-missing), нового чата вместо старого не заводим —
+    // пустая ячейка честнее подмены (#5455).
+    const row = newWindowRow(id);
+    if (!row) { newWindowMark({ state: "chat-missing", step: "row" }); return false; }
+    const prev = location.pathname;
+    // Домашний экран прежним разговором не считается: возвращаться будем
+    // историей, а не по строке сайдбара (её у /epitaxy нет).
+    const prevId = prev === NEW_WINDOW_HOME_PATH ? "" : newWindowSegment(prev);
+    const lengthBefore = history.length;
+    newWindowMark({ step: "row" });
+    // Клик по строке и та же секунда на смену адреса, что у возврата: это одна
+    // и та же навигация роутера, только в другую сторону.
+    try { (row.querySelector("a,button") ?? row).click(); } catch {}
+    const here = await newWindowWait(() => (newWindowSessionId() === id ? true : null), NEW_WINDOW_BACK_MS, token);
+    if (!newWindowLive(token)) return false;
+    let done = false;
+    if (!here) newWindowMark({ state: "chat-missing", step: "row" });
+    else {
+      newWindowMark({ step: "store" });
+      const opened = await newWindowFindStore(token);
+      if (!newWindowLive(token)) return false;
+      if (!opened) newWindowMark({ state: "no-store" });
+      else {
+        newWindowMark({ step: "popout" });
+        try { newWindowOpenPopout(opened, id, popoutTitle(), x, y); done = true; }
+        catch (error) { newWindowMark({ state: "popout-failed", error: newWindowError(error) }); }
+      }
+      if (done) newWindowMark({ state: "ok" });
+      else newWindowNote(NEW_WINDOW_NOTE_POPOUT);
     }
-    newWindowMark({ state: "ok" });
-    return true;
+    // Возврат главного окна — ВСЕГДА, вышло вынести или нет: чат Элвиса мы
+    // увели отсюда своими руками (у newWindowBack на месте — «stay»).
+    newWindowMark({ step: "back" });
+    await newWindowBack(prev, prevId, lengthBefore, token);
+    return done;
   };
   // Обе команды асинхронные: отказ промиса не должен всплывать в консоль страницы.
   const newWindowStart = (run, detail) => { try { run(detail).catch(() => {}); } catch {} };
