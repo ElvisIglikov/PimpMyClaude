@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>PimpMyClaude — полоска прогресса v3</title>
+<title>PimpMyClaude — полоска прогресса v3, редакция 2</title>
 <style>
   :root{
     --bg:#161618; --card:#232326; --line:rgba(255,255,255,.10);
@@ -13,10 +13,12 @@
   *{box-sizing:border-box}
   body{margin:0;padding:20px 22px 40px;background:var(--bg);color:var(--text);
     font:13px/1.45 -apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
-  h1{font-size:18px;margin:0 0 4px;font-weight:600}
+  h1{font-size:19px;margin:0 0 5px;font-weight:600}
   .lead{color:var(--dim);font-size:12.5px;margin:0 0 6px;max-width:1000px}
-  h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--head);font-weight:600;
-    margin:28px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+  h2{font-size:15px;letter-spacing:0;text-transform:none;color:#e6e6ea;font-weight:600;
+    margin:30px 0 12px;padding-top:16px;border-top:1px solid var(--line)}
+  h2 span{display:inline-flex;width:22px;height:22px;border-radius:6px;background:#2f3a55;color:#9fb4ff;
+    font-size:12.5px;align-items:center;justify-content:center;margin-right:8px;vertical-align:-4px}
   h2:first-of-type{border-top:0;padding-top:0}
   .capt{font-size:11px;color:var(--head);margin:0 0 6px 2px}
   .note{color:var(--dim);font-size:12px;margin-top:12px;max-width:1000px;line-height:1.6}
@@ -25,111 +27,147 @@
   /* ——— окно Claude ——— */
   .win{border-radius:11px;background:#1f1f23;border:1px solid rgba(255,255,255,.12);
     box-shadow:0 18px 40px rgba(0,0,0,.55);overflow:hidden;position:relative}
-  .tbar{height:26px;display:flex;align-items:center;gap:7px;padding:0 10px;background:#2b2b30;
+  .win.w368{width:368px} .win.w490{width:490px}
+  .tbar{height:24px;display:flex;align-items:center;gap:6px;padding:0 9px;background:#2b2b30;
     border-bottom:1px solid rgba(0,0,0,.45)}
-  .d{width:11px;height:11px;border-radius:50%;background:#5a5a5f}
+  .d{width:10px;height:10px;border-radius:50%;background:#5a5a5f}
   .d.r{background:#ee6a5f} .d.y{background:#f5bd4f} .d.g{background:#61c454}
   .d.ring{box-shadow:0 0 0 3px rgba(245,189,79,.28)}
-  .tbar b{font-size:11px;color:#c6c6cc;font-weight:500;margin-left:8px}
+  .tbar b{font-size:10.5px;color:#c6c6cc;font-weight:500;margin-left:6px}
   .wbody{display:flex}
-  .side{background:#26262b;padding:10px 9px}
-  .side i{display:block;height:7px;border-radius:3px;background:rgba(255,255,255,.13);margin-bottom:9px;font-style:normal}
+  .side{background:#26262b;padding:9px 7px;width:38px;flex:0 0 auto}
+  .side i{display:block;height:6px;border-radius:3px;background:rgba(255,255,255,.13);margin-bottom:8px;font-style:normal}
   .side i.on{background:rgba(107,147,245,.45)}
-  .main{flex:1;padding:12px 14px 10px;display:flex;flex-direction:column}
-  .msg{border-radius:9px;background:#2c2c32;height:26px;margin-bottom:9px}
+  .main{flex:1;min-width:0;padding:10px 12px 9px;display:flex;flex-direction:column}
+  .msg{border-radius:9px;background:#2c2c32;height:22px;margin-bottom:8px}
   .msg.me{margin-left:34%;background:#33333a}
-  .ans{border-radius:9px;background:#2c2c32;padding:9px 11px;margin-bottom:10px;color:#b9b9c1;font-size:11px}
-  .ans u{display:block;height:6px;border-radius:3px;background:rgba(255,255,255,.15);margin:0 0 7px}
+  .ans{border-radius:9px;background:#2c2c32;padding:8px 10px;margin-bottom:9px;color:#b9b9c1;font-size:11px}
+  .ans u{display:block;height:6px;border-radius:3px;background:rgba(255,255,255,.15);margin:0 0 6px}
   .ans u.s{width:72%} .ans u.m{width:88%}
-  .sl{font-size:11.5px;color:#d7d7dd;white-space:nowrap}
+  .sl{font-size:11px;color:#d7d7dd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sl a{color:#9fb4ff;text-decoration:underline;text-underline-offset:2px}
   .prompt{margin-top:auto;position:relative;border:1px solid #3d3d44;border-radius:10px;
-    padding:9px 11px;color:#6f6f78;font-size:12px}
-  .tools{color:#6f6f78;font-size:11px;padding:8px 2px 2px}
+    padding:8px 10px;color:#6f6f78;font-size:11px}
+  .tools{color:#6f6f78;font-size:10px;padding:7px 2px 0}
 
   /* ——— полоска ——— */
   .bar{position:absolute;left:8px;right:8px;bottom:-2px;height:3px;display:flex;gap:3px}
-  .sg{flex:1;background:rgba(255,255,255,.13);border-radius:2px;overflow:hidden}
-  .sg i{display:block;height:3px;width:0;background:var(--accent);
-    box-shadow:0 0 7px rgba(107,147,245,.85);font-style:normal}
+  .bar.solo{position:static;left:auto;right:auto;bottom:auto;height:5px;gap:4px}
+  .sg{flex:1;min-width:0;background:rgba(255,255,255,.13);border-radius:2px;overflow:hidden}
+  .sg i{display:block;height:100%;width:0;background:var(--accent);
+    box-shadow:0 0 7px rgba(107,147,245,.85);font-style:normal;border-radius:2px}
+  .bar{align-items:stretch}
   .sg.full i{width:100%}
   .sg.half i{width:55%}
+  .sg.now i{width:62%}
   .sg.wait i{background:var(--wait);box-shadow:0 0 7px rgba(245,196,66,.9)}
   .sg.fail i{background:var(--fail);box-shadow:0 0 7px rgba(239,68,68,.9)}
   .sg.done i{background:#4a6ab0;box-shadow:none}
-  .bar.blink .sg.wait i{animation:bl 1.6s ease-in-out infinite}
-  .bar.blinkall .sg i{animation:bl 1.6s ease-in-out infinite}
-  @keyframes bl{0%,100%{opacity:1}50%{opacity:.3}}
   .bar.empty{gap:0}
-  .bar.empty .sg{background:transparent;border:1px solid rgba(255,255,255,.16);border-radius:2px;height:3px}
+  .bar.empty .sg{background:transparent;border:1px solid rgba(255,255,255,.16);border-radius:2px}
 
-  /* ——— подсказка ——— */
-  .tp{background:var(--tip);border:1px solid var(--tipline);border-radius:8px;padding:8px 10px;
-    font-size:12px;line-height:1.5;color:#e7e9f0;box-shadow:0 10px 26px rgba(0,0,0,.5)}
-  .tp .h{color:#cfd6ff;text-decoration:underline;text-underline-offset:2px}
-  .tp .h .doc{text-decoration:none;color:#9fb4ff}
-  .tp .b{margin-top:3px}
-  .tp .role{color:#b6b9c4;padding-left:18px}
-  .tp .role b{color:#ff8b8b}
-  .tp .w{color:var(--wait);margin-top:4px}
-  .tp .n{color:#a9adb8;margin-top:3px}
-  .tp .p{color:#7c8290;margin-top:6px;font-size:11px}
+  /* ——— три живых варианта ——— */
+  @keyframes glowPulse{
+    0%,100%{filter:brightness(.9);box-shadow:0 0 4px rgba(107,147,245,.5)}
+    50%{filter:brightness(1.4);box-shadow:0 0 14px rgba(107,147,245,1)}
+  }
+  @keyframes glowPulseWait{
+    0%,100%{filter:brightness(.85);box-shadow:0 0 4px rgba(245,196,66,.5)}
+    50%{filter:brightness(1.45);box-shadow:0 0 14px rgba(245,196,66,1)}
+  }
+  @keyframes shine{0%{transform:translateX(-140%)}100%{transform:translateX(360%)}}
+  @keyframes breathe{0%,100%{width:56%}50%{width:66%}}
+  @keyframes edgePulse{0%,100%{opacity:.35}50%{opacity:1}}
+  .anim-glow .sg.now i{animation:glowPulse 1.9s ease-in-out infinite}
+  .anim-glow .sg.now.wait i{animation:glowPulseWait 2.6s ease-in-out infinite}
+  .anim-shine .sg.now i{position:relative;overflow:hidden}
+  .anim-shine .sg.now i::after{content:"";position:absolute;top:0;bottom:0;left:0;width:16px;
+    background:linear-gradient(90deg,rgba(255,255,255,0),rgba(255,255,255,.92),rgba(255,255,255,0));
+    animation:shine 1.7s linear infinite}
+  .anim-breath .sg.now i{animation:breathe 2.3s ease-in-out infinite}
+  /* сплошная полоса узкого окна: пульсирует правый край заливки */
+  .sg.edge i{position:relative;overflow:hidden}
+  .sg.edge i::after{content:"";position:absolute;top:0;bottom:0;right:0;width:14px;
+    background:linear-gradient(90deg,rgba(255,255,255,0),rgba(255,255,255,.9));
+    animation:edgePulse 1.9s ease-in-out infinite}
 
-  /* ——— большое окно с выносками ——— */
-  .scene{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
-  .big{width:560px;position:relative}
-  .big .win{height:340px}
-  .big .side{width:104px}
-  .num{position:absolute;width:19px;height:19px;border-radius:50%;background:var(--accent);color:#0d1220;
-    font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center;
-    box-shadow:0 2px 8px rgba(0,0,0,.6);z-index:3}
-  .legend{flex:1;min-width:330px;max-width:430px}
-  .legend .li{display:flex;gap:9px;margin-bottom:11px}
-  .legend .li .n{flex:0 0 19px;height:19px;border-radius:50%;background:var(--accent);color:#0d1220;
-    font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center}
-  .legend .li p{margin:0;font-size:12.5px;color:#d6d6da}
+  .rowbar{padding:12px 12px 12px;border-radius:9px;background:#1b1b1f;border:1px solid rgba(255,255,255,.07)}
 
-  /* ——— карточки состояний ——— */
-  .states{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;max-width:1040px}
-  .st{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 12px}
-  .st .win{height:132px}
-  .st .side{width:52px;padding:8px 6px}
-  .st .main{padding:9px 10px 8px}
-  .st .msg{height:16px;margin-bottom:7px}
-  .st b{display:block;font-size:13px;margin:9px 0 3px}
-  .st p{margin:2px 0;font-size:12px;color:#cfcfd4}
-  .st p.src{color:#8f939d;font-size:11.5px}
-  .st p.min{color:var(--warn)}
+  /* ——— увеличенный сегмент (заливка по этапам) ——— */
+  .zoom{margin:2px 0 0}
+  .zseg{position:relative;height:16px;border-radius:5px;background:rgba(255,255,255,.12);overflow:hidden}
+  .zseg i{display:block;height:100%;background:var(--accent);border-radius:5px;
+    box-shadow:0 0 10px rgba(107,147,245,.8);font-style:normal}
+  .zseg.wait i{background:var(--wait);box-shadow:0 0 10px rgba(245,196,66,.85);animation:glowPulseWait 2.6s ease-in-out infinite}
+  .zseg.fail i{background:var(--fail);box-shadow:0 0 10px rgba(239,68,68,.85)}
+  .zseg.done i{background:#4a6ab0;box-shadow:none}
+  .zseg.live i{animation:glowPulse 1.9s ease-in-out infinite}
+  .zseg b{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.34)}
+  .zlab{display:flex;margin-top:5px;font-size:10.5px;color:#8f939d}
+  .zlab span{flex:1;text-align:center}
+  .zlab span.on{color:#bfe6cf;font-weight:600}
+
+  .steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;max-width:1040px;margin-top:10px}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 11px}
+  .step b{display:block;font-size:12.5px;margin:8px 0 2px}
+  .step p{margin:0;font-size:11.5px;color:#9ba0ab;line-height:1.5}
+  .step p.st{color:#cfcfd4}
+
+  /* ——— карточка подсказки ——— */
+  .card{background:var(--tip);border:1px solid var(--tipline);border-radius:8px;padding:7px 9px;
+    box-shadow:0 10px 26px rgba(0,0,0,.5);font-size:11.5px;line-height:1.4;color:#e7e9f0;min-width:0}
+  .card .top{display:flex;align-items:baseline;gap:8px}
+  .card .no{font-size:17px;font-weight:700;color:#fff;line-height:1.05}
+  .card .stt{font-size:13px;font-weight:600}
+  .stt.run{color:#9fb4ff} .stt.ok{color:var(--ok)} .stt.wait{color:var(--wait)} .stt.fail{color:#ff8b8b}
+  .card .about{margin-top:2px;color:#cdd1dc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .stages{margin-top:4px;color:#7e8595;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .stages b{color:#bfe6cf;font-weight:600}
+  .card .stages u{text-decoration:none;color:#9fb4ff;font-weight:600}
+  .card .roles{margin-top:5px;border-top:1px solid rgba(255,255,255,.08);padding-top:4px}
+  .card .tr{display:flex;justify-content:space-between;gap:10px;color:#a8adba}
+  .card .tr u{text-decoration:none;color:#dfe2ea;text-align:right}
+  .card .tr u b{color:#ff8b8b;font-weight:700}
+  .card .time{margin-top:4px;color:#8f96a6;font-size:11px}
+  .card .foot{margin-top:2px;color:#697083;font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card.old{white-space:nowrap;font-size:11.5px}
+  .card.old .over{overflow:hidden;text-overflow:clip}
+
+  .hist .hh{color:#8f96a6;font-size:10.5px;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hist .hrow{display:flex;gap:6px;align-items:baseline;color:#aeb3bf;line-height:1.55}
+  .hist .hrow .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hist .hrow .dd{color:#697083;font-size:10.5px;flex:0 0 auto}
+  .hist .open{background:rgba(107,147,245,.12);border:1px solid rgba(107,147,245,.22);
+    border-radius:6px;padding:5px 6px;margin:4px -3px}
+  .hist .open .hrow{color:#e7e9f0}
+
+  .frames{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;margin-top:4px}
 
   /* ——— варианты ——— */
   .vars{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;max-width:1040px;align-items:start}
   .vars.three{grid-template-columns:repeat(3,minmax(0,1fr))}
-  .var{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .stack{display:grid;grid-template-columns:1fr;gap:12px;max-width:1040px}
+  .var{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px;min-width:0}
   .var.pick{border-color:#3ea06a;background:#1e2a22}
-  .var b.t{display:block;font-size:13.5px;margin-bottom:8px}
+  .var b.t{display:block;font-size:13.5px;margin-bottom:9px}
   .tag{display:inline-block;font-size:10.5px;font-weight:600;color:#0f1a12;background:var(--ok);
     border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:2px}
-  .var p{margin:6px 0 0;font-size:12.5px;color:#d6d6da}
+  .tag.let{background:#2f3a55;color:#cfe0ff}
+  .var p{margin:7px 0 0;font-size:12.5px;color:#d6d6da}
   .var p.min{color:var(--warn)}
+  .var p.why{color:#bfe6cf}
 
-  /* ——— таблица ——— */
-  table{border-collapse:collapse;font-size:12.5px;max-width:1040px;width:100%}
-  th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
-  th{color:var(--head);font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase}
-  td.now{color:var(--warn)} td.next{color:#bfe6cf} td.k{color:#e4e4e8;white-space:nowrap}
-
-  .pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:640px;margin-top:12px}
-  .pl{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12.5px}
-  .pl b{display:block;margin-bottom:6px;font-size:12.5px}
-  .pl span{display:block;color:#d6d6da;line-height:1.7}
-  .pl span.out{color:#7a6060;text-decoration:line-through}
+  /* ——— решено раньше ——— */
+  .done-list{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;max-width:1040px}
+  .done-list ul{margin:0;padding-left:18px}
+  .done-list li{font-size:12.5px;color:#c9c9cf;margin:4px 0}
 
   /* ——— вопросы ——— */
-  .qs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;max-width:1040px}
+  .qs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px;max-width:1040px}
   .q{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
   .q b{font-size:13.5px}
   .q ul{margin:7px 0 0;padding-left:0;list-style:none}
-  .q li{font-size:12.5px;color:#d6d6da;margin:5px 0;padding-left:22px;position:relative}
+  .q li{font-size:12.5px;color:#d6d6da;margin:6px 0;padding-left:24px;position:relative}
   .q li em{position:absolute;left:0;top:0;font-style:normal;font-weight:700;color:#9fb4ff}
   .q li.rec{color:#bfe6cf}
   .q li.rec em{color:var(--ok)}
@@ -139,437 +177,497 @@
   .answer b{color:#cfe0ff}
 
   @media (max-width:1080px){
-    .states{grid-template-columns:repeat(2,minmax(0,1fr))}
-    .vars.three{grid-template-columns:1fr 1fr}
+    .steps{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .vars.three,.qs{grid-template-columns:1fr 1fr}
   }
   @media (max-width:760px){
-    .states,.vars,.vars.three,.qs,.pair{grid-template-columns:1fr}
-    .big{width:100%}
+    .steps,.vars,.vars.three,.qs{grid-template-columns:1fr}
   }
 </style>
 </head>
 <body>
 
-<h1>Полоска прогресса: как она работает сейчас и что меняет v3</h1>
-<p class="lead">Полоска — тонкая линия на кромке поля ввода, она уже есть в каждом окне Claude. Сначала показываю,
-что она делает сегодня, потом — что чиню. Внизу пять вопросов, ответь одной строкой — и я запускаю работу.</p>
+<h1>Полоска прогресса v3 — редакция 2: живой этап, заливка по шагам, подсказка для узкого окна</h1>
+<p class="lead">Пока воркфлоу идёт, полоска должна <b class="g">жить</b>: текущий кусок дышит и медленно растёт по этапам
+(план → критик → кодинг → проверка), чтобы издалека было видно — работа идёт, а не встала. Подсказка влезает
+в самое узкое окно и одним значком отвечает «готов / идёт / ждёт / упал». Ниже варианты; ответь тремя буквами,
+например <b>1A 2A 3A</b>.</p>
 
-<!-- ==================================================== 1. как есть -->
-<h2>1. Сегодня: где полоска и откуда берёт числа</h2>
-<div class="scene">
-  <div class="big">
-    <div class="win">
-      <div class="tbar">
-        <span class="d r"></span><span class="d y ring"></span><span class="d g"></span>
-        <b>PimpMyClaude — полоска v3</b>
-      </div>
-      <div class="wbody" style="height:314px">
-        <div class="side">
-          <i></i><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i>
-        </div>
-        <div class="main">
-          <div class="msg me"></div>
-          <div class="ans"><u class="m"></u><u class="s"></u></div>
-          <div class="msg me" style="height:18px"></div>
-          <div class="ans">
-            <u class="m"></u><u class="s"></u>
-            <div class="sl">💭⚪<a href="#">PimpMyClaude</a> · WF 3 из 14 · идёт💭</div>
-          </div>
-          <div class="tp" style="align-self:flex-start;margin-top:auto;margin-bottom:12px">
-            <div class="b" style="margin-top:0">Воркфлоу 3 · идёт</div>
-          </div>
-          <div class="prompt" style="margin-top:0">Спроси что-нибудь…
-            <div class="bar">
-              <span class="sg full"><i></i></span><span class="sg full"><i></i></span><span class="sg half"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span>
-            </div>
-          </div>
-          <div class="tools">Opus 5 · max · ⌘↵</div>
-        </div>
-      </div>
-    </div>
-    <span class="num" style="left:44px;top:-9px">4</span>
-    <span class="num" style="left:368px;top:184px">2</span>
-    <span class="num" style="left:258px;top:229px">3</span>
-    <span class="num" style="left:118px;top:296px">1</span>
-  </div>
-
-  <div class="legend">
-    <div class="li"><span class="n">1</span><p><b>Сама полоска.</b> Линия толщиной в две точки сидит на нижней
-      кромке поля ввода — в каждом окне Claude, и в главном, и в вынесенных. Здесь нарисована чуть толще, чтобы
-      было видно на картинке.</p></div>
-    <div class="li"><span class="n">2</span><p><b>Откуда числа.</b> Полоска читает последнюю строку моего ответа:
-      «💭⚪PimpMyClaude · WF 3 из 14 · идёт💭». Сегментов столько, сколько воркфлоу в этом чате; закрашены —
-      сделанные, текущий закрашен наполовину.</p></div>
-    <div class="li"><span class="n">3</span><p><b>Подсказка.</b> Клик по сегменту открывает окошко над полосой.
-      Сегодня в нём почти всегда одна строка — «Воркфлоу 3 · идёт», и ничего больше. Мышь оно не ловит: кликается
-      только полоса, Escape или клик мимо закрывают. <b class="g">Это и есть главное, что чинит v3</b> —
-      см. раздел 4.</p></div>
-    <div class="li"><span class="n">4</span><p><b>Жёлтый кружок</b> — наш «минус» с меню оформления. К полоске
-      отношения не имеет, просто напоминаю, где он.</p></div>
-    <div class="li"><span class="n">•</span><p><b>Цвет по значку строки:</b> 💭 идёт — синий (цвет темы окна),
-      ✋ ждёт тебя — жёлтый, 🛑 упал — красный, ✅ готово — вся полоса закрашена.</p></div>
-  </div>
+<div class="done-list">
+  <p class="capt">решено в прошлый раз — не переспрашиваю</p>
+  <ul>
+    <li>в новом чате рисуется пустой контур: полоска на месте, просто считать нечего;</li>
+    <li>подсказка показывает сводку проекта, а не одну строку «Воркфлоу 3 · идёт»;</li>
+    <li>«✋ ждёт тебя» — отдельной строкой, сегмент жёлтый и мигает;</li>
+    <li>сводки всех проектов доезжают целиком — хвост по алфавиту больше не пропадает;</li>
+    <li>клик по шапке подсказки открывает <b>status.md</b> проекта.</li>
+  </ul>
 </div>
 
-<!-- ==================================================== 2. состояния -->
-<h2>2. Полоска в пяти состояниях</h2>
-<div class="states">
+<!-- ==================================================== 1. идущий этап -->
+<h2><span>1</span>Идущий этап: чтобы было видно, что он летит</h2>
+<p class="capt">все три полоски ниже живые — просто смотри секунд пять. Нарисованы толще, чем в жизни</p>
 
-  <div class="st">
-    <p class="capt">новый чат — как сегодня</p>
-    <div class="win">
-      <div class="tbar"><span class="d r"></span><span class="d y"></span><span class="d g"></span></div>
-      <div class="wbody" style="height:105px">
-        <div class="side"><i></i><i></i><i></i></div>
-        <div class="main">
-          <div class="msg" style="opacity:.25"></div>
-          <div class="prompt" style="font-size:10.5px">Спроси что-нибудь…</div>
-          <div class="tools" style="font-size:9.5px">Opus 5 · max</div>
-        </div>
-      </div>
-    </div>
-    <b>Пусто и непонятно</b>
-    <p class="src">в чате ещё нет ответов со строкой состояния</p>
-    <p class="min">полоски нет вовсе — не разобрать, марафона нет или она сломалась.</p>
-  </div>
-
-  <div class="st">
-    <p class="capt">новый чат — как станет в v3</p>
-    <div class="win">
-      <div class="tbar"><span class="d r"></span><span class="d y"></span><span class="d g"></span></div>
-      <div class="wbody" style="height:105px">
-        <div class="side"><i></i><i></i><i></i></div>
-        <div class="main">
-          <div class="msg" style="opacity:.25"></div>
-          <div class="prompt" style="font-size:10.5px">Спроси что-нибудь…
-            <div class="bar empty"><span class="sg"></span></div>
-          </div>
-          <div class="tools" style="font-size:9.5px">Opus 5 · max</div>
-        </div>
-      </div>
-    </div>
-    <b>Пустой контур</b>
-    <p class="src">ответов ещё нет</p>
-    <p>Тонкая пустая рамка во всю ширину: полоска на месте, просто считать пока нечего. Врать сегментами не будет.</p>
-  </div>
-
-  <div class="st">
-    <p class="capt">идёт работа</p>
-    <div class="win">
-      <div class="tbar"><span class="d r"></span><span class="d y"></span><span class="d g"></span></div>
-      <div class="wbody" style="height:105px">
-        <div class="side"><i></i><i class="on"></i><i></i></div>
-        <div class="main">
-          <div class="msg"></div>
-          <div class="prompt" style="font-size:10.5px">Спроси что-нибудь…
-            <div class="bar">
-              <span class="sg full"><i></i></span><span class="sg full"><i></i></span><span class="sg half"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span>
-            </div>
-          </div>
-          <div class="tools" style="font-size:9.5px">Opus 5 · max</div>
-        </div>
-      </div>
-    </div>
-    <b>WF 3 из 14 · идёт</b>
-    <p class="src">в ответе: 💭⚪PimpMyClaude · WF 3 из 14 · идёт💭</p>
-    <p>Два сегмента закрашены целиком, третий наполовину — он в работе. Цвет — акцент темы окна.</p>
-  </div>
-
-  <div class="st">
-    <p class="capt">ждёт тебя</p>
-    <div class="win">
-      <div class="tbar"><span class="d r"></span><span class="d y"></span><span class="d g"></span></div>
-      <div class="wbody" style="height:105px">
-        <div class="side"><i></i><i class="on"></i><i></i></div>
-        <div class="main">
-          <div class="msg"></div>
-          <div class="prompt" style="font-size:10.5px">Спроси что-нибудь…
-            <div class="bar blink">
-              <span class="sg full"><i></i></span><span class="sg full"><i></i></span><span class="sg half wait"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span>
-            </div>
-          </div>
-          <div class="tools" style="font-size:9.5px">Opus 5 · max</div>
-        </div>
-      </div>
-    </div>
-    <b>WF 3 из 14 · ✋ жду тебя</b>
-    <p class="src">в ответе: ✋⚪PimpMyClaude · WF 3 из 14 · жду✋</p>
-    <p>Текущий сегмент жёлтый и медленно мигает — видно краем глаза из другого окна. В подсказке отдельной
-      строкой написано, чего именно ждут.</p>
-  </div>
-
-  <div class="st">
-    <p class="capt">всё сделано</p>
-    <div class="win">
-      <div class="tbar"><span class="d r"></span><span class="d y"></span><span class="d g"></span></div>
-      <div class="wbody" style="height:105px">
-        <div class="side"><i></i><i></i><i></i></div>
-        <div class="main">
-          <div class="msg"></div>
-          <div class="prompt" style="font-size:10.5px">Спроси что-нибудь…
-            <div class="bar">
-              <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
-              <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
-              <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
-              <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
-              <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
-            </div>
-          </div>
-          <div class="tools" style="font-size:9.5px">Opus 5 · max</div>
-        </div>
-      </div>
-    </div>
-    <b>WF 14 из 14 · готово</b>
-    <p class="src">в ответе: ✅⚪PimpMyClaude · WF 14 из 14 · готово✅</p>
-    <p>Полоса закрашена целиком и притушена — работа закончена, глаз она больше не тянет.</p>
-  </div>
-
-  <div class="st">
-    <p class="capt">упало</p>
-    <div class="win">
-      <div class="tbar"><span class="d r"></span><span class="d y"></span><span class="d g"></span></div>
-      <div class="wbody" style="height:105px">
-        <div class="side"><i></i><i class="on"></i><i></i></div>
-        <div class="main">
-          <div class="msg"></div>
-          <div class="prompt" style="font-size:10.5px">Спроси что-нибудь…
-            <div class="bar">
-              <span class="sg full"><i></i></span><span class="sg full"><i></i></span><span class="sg full fail"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-              <span class="sg"><i></i></span><span class="sg"><i></i></span>
-            </div>
-          </div>
-          <div class="tools" style="font-size:9.5px">Opus 5 · max</div>
-        </div>
-      </div>
-    </div>
-    <b>WF 3 из 14 · упал</b>
-    <p class="src">в ответе: 🛑⚪PimpMyClaude · WF 3 из 14 · упал🛑</p>
-    <p>Красным помечено ровно то место, где работа встала. Остальные сегменты не трогаются.</p>
-  </div>
-
-</div>
-
-<!-- ==================================================== 3. что меняет v3 -->
-<h2>3. Что меняет v3</h2>
-<table>
-  <tr><th>что</th><th>сегодня</th><th>станет</th></tr>
-  <tr><td class="k">новый чат</td>
-      <td class="now">полоски нет вовсе</td>
-      <td class="next">пустой контур: видно, что полоска на месте, но считать нечего</td></tr>
-  <tr><td class="k">подсказка</td>
-      <td class="now">чаще всего одна строка «Воркфлоу 3 · идёт» — и всё</td>
-      <td class="next">сводка проекта: сколько воркфлоу и сколько готово, чем занят сейчас, роли столбиком, Fable max красным</td></tr>
-  <tr><td class="k">«ждёт тебя»</td>
-      <td class="now">до подсказки не доходит никогда</td>
-      <td class="next">отдельная жёлтая строка ✋ с текстом, чего ждут, плюс мигающий сегмент</td></tr>
-  <tr><td class="k">узкое окно</td>
-      <td class="now">текст подсказки уезжает за край и обрезается</td>
-      <td class="next">подсказка не шире окна, длинные строки переносятся</td></tr>
-  <tr><td class="k">лишние значки</td>
-      <td class="now">у запланированного воркфлоу стояла галка ✅ — путало</td>
-      <td class="next">один значок состояния и ничего лишнего</td></tr>
-  <tr><td class="k">много проектов</td>
-      <td class="now">с восьмого проекта сводки перестают доезжать — пропадает хвост по алфавиту</td>
-      <td class="next">помещается около четырнадцати; если станет больше — первым уйдёт тот, чей файл давно не трогали</td></tr>
-  <tr><td class="k">номера воркфлоу</td>
-      <td class="now">номера от 11 и выше читались неверно, строки уезжали не в тот сегмент</td>
-      <td class="next">подсказка вообще перестаёт привязываться к номеру: показывает состояние проекта целиком</td></tr>
-  <tr><td class="k">клик</td>
-      <td class="now">клик по сегменту только открывает и закрывает подсказку</td>
-      <td class="next">клик по первой строке подсказки открывает сводку проекта (вопрос 4)</td></tr>
-</table>
-
-<div class="pair">
-  <div class="pl">
-    <b class="r">сегодня доезжает 7 проектов</b>
-    <span>Dictatorik</span><span>DrStrange</span><span>ElvisOS</span><span>MenuMaker</span>
-    <span>PimpMyClaude</span><span>SkilZZZ</span><span>TrelvisBot</span>
-    <span class="out">TrelvisCom</span><span class="out">VkusBotSDK</span><span class="out">VkusnoffKz</span>
-  </div>
-  <div class="pl">
-    <b class="g">в v3 — все, и ещё запас</b>
-    <span>Dictatorik</span><span>DrStrange</span><span>ElvisOS</span><span>MenuMaker</span>
-    <span>PimpMyClaude</span><span>SkilZZZ</span><span>TrelvisBot</span>
-    <span>TrelvisCom</span><span>VkusBotSDK</span><span>VkusnoffKz</span>
-  </div>
-</div>
-<p class="note">Сводки едут в окна одной пачкой, и пачка ограничена. Сейчас туда кладётся весь текст файлов целиком,
-поэтому место кончается на седьмом проекте — и отваливаются как раз те, что в конце алфавита: Trelvis и Vkusnoff,
-где работа обычно и идёт. В v3 в пачку кладутся уже готовые короткие строки, места хватает примерно на четырнадцать
-проектов.</p>
-
-<!-- ==================================================== 4. подсказка -->
-<h2>4. Подсказка — два варианта</h2>
-<div class="vars">
-
-  <div class="var pick">
-    <b class="t">А. Сводка проекта целиком <span class="tag">рекомендую</span></b>
-    <div class="tp">
-      <div class="h"><span class="doc">📄</span> PimpMyClaude · 14 воркфлоу · 8 готово · 3,5 ч</div>
-      <div class="b">💭 идёт: полоска — пустая в новом чате, сводка в подсказке, «ждёт тебя»</div>
-      <div class="role">кодинг · 2 агента · Opus max</div>
-      <div class="role">проверка · 1 агент · <b>🔴 Fable max</b></div>
-      <div class="w">✋ Ждёт тебя: ответы на вопросы этого макета</div>
-      <div class="n">Сейчас: делается полоска, дальше сетки окон</div>
-    </div>
-    <p>Одним взглядом видно: чей проект, сколько всего сделано, чем заняты прямо сейчас, кем и на какой модели,
-      и чего ждут от тебя. Роли столбиком, Fable max красным.</p>
-    <p>Пустые строки не рисуются: нечего ждать — строки ✋ нет вовсе.</p>
-    <p class="min">Самая высокая подсказка: до шести строк, в низком окне заметно накрывает ленту.</p>
-  </div>
-
-  <div class="var">
-    <b class="t">Б. Коротко: только текущий воркфлоу</b>
-    <div class="tp">
-      <div class="h"><span class="doc">📄</span> PimpMyClaude · WF 3 из 14 · идёт</div>
-      <div class="b">💭 полоска — пустая в новом чате, сводка в подсказке, «ждёт тебя»</div>
-      <div class="w">✋ Ждёт тебя: ответы на вопросы этого макета</div>
-    </div>
-    <p>Три строки, почти не закрывает ленту, читается мгновенно.</p>
-    <p class="min">Не видно ни сколько сделано по проекту, ни кто и на какой модели сейчас работает — а именно
-      это ты и спрашиваешь чаще всего.</p>
-  </div>
-
-</div>
-
-<!-- ==================================================== 5. как показывать «ждёт» -->
-<h2>5. Как заметно показать «ждёт тебя»</h2>
 <div class="vars three">
 
   <div class="var pick">
-    <b class="t">А. Мигает один сегмент <span class="tag">рекомендую</span></b>
-    <div class="win"><div class="wbody" style="height:44px"><div class="main" style="padding:8px 10px">
-      <div class="prompt" style="font-size:10.5px">Спроси что-нибудь…
-        <div class="bar blink">
-          <span class="sg full"><i></i></span><span class="sg full"><i></i></span><span class="sg half wait"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span>
-        </div>
+    <b class="t">A. Мягкий пульс свечения <span class="tag">рекомендую</span></b>
+    <div class="rowbar">
+      <div class="bar solo anim-glow">
+        <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+        <span class="sg full done"><i></i></span><span class="sg now"><i></i></span>
+        <span class="sg"><i></i></span><span class="sg"><i></i></span>
       </div>
-    </div></div></div>
-    <p>Жёлтый сегмент медленно дышит — заметно боковым зрением, но не мельтешит.</p>
-    <p class="min">Любое мигание на экране немного отвлекает.</p>
+    </div>
+    <p class="why">Свет вокруг текущего куска то ярче, то тише — раз в две секунды. Ничего не двигается и не прыгает.</p>
+    <p><b>Почему этот:</b> заметно боковым зрением из соседнего окна, но не мельтешит перед глазами, когда читаешь ответ,
+      и не врёт про прогресс — ширина заливки честная.</p>
+    <p class="min">Совсем яркое солнце в окне — пульс приглушается, надо смотреть чуть внимательнее.</p>
   </div>
 
   <div class="var">
-    <b class="t">Б. Просто жёлтый, как сегодня</b>
-    <div class="win"><div class="wbody" style="height:44px"><div class="main" style="padding:8px 10px">
-      <div class="prompt" style="font-size:10.5px">Спроси что-нибудь…
-        <div class="bar">
-          <span class="sg full"><i></i></span><span class="sg full"><i></i></span><span class="sg half wait"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span>
-        </div>
+    <b class="t">B. Бегущий блик</b>
+    <div class="rowbar">
+      <div class="bar solo anim-shine">
+        <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+        <span class="sg full done"><i></i></span><span class="sg now"><i></i></span>
+        <span class="sg"><i></i></span><span class="sg"><i></i></span>
       </div>
-    </div></div></div>
-    <p>Ничего не двигается, спокойно.</p>
-    <p class="min">Линия в две точки: жёлтый от синего боковым зрением почти не отличить — так и сегодня, ждут
-      тебя часами, а ты не видишь.</p>
+    </div>
+    <p>Светлая полоска пробегает по залитому куску слева направо — как загрузка.</p>
+    <p class="min">Читается как «идёт» лучше всех, но движение в поле зрения цепляет глаз каждые полторы секунды —
+      мешает читать ответ прямо над полосой.</p>
   </div>
 
   <div class="var">
-    <b class="t">В. Мигает вся полоска</b>
-    <div class="win"><div class="wbody" style="height:44px"><div class="main" style="padding:8px 10px">
-      <div class="prompt" style="font-size:10.5px">Спроси что-нибудь…
-        <div class="bar blinkall">
-          <span class="sg full wait"><i></i></span><span class="sg full wait"><i></i></span><span class="sg half wait"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
-          <span class="sg"><i></i></span><span class="sg"><i></i></span>
-        </div>
+    <b class="t">C. Дыхание ширины</b>
+    <div class="rowbar">
+      <div class="bar solo anim-breath">
+        <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+        <span class="sg full done"><i></i></span><span class="sg now"><i></i></span>
+        <span class="sg"><i></i></span><span class="sg"><i></i></span>
       </div>
-    </div></div></div>
-    <p>Не заметить невозможно.</p>
-    <p class="min">Пропадает вся картина: не видно, сколько сделано и на каком воркфлоу встали.</p>
+    </div>
+    <p>Заливка сама чуть-чуть ходит туда-сюда, будто дышит.</p>
+    <p class="min">Врёт: кажется, что работа то продвинулась, то откатилась назад. А когда заливка и правда вырастет
+      на этап, этого уже не заметить — движение и так всё время есть.</p>
   </div>
 
 </div>
 
-<!-- ==================================================== 6. вопросы -->
-<h2>6. Вопросы Элвису</h2>
+<div class="vars" style="margin-top:12px">
+  <div class="var">
+    <b class="t">Когда пульс выключается</b>
+    <div class="rowbar" style="display:flex;flex-direction:column;gap:12px">
+      <div>
+        <div class="bar solo anim-glow">
+          <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+          <span class="sg full done"><i></i></span><span class="sg now wait"><i></i></span>
+          <span class="sg"><i></i></span><span class="sg"><i></i></span>
+        </div>
+        <p class="capt" style="margin:6px 0 0">✋ ждёт тебя — тот же пульс, но жёлтый и вдвое медленнее</p>
+      </div>
+      <div>
+        <div class="bar solo">
+          <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+          <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+          <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+        </div>
+        <p class="capt" style="margin:6px 0 0">✅ готово — полоса тихая, ничего не движется</p>
+      </div>
+      <div>
+        <div class="bar solo">
+          <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+          <span class="sg full done"><i></i></span><span class="sg now fail"><i></i></span>
+          <span class="sg"><i></i></span><span class="sg"><i></i></span>
+        </div>
+        <p class="capt" style="margin:6px 0 0">🛑 упал — красный, тоже без движения: движение значит «работаю»</p>
+      </div>
+    </div>
+    <p>Пульс горит ровно тогда, когда в чате стоит 💭 «идёт». Ответ дописан и марафон встал — полоска замирает,
+      и это тоже сведения.</p>
+  </div>
+
+  <div class="var">
+    <b class="t">То же самое в узком окне</b>
+    <div class="rowbar">
+      <div class="bar solo">
+        <span class="sg edge"><i style="width:60%"></i></span>
+      </div>
+    </div>
+    <p>В окне 368 точек при 36 воркфлоу сегменты уже не разделить — каждый вышел бы уже шести точек, и полоска
+      сливается в одну сплошную. Так она работает и сегодня.</p>
+    <p>Тогда дышит <b class="g">правый край заливки</b> — то место, где марафон сейчас. Правило то же, картинка проще;
+      в окне пошире (490 и больше) сегменты возвращаются сами.</p>
+  </div>
+</div>
+
+<!-- ==================================================== 2. заливка по шагам -->
+<h2><span>2</span>Заливка по шагам: сегмент растёт, пока идёт этап</h2>
+<p class="capt">сегмент увеличен раз в двадцать — в жизни он шириной с ноготь спички</p>
+
+<div class="vars">
+
+  <div class="var pick">
+    <b class="t">A. Четыре этапа воркфлоу, поровну <span class="tag">рекомендую</span></b>
+    <div class="rowbar">
+      <div class="zoom">
+        <div class="zseg live"><i style="width:62%"></i>
+          <b style="left:25%"></b><b style="left:50%"></b><b style="left:75%"></b>
+        </div>
+        <div class="zlab"><span>план</span><span>критик</span><span class="on">кодинг</span><span>проверка</span></div>
+      </div>
+    </div>
+    <p>Один воркфлоу — всегда одни и те же четыре этапа: <b>план → критик → кодинг → проверка</b>. Каждый закрытый
+      этап добавляет четверть, идущий даёт половину своей четверти. Кодинг идёт — заливка на 62 %.</p>
+    <p class="why">Почему этот: этапы одинаковы у любого воркфлоу, и «ждёт одобрения» получает своё место — ровно
+      середину. Издалека видно не только «идёт», а на чём именно стоим.</p>
+    <p class="min">Цена: в сводке проекта у идущего воркфлоу появится одна строка «этап: кодинг» — её пишет тот же
+      оркестратор, что и всё остальное. Тебе делать ничего не нужно.</p>
+  </div>
+
+  <div class="var">
+    <b class="t">B. По «шаги N из M» из сводки</b>
+    <div class="rowbar">
+      <div class="zoom">
+        <div class="zseg live"><i style="width:67%"></i>
+          <b style="left:33.3%"></b><b style="left:66.6%"></b>
+        </div>
+        <div class="zlab"><span>шаг 1</span><span class="on">шаг 2</span><span>шаг 3</span></div>
+      </div>
+    </div>
+    <p>Строка «шаги 2 из 3» в сводке уже есть и пишется руками оркестратора — заливка просто делит сегмент
+      на эти доли.</p>
+    <p class="min">Шаг — это волна работы, а не этап: у одного воркфлоу их 2, у другого 4, и полоска у соседних
+      сегментов меряет разное. У запланированных воркфлоу строки нет вовсе, и цифра появляется только когда шаг
+      уже закрыт — то есть в самый долгий момент, пока идёт кодинг, полоска опять стоит.</p>
+  </div>
+
+</div>
+
+<p class="capt" style="margin-top:16px">семь состояний — вариант A крупным планом</p>
+<div class="steps">
+
+  <div class="step">
+    <div class="zseg live"><i style="width:12%"></i><b style="left:25%"></b><b style="left:50%"></b><b style="left:75%"></b></div>
+    <b>план · 12 %</b>
+    <p class="st">пульс синий</p>
+    <p>в чате: 💭 · WF 22 из 36 · идёт</p>
+  </div>
+
+  <div class="step">
+    <div class="zseg live"><i style="width:38%"></i><b style="left:25%"></b><b style="left:50%"></b><b style="left:75%"></b></div>
+    <b>критик · 38 %</b>
+    <p class="st">пульс синий</p>
+    <p>план разносит отдельный агент</p>
+  </div>
+
+  <div class="step">
+    <div class="zseg wait"><i style="width:50%"></i><b style="left:25%"></b><b style="left:50%"></b><b style="left:75%"></b></div>
+    <b>✋ ждёт тебя · 50 %</b>
+    <p class="st" style="color:#f5c542">жёлтый, медленный пульс</p>
+    <p>ровно середина: до кодинга нужно твоё слово</p>
+  </div>
+
+  <div class="step">
+    <div class="zseg live"><i style="width:62%"></i><b style="left:25%"></b><b style="left:50%"></b><b style="left:75%"></b></div>
+    <b>кодинг · 62 %</b>
+    <p class="st">пульс синий</p>
+    <p>самый долгий этап — потому и пульс</p>
+  </div>
+
+  <div class="step">
+    <div class="zseg live"><i style="width:88%"></i><b style="left:25%"></b><b style="left:50%"></b><b style="left:75%"></b></div>
+    <b>проверка · 88 %</b>
+    <p class="st">пульс синий</p>
+    <p>тесты и сверка «сделано против описанного»</p>
+  </div>
+
+  <div class="step">
+    <div class="zseg done"><i style="width:100%"></i></div>
+    <b>✅ готово · 100 %</b>
+    <p class="st">тихо, свечения нет</p>
+    <p>сегмент притушён, глаз не тянет</p>
+  </div>
+
+  <div class="step">
+    <div class="zseg fail"><i style="width:62%"></i><b style="left:25%"></b><b style="left:50%"></b><b style="left:75%"></b></div>
+    <b>🛑 упал · 62 %</b>
+    <p class="st" style="color:#ff8b8b">красный, без движения</p>
+    <p>видно, на каком этапе встали</p>
+  </div>
+
+  <div class="step">
+    <div class="zseg"><i style="width:0"></i><b style="left:25%"></b><b style="left:50%"></b><b style="left:75%"></b></div>
+    <b>⬜ запланирован</b>
+    <p class="st">пустой контур</p>
+    <p>ещё не начинали</p>
+  </div>
+
+</div>
+
+<!-- ==================================================== 3. подсказка -->
+<h2><span>3</span>Подсказка: влезает в самое узкое окно</h2>
+
+<div class="stack">
+
+  <div class="var">
+    <b class="t">Как сейчас — тот самый «слишком широкий текст»</b>
+    <div class="frames">
+      <div>
+        <p class="capt">окно 368 px</p>
+        <div class="win w368">
+          <div class="tbar"><span class="d r"></span><span class="d y ring"></span><span class="d g"></span><b>PimpMyClaude</b></div>
+          <div class="wbody" style="height:150px">
+            <div class="side"><i></i><i class="on"></i><i></i></div>
+            <div class="main">
+              <div class="msg me" style="height:16px"></div>
+              <div class="card old" style="margin-top:auto;margin-bottom:9px">
+                <div class="over">Воркфлоу 22 из 36 · идёт</div>
+                <div class="over">2️⃣2️⃣ ⬜ · полоска v3: пустая в новом чате, «ждёт Элвиса», подсказка уже, клик открывает status.md — макет у Элвиса · планирование</div>
+              </div>
+              <div class="prompt" style="margin-top:0">Спроси что-нибудь…
+                <div class="bar"><span class="sg edge"><i style="width:60%"></i></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="flex:1;min-width:260px">
+        <p style="margin-top:22px">Строка одна, длиной в двести знаков, переносов нет — хвост уезжает за край окна и
+          обрезается. Прочитать невозможно, а главное — то, что нужно («готов или нет»), стоит в середине строки.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="var pick">
+    <b class="t">A. Одна карточка на сегмент <span class="tag">рекомендую</span></b>
+    <div class="frames">
+
+      <div>
+        <p class="capt">окно 368 px — самое узкое</p>
+        <div class="win w368">
+          <div class="tbar"><span class="d r"></span><span class="d y ring"></span><span class="d g"></span><b>PimpMyClaude</b></div>
+          <div class="wbody" style="height:214px">
+            <div class="side"><i></i><i class="on"></i><i></i><i></i></div>
+            <div class="main">
+              <div class="msg me" style="height:16px"></div>
+              <div class="ans"><u class="m"></u><u class="s"></u>
+                <div class="sl">💭⚪PimpMyClaude · WF 22 из 36 · идёт💭</div>
+              </div>
+              <div class="card" style="margin-top:auto;margin-bottom:9px">
+                <div class="top"><span class="no">22</span><span class="stt run">💭 идёт</span></div>
+                <div class="about">полоска v3: живой этап, заливка по шагам, подсказка</div>
+                <div class="stages">план <b>✓</b> · критик <b>✓</b> · кодинг <u>●</u> · проверка ○</div>
+                <div class="roles">
+                  <div class="tr"><span>планирование</span><u>3 агента · Opus max</u></div>
+                  <div class="tr"><span>кодинг</span><u>2 агента · Opus max</u></div>
+                  <div class="tr"><span>проверка</span><u>1 агент · 🔴<b>Fable max</b></u></div>
+                </div>
+                <div class="time">16:00 → идёт · 1,3 ч</div>
+                <div class="foot">PimpMyClaude · 36 воркфлоу · 25 готово</div>
+              </div>
+              <div class="prompt" style="margin-top:0">Спроси что-нибудь…
+                <div class="bar"><span class="sg edge"><i style="width:60%"></i></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <p class="capt">окно 490 px — сегменты видны</p>
+        <div class="win w490">
+          <div class="tbar"><span class="d r"></span><span class="d y ring"></span><span class="d g"></span><b>PimpMyClaude</b></div>
+          <div class="wbody" style="height:214px">
+            <div class="side"><i></i><i class="on"></i><i></i><i></i></div>
+            <div class="main">
+              <div class="msg me" style="height:16px"></div>
+              <div class="ans"><u class="m"></u><u class="s"></u>
+                <div class="sl">💭⚪PimpMyClaude · WF 22 из 36 · идёт💭</div>
+              </div>
+              <div class="card" style="margin-top:auto;margin-bottom:9px">
+                <div class="top"><span class="no">21</span><span class="stt ok">✅ готов</span></div>
+                <div class="about">сетка окон как в Moom, окна местами, раскладки проектов</div>
+                <div class="stages">план <b>✓</b> · критик <b>✓</b> · кодинг <b>✓</b> · проверка <b>✓</b></div>
+                <div class="roles">
+                  <div class="tr"><span>планирование</span><u>3 агента · Opus max</u></div>
+                  <div class="tr"><span>кодинг</span><u>4 агента · Opus max</u></div>
+                  <div class="tr"><span>проверка</span><u>3 агента · Opus max</u></div>
+                </div>
+                <div class="time">18:25 → 00:40 · 3,5 ч</div>
+                <div class="foot">PimpMyClaude · 36 воркфлоу · 25 готово</div>
+              </div>
+              <div class="prompt" style="margin-top:0">Спроси что-нибудь…
+                <div class="bar anim-glow">
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg now"><i></i></span>
+                  <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
+                  <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
+                  <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
+                  <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
+                  <span class="sg"><i></i></span><span class="sg"><i></i></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <p class="capt" style="margin-top:12px">первая строка в четырёх состояниях — крупно, чтобы не читать остальное</p>
+    <div class="frames">
+      <div class="card" style="width:150px"><div class="top"><span class="no">21</span><span class="stt ok">✅ готов</span></div></div>
+      <div class="card" style="width:150px"><div class="top"><span class="no">22</span><span class="stt run">💭 идёт</span></div></div>
+      <div class="card" style="width:150px"><div class="top"><span class="no">22</span><span class="stt wait">✋ ждёт тебя</span></div></div>
+      <div class="card" style="width:150px"><div class="top"><span class="no">22</span><span class="stt fail">🛑 упал</span></div></div>
+    </div>
+
+    <p class="why">Почему этот: в окне 368 в строку влезает знаков сорок пять. Карточка тратит их все на один воркфлоу —
+      номер и значок крупно, «о чём» одной строкой с обрезкой, роли столбиком с моделями и эффортами, время.</p>
+    <p>Про «сколько их штук» отвечает строка ролей: <b>2 агента · Opus max</b>. 🔴 <b style="color:#ff8b8b">Fable max</b>
+      выделен красным и жирным — по правилу из наших же правил.</p>
+    <p class="min">Про соседние воркфлоу карточка молчит: чтобы посмотреть другой, надо кликнуть по другому сегменту,
+      а в узком окне сегмент один на всех.</p>
+  </div>
+
+  <div class="var">
+    <b class="t">B. Лента истории, текущий раскрыт</b>
+    <div class="frames">
+
+      <div>
+        <p class="capt">окно 368 px — самое узкое</p>
+        <div class="win w368">
+          <div class="tbar"><span class="d r"></span><span class="d y ring"></span><span class="d g"></span><b>PimpMyClaude</b></div>
+          <div class="wbody" style="height:214px">
+            <div class="side"><i></i><i class="on"></i><i></i><i></i></div>
+            <div class="main">
+              <div class="card hist" style="margin-top:auto;margin-bottom:9px">
+                <div class="hh">PimpMyClaude · 36 воркфлоу · 25 готово · 38 ч</div>
+                <div class="hrow"><span>✅</span><span class="t">20 · редактор своей темы</span><span class="dd">3,5 ч</span></div>
+                <div class="hrow"><span>✅</span><span class="t">21 · сетка окон как в Moom</span><span class="dd">3,5 ч</span></div>
+                <div class="open">
+                  <div class="hrow"><span>💭</span><span class="t"><b>22 · полоска v3</b></span><span class="dd">1,3 ч</span></div>
+                  <div class="stages">план <b>✓</b> · критик <b>✓</b> · кодинг <u>●</u> · проверка ○</div>
+                  <div class="tr"><span>кодинг</span><u>2 агента · Opus max</u></div>
+                  <div class="tr"><span>проверка</span><u>1 агент · 🔴<b>Fable max</b></u></div>
+                </div>
+                <div class="hrow"><span>⬜</span><span class="t">23 · кикофф Workflow по проекту</span><span class="dd">—</span></div>
+                <div class="hrow"><span>✅</span><span class="t">24 · JS-тесты в репозитории</span><span class="dd">2 ч</span></div>
+              </div>
+              <div class="prompt" style="margin-top:0">Спроси что-нибудь…
+                <div class="bar"><span class="sg edge"><i style="width:60%"></i></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <p class="capt">окно 490 px</p>
+        <div class="win w490">
+          <div class="tbar"><span class="d r"></span><span class="d y ring"></span><span class="d g"></span><b>PimpMyClaude</b></div>
+          <div class="wbody" style="height:214px">
+            <div class="side"><i></i><i class="on"></i><i></i><i></i></div>
+            <div class="main">
+              <div class="card hist" style="margin-top:auto;margin-bottom:9px">
+                <div class="hh">PimpMyClaude · 36 воркфлоу · 25 готово · 38 ч</div>
+                <div class="hrow"><span>✅</span><span class="t">19 · хвосты меню: половина размера, галка «всем»</span><span class="dd">1,5 ч</span></div>
+                <div class="hrow"><span>✅</span><span class="t">20 · редактор своей темы, меню слева от минуса</span><span class="dd">3,5 ч</span></div>
+                <div class="hrow"><span>⬜</span><span class="t">21 · сетка окон как в Moom, раскладки проектов</span><span class="dd">—</span></div>
+                <div class="open">
+                  <div class="hrow"><span>💭</span><span class="t"><b>22 · полоска v3: живой этап, заливка, подсказка</b></span><span class="dd">1,3 ч</span></div>
+                  <div class="stages">план <b>✓</b> · критик <b>✓</b> · кодинг <u>●</u> · проверка ○</div>
+                  <div class="tr"><span>планирование</span><u>3 агента · Opus max</u></div>
+                  <div class="tr"><span>кодинг</span><u>2 агента · Opus max</u></div>
+                  <div class="tr"><span>проверка</span><u>1 агент · 🔴<b>Fable max</b></u></div>
+                </div>
+                <div class="hrow"><span>⬜</span><span class="t">23 · кикофф Workflow по проекту, /skilzzz кнопкой</span><span class="dd">—</span></div>
+              </div>
+              <div class="prompt" style="margin-top:0">Спроси что-нибудь…
+                <div class="bar anim-glow">
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg full done"><i></i></span><span class="sg full done"><i></i></span><span class="sg full done"><i></i></span>
+                  <span class="sg now"><i></i></span>
+                  <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
+                  <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
+                  <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
+                  <span class="sg"><i></i></span><span class="sg"><i></i></span><span class="sg"><i></i></span>
+                  <span class="sg"><i></i></span><span class="sg"><i></i></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <p>Вся история запусков сразу: галочки за сделанное, пустые квадраты за то, что впереди, текущий раскрыт
+      с ролями и этапами. Пять строк вокруг текущего, остальное прокручивается.</p>
+    <p class="min">В окне 368 каждая строка обрезается на трети — от «о чём» остаётся полфразы, а место под ролями
+      того воркфлоу, который тебя и интересует, съедено соседями. Плюс та же история уже нарисована самой полоской:
+      закрашенные сегменты и есть галочки.</p>
+  </div>
+
+</div>
+
+<!-- ==================================================== 4. вопросы -->
+<h2><span>4</span>Вопросы Элвису — три</h2>
 <div class="qs">
 
   <div class="q">
-    <b>1. Что показывает подсказка</b>
+    <b>1. Как показывать идущий этап</b>
     <ul>
-      <li class="rec"><em>А</em><i>(рекомендую)</i> сводку проекта целиком: сколько воркфлоу и сколько готово,
-        чем заняты сейчас, роли столбиком, «✋ ждёт тебя»</li>
-      <li><em>Б</em> коротко: текущий воркфлоу и «✋ ждёт тебя», три строки</li>
-      <li><em>В</em> как сегодня — одна строка «Воркфлоу 3 · идёт»</li>
+      <li class="rec"><em>A</em><i>(рекомендую)</i> мягкий пульс свечения — заметно краем глаза, ничего не прыгает</li>
+      <li><em>B</em> бегущий блик — как загрузка, но движение цепляет глаз при чтении</li>
+      <li><em>C</em> дыхание ширины — красиво, но врёт про прогресс</li>
     </ul>
   </div>
 
   <div class="q">
-    <b>2. Полоска в новом чате</b>
+    <b>2. Чем меряется заливка текущего куска</b>
     <ul>
-      <li class="rec"><em>А</em><i>(рекомендую)</i> пустой контур во всю ширину — видно, что полоска на месте,
-        просто считать нечего</li>
-      <li><em>Б</em> не рисовать ничего, как сегодня</li>
-      <li><em>В</em> одна тусклая точка слева</li>
+      <li class="rec"><em>A</em><i>(рекомендую)</i> четыре этапа поровну: план · критик · кодинг · проверка,
+        «ждёт тебя» — ровно середина</li>
+      <li><em>B</em> по «шаги N из M» из сводки — цифра уже есть, но означает волны, а не этапы</li>
+      <li><em>C</em> не заливать по этапам вовсе: текущий кусок просто пульсирует, как сегодня</li>
     </ul>
   </div>
 
   <div class="q">
-    <b>3. Как показывать «ждёт тебя»</b>
+    <b>3. Что показывает подсказка по клику</b>
     <ul>
-      <li class="rec"><em>А</em><i>(рекомендую)</i> жёлтый сегмент медленно мигает</li>
-      <li><em>Б</em> жёлтый без мигания, как сегодня</li>
-      <li><em>В</em> мигает вся полоска</li>
-    </ul>
-  </div>
-
-  <div class="q">
-    <b>4. Куда открывать сводку по клику</b>
-    <ul>
-      <li class="rec"><em>А</em><i>(рекомендую)</i> прямо в Claude — так же, как когда ты жмёшь на имя проекта
-        в моей строке состояния</li>
-      <li><em>Б</em> в твоём редакторе, отдельным окном</li>
-      <li><em>В</em> ничего не открывать, показывать путь строкой, чтобы скопировать</li>
-    </ul>
-    <p style="margin:8px 0 0;font-size:12px;color:#9b9ba1">Первый способ надо один раз проверить живьём. Не выйдет —
-      сделаю второй, полоска и подсказка от этого не задержатся.</p>
-  </div>
-
-  <div class="q">
-    <b>5. Наведение мышью</b>
-    <ul>
-      <li class="rec"><em>А</em><i>(рекомендую)</i> навёл — короткая строка «PimpMyClaude · WF 3 из 14 · идёт»,
-        кликнул — полная сводка</li>
-      <li><em>Б</em> только клик, как сегодня: навёл — ничего</li>
+      <li class="rec"><em>A</em><i>(рекомендую)</i> карточку сегмента: номер и значок крупно, «о чём», роли
+        с моделями, время</li>
+      <li><em>B</em> ленту истории проекта, текущий воркфлоу раскрыт</li>
+      <li><em>C</em> и то и другое: сначала карточка, клик по её шапке разворачивает ленту (дороже примерно на час)</li>
     </ul>
   </div>
 
 </div>
 
 <div class="answer">
-  <b>Ответь одной строкой, например:</b> 1А 2А 3А 4А 5А
+  <b>Ответь одной строкой, например:</b> 1A 2A 3A
 </div>
 
-<p class="note">Что не меняется: место полоски, её толщина, цвет по теме окна, клавиши и то, что подсказка мышь
-не ловит. В совсем узком окне сегменты по-прежнему сливаются в одну сплошную долю. Сводки берутся из файла
-<b>status.md</b> в папке проекта; папки проектов нет — подсказки нет, всё остальное работает. Команде это приедет
-следующим обновлением: после замены приложения надо один раз нажать «Поставить снова», иначе полоска останется
-без подсказок.</p>
+<p class="note">Что не меняется: место полоски и её толщина, цвет по теме окна, наведение ставит «руку», клик
+открывает подсказку, Escape и клик мимо закрывают. Данные — из <b>status.md</b> проекта, как и сейчас; папки
+проекта нет — нет и подсказки, всё остальное работает. Строку состояния в чате не трогаем: процентов там нет,
+шаблон прежний. Одна честная оговорка: этап («кодинг», «проверка») полоска сама угадать не может — его пишет
+в сводку тот же оркестратор, что ведёт марафон; пока строки нет, кусок просто пульсирует и стоит на месте
+последнего известного этапа.</p>
 
 </body>
 </html>
