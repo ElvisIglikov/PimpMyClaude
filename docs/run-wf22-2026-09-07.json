@@ -12,17 +12,17 @@
  "models": "критик Opus max (сделано), макет Fable xhigh (сделано), кодинг Opus max ×2, проверка Opus max",
  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/fff36f1e-9e69-4044-8f51-947c72df8f04/workflows/scripts/pimpmyclaude-wf22-wave1-wf_988d13a9-6b2.js",
  "run_id": "wf_988d13a9-6b2",
- "resumes": 0,
+ "resumes": 1,
  "batches": {
   "P": {
    "what": "страница: разбор сводки в объекты, соединение по значку, заливка по этапам, пульс animate(), карточка 3A",
    "model": "Opus 5 max",
-   "status": "идёт"
+   "status": "упал по лимиту сессии (сброс 22:00), огрызок откачен, перезапуск"
   },
   "S": {
    "what": "Swift: StatusFeed сжимает блоки и режет с начала, порядок по mtime, digest по имени",
    "model": "Opus 5 max",
-   "status": "идёт"
+   "status": "готово → коммит 6f8ee42"
   },
   "V": {
    "what": "проверка по диффу wf22-start..HEAD → docs/verify-wf22-2026-09-07.md",
@@ -36,7 +36,9 @@
   "CLAUDE.md, слияние, push, закрыть задачи"
  ],
  "journal": [
-  "19:46 · старт: ветка wf22, тег, сторож, волна 1 (P ∥ S) по плану после критика; карточка по умолчанию 3A"
+  "19:46 · старт: ветка wf22, тег, сторож, волна 1 (P ∥ S) по плану после критика; карточка по умолчанию 3A",
+  "~20:05 · S готов (184 Swift); P и V упали: «session limit · resets 10pm»",
+  "22:42 · сторож: огрызок P откачен (inject.js, dom.mjs, idempotent), S закоммичен 6f8ee42; resume волны (P и V заново, S из кэша), resumes=1"
  ],
  "watchdog_cron_id": "03e16a37 (41 * * * *)"
 }
