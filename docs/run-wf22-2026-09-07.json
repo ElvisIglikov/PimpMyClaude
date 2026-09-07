@@ -1,0 +1,41 @@
+{
+ "project": "⚪PimpMyClaude",
+ "workflow": "WF22 «Полоска v3»",
+ "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf22-2026-09-07.md",
+ "mockup": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/mockup-wf22-cards.html (буква Элвиса ждёт; по умолчанию 3A)",
+ "branch": "wf22",
+ "tag": "wf22-start",
+ "status": "идёт",
+ "started": "2026-09-07T19:46:00+05:00",
+ "watchdog": "watchdog-pimpmyclaude-wf22",
+ "orchestrator": "Fable 5.1 xhigh (чат «PimpMyClaude баги и улучшения», local_facfb20c)",
+ "models": "критик Opus max (сделано), макет Fable xhigh (сделано), кодинг Opus max ×2, проверка Opus max",
+ "script_path": null,
+ "run_id": null,
+ "resumes": 0,
+ "batches": {
+  "P": {
+   "what": "страница: разбор сводки в объекты, соединение по значку, заливка по этапам, пульс animate(), карточка 3A",
+   "model": "Opus 5 max",
+   "status": "идёт"
+  },
+  "S": {
+   "what": "Swift: StatusFeed сжимает блоки и режет с начала, порядок по mtime, digest по имени",
+   "model": "Opus 5 max",
+   "status": "идёт"
+  },
+  "V": {
+   "what": "проверка по диффу wf22-start..HEAD → docs/verify-wf22-2026-09-07.md",
+   "model": "Opus 5 max",
+   "status": "ждёт P и S"
+  }
+ },
+ "next_steps": [
+  "гейт: tools/test.sh, bundle, подмена, живьём в этом чате и в попапе",
+  "буква Элвиса по карточке → при 3B/3C — точечная правка вида",
+  "CLAUDE.md, слияние, push, закрыть задачи"
+ ],
+ "journal": [
+  "19:46 · старт: ветка wf22, тег, сторож, волна 1 (P ∥ S) по плану после критика; карточка по умолчанию 3A"
+ ]
+}
