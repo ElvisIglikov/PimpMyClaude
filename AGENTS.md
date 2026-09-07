@@ -207,7 +207,7 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
   режется `progressClip` до `PROGRESS_CARD_ABOUT_MAX = 90` знаков и двух строк — время, шаги и четыре этапа влезают
   всегда. VERSION `wf22-q-1`, живой = main. **⚠️ = «жду»** (правило AGENTS.md 08.09 ночь, #5663): `PROGRESS_STATES` держит
   и ✋, и «⚠» (без VS16 — селектор в строку попадает не всегда), карточка «ждёт» рисует ⚠️, `StatusFeed` считает ⚠️ живым
-  блоком (`isLiveBlock`). VERSION `wf22-r-1`.
+  блоком (`isLiveBlock`). VERSION `wf22-r-1`; после WF21 (popout-window с `chat`) — `wf21-a-1`.
 - Старые: `collapse`, `expand`, `scroll`.
 - Хранилище тем на странице: localStorage `myclaude-themes-v1` — карта `{ключ: {theme, font, size, frame}}`, ключи
   **`id:<id чата>`** (главный ключ чата, WF35), `chat:<заголовок>` (тень — по ней живут окна, которые своего id ещё

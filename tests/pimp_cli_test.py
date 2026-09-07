@@ -190,7 +190,7 @@ class PimpCliTest(unittest.TestCase):
     def test_arrange_ok(self):
         done = self.call("arrange", result=fixture("arrange.result.json"))
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(done.stdout.strip(), "Расставил 3 окна: как сейчас (лента)")
+        self.assertEqual(done.stdout.strip(), "Расставил 3 окна на главном экране: как сейчас (лента)")
 
     def test_arrange_layout_and_skipped(self):
         # Просили «как в прошлый раз» — называем ту раскладку, что применилась.
@@ -201,7 +201,7 @@ class PimpCliTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.app.requests[0]["layout"], "last")
         self.assertEqual(done.stdout.strip(),
-                         "Расставил 3 окна: пять в ряд, 2 не тронул — ячеек нет")
+                         "Расставил 3 окна на главном экране: пять в ряд, 2 не тронул — ячеек нет")
 
     def test_arrange_too_small(self):
         # Тесно не окну, а раскладке: текст «Мало места…» тут не годится.
@@ -210,7 +210,7 @@ class PimpCliTest(unittest.TestCase):
         done = self.call("arrange", "--layout", "5", result=answer)
         self.assertEqual(done.returncode, 1)
         self.assertEqual(done.stdout.strip(),
-                         "Экран уже: столько окон в ряд не влезает — "
+                         "Экран мал: столько окон в эту раскладку не влезает — "
                          "сделай окна уже или выбери другую раскладку")
 
     def test_projects_ok(self):

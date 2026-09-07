@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf41-a-1";
+  const VERSION = "wf21-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -5225,6 +5225,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // есть, — и выносим уже текущий чат. Строки нет или чат по ней не открылся:
     // окна НЕ будет (chat-missing), нового чата вместо старого не заводим —
     // пустая ячейка честнее подмены (#5455).
+    // Запасной путь уводит ГЛАВНОЕ окно на чужой чат: пока идём, «Новое окно» не
+    // стартует, а chats() молчит (иначе окно на секунду опознается чужим проектом).
+    if (state.newWindow?.busy === true) { newWindowMark({ state: "busy" }); return false; }
     const row = newWindowRow(id);
     if (!row) { newWindowMark({ state: "chat-missing", step: "row" }); return false; }
     const prev = location.pathname;
@@ -5232,7 +5235,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // историей, а не по строке сайдбара (её у /epitaxy нет).
     const prevId = prev === NEW_WINDOW_HOME_PATH ? "" : newWindowSegment(prev);
     const lengthBefore = history.length;
-    newWindowMark({ step: "row" });
+    newWindowMark({ step: "row", busy: true });
     // Клик по строке и та же секунда на смену адреса, что у возврата: это одна
     // и та же навигация роутера, только в другую сторону.
     try { (row.querySelector("a,button") ?? row).click(); } catch {}
@@ -5257,6 +5260,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // увели отсюда своими руками (у newWindowBack на месте — «stay»).
     newWindowMark({ step: "back" });
     await newWindowBack(prev, prevId, lengthBefore, token);
+    if (token === newWindowToken) newWindowMark({ busy: false });
     return done;
   };
   // Обе команды асинхронные: отказ промиса не должен всплывать в консоль страницы.

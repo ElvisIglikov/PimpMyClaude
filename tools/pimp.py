@@ -233,8 +233,8 @@ def say_error(request: dict, data: dict) -> str:
         return f"Не нашёл проект «{request.get('project', '')}», и списка Пимп не дал"
     if error == "too-small" and request["action"] == "arrange":
         # У «расставить» тесно не окну, а всей раскладке — и лечится это иначе.
-        return ("Экран уже: столько окон в ряд не влезает — сделай окна уже "
-                "или выбери другую раскладку")
+        return ("Экран мал: столько окон в эту раскладку не влезает — сделай окна "
+                "уже или выбери другую раскладку")
     known = ERRORS.get(error)
     if known:
         return known
@@ -250,6 +250,9 @@ def say_result(request: dict, data: dict) -> str:
     if action == "arrange":
         windows = data.get("windows") or []
         line = f"Расставил {plural(len(windows), 'окно', 'окна', 'окон')}"
+        # Второй экран Пимп не раскладывает — и говорит об этом словами (риск 3 WF36).
+        if data.get("screen") == "main":
+            line += " на главном экране"
         # Раскладку называем ту, что применилась: «last» приложение разрешает
         # в конкретную, и Элвис должен видеть, что именно вышло (WF21).
         layout = LAYOUT_WORDS.get(str(data.get("layout") or ""))

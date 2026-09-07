@@ -33,11 +33,16 @@ enum ArrangeLayout {
     /// Сколько окон помещается в раскладку; лента берёт все (nil).
     static func capacity(of mode: Mode) -> Int? { grid(of: mode).map { $0.cols * $0.rows } }
 
-    /// Влезает ли раскладка на экран: ячейка не уже `minCellWidth`. Лента влезает всегда —
-    /// узкие ячейки она разводит по рядам сама.
+    /// Ниже этой высоты ячейку не даём: лоадер подменяет только ширину минимума окна,
+    /// высоту Electron держит сам (тот же порог, что у деления столбца «под этим»).
+    static let minCellHeight: CGFloat = 360
+
+    /// Влезает ли раскладка на экран: ячейка не уже `minCellWidth` и не ниже
+    /// `minCellHeight`. Лента влезает всегда — узкие ячейки она разводит по рядам сама.
     static func fits(_ mode: Mode, in area: CGRect, minCellWidth: CGFloat) -> Bool {
         guard let grid = grid(of: mode) else { return true }
         return area.width / CGFloat(grid.cols) >= minCellWidth
+            && area.height / CGFloat(grid.rows) >= minCellHeight
     }
 
     /// Столбцы для n окон: сначала все в один ряд во всю высоту, ряды появляются
