@@ -112,6 +112,8 @@ final class ThemeStore {
     /// Рамка — тумблер: в карте только включённые окна, выключенное просто выпадает.
     static let frameByWindowKey = "frameByWindow"
     static let frameAllKey = "frameAll"
+    /// Последняя раскладка «Расставить» (план WF21): строка `Mode.rawValue`.
+    static let arrangeModeKey = "arrangeMode"
 
     private let defaults: ThemeDefaults
 
@@ -236,5 +238,18 @@ final class ThemeStore {
         } else {
             defaults.removeObject(forKey: ThemeStore.frameAllKey)
         }
+    }
+
+    // MARK: - раскладка окон (план WF21)
+
+    /// Последняя выбранная раскладка: её повторяют ⌥⌘A и «▦ Расставить», её же берёт канал
+    /// на `layout: "last"`. Закрепляют выбор плитка меню и запрос канала с конкретной
+    /// раскладкой. Записи нет или в ней чужое слово — лента, как было до WF21.
+    var arrangeMode: ArrangeLayout.Mode {
+        get {
+            defaults.string(forKey: ThemeStore.arrangeModeKey)
+                .flatMap(ArrangeLayout.Mode.init(rawValue:)) ?? .ribbon
+        }
+        set { defaults.set(newValue.rawValue, forKey: ThemeStore.arrangeModeKey) }
     }
 }

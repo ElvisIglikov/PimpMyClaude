@@ -1033,19 +1033,29 @@ final class ClaudeActions {
 
     /// Ровная сетка по главному экрану. Порядок окон сохраняется (см. ArrangeLayout.order).
     /// Свёрнутые и спрятанные не трогаем; чужие приложения — тоже (в отличие от ElvisOS).
-    func arrange() {
+    /// ⌥⌘A и пункт «▦ Расставить» повторяют последнюю раскладку (план WF21).
+    func arrange() { arrange(mode: themeStore.arrangeMode) }
+
+    /// То же по заданной раскладке — её выбирают плиткой в меню. Ячеек меньше, чем окон
+    /// («4» при пяти окнах), — хвост порядка не трогаем вовсе, окна стоят где стояли.
+    func arrange(mode: ArrangeLayout.Mode) {
         let windows = app.visibleWindows()
         guard !windows.isEmpty, let area = Screens.mainUsableFrame else { return }
         let frames = windows.map { AX.frame($0) ?? .zero }
         let order = ArrangeLayout.order(of: frames)
-        let cells = ArrangeLayout.frames(count: order.count, in: area,
+        let cells = ArrangeLayout.frames(count: order.count, in: area, mode: mode,
                                          minCellWidth: cellWidth())
-        for (index, windowIndex) in order.enumerated() {
-            let cell = cells[index]
-            let window = windows[windowIndex]
-            ClaudeActions.setFrame(window, cell)
+        for (index, cell) in cells.enumerated() {
+            ClaudeActions.setFrame(windows[order[index]], cell)
         }
         onWindowsMoved?()
+    }
+
+    /// Влезает ли раскладка на главный экран (ячейка не уже `minWindowWidth`): по этому
+    /// плитка в меню гаснет, а канал «Пимп» отвечает `too-small`. Экрана не знаем — не мешаем.
+    func arrangeFits(_ mode: ArrangeLayout.Mode) -> Bool {
+        guard let area = Screens.mainUsableFrame else { return true }
+        return ArrangeLayout.fits(mode, in: area, minCellWidth: cellWidth())
     }
 
     /// Поставить окну рамку и УБЕДИТЬСЯ, что она встала (гейт WF36, 07.09): Electron молча
@@ -1100,23 +1110,25 @@ final class ClaudeActions {
         app.windows().filter { AX.bool($0, kAXMinimizedAttribute) == true }.count
     }
 
-    /// Расставить окна в ЗАДАННОМ порядке (номера окон Quartz). Возвращает окна с рамками,
-    /// которые им поставили: канал отдаёт их в ответе, не перечитывая экран (`CGWindowList`
-    /// после переезда отвечает не сразу).
+    /// Расставить окна в ЗАДАННОМ порядке (номера окон Quartz) по заданной раскладке.
+    /// Возвращает окна с рамками, которые им поставили (канал отдаёт их в ответе, не
+    /// перечитывая экран — `CGWindowList` после переезда отвечает не сразу), и сколько
+    /// окон осталось без ячейки: их не двигали вовсе.
     @discardableResult
-    func arrange(ids: [CGWindowID]) -> [(id: CGWindowID, title: String, frame: CGRect)] {
+    func arrange(ids: [CGWindowID], mode: ArrangeLayout.Mode)
+        -> (placed: [(id: CGWindowID, title: String, frame: CGRect)], skipped: Int) {
         let windows = pimpWindows()
         let ordered = ids.compactMap { id in windows.first { $0.id == id } }
-        guard !ordered.isEmpty, let area = Screens.mainUsableFrame else { return [] }
-        let cells = ArrangeLayout.frames(count: ordered.count, in: area,
+        guard !ordered.isEmpty, let area = Screens.mainUsableFrame else { return ([], 0) }
+        let cells = ArrangeLayout.frames(count: ordered.count, in: area, mode: mode,
                                          minCellWidth: cellWidth())
         var out: [(id: CGWindowID, title: String, frame: CGRect)] = []
-        for (index, entry) in ordered.enumerated() {
-            ClaudeActions.setFrame(entry.window, cells[index])
-            out.append((id: entry.id, title: entry.title, frame: cells[index]))
+        for (index, cell) in cells.enumerated() {
+            ClaudeActions.setFrame(ordered[index].window, cell)
+            out.append((id: ordered[index].id, title: ordered[index].title, frame: cell))
         }
         onWindowsMoved?()
-        return out
+        return (placed: out, skipped: ordered.count - out.count)
     }
 
     /// Поставить окна по рамкам — деление столбца пополам («под этим»/«над этим»).

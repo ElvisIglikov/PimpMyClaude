@@ -198,6 +198,15 @@ final class MinimizeMenu: NSObject {
         config.newWindowInProject = { [weak self] project in
             DispatchQueue.main.async { self?.actions.newWindow(in: project, on: window) }
         }
+        // Полоса раскладок (план WF21): выбор закрепляется — его повторяют ⌥⌘A и «▦ Расставить».
+        // Отсрочки здесь нет: плитка сама закрывает меню и зовёт это ходом вперёд.
+        config.arrangeMode = actions.themeStore.arrangeMode
+        config.arrangeFits = { [weak self] mode in self?.actions.arrangeFits(mode) ?? true }
+        config.arrange = { [weak self] mode in
+            guard let self = self else { return }
+            self.actions.themeStore.arrangeMode = mode
+            self.actions.arrange(mode: mode)
+        }
         config.apply = { [weak self] scope, theme, font, size, frame in
             committed = true
             DispatchQueue.main.async {
@@ -402,6 +411,11 @@ final class MinimizeMenu: NSObject {
         var newWindowInProject: (Project) -> Void = { _ in }
         /// Клик по тумблеру «🗂 Цвет по проекту» — приходит уже перевёрнутым.
         var setProjectColor: (Bool) -> Void = { _ in }
+        /// Полоса раскладок первым пунктом (план WF21): какая раскладка выбрана сейчас,
+        /// влезает ли раскладка на экран (иначе плитка серая) и что делать по клику.
+        var arrangeMode: ArrangeLayout.Mode = .ribbon
+        var arrangeFits: (ArrangeLayout.Mode) -> Bool = { _ in true }
+        var arrange: (ArrangeLayout.Mode) -> Void = { _ in }
 
         /// Можно ли верить памяти приложения об этом окне — от этого зависит галка «Как у Claude».
         var windowMemoryTrusted: Bool { windowTitled && !windowAutoPainted }
@@ -447,6 +461,9 @@ final class MinimizeMenu: NSObject {
     static func build(config: MenuConfig) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+        // Полоса раскладок — самый первый пункт (план WF21), за ней один разделитель.
+        menu.addItem(layoutPickerItem(config))
+        menu.addItem(.separator())
         // Пункты из moreCommands на верхний уровень не рисуются, но из `MenuModel.entries`
         // не выпадают: по нему регистрируются Carbon-хоткеи (блокер Б1 критика).
         for entry in MenuModel.entries where !MenuModel.moreCommands.contains(entry.command) {
@@ -460,6 +477,16 @@ final class MinimizeMenu: NSObject {
         addSeparator(menu)
         menu.addItem(moreItem(config))
         return menu
+    }
+
+    /// Полоса раскладок (план WF21): пункт-вьюха, четыре картинки. Заголовок на экран не
+    /// выходит — его закрывает вьюха, — но он нужен VoiceOver и тестам структуры меню.
+    /// Клавиша ⌥⌘A остаётся на «▦ Расставить» в «⋯ Ещё ▸»: по view-пункту клавиатура
+    /// не ходит вовсе.
+    static func layoutPickerItem(_ config: MenuConfig) -> NSMenuItem {
+        let item = NSMenuItem(title: MenuModel.layoutsTitle, action: nil, keyEquivalent: "")
+        item.view = LayoutPickerView(config: config)
+        return item
     }
 
     /// Пункт-команда: иконка картинкой, клавиша — в keyEquivalent (её справа серым AppKit

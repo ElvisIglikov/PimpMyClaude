@@ -200,12 +200,18 @@ public final class ClaudeAXController: ClaudeAXControlling {
                 // что в фокусе у Claude, а команда всё равно адресуется главному (`match`).
                 self?.actions.newWindow(in: project, on: nil, origin: origin)
             },
-            arrange: { [weak self] ids in
-                guard let self = self else { return [] }
-                return self.actions.arrange(ids: ids).map {
+            arrange: { [weak self] ids, mode in
+                guard let self = self else { return ([], 0) }
+                // Раскладка запроса становится последней (план WF21): ⌥⌘A и плитка в меню
+                // повторяют её же. `last` и новое окно кладут сюда то, что и так лежит.
+                self.actions.themeStore.arrangeMode = mode
+                let done = self.actions.arrange(ids: ids, mode: mode)
+                return (windows: done.placed.map {
                     self.pimpWindow(id: $0.id, title: $0.title, frame: $0.frame)
-                }
+                }, skipped: done.skipped)
             },
+            arrangeMode: { [weak self] in self?.actions.themeStore.arrangeMode ?? .ribbon },
+            fitsLayout: { [weak self] mode in self?.actions.arrangeFits(mode) ?? true },
             place: { [weak self] moves in self?.actions.place(moves) },
             titleForChat: { [weak self] chat in self?.pimpTitle(forChat: chat) },
             newWindowLayers: { [weak self] in self?.actions.lastNewWindowLayers ?? false })

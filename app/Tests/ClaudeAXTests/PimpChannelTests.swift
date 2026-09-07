@@ -18,6 +18,10 @@ private final class PimpRig {
 
     var opened: [(project: Project, origin: (x: Int, y: Int)?)] = []
     var arranged: [[CGWindowID]] = []
+    /// Раскладки, с которыми звали «Расставить» (план WF21), и последняя выбранная.
+    var layouts: [ArrangeLayout.Mode] = []
+    var mode = ArrangeLayout.Mode.ribbon
+    var fits = true
     var moved: [PimpMove] = []
 
     func advance(_ seconds: TimeInterval) { now = now.addingTimeInterval(seconds) }
@@ -33,25 +37,32 @@ private final class PimpRig {
             openNewWindow: { [unowned self] project, origin in
                 self.opened.append((project: project, origin: origin))
             },
-            arrange: { [unowned self] ids in self.arrange(ids) },
+            arrange: { [unowned self] ids, mode in self.arrange(ids, mode) },
+            arrangeMode: { [unowned self] in self.mode },
+            fitsLayout: { [unowned self] _ in self.fits },
             place: { [unowned self] moves in self.place(moves) },
             titleForChat: { [unowned self] chat in self.titles[chat] },
             newWindowLayers: { [unowned self] in self.layers })
     }
 
     /// «Расставить»: та же арифметика, что в приложении, только окна двигаются в массиве.
-    private func arrange(_ ids: [CGWindowID]) -> [PimpWindow] {
+    /// Ячеек меньше, чем окон, — хвост остаётся где стоял, как в `ClaudeActions`.
+    private func arrange(_ ids: [CGWindowID],
+                         _ mode: ArrangeLayout.Mode) -> (windows: [PimpWindow], skipped: Int) {
         arranged.append(ids)
+        layouts.append(mode)
+        self.mode = mode
         let ordered = ids.compactMap { id in windows.first { $0.id == id } }
-        let cells = ArrangeLayout.frames(count: ordered.count, in: PimpRig.area)
+        let cells = ArrangeLayout.frames(count: ordered.count, in: PimpRig.area, mode: mode)
         var out: [PimpWindow] = []
-        for (index, window) in ordered.enumerated() {
+        for (index, cell) in cells.enumerated() {
+            let window = ordered[index]
             let placed = PimpWindow(id: window.id, title: window.title, chat: window.chat,
-                                    folder: window.folder, frame: cells[index])
+                                    folder: window.folder, frame: cell)
             out.append(placed)
             if let at = windows.firstIndex(where: { $0.id == window.id }) { windows[at] = placed }
         }
-        return out
+        return (windows: out, skipped: ordered.count - out.count)
     }
 
     private func place(_ moves: [PimpMove]) {
@@ -146,7 +157,22 @@ final class PimpChannelTests: XCTestCase {
             XCTAssertEqual(parsed.from, "", name)
             // Поля `place` у этих запросов нет — умолчание «справа», а не отказ.
             XCTAssertEqual(parsed.place, .right, name)
+            // `layout` — лента: у arrange он «row», у остальных поля нет вовсе (план WF21).
+            XCTAssertEqual(parsed.layout, .ribbon, name)
         }
+
+        // Раскладки (план WF21): свои слова, «last» — раскладку подставит приложение,
+        // чужое слово — не запрос (`bad-request`).
+        func arrange(_ layout: String) -> Data {
+            let body = "{\"id\":\"1-1\",\"at\":\"2026-09-07T11:20:00Z\",\"action\":\"arrange\","
+                + "\"from\":\"\",\"layout\":\"\(layout)\"}"
+            return Data(body.utf8)
+        }
+        XCTAssertEqual(PimpRequest.parse(arrange("4"))?.layout, .four)
+        XCTAssertEqual(PimpRequest.parse(arrange("5"))?.layout, .five)
+        XCTAssertEqual(PimpRequest.parse(arrange("5x2"))?.layout, .tenGrid)
+        XCTAssertNil(try XCTUnwrap(PimpRequest.parse(arrange(" LAST "))).layout)
+        XCTAssertNil(PimpRequest.parse(arrange("5x3")), "чужая раскладка — bad-request")
 
         // Чужое действие — `bad-request` (эталон bad.request.json: "action":"fly").
         XCTAssertNil(PimpRequest.parse(try fixture("bad.request.json")))
@@ -191,9 +217,11 @@ final class PimpChannelTests: XCTestCase {
             PimpWindow(id: 3, title: "Диктаторик",
                        frame: CGRect(x: 980, y: 34, width: 490, height: 859)),
         ]
+        // У «Расставить» свои поля (план WF21): раскладка, окна, пропущенные, свёрнутые.
         XCTAssertEqual(PimpAnswer(id: "1788780010000-0777",
                                   at: PimpChannel.date("2026-09-07T11:20:12Z")!, ok: true,
-                                  fields: PimpChannel.windowsFields(windows, minimized: 0)).json,
+                                  fields: PimpChannel.arrangeFields(windows, mode: .ribbon,
+                                                                    skipped: 0, minimized: 0)).json,
                        try fixtureText("arrange.result.json"))
 
         let list = [Project(folder: URL(fileURLWithPath: "/Users/elvis/_ElvisProjects/PimpMyClaude"),
@@ -409,6 +437,86 @@ final class PimpChannelTests: XCTestCase {
         XCTAssertEqual(result("300-0004", in: box)?["error"] as? String, "no-windows")
     }
 
+    // MARK: - 5а. раскладки «Расставить» (план WF21)
+
+    func testPimpChannelArrangesByLayout() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.windows = (1...6).map { id in
+            PimpWindow(id: CGWindowID(id), title: "Окно \(id)",
+                       frame: CGRect(x: CGFloat(id - 1) * 240, y: 34, width: 240, height: 859))
+        }
+        let channel = makeChannel(rig, in: box)
+
+        // «5 в ряд» на шести окнах: шестое остаётся где стояло, и об этом сказано числом.
+        write(request("900-0001", action: "arrange", at: rig.now, extra: ",\"layout\":\"5\""),
+              id: "900-0001", in: box)
+        channel.tick()
+        let five = try XCTUnwrap(result("900-0001", in: box))
+        XCTAssertEqual(five["ok"] as? Bool, true)
+        XCTAssertEqual(five["layout"] as? String, "5")
+        XCTAssertEqual((five["windows"] as? [[String: Any]])?.count, 5)
+        XCTAssertEqual(five["skipped"] as? Int, 1)
+        XCTAssertEqual(rig.window(1)?.frame, CGRect(x: 0, y: 34, width: 294, height: 859))
+        XCTAssertEqual(rig.window(6)?.frame, CGRect(x: 1200, y: 34, width: 240, height: 859))
+
+        // «last» — та же раскладка, что выбрали в прошлый раз; в ответе она названа.
+        rig.advance(1)
+        write(request("900-0002", action: "arrange", at: rig.now, extra: ",\"layout\":\"last\""),
+              id: "900-0002", in: box)
+        channel.tick()
+        XCTAssertEqual(result("900-0002", in: box)?["layout"] as? String, "5")
+        XCTAssertEqual(rig.layouts, [.five, .five])
+
+        // Раскладка на этот экран не влезает — `too-small`, окна не трогаем вовсе.
+        rig.advance(1)
+        rig.fits = false
+        write(request("900-0003", action: "arrange", at: rig.now, extra: ",\"layout\":\"5x2\""),
+              id: "900-0003", in: box)
+        channel.tick()
+        XCTAssertEqual(result("900-0003", in: box)?["error"] as? String, "too-small")
+        XCTAssertEqual(rig.layouts.count, 2, "окна не двигали")
+
+        // Чужое слово в `layout` — bad-request: наугад окна не ставим.
+        rig.advance(1)
+        rig.fits = true
+        write(request("900-0004", action: "arrange", at: rig.now, extra: ",\"layout\":\"5x3\""),
+              id: "900-0004", in: box)
+        channel.tick()
+        XCTAssertEqual(result("900-0004", in: box)?["error"] as? String, "bad-request")
+    }
+
+    /// Ячеек в последней раскладке меньше, чем окон: новое окно остаётся где родилось,
+    /// ответ всё равно `ok`, а поле `skipped` говорит, что его не двигали (план WF21).
+    func testPimpChannelKeepsNewWindowWhenNoCellLeft() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.projects = [PimpChannelTests.project("Dictator")]
+        rig.mode = .four
+        rig.windows = (1...4).map { id in
+            PimpWindow(id: CGWindowID(id), title: "Окно \(id)",
+                       frame: CGRect(x: CGFloat(id - 1) * 367, y: 34, width: 367, height: 859))
+        }
+        let channel = makeChannel(rig, in: box)
+
+        write(request("910-0001", action: "new-window", at: rig.now,
+                      extra: ",\"project\":\"Dictator\",\"place\":\"right\""),
+              id: "910-0001", in: box)
+        channel.tick()
+        rig.advance(3)
+        rig.windows.append(PimpWindow(id: 9, title: "Диктаторик",
+                                      frame: CGRect(x: 120, y: 120, width: 900, height: 700)))
+        channel.tick()
+
+        let answer = try XCTUnwrap(result("910-0001", in: box))
+        XCTAssertEqual(answer["ok"] as? Bool, true)
+        XCTAssertEqual(answer["skipped"] as? Int, 1)
+        XCTAssertEqual((answer["window"] as? [String: Any])?["frame"] as? [Int],
+                       [120, 120, 900, 700])
+        XCTAssertEqual(rig.layouts, [.four], "новое окно расставляют последней раскладкой")
+        XCTAssertEqual(rig.window(9)?.frame, CGRect(x: 120, y: 120, width: 900, height: 700))
+    }
+
     // MARK: - 6. новое окно посередине
 
     func testPimpChannelOpensWindowInTheMiddle() throws {
@@ -451,6 +559,8 @@ final class PimpChannelTests: XCTestCase {
         XCTAssertEqual(window["chat"] as? String, "local_new")
         XCTAssertEqual(window["frame"] as? [Int], [490, 34, 490, 859])
         XCTAssertEqual(answer["layers"] as? String, "ok")
+        // Ячейка нашлась — поля `skipped` в ответе нет вовсе (эталон new-window.result.json).
+        XCTAssertNil(answer["skipped"])
         XCTAssertEqual(rig.window(3)?.frame, CGRect(x: 490, y: 34, width: 490, height: 859))
     }
 

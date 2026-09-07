@@ -55,6 +55,9 @@ struct PimpRequest: Equatable {
     let project: String
     /// Только `new-window`; поля нет — «справа».
     let place: PimpPlace
+    /// Только `arrange` (план WF21): раскладка; nil — `last`, то есть последняя выбранная,
+    /// её подставляет приложение. Поля нет — лента (умолчание CLI).
+    let layout: ArrangeLayout.Mode?
 }
 
 /// Ответ канала: `<id>.result.json` рядом с запросом. Порядок ключей побайтно —
@@ -107,8 +110,14 @@ struct PimpSeats {
     /// Открыть новое окно в папке проекта — тот же путь, что пункт меню «🪟 Новое окно ▸».
     /// `origin` — точка для места «x,y»; nil — как в меню (уступ от окна-источника).
     var openNewWindow: (Project, (x: Int, y: Int)?) -> Void = { _, _ in }
-    /// Расставить окна в этом порядке; возвращает окна с рамками, которые им поставили.
-    var arrange: ([CGWindowID]) -> [PimpWindow] = { _ in [] }
+    /// Расставить окна в этом порядке по этой раскладке; возвращает окна с рамками, которые
+    /// им поставили, и сколько окон осталось без ячейки — их не двигали (план WF21).
+    var arrange: ([CGWindowID], ArrangeLayout.Mode) -> (windows: [PimpWindow], skipped: Int)
+        = { _, _ in ([], 0) }
+    /// Последняя выбранная раскладка: её берут `layout: "last"` и новое окно.
+    var arrangeMode: () -> ArrangeLayout.Mode = { .ribbon }
+    /// Влезает ли раскладка на экран (ячейка не уже `minWindowWidth`) — иначе `too-small`.
+    var fitsLayout: (ArrangeLayout.Mode) -> Bool = { _ in true }
     /// Поставить окна по рамкам (деление столбца пополам).
     var place: ([PimpMove]) -> Void = { _ in }
     /// Заголовок окна чата `from`: главное окно — по индексу Claude, попап — по карте probe.
@@ -294,7 +303,7 @@ final class PimpChannel {
         switch request.action {
         case .projects: runProjects(id: incoming.id, at: at)
         case .windows: runWindows(id: incoming.id, at: at)
-        case .arrange: runArrange(id: incoming.id, at: at)
+        case .arrange: runArrange(request, id: incoming.id, at: at)
         case .newWindow: runNewWindow(request, id: incoming.id, at: at)
         }
     }
@@ -319,17 +328,25 @@ final class PimpChannel {
             windows, minimized: seats.minimized())), for: id)
     }
 
-    /// «Расставить в ряд» — то же, что пункт меню: порядок по текущим рамкам.
-    private func runArrange(id: String, at: Date) {
+    /// «Расставить» — то же, что плитка в меню: порядок по текущим рамкам, раскладка из
+    /// запроса (`last` — последняя выбранная). Ячейка уже `minWindowWidth` — `too-small`:
+    /// такие окна Electron всё равно не сделает, и лучше сказать это словами.
+    private func runArrange(_ request: PimpRequest, id: String, at: Date) {
         let windows = seats.windows()
         guard seats.claudeRunning(), !windows.isEmpty else {
             reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
             return
         }
+        let mode = request.layout ?? seats.arrangeMode()
+        guard seats.fitsLayout(mode) else {
+            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.tooSmall.rawValue), for: id)
+            return
+        }
         let order = ArrangeLayout.order(of: windows.map { $0.frame })
-        let placed = seats.arrange(order.map { windows[$0].id })
-        reply(PimpAnswer(id: id, at: at, ok: true, fields: PimpChannel.windowsFields(
-            placed.isEmpty ? windows : placed, minimized: seats.minimized())), for: id)
+        let placed = seats.arrange(order.map { windows[$0].id }, mode)
+        reply(PimpAnswer(id: id, at: at, ok: true, fields: PimpChannel.arrangeFields(
+            placed.windows.isEmpty ? windows : placed.windows, mode: mode,
+            skipped: placed.skipped, minimized: seats.minimized())), for: id)
     }
 
     /// «Новое окно в проекте»: находим папку, зовём тот же путь, что пункт меню, и ждём
@@ -381,19 +398,30 @@ final class PimpChannel {
         var job = current
         var frame = window.frame
         var failure: Failure?
+        // Новому окну не досталось ячейки (в последней раскладке их меньше, чем окон):
+        // оно остаётся где родилось, и об этом честно говорит поле `skipped` (план WF21).
+        var skipped = 0
         switch job.place {
         case .point:
             // Точку поставила сама страница — двигать нечего.
             break
         case .left, .middle, .right:
-            frame = row(job.place, window: window, in: windows) ?? frame
+            if let placed = row(job.place, window: window, in: windows) {
+                frame = placed
+            } else {
+                skipped = 1
+            }
         case .below, .above:
             // Окно `from` могло закрыться, пока шли 40 с, — тогда «под этим» вырождается
             // в «справа», ровно как при неизвестном чате, и это видно по `fromResolved`.
             guard let target = PimpChannel.window(id: job.fromId, title: job.fromTitle, in: windows),
                   target.id != window.id else {
                 job.fromResolved = false
-                frame = row(.right, window: window, in: windows) ?? frame
+                if let placed = row(.right, window: window, in: windows) {
+                    frame = placed
+                } else {
+                    skipped = 1
+                }
                 break
             }
             guard let halves = PimpChannel.split(target.frame, above: job.place == .above) else {
@@ -410,7 +438,7 @@ final class PimpChannel {
             return
         }
         let final = seats.windows().first { $0.id == window.id } ?? window
-        reply(PimpAnswer(id: job.id, at: at, ok: true, fromResolved: job.fromResolved, fields: [
+        var fields: [(key: String, value: CommandValue)] = [
             (key: "window", value: .object([
                 (key: "title", value: .string(final.title)),
                 (key: "chat", value: .string(final.chat)),
@@ -419,18 +447,24 @@ final class PimpChannel {
             // Слои страница кладёт сама и о судьбе их рассказывает в своём `status()`;
             // приложение знает ровно то, что послало (канал probe у неё не отнимаем).
             (key: "layers", value: .string(seats.newWindowLayers() ? "ok" : "")),
-        ]), for: job.id)
+        ]
+        // Поле есть только когда ячейки не нашлось: эталон `new-window.result.json` — случай
+        // с ячейкой, и он обязан остаться побайтно тем же.
+        if skipped > 0 { fields.append((key: "skipped", value: .number(skipped))) }
+        reply(PimpAnswer(id: job.id, at: at, ok: true, fromResolved: job.fromResolved,
+                         fields: fields), for: job.id)
     }
 
     /// Поставить новое окно столбцом: порядок существующих окон берём по их рамкам, новое
-    /// вставляем по индексу места и расставляем всё в ряд. Возвращает рамку нового окна.
+    /// вставляем по индексу места и расставляем всё последней раскладкой. Возвращает рамку
+    /// нового окна; нет ячейки (окон больше, чем ячеек) — nil, и окно остаётся где родилось.
     private func row(_ place: PimpPlace, window: PimpWindow, in windows: [PimpWindow]) -> CGRect? {
         let others = windows.indices.filter { windows[$0].id != window.id }
         let order = ArrangeLayout.order(of: others.map { windows[$0].frame })
         let index = ArrangeLayout.insertIndex(of: place, count: others.count)
         let full = ArrangeLayout.insert(order: order, count: others.count, at: index)
         let ids = full.map { $0 == others.count ? window.id : windows[others[$0]].id }
-        return seats.arrange(ids).first { $0.id == window.id }?.frame
+        return seats.arrange(ids, seats.arrangeMode()).windows.first { $0.id == window.id }?.frame
     }
 
     // MARK: - файлы
@@ -555,16 +589,31 @@ final class PimpChannel {
         ])
     }
 
-    static func windowsFields(_ windows: [PimpWindow],
-                              minimized: Int) -> [(key: String, value: CommandValue)] {
-        [(key: "windows", value: .array(windows.map { window in
+    static func windowsValue(_ windows: [PimpWindow]) -> CommandValue {
+        .array(windows.map { window in
             .object([
                 (key: "title", value: .string(window.title)),
                 (key: "chat", value: .string(window.chat)),
                 (key: "folder", value: .string(window.folder)),
                 (key: "frame", value: frameValue(window.frame)),
             ])
-        })),
+        })
+    }
+
+    static func windowsFields(_ windows: [PimpWindow],
+                              minimized: Int) -> [(key: String, value: CommandValue)] {
+        [(key: "windows", value: windowsValue(windows)),
+         (key: "minimized", value: .number(max(0, minimized)))]
+    }
+
+    /// Поля ответа `arrange` (план WF21): раскладка применённая (`last` уже разрешён),
+    /// окна — только переставленные, `skipped` — сколько не тронули. Порядок побайтно —
+    /// эталон `tests/fixtures/pimp/arrange.result.json`.
+    static func arrangeFields(_ windows: [PimpWindow], mode: ArrangeLayout.Mode, skipped: Int,
+                              minimized: Int) -> [(key: String, value: CommandValue)] {
+        [(key: "layout", value: .string(mode.rawValue)),
+         (key: "windows", value: windowsValue(windows)),
+         (key: "skipped", value: .number(max(0, skipped))),
          (key: "minimized", value: .number(max(0, minimized)))]
     }
 }
@@ -585,8 +634,19 @@ extension PimpRequest {
         // Папка — единственное, без чего «новое окно» бессмысленно.
         if action == .newWindow, project.isEmpty { return nil }
         guard let place = PimpRequest.place(root["place"] as? String) else { return nil }
+        // Раскладка (WF21): поля нет — лента (умолчание CLI), `last` — nil (подставит
+        // приложение), чужое слово — `bad-request`: наугад окна не двигаем.
+        let raw = (root["layout"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        var layout: ArrangeLayout.Mode? = .ribbon
+        if raw == "last" {
+            layout = nil
+        } else if !raw.isEmpty {
+            guard let mode = ArrangeLayout.Mode(rawValue: raw) else { return nil }
+            layout = mode
+        }
         return PimpRequest(id: id, at: at, action: action, from: from, project: project,
-                           place: place)
+                           place: place, layout: layout)
     }
 
     /// `place` запроса; поля нет или оно пустое — «справа» (умолчание CLI). Чужое слово —
