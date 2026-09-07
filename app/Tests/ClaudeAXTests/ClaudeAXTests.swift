@@ -3336,3 +3336,13 @@ final class ClaudeAXTests: XCTestCase {
         target.perform(action)
     }
 }
+
+final class FrameMatchTests: XCTestCase {
+    /// Гейт WF36: рамка «встала», если все четыре величины в допуске 2 pt.
+    func testFrameMatchesWithinTolerance() {
+        let want = CGRect(x: 735, y: 34, width: 367, height: 859)
+        XCTAssertTrue(ClaudeActions.frameMatches(CGRect(x: 736, y: 34, width: 367, height: 858), want))
+        XCTAssertFalse(ClaudeActions.frameMatches(CGRect(x: 493, y: 74, width: 367, height: 819), want))
+        XCTAssertFalse(ClaudeActions.frameMatches(CGRect(x: 735, y: 34, width: 367, height: 819), want))
+    }
+}

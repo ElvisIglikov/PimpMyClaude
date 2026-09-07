@@ -956,10 +956,37 @@ final class ClaudeActions {
         for (index, windowIndex) in order.enumerated() {
             let cell = cells[index]
             let window = windows[windowIndex]
-            AX.set(window, kAXPositionAttribute, point: cell.origin)
-            AX.set(window, kAXSizeAttribute, size: cell.size)
+            ClaudeActions.setFrame(window, cell)
         }
         onWindowsMoved?()
+    }
+
+    /// Поставить окну рамку и УБЕДИТЬСЯ, что она встала (гейт WF36, 07.09): Electron молча
+    /// глотает `kAXPositionAttribute`, пока окно ещё едет (свежий popout, анимация) — на живом
+    /// прогоне три окна сузились по сетке, а с места не сдвинулись, и Элвис видел ровно это
+    /// («в ширину уменьшились, больше ничего не произошло»). Поэтому после записи читаем рамку
+    /// назад и повторяем до трёх раз с паузой; порядок «позиция → размер → позиция»: смена
+    /// размера у правого края может снова сдвинуть окно. Сон короткий и только при промахе —
+    /// в штатном случае вызов остаётся мгновенным.
+    static let frameRetries = 3
+    static let frameRetryPause: TimeInterval = 0.25
+    static let frameTolerance: CGFloat = 2
+
+    @discardableResult
+    static func setFrame(_ window: AXUIElement, _ frame: CGRect) -> Bool {
+        for attempt in 0..<frameRetries {
+            AX.set(window, kAXPositionAttribute, point: frame.origin)
+            AX.set(window, kAXSizeAttribute, size: frame.size)
+            AX.set(window, kAXPositionAttribute, point: frame.origin)
+            if let now = AX.frame(window), frameMatches(now, frame) { return true }
+            if attempt + 1 < frameRetries { Thread.sleep(forTimeInterval: frameRetryPause) }
+        }
+        return AX.frame(window).map { frameMatches($0, frame) } ?? false
+    }
+
+    static func frameMatches(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = frameTolerance) -> Bool {
+        abs(a.origin.x - b.origin.x) <= tolerance && abs(a.origin.y - b.origin.y) <= tolerance
+            && abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
     }
 
     // MARK: - канал «Пимп» (план WF36)
@@ -998,8 +1025,7 @@ final class ClaudeActions {
                                          minCellWidth: cellWidth())
         var out: [(id: CGWindowID, title: String, frame: CGRect)] = []
         for (index, entry) in ordered.enumerated() {
-            AX.set(entry.window, kAXPositionAttribute, point: cells[index].origin)
-            AX.set(entry.window, kAXSizeAttribute, size: cells[index].size)
+            ClaudeActions.setFrame(entry.window, cells[index])
             out.append((id: entry.id, title: entry.title, frame: cells[index]))
         }
         onWindowsMoved?()
@@ -1015,8 +1041,7 @@ final class ClaudeActions {
         var moved = 0
         for move in moves {
             guard let entry = windows.first(where: { $0.id == move.id }) else { continue }
-            AX.set(entry.window, kAXPositionAttribute, point: move.frame.origin)
-            AX.set(entry.window, kAXSizeAttribute, size: move.frame.size)
+            ClaudeActions.setFrame(entry.window, move.frame)
             moved += 1
         }
         if moved > 0 { onWindowsMoved?() }
