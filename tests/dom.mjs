@@ -118,6 +118,11 @@ export const createDom = ({
   const counters = { listeners: 0, observers: 0, timers: 0, intervals: 0, rafs: 0 };
   const timers = new Map();
   let timerSeq = 1;
+  // Живые анимации Web Animations (element.animate): пульс полосы прогресса —
+  // единственный, кто их заводит, и после dispose() их должно остаться ноль.
+  // Счётчик отдельным списком, а не в counters: узлы у анимации свои, и тесту
+  // важно, НА ЧЁМ она висит, а не только сколько их.
+  const animations = [];
 
   const makeStyle = () => {
     const map = new Map();
@@ -331,7 +336,19 @@ export const createDom = ({
       blur() { if (document.activeElement === node) document.activeElement = null; },
       click() { node.dispatchEvent({ type: "click" }); },
       scrollIntoView() {},
-      animate() { return { finished: Promise.resolve(), cancel() {} }; },
+      // Настоящий Animation отдаёт playState и умеет cancel()/finish(); стаб
+      // отдаёт то же самое и запоминает себя в списке окна, чтобы тест видел,
+      // на каком узле и с какими кадрами крутится пульс.
+      animate(frames, options) {
+        const animation = {
+          node, frames, options, playState: "running",
+          finished: Promise.resolve(),
+          cancel() { animation.playState = "idle"; },
+          finish() { animation.playState = "finished"; },
+        };
+        animations.push(animation);
+        return animation;
+      },
       // Удобство тестов: собрать поддерево одной строкой.
       add(tag2, options = {}) {
         const kid = makeNode(tag2);
@@ -553,11 +570,19 @@ export const createDom = ({
         getPropertyValue: name => own[name] ?? read(name),
       };
     },
-    matchMedia: query => ({
-      matches: String(query).includes("dark"),
-      media: String(query),
-      addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
-    }),
+    // prefers-reduced-motion читается ЛЕНИВО, из win.__reducedMotion: тест
+    // ставит флаг уже после установки инжекта и гонит перечёт полосы — ровно
+    // так системная настройка меняется и в бою.
+    matchMedia: query => {
+      const media = String(query);
+      const matches = /prefers-reduced-motion/.test(media)
+        ? (/reduce/.test(media) ? Boolean(win.__reducedMotion) : !win.__reducedMotion)
+        : media.includes("dark");
+      return {
+        matches, media,
+        addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+      };
+    },
     getSelection: () => document.getSelection(),
     requestAnimationFrame: fn => timerHandle("raf", fn, 16),
     cancelAnimationFrame: id => timerDrop(id),
@@ -586,6 +611,9 @@ export const createDom = ({
     document,
     counters,
     timers,
+    // Все анимации окна и только живые (пульс полосы прогресса, WF22).
+    animations,
+    running: () => animations.filter(item => item.playState === "running"),
     node: makeNode,
     query: selector => document.querySelector(selector),
     queryAll: selector => document.querySelectorAll(selector),

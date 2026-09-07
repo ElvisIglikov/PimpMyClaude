@@ -48,7 +48,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf37-p-1";
+  const VERSION = "wf22-p-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1750,6 +1750,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // меняется: считаем его по boundingClientRect рамки поля.
   const PROGRESS_ID = "myclaude-progress-bar";
   const PROGRESS_TIP_ID = "myclaude-progress-tip";
+  const PROGRESS_CARD_ID = "myclaude-progress-card";
+  // Вид карточки сегмента по макету docs/mockup-wf22-cards.html. Элвис выбрал
+  // 3A — «таблица с цветной кромкой»; назовёт 3B или 3C, меняется эта строка и
+  // вид карточки, а данные, разбор и попадание мышью общие для всех трёх.
+  const PROGRESS_CARD_VARIANT = "3A";
   // Ширина едет 400 мс: быстрее — дёрганье на каждом ответе, медленнее — полоса
   // заметно отстаёт от цифры в чате. Тем же временем живут проявление и
   // затухание сегментов и смена цвета состояния — движение у полосы одно.
@@ -1767,11 +1772,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // ответ, поэтому дальше десятка забираться незачем, а перечитывать весь
   // длинный разговор раз в секунду — уже заметная работа.
   const PROGRESS_LOOKBACK = 12;
-  // Цвет ТЕКУЩЕГО сегмента по состоянию: ждём Элвиса — жёлтый, упало — красный;
-  // «идёт» и «готово» берут акцент темы окна (её красит раздел 2а). Готовые и
-  // будущие сегменты всегда в акценте: красным метится ровно то место, где
-  // марафон встал.
-  const PROGRESS_PAINT = { wait: "#f5c542", fail: "#ef4444" };
+  // Цвет по состоянию: ждём Элвиса — жёлтый, упало — красный, «готово» —
+  // зелёный (буква Элвиса 1A, WF22); «идёт» берёт акцент темы окна (её красит
+  // раздел 2а). Жёлтый и красный достаются ТЕКУЩЕМУ сегменту — красным метится
+  // ровно то место, где марафон встал; зелёное «готово» красит всю полосу.
+  const PROGRESS_PAINT = { done: "#4dbb7d", wait: "#f5c542", fail: "#ef4444" };
   // Зазор между сегментами и их предельное число. Марафон длиннее сорока
   // воркфлоу — уже не марафон, а полоса из одних зазоров.
   const PROGRESS_SEG_GAP = 3;
@@ -1873,76 +1878,140 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const STATUS_MAX_LINES = 12;
   const STATUS_LINE_MAX = 120;
   // Блок воркфлоу в сводке начинается с номера-клавиши: «1️⃣ Workflow ✅ готово».
-  const STATUS_HEAD_RE = /^(\d\uFE0F?\u20E3|\u{1F51F})\s*(.*)$/u;
+  // Номер — ЦЕПОЧКА клавиш, а не одна (WF22): «2️⃣9️⃣» это 29, «4️⃣0️⃣» — 40, «🔟» — 10.
+  // Читалась первая клавиша, и весь четвёртый десяток сводки числился четвёртым
+  // воркфлоу.
+  const STATUS_HEAD_RE = /^((?:\d\uFE0F?\u20E3|\u{1F51F})+)\s*(.*)$/u;
+  const STATUS_KEYCAP_RE = /\d\uFE0F?\u20E3|\u{1F51F}/gu;
   const STATUS_DEFAULT_ICON = "⬜";
+  // Четыре этапа воркфлоу (AGENTS.md): по ним заливается идущий сегмент и
+  // строится карточка. Пятая роль в сводке («макет» и подобные) на заливку не
+  // влияет и в карточку не идёт — этапов по букве Элвиса ровно четыре.
+  const STATUS_STAGES = [
+    { key: "plan", label: "план", re: /^план/i },
+    { key: "critic", label: "критик", re: /^критик/i },
+    { key: "code", label: "кодинг", re: /^кодинг/i },
+    { key: "check", label: "проверка", re: /^проверк/i },
+  ];
+  const STATUS_EFFORT_RE = /\s(low|medium|high|xhigh|max)$/i;
+  // Шапка сводки — три строки счёта («41 воркфлоу», «26 готово», «39 ч»): они
+  // уходят в подвал карточки.
+  const STATUS_HEAD_LINES = 3;
   const statusFeed = { at: 0, projects: new Map() };
 
-  const statusLine = (item) => {
-    const roles = item.roles.slice(0, 6).join(" · ");
-    const line = [`${item.number} ${item.icon}`, item.about, roles]
+  // Строка подсказки из блока. Вид её закреплён тестами знак в знак: разбор
+  // переехал в объекты (WF22), а строка осталась прежней.
+  const statusLine = (block) => {
+    const roles = block.roles.slice(0, 6).map(role => role.role).join(" · ");
+    const line = [`${block.mark} ${block.icon}`, block.about, roles]
       .filter(Boolean).join(" · ").replace(/\s+/g, " ").trim();
     return line.length > STATUS_LINE_MAX ? `${line.slice(0, STATUS_LINE_MAX - 1)}…` : line;
   };
+  // Номер воркфлоу, с которого начинается строка сводки: «3️⃣ …» → 3, «🔟 …» → 10,
+  // «2️⃣9️⃣ …» → 29. Разбираем по цифрам клавиш, а не по готовому значку: в сводке
+  // встречается и запись без вариационного селектора («3⃣»), и та и другая — один
+  // и тот же номер.
+  const statusLineNumber = (line) => {
+    const head = String(line ?? "").match(STATUS_HEAD_RE);
+    if (!head) return null;
+    let digits = "";
+    for (const cap of head[1].match(STATUS_KEYCAP_RE) ?? []) {
+      digits += cap === "\u{1F51F}" ? "10" : (cap.match(/\d/)?.[0] ?? "");
+    }
+    const number = Number(digits);
+    return digits !== "" && Number.isFinite(number) ? number : null;
+  };
+  // Строка роли: «- кодинг · 2 агента · Opus max». Кто (агенты) и на чём (модель,
+  // эффорт) стоят в любом порядке, части может не быть вовсе («- кодинг · Opus
+  // max», «- проверка · 🔴 **Fable max**»). Значок 💭 в конце — необязательная
+  // пометка идущего этапа (правило AGENTS.md пишет чат Max).
+  const statusRole = (item) => {
+    const running = /💭\s*$/.test(item);
+    const parts = item.replace(/💭\s*$/, "").split(/\s*[·•]\s*/).map(part => part.trim()).filter(Boolean);
+    const rest = parts.slice(1);
+    const agentsAt = rest.findIndex(part => /аген/i.test(part) || part === "я" || part.startsWith("я "));
+    // Жирное начертание и красный кружок «Fable max» — разметка сводки, а не имя
+    // модели: снимаем их здесь, рисует их карточка сама.
+    const who = rest.filter((part, index) => index !== agentsAt).join(" · ")
+      .replace(/\*\*/g, "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
+    const effort = who.match(STATUS_EFFORT_RE);
+    return {
+      role: parts[0] ?? "",
+      agents: agentsAt >= 0 ? rest[agentsAt] : "",
+      model: effort ? who.slice(0, who.length - effort[0].length).trim() : who,
+      effort: effort ? effort[1] : "",
+      running,
+    };
+  };
   // Сводка написана списками, а не таблицей, поэтому разбираем построчно:
   // заголовок блока даёт номер и значок, первый пункт — «о чём», пункты с
-  // разделителем и словом впереди — роли. Пункты «шаги 2 из 2» и время
-  // («00:17 → 01:20 · 1 ч») в подсказку не идут: в ней важно, что за воркфлоу и
-  // кто в нём занят.
-  const statusLines = (text) => {
-    const lines = [];
+  // разделителем и словом впереди — роли, «шаги N из M» и время — свои поля.
+  // Разбор ОДИН на три читателя (WF22): строки подсказки, объекты блоков для
+  // карточки и заливки, шапка проекта. Порядок проверок внутри цикла менять
+  // нельзя — на нём стоят строки подсказки знак в знак.
+  const statusParse = (text) => {
+    const head = [];
+    const blocks = [];
     let current = null;
-    const flush = () => { if (current) lines.push(statusLine(current)); current = null; };
+    const flush = () => { if (current) blocks.push(current); current = null; };
     for (const raw of String(text ?? "").split("\n")) {
       const line = raw.trim();
-      const head = line.match(STATUS_HEAD_RE);
-      if (head) {
+      const title = line.match(STATUS_HEAD_RE);
+      if (title) {
         flush();
-        const hit = PROGRESS_STATES.find(([icon]) => (head[2] ?? "").includes(icon));
-        current = { number: head[1], icon: hit ? hit[0] : STATUS_DEFAULT_ICON, about: "", roles: [] };
+        const hit = PROGRESS_STATES.find(([icon]) => (title[2] ?? "").includes(icon));
+        current = {
+          number: statusLineNumber(line), mark: title[1],
+          icon: hit ? hit[0] : STATUS_DEFAULT_ICON, state: hit ? hit[1] : "todo",
+          about: "", steps: null, time: "", roles: [],
+        };
         continue;
       }
-      if (!current || !/^[-*]\s/.test(line)) continue;
+      if (!current) {
+        // Шапка: три строки счёта, каждая начинается с числа.
+        if (head.length < STATUS_HEAD_LINES && /^\d/.test(line)) head.push(line);
+        continue;
+      }
+      if (!/^[-*]\s/.test(line)) continue;
       const item = line.replace(/^[-*]\s*/, "").trim();
       if (!item) continue;
+      const steps = item.match(/^шаги\s+(\d+)\s+из\s+(\d+)/i);
+      if (steps && !current.steps) current.steps = { done: Number(steps[1]), total: Number(steps[2]) };
       if (!current.about && !/^шаги\b/i.test(item) && !/\d\s*:\s*\d/.test(item)) {
         current.about = item.replace(/^о\s+чём\s*:\s*/i, "");
         continue;
       }
+      if (!current.time && /\d\s*:\s*\d/.test(item)) { current.time = item; continue; }
       const role = item.split(/\s*[·•]\s*/)[0] ?? "";
-      if (item.includes("·") && !item.includes("→") && role && !/\d/.test(role)) current.roles.push(role);
+      if (item.includes("·") && !item.includes("→") && role && !/\d/.test(role)) current.roles.push(statusRole(item));
     }
     flush();
     // Подсказка не должна вырастать в простыню: последние двенадцать воркфлоу.
-    return lines.slice(-STATUS_MAX_LINES);
+    return { head, blocks, lines: blocks.map(statusLine).slice(-STATUS_MAX_LINES) };
   };
+  const statusBlocks = (text) => statusParse(text).blocks;
+  const statusLines = (text) => statusParse(text).lines;
   // Имя проекта в строке состояния и имя папки, которое прислало приложение,
   // совпадают не побуквенно (регистр, дефисы). Сравниваем по буквам и цифрам.
   const statusKey = (name) => String(name ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-  const statusFeedLines = (project) => {
+  // Точное имя выигрывает всегда, а по началу имени отвечаем ТОЛЬКО когда такой
+  // сосед один (WF22): «VkusnoffKz» рядом с «VkusnoffKz-deploy» выбирался
+  // алфавитом, то есть случайно.
+  const statusFeedProject = (project) => {
     const key = statusKey(project);
-    if (!key) return [];
-    for (const [name, lines] of statusFeed.projects) {
+    if (!key) return null;
+    let near = null;
+    let count = 0;
+    for (const [name, item] of statusFeed.projects) {
       const other = statusKey(name);
       if (!other) continue;
-      if (other === key || other.startsWith(key) || key.startsWith(other)) return lines;
+      if (other === key) return item;
+      if (other.startsWith(key) || key.startsWith(other)) { near = item; count += 1; }
     }
-    return [];
+    return count === 1 ? near : null;
   };
-  // Номер воркфлоу, с которого начинается строка сводки: «3️⃣ …» → 3, «🔟 …» → 10.
-  // Разбираем по цифре, а не по готовому значку: в сводке встречается и запись
-  // без вариационного селектора («3⃣»), и та и другая — один и тот же номер.
-  const statusLineNumber = (line) => {
-    const head = String(line ?? "").match(STATUS_HEAD_RE);
-    if (!head) return null;
-    if (head[1] === "\u{1F51F}") return 10;
-    const digit = head[1].match(/\d/);
-    return digit ? Number(digit[0]) : null;
-  };
-  // Строки сводки ОДНОГО воркфлоу: подсказка теперь про тот сегмент, по которому
-  // кликнули, а не про весь марафон разом.
-  const statusFeedFor = (project, number) =>
-    statusFeedLines(project).filter(line => statusLineNumber(line) === number);
-  // Команда снаружи: разбираем сразу, а не при показе подсказки — разбор дешевле
+  const statusFeedLines = (project) => statusFeedProject(project)?.lines ?? [];
+  // Команда снаружи: разбираем сразу, а не при показе карточки — разбор дешевле
   // раза в минуту, чем на каждое движение мыши.
   const runStatusCommand = (detail) => {
     const list = Array.isArray(detail?.projects) ? detail.projects : null;
@@ -1954,33 +2023,40 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       const text = typeof item?.text === "string" ? item.text.slice(0, STATUS_MAX_TEXT) : "";
       if (!name || !text) continue;
       // Потолок выбран — остальные проекты отбрасываем целиком: половина сводки
-      // в подсказке хуже, чем её отсутствие.
+      // в карточке хуже, чем её отсутствие.
       budget -= name.length + text.length;
       if (budget < 0) break;
-      next.set(name, statusLines(text));
+      next.set(name, statusParse(text));
     }
     statusFeed.projects = next;
     statusFeed.at = Date.now();
-    progressState.tipText = "";
+    progressState.cardText = "";
+    // Со сводкой меняется и заливка идущего сегмента — она считается по этапам
+    // блока (WF22). Перерисовываем полосу сразу, а не ждём страховочного
+    // перечёта через десять секунд.
+    try { placeProgress(); } catch {}
     if (progressState.tipOpen) { try { progressTipShow(); } catch {} }
     return true;
   };
 
   const progressState = {
     info: null, reason: "полоса ещё не считалась", at: 0, runs: 0, timer: 0, pulse: 0,
-    // Найденная рамка поля, нарисованные доли сегментов, место линии на экране,
-    // наведение (только курсор) и последний текст подсказки.
-    frame: null, shell: null, segments: [], box: null, hovering: false, tipText: "", tipDark: null,
+    // Найденная рамка поля, нарисованные доли сегментов, место линии на экране
+    // и наведение (только курсор).
+    frame: null, shell: null, segments: [], box: null, hovering: false,
     // Подсказка: какой сегмент открыт кликом и открыта ли она вообще. Наведение
     // подсказку не показывает — только клик (план WF12, п. 3).
     tipSegment: null, tipOpen: false,
+    // Карточка сегмента (WF22): что на ней написано сейчас, дышит ли значок
+    // состояния и сама анимация значка.
+    cardText: "", cardPulse: false, anim: null,
     // На чём сейчас сидит линия: "рамка" или запасное "строка инструментов".
     anchor: null,
   };
 
-  // Полосу и подсказку сносим по id, как ручку и стили: упавшая на середине
-  // установка оставляет их в окне, а реестра отмены у них уже нет.
-  for (const id of [PROGRESS_ID, PROGRESS_TIP_ID]) {
+  // Полосу, подсказку и карточку сносим по id, как ручку и стили: упавшая на
+  // середине установка оставляет их в окне, а реестра отмены у них уже нет.
+  for (const id of [PROGRESS_ID, PROGRESS_TIP_ID, PROGRESS_CARD_ID]) {
     for (const orphan of document.querySelectorAll(`#${id}`)) orphan.remove();
   }
 
@@ -2004,17 +2080,75 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   (document.body ?? document.documentElement).appendChild(progressBar);
   track(() => progressBar.remove());
 
+  // Коробка карточки. Ширина — во всё окно минус поля, текст переносится:
+  // окна у Элвиса по 360 точек, и прежняя однострочная подсказка в них не
+  // влезала (#5566, #5434). Прокрутки нет намеренно — узел прозрачен для мыши,
+  // колесо до него не доходит; вместо неё потолок в 60 % высоты окна.
   const progressTip = document.createElement("div");
   progressTip.id = PROGRESS_TIP_ID;
   progressTip.setAttribute("aria-hidden", "true");
   for (const [name, value] of Object.entries({
-    position: "fixed", display: "none", left: "0px", top: "0px", "max-width": "560px",
-    padding: "8px 10px", "border-radius": "8px", "border-width": "1px", "border-style": "solid",
-    font: "12px/1.45 -apple-system, system-ui, sans-serif", "white-space": "pre",
-    overflow: "hidden", "pointer-events": "none", "z-index": "2147483646",
+    position: "fixed", display: "none", left: "0px", top: "0px",
+    // box-sizing своим объявлением: ширину карточке считаем от окна, и хозяйская
+    // раскладка страницы (content-box) вынесла бы её за край на поля и рамку.
+    "box-sizing": "border-box",
+    padding: "9px 11px 8px", "border-radius": "12px", "border-width": "1px", "border-style": "solid",
+    font: "13px/1.4 -apple-system, system-ui, sans-serif", "white-space": "normal",
+    "overflow-wrap": "anywhere", overflow: "hidden", "pointer-events": "none", "z-index": "2147483646",
   })) progressTip.style.setProperty(name, value);
   (document.body ?? document.documentElement).appendChild(progressTip);
   track(() => progressTip.remove());
+
+  // Карточка сегмента (WF22, вариант 3A макета): «Workflow N · состояние», о чём,
+  // время и шаги, четыре этапа со своим «кто», подвал со счётом проекта. Узлы
+  // строим один раз и потом только переписываем текст — карточка открывается по
+  // клику, и пересобирать её дерево на каждый показ незачем.
+  const progressCard = document.createElement("div");
+  progressCard.id = PROGRESS_CARD_ID;
+  // Свой aria-hidden и никаких role/data-state: и раздел 16 (Escape), и
+  // progressCovered ловят открытые накладки по role="dialog"/data-state="open" —
+  // назовись карточка так, она сама себя и накрыла бы.
+  progressCard.setAttribute("aria-hidden", "true");
+  const cardNode = (parent, styles) => {
+    const node = document.createElement("div");
+    for (const [name, value] of Object.entries(styles)) node.style.setProperty(name, value);
+    parent.appendChild(node);
+    return node;
+  };
+  const progressCardHead = cardNode(progressCard, {
+    display: "flex", "align-items": "center", "column-gap": "10px", "row-gap": "4px", "flex-wrap": "wrap",
+  });
+  const progressCardTitle = cardNode(progressCardHead, { "font-size": "15px", "font-weight": "700" });
+  const progressCardWhere = cardNode(progressCardHead, { "font-size": "12px" });
+  const progressCardPill = cardNode(progressCardHead, {
+    "border-radius": "999px", padding: "1px 10px", "font-size": "12px", "font-weight": "650",
+    "border-width": "1px", "border-style": "solid", "white-space": "nowrap",
+  });
+  // «О чём» — три строки с настоящим троеточием (line-clamp), а не обрезка по
+  // буквам: длинная строка в узком окне иначе съедает всю карточку.
+  const progressCardAbout = cardNode(progressCard, {
+    "margin-top": "5px", display: "-webkit-box", "-webkit-line-clamp": "3",
+    "-webkit-box-orient": "vertical", overflow: "hidden",
+  });
+  const progressCardMeta = cardNode(progressCard, { "margin-top": "4px", "font-size": "12px" });
+  const progressCardStages = cardNode(progressCard, { "margin-top": "7px" });
+  const progressCardRows = STATUS_STAGES.map(() => {
+    const row = cardNode(progressCardStages, {
+      display: "grid", "grid-template-columns": "20px 74px minmax(0, 1fr)", "column-gap": "4px",
+      "align-items": "baseline", padding: "2px 6px", margin: "0 -6px", "border-radius": "6px",
+    });
+    return {
+      row,
+      icon: cardNode(row, { "font-size": "12px" }),
+      label: cardNode(row, { "font-weight": "600" }),
+      who: cardNode(row, { "font-size": "12px", "min-width": "0" }),
+    };
+  });
+  const progressCardFoot = cardNode(progressCard, {
+    "margin-top": "7px", "padding-top": "5px", "border-top-width": "1px", "border-top-style": "solid",
+    "font-size": "12px", "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis",
+  });
+  progressTip.appendChild(progressCard);
 
   // Цвет полосы — тот же акцент окна, что у неоновой рамки, и функция на двоих
   // одна (accentColor, раздел 2а). Раньше она жила здесь, но рамка красится ещё
@@ -2097,17 +2231,81 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     return false;
   };
 
-  // Сегменты марафона: готовые полные, текущий на свои проценты, будущие пустые.
-  // ✅ закрашивает все — «готово» сильнее любых процентов рядом.
+  // ---- сегмент ↔ блок сводки (WF22) ----------------------------------------
+  // Соединяем по ЗНАЧКУ, а не по номеру: «WF N из M» считает воркфлоу ЭТОГО
+  // чата, а status.md нумерует их по проекту (решение Элвиса 05.09,
+  // docs/PROGRESS.md) — совпадение номеров было бы случайностью, и клик по
+  // седьмому сегменту показывал чужой воркфлоу.
+  const progressBlockAt = (info, number) => {
+    if (!info) return null;
+    const blocks = statusFeedProject(info.project)?.blocks ?? [];
+    if (blocks.length === 0) return null;
+    // Идущий блок — ПОСЛЕДНИЙ с 💭 в заголовке: в сводке рядом легко висит
+    // недописанный старый.
+    let runAt = -1;
+    for (let index = 0; index < blocks.length; index += 1) if (blocks[index].state === "run") runAt = index;
+    // Идущий сегмент — он же. ✋ и 🛑 в сводке значков не имеют: чат ждёт Элвиса
+    // или упал на том же самом блоке, который в сводке помечен 💭.
+    if (info.state !== "done" && number === info.wf) return runAt >= 0 ? blocks[runAt] : null;
+    // Готовый сегмент k из D — k-й с ХВОСТА среди ✅: последние готовые блоки
+    // проекта и есть воркфлоу этого чата. Свой номер карточка называет честно.
+    const doneCount = info.state === "done" ? info.of : info.wf - 1;
+    if (number <= doneCount) {
+      const done = blocks.filter(block => block.state === "done");
+      return done[done.length - 1 - (doneCount - number)] ?? null;
+    }
+    // Будущий — ⬜ с головы, но только те, что стоят ПОСЛЕ идущего.
+    const todo = blocks.filter((block, index) => block.state === "todo" && index > runAt);
+    return todo[number - info.wf - 1] ?? null;
+  };
+  // Четыре этапа блока и который из них идёт. Явная пометка 💭 в строке роли
+  // сильнее порядка записи; её нет — идущим считаем ПОСЛЕДНИЙ записанный этап
+  // (по шаблону AGENTS.md роли дописывают по мере прохождения).
+  const progressStages = (block) => {
+    const rows = STATUS_STAGES.map(stage => ({
+      key: stage.key, label: stage.label,
+      role: block?.roles.find(role => stage.re.test(role.role)) ?? null,
+    }));
+    let now = rows.findIndex(row => row.role?.running);
+    if (now < 0) for (let index = 0; index < rows.length; index += 1) if (rows[index].role) now = index;
+    return { rows, now };
+  };
+  // Заливка идущего сегмента (буква 1A): не проценты — их в строке состояния
+  // больше нет (AGENTS.md 07.09), — а ПРОЙДЕННЫЕ ЭТАПЫ из четырёх. Каждый этап
+  // четверть, идущий даёт половину своей четверти. Ролей в блоке нет — считаем
+  // по «шаги N из M»; нет и их — минимум, чтобы сегмент вообще был виден (#5543).
+  const PROGRESS_MIN_FILL = 8;
+  const progressBlockFill = (block) => {
+    if (!block) return null;
+    if (block.state === "done") return 100;
+    const { rows, now } = progressStages(block);
+    if (now >= 0) return (now + 0.5) * (100 / rows.length);
+    if (block.steps && block.steps.total > 0) return block.steps.done / block.steps.total * 100;
+    return null;
+  };
+  const progressFill = (info) => {
+    if (!info) return 0;
+    if (info.state === "done") return 100;
+    // Процент из строки состояния сильнее сводки: его пишут чаты, которые ещё не
+    // перечитали правила, и врать про них незачем.
+    const share = info.pct != null ? info.pct : progressBlockFill(progressBlockAt(info, info.wf));
+    return Math.max(PROGRESS_MIN_FILL, Math.min(100, share ?? 0));
+  };
+
+  // Сегменты марафона: готовые полные, текущий на свою заливку, будущие пустые.
+  // ✅ закрашивает все — «готово» сильнее всего, что написано рядом.
   const progressShares = (info, width) => {
     const count = Math.max(1, Math.min(PROGRESS_SEG_MAX, Math.round(info.of) || 1));
     // Совсем узкая полоса: сегменты по паре точек с зазором в три уже не
     // читаются — тогда честнее одна сплошная доля всего марафона.
-    if (count > 1 && (width - (count - 1) * PROGRESS_SEG_GAP) / count < PROGRESS_SEG_MIN) return [info.total];
+    if (count > 1 && (width - (count - 1) * PROGRESS_SEG_GAP) / count < PROGRESS_SEG_MIN) {
+      return [Math.max(PROGRESS_MIN_FILL, info.total)];
+    }
+    const fill = progressFill(info);
     const shares = [];
     for (let number = 1; number <= count; number += 1) {
       if (info.state === "done" || number < info.wf) shares.push(100);
-      else if (number === info.wf) shares.push(info.pct ?? 0);
+      else if (number === info.wf) shares.push(fill);
       else shares.push(0);
     }
     return shares;
@@ -2128,12 +2326,57 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const PROGRESS_FILL_TRANS =
     `width ${PROGRESS_MOVE_MS}ms linear, background ${PROGRESS_MOVE_MS}ms ease, box-shadow ${PROGRESS_MOVE_MS}ms ease`;
   const PROGRESS_TRACK_TRANS = `box-shadow ${PROGRESS_MOVE_MS}ms ease`;
+
+  // ---- пульс идущего этапа (WF22, буква 1A) --------------------------------
+  // Дышит ОТДЕЛЬНЫЙ слой свечения, а не тень заливки: анимировать box-shadow
+  // значит перерисовывать тень каждый кадр, а прозрачность composited-слоя
+  // ничего не стоит. Ключевые кадры — Web Animations (element.animate): своей
+  // таблицы стилей у полосы нет и заводить её нельзя (CSP страницы, раздел 4),
+  // а @keyframes без таблицы не бывает.
+  const PROGRESS_PULSE_MS = 2400;
+  const PROGRESS_GLOW_FRAMES = [{ opacity: "0.35" }, { opacity: "0.8" }, { opacity: "0.35" }];
+  const PROGRESS_PILL_FRAMES = [{ opacity: "0.6" }, { opacity: "1" }, { opacity: "0.6" }];
+  // Скрытое окно и «поменьше движения» в системе гасят пульс: Electron всё равно
+  // придушит таймеры перекрытого окна, а анимация останется висеть.
+  const progressMotionOk = () => {
+    if (document.hidden) return false;
+    try { return !matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return true; }
+  };
+  // slot — любой объект с полем anim (сегмент или карточка): вторую анимацию на
+  // тот же узел не заводим, а снимаем ровно свою.
+  const progressPulse = (slot, node, on, frames, rest) => {
+    if (!node) return;
+    if (!on || !progressMotionOk()) {
+      if (slot.anim) { try { slot.anim.cancel(); } catch {} slot.anim = null; }
+      node.style.setProperty("opacity", rest);
+      return;
+    }
+    if (slot.anim) return;
+    try { slot.anim = node.animate(frames, { duration: PROGRESS_PULSE_MS, iterations: Infinity }); }
+    catch { slot.anim = null; node.style.setProperty("opacity", rest); }
+  };
   // Живые сегменты слева направо и те, что сейчас гаснут (они ещё в разметке).
   const progressCells = [];
   const progressLeaving = [];
+  // Пересобрать пульсы по тому, что уже решил последний проход: зовётся на
+  // visibilitychange, где меняется не полоса, а только право двигаться.
+  const progressPulseSync = () => {
+    for (const item of progressCells) progressPulse(item, item.glow, item.pulse, PROGRESS_GLOW_FRAMES, "0");
+    for (const item of progressLeaving) progressPulse(item, item.glow, false, PROGRESS_GLOW_FRAMES, "0");
+    progressPulse(progressState, progressCardPill, progressState.cardPulse, PROGRESS_PILL_FRAMES, "1");
+  };
+  on(document, "visibilitychange", () => { try { progressPulseSync(); } catch {} });
+  // Снятие: анимация переживает и удаление узла из разметки, и dispose().
+  track(() => {
+    for (const item of [...progressCells, ...progressLeaving]) {
+      if (item.anim) { try { item.anim.cancel(); } catch {} item.anim = null; }
+    }
+    if (progressState.anim) { try { progressState.anim.cancel(); } catch {} progressState.anim = null; }
+  });
 
   const progressDrop = (item) => {
     if (item.timer) { clearTimeout(item.timer); item.timer = 0; }
+    if (item.anim) { try { item.anim.cancel(); } catch {} item.anim = null; }
     const index = progressLeaving.indexOf(item);
     if (index >= 0) progressLeaving.splice(index, 1);
     item.cell.remove();
@@ -2148,6 +2391,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // прыгнули бы вширь в тот миг, когда узел исчез из разметки.
   const progressLeave = (item, instant) => {
     if (instant) { progressDrop(item); return; }
+    // Гаснущий сегмент больше не идущий этап — пульс снимаем сразу, не дожидаясь
+    // конца затухания.
+    progressPulse(item, item.glow, false, PROGRESS_GLOW_FRAMES, "0");
+    item.pulse = false;
     progressLeaving.push(item);
     for (const [name, value] of Object.entries({
       opacity: "0", "flex-basis": "0%", "margin-left": `-${PROGRESS_SEG_GAP}px`,
@@ -2176,9 +2423,18 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       position: "absolute", left: "0", top: "0", bottom: "0", width: "0%",
       "border-radius": "999px", transition: "none",
     })) fill.style.setProperty(name, value);
+    // Слой свечения поверх заливки: он и дышит (WF22). Отдельным узлом, потому
+    // что заливке нельзя менять прозрачность — вместе с ней выцвел бы и цвет
+    // сегмента, а тень у неё своя, постоянная.
+    const glow = document.createElement("div");
+    for (const [name, value] of Object.entries({
+      position: "absolute", left: "0", top: "0", bottom: "0", width: "0%",
+      "border-radius": "999px", opacity: "0", "pointer-events": "none", transition: "none",
+    })) glow.style.setProperty(name, value);
     cell.appendChild(track);
     cell.appendChild(fill);
-    return { cell, track, fill, timer: 0, born: true };
+    cell.appendChild(glow);
+    return { cell, track, fill, glow, anim: null, pulse: false, timer: 0, born: true };
   };
 
   // Пул: число сегментов гуляет при каждой прокрутке ленты, и пересоздавать их
@@ -2209,6 +2465,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   };
 
   const progressTipHide = () => {
+    if (progressState.cardPulse) {
+      progressState.cardPulse = false;
+      progressPulse(progressState, progressCardPill, false, PROGRESS_PILL_FRAMES, "1");
+    }
     if (progressTip.style.display !== "none") progressTip.style.setProperty("display", "none");
   };
   // Сегмент под точкой x. Считаем арифметикой по коробке полосы, а не по
@@ -2241,6 +2501,36 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (count === 1 && info.of > 1) return info.wf;
     return Math.min(count, Math.max(1, index + 1));
   };
+  // Значок состояния воркфлоу и цвет карточки под него. Цвета взяты из макета
+  // (docs/mockup-wf22-cards.html): тройками, потому что кромка, плашка и заливка
+  // строки берут один и тот же тон с разной прозрачностью.
+  const PROGRESS_CARD_ICONS = {
+    "готов": "✅", "идёт": "💭", "ждёт": "✋", "упал": "🛑", "запланирован": "⬜",
+  };
+  const PROGRESS_CARD_TONES = {
+    "готов": "ok", "идёт": "run", "ждёт": "wait", "упал": "fail", "запланирован": "todo",
+  };
+  const PROGRESS_CARD_SKIN = {
+    dark: {
+      back: "#33373f", line: "rgba(255,255,255,.16)", text: "#eef0f4", dim: "#aab0bc",
+      shadow: "0 18px 44px rgba(0,0,0,.62),0 2px 6px rgba(0,0,0,.45)",
+      run: "126,160,255", ok: "77,187,125", wait: "245,197,66", fail: "238,106,95", todo: "150,155,165",
+    },
+    light: {
+      back: "#ffffff", line: "rgba(20,24,32,.16)", text: "#171a20", dim: "#666c7a",
+      shadow: "0 18px 44px rgba(20,24,32,.24),0 2px 6px rgba(20,24,32,.12)",
+      run: "47,98,216", ok: "31,154,90", wait: "196,138,0", fail: "204,58,48", todo: "130,136,150",
+    },
+  };
+  // Кто делал этап: «2 агента · Opus max». Fable max — красный кружок и жирным
+  // (слово Элвиса 04.09 21:10): по нему видно, где потрачена дорогая модель.
+  const progressWho = (role) => {
+    if (!role) return { text: "—", fable: false };
+    const model = [role.model, role.effort].filter(Boolean).join(" ");
+    const fable = /fable/i.test(role.model) && role.effort.toLowerCase() === "max";
+    const text = [role.agents, fable ? `🔴 ${model}` : model].filter(Boolean).join(" · ");
+    return { text: text || "—", fable };
+  };
   const progressTipShow = () => {
     const info = progressState.info;
     const segment = progressState.tipSegment;
@@ -2250,39 +2540,93 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const index = Math.min(count - 1, Math.max(0, segment));
     const number = progressNumberAt(index);
     const word = progressWord(info, number);
-    // Сводки по этому воркфлоу нет — подсказка вся и есть одна строка «Воркфлоу N
-    // · состояние» (план WF12, п. 3: «для сегментов без сводки»). Есть — сверху
-    // заголовок со счётом марафона, под ним строки ТОЛЬКО этого номера.
-    const lines = statusFeedFor(info.project, number);
-    const text = lines.length
-      ? [`Воркфлоу ${number} из ${info.of} · ${word}`, ...lines].join("\n")
-      : `Воркфлоу ${number} · ${word}`;
-    if (progressState.tipText !== text) {
-      progressState.tipText = text;
+    // Блок сводки ищем по значку, а не по номеру (progressBlockAt): номера
+    // марафона и проекта — разные счёты. Нашёлся — карточка называет СВОЙ номер
+    // из сводки, и подмена не врёт.
+    const feed = statusFeedProject(info.project);
+    const block = progressBlockAt(info, number);
+    const stages = progressStages(block);
+    const skin = PROGRESS_CARD_SKIN[progressDark() ? "dark" : "light"];
+    const tone = skin[PROGRESS_CARD_TONES[word] ?? "run"];
+    const title = block ? `Workflow ${block.number ?? number}` : `Воркфлоу ${number}`;
+    const where = block ? "в проекте" : `из ${info.of} · этот чат`;
+    const about = block ? (block.about || "—") : "сводки нет";
+    const meta = block
+      ? [block.time, block.steps ? `шаги ${block.steps.done} из ${block.steps.total}` : ""].filter(Boolean).join(" · ")
+      : "";
+    const foot = [info.project, ...(feed?.head ?? [])].filter(Boolean).join(" · ");
+    const rows = stages.rows.map((row, order) => {
+      const state = block?.state === "done"
+        ? (row.role ? "done" : "todo")
+        : (block?.state === "run" && stages.now >= 0
+          ? (order < stages.now ? "done" : (order === stages.now ? "now" : "todo"))
+          : "todo");
+      return { ...row, state, who: progressWho(row.role) };
+    });
+    // Пишем только когда содержимое поменялось: карточка живёт открытой, а
+    // команда status приходит раз в две секунды.
+    // Ключ смены — он же читаемый слепок карточки для гейта (status().progress.tip.card).
+    const key = [title, where, word, about, meta,
+      ...rows.map(row => `${row.label} ${row.state} ${row.who.text}`), foot].filter(Boolean).join(" · ");
+    if (progressState.cardText !== key) {
+      progressState.cardText = key;
       // Только textContent: сводка приходит снаружи, и разметки в ней быть не должно.
-      progressTip.textContent = text;
-    }
-    const dark = progressDark();
-    if (progressState.tipDark !== dark) {
-      progressState.tipDark = dark;
-      for (const [name, value] of Object.entries(dark
-        ? { background: "#12151c", color: "#e7e9f0", "border-color": "#2a2f3a", "box-shadow": "0 8px 24px rgba(0,0,0,.45)" }
-        : { background: "#ffffff", color: "#14181f", "border-color": "#d7dbe3", "box-shadow": "0 8px 24px rgba(15,20,30,.18)" })) {
-        progressTip.style.setProperty(name, value);
+      progressCardTitle.textContent = title;
+      progressCardWhere.textContent = where;
+      progressCardPill.textContent = `${PROGRESS_CARD_ICONS[word] ?? "💭"} ${word}`;
+      progressCardAbout.textContent = about;
+      progressCardMeta.textContent = meta;
+      progressCardMeta.hidden = meta === "";
+      progressCardFoot.textContent = foot;
+      progressCardFoot.hidden = foot === "";
+      progressCardStages.hidden = !block;
+      for (let order = 0; order < progressCardRows.length; order += 1) {
+        const node = progressCardRows[order];
+        const row = rows[order];
+        node.icon.textContent = row.state === "done" ? "✅" : (row.state === "now" ? "💭" : "⬜");
+        node.label.textContent = row.label;
+        node.who.textContent = row.who.text;
+        node.who.style.setProperty("font-weight", row.who.fable ? "700" : "400");
       }
     }
+    // Цвета переписываем каждый показ: тон зависит от состояния сегмента, а тема
+    // окна меняется командой в любой момент.
+    for (const [name, value] of Object.entries({
+      background: skin.back, color: skin.text, "border-color": skin.line, "box-shadow": skin.shadow,
+      // Ширина — всё окно минус поля; потолок высоты 60 % окна, лишнее уходит
+      // под обрез: прокрутки у прозрачного для мыши узла всё равно нет.
+      width: `${Math.max(120, innerWidth - 12)}px`, "max-height": `${Math.round(innerHeight * 0.6)}px`,
+    })) progressTip.style.setProperty(name, value);
+    for (const [name, value] of Object.entries(PROGRESS_CARD_VARIANT === "3A"
+      // 3A — «таблица с цветной кромкой»: состояние читается кромкой слева.
+      ? { "border-left": `4px solid rgb(${tone})`, "padding-left": "12px" }
+      : { "border-left": "0", "padding-left": "0" })) progressCard.style.setProperty(name, value);
+    progressCardWhere.style.setProperty("color", skin.dim);
+    progressCardMeta.style.setProperty("color", skin.dim);
+    progressCardFoot.style.setProperty("color", skin.dim);
+    progressCardFoot.style.setProperty("border-top-color", skin.line);
+    for (const [name, value] of Object.entries({
+      color: `rgb(${tone})`, background: `rgba(${tone},.14)`, "border-color": `rgba(${tone},.4)`,
+    })) progressCardPill.style.setProperty(name, value);
+    for (let order = 0; order < progressCardRows.length; order += 1) {
+      const node = progressCardRows[order];
+      const row = rows[order];
+      node.row.style.setProperty("background", row.state === "now" ? `rgba(${tone},.14)` : "transparent");
+      node.row.style.setProperty("opacity", row.state === "todo" ? "0.55" : "1");
+      node.label.style.setProperty("color", row.state === "now" ? `rgb(${tone})` : skin.text);
+      node.who.style.setProperty("color", row.state === "now" || row.who.fable ? skin.text : skin.dim);
+    }
     progressTip.style.setProperty("display", "block");
-    // Место считаем уже по показанной подсказке: до показа высоты у неё нет.
-    // Стоит она над своим сегментом, а не над левым краем полосы: подсказка
-    // теперь про один воркфлоу, и глазу видно, про какой именно.
+    // Идёт и готово — дышат, как сегмент полосы (буква 1A). Ждёт и упал стоят.
+    progressState.cardPulse = word === "идёт" || word === "готов";
+    progressPulse(progressState, progressCardPill, progressState.cardPulse, PROGRESS_PILL_FRAMES, "1");
+    // Место считаем уже по показанной карточке: до показа высоты у неё нет.
+    // Карточка шире сегмента, поэтому стоит она у левого края окна, а не над
+    // своим сегментом — иначе в узком окне её всё равно прижимало бы к краю.
     const rect = progressTip.getBoundingClientRect();
-    const width = rect.width || 0;
     const height = rect.height || 0;
-    const step = (progressState.box.right - progressState.box.left + PROGRESS_SEG_GAP) / count;
-    const anchor = progressState.box.left + step * index;
-    const left = Math.max(6, Math.min(innerWidth - width - 6, anchor));
     const top = Math.max(6, progressState.box.top - height - 8);
-    progressTip.style.setProperty("left", `${Math.round(left)}px`);
+    progressTip.style.setProperty("left", "6px");
     progressTip.style.setProperty("top", `${Math.round(top)}px`);
   };
   const progressTipClose = () => {
@@ -2291,17 +2635,34 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     progressTipHide();
   };
   // Клик по полосе: по тому же сегменту — закрыть, по другому — переключить.
+  // Пустой контур (строки состояния нет) карточке рассказать нечего.
   const progressTipToggle = (segment) => {
-    if (segment == null) { progressTipClose(); return; }
+    if (segment == null || !progressState.info) { progressTipClose(); return; }
     if (progressState.tipOpen && progressState.tipSegment === segment) { progressTipClose(); return; }
     progressState.tipSegment = segment;
     progressState.tipOpen = true;
     progressTipShow();
   };
+  // Попадание в открытую карточку. Своя проверка нужна потому, что узел
+  // прозрачен для мыши (pointer-events:none, чтобы не съедать клики по полю
+  // ввода под ним): без неё клик по самой карточке гасил бы её же.
+  const progressCardHit = (x, y) => {
+    if (!progressState.tipOpen || progressTip.style.display === "none") return false;
+    try {
+      const rect = progressTip.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    } catch { return false; }
+  };
 
   const progressHide = () => {
     progressState.box = null;
     progressState.anchor = null;
+    // Полоса ушла с экрана (меню накрыло линию, окно уехало) — дышать нечему.
+    for (const item of progressCells) {
+      item.pulse = false;
+      progressPulse(item, item.glow, false, PROGRESS_GLOW_FRAMES, "0");
+    }
     // Полосы нет — не о чем и подсказке: держать её открытой над пустым местом
     // (меню накрыло линию, окно уехало) не за что.
     progressTipClose();
@@ -2326,7 +2687,6 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const rect = onFrame ? frameRect : rowRect;
     if (!rect) { progressState.reason = "нет рамки поля"; progressHide(); return; }
     const info = progressState.info;
-    if (!info) { progressState.reason = "нет строки состояния"; progressHide(); return; }
     if (rect.width < PROGRESS_MIN_WIDTH || rect.bottom <= 0 || rect.top >= innerHeight) {
       progressState.reason = "рамка поля вне окна";
       progressHide();
@@ -2345,9 +2705,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       progressHide();
       return;
     }
-    progressState.reason = null;
+    // Строки состояния нет — рисуем ОДИН пустой контур, а не прячем полосу
+    // (PROGRESS.md, п. 1): в новом чате должно быть видно, что полоса на месте и
+    // ждёт первого ответа, а не «сломалась». Причину при этом называем честно —
+    // её читает гейт через probe.
+    progressState.reason = info ? null : "нет строки состояния — пустой контур";
     progressState.anchor = onFrame ? "рамка" : "строка инструментов";
-    const shares = progressShares(info, width);
+    const shares = info ? progressShares(info, width) : [0];
     progressState.segments = shares;
     // Полоса сейчас спрятана — значит это её появление: ни первый показ при
     // открытии окна, ни возврат из-под закрывшегося меню анимировать нечего,
@@ -2355,10 +2719,14 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const instant = progressBar.style.display !== "flex";
     progressBuild(shares.length, instant);
     const accent = progressAccent();
-    const hot = PROGRESS_PAINT[info.state] ?? accent;
+    // Вся полоса «готово» — зелёная (буква Элвиса 1A: готово это сигнал
+    // продолжать, а не «всё, конец»). У идущего марафона зелени нет: цвет по
+    // состоянию берёт только текущий сегмент.
+    const base = info?.state === "done" ? PROGRESS_PAINT.done : accent;
+    const hot = (info && PROGRESS_PAINT[info.state]) ?? accent;
     // Слитая в одну полоса — это и есть текущий воркфлоу целиком.
-    const merged = shares.length === 1 && info.of > 1;
-    const current = merged ? 0 : Math.min(shares.length - 1, Math.max(0, info.wf - 1));
+    const merged = shares.length === 1 && (info?.of ?? 1) > 1;
+    const current = info ? (merged ? 0 : Math.min(shares.length - 1, Math.max(0, info.wf - 1))) : -1;
     // Доли считаем от сотни: сумма ровно 100 %, зазоры съедает flex-shrink.
     const basis = `${Math.round(10000 / shares.length) / 100}%`;
     // Узлы, которым этот проход пишется без переходов: свежерождённые и все
@@ -2372,7 +2740,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         quiet.push(item);
       }
       const share = shares[index];
-      const paint = index === current ? hot : accent;
+      const paint = index === current ? hot : base;
       item.cell.style.setProperty("flex-basis", basis);
       if (instant) item.cell.style.setProperty("opacity", "1");
       item.fill.style.setProperty("width", `${share}%`);
@@ -2381,6 +2749,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       // проход по той же тени, отчего свет плотнее у самой линии. Пустому
       // сегменту светиться нечем.
       item.fill.style.setProperty("box-shadow", share > 0 ? `0 0 18px ${paint},0 0 6px ${paint}` : "none");
+      // Дышит только идущий этап и вся зелёная полоса «готово»: ждёт (жёлтый) и
+      // упал (красный) стоят на месте — движение там значило бы «работа идёт».
+      item.glow.style.setProperty("width", `${share}%`);
+      item.glow.style.setProperty("box-shadow", share > 0 ? `0 0 18px ${paint},0 0 10px ${paint}` : "none");
+      item.pulse = share > 0 && Boolean(info) &&
+        (info.state === "done" || (index === current && info.state === "run"));
+      progressPulse(item, item.glow, item.pulse, PROGRESS_GLOW_FRAMES, "0");
       // Контур в одну точку — «сюда марафон ещё не дошёл».
       item.track.style.setProperty("box-shadow", `inset 0 0 0 1px ${accent}`);
     }
@@ -2402,7 +2777,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     progressBar.style.setProperty("left", `${left}px`);
     progressBar.style.setProperty("top", `${top}px`);
     progressBar.style.setProperty("width", `${width}px`);
-    const title = `Воркфлоу ${info.wf} из ${info.of}` + (info.pct == null ? "" : ` · ${info.pct} %`);
+    const title = info
+      ? `Воркфлоу ${info.wf} из ${info.of}` + (info.pct == null ? "" : ` · ${info.pct} %`)
+      : "Воркфлоу ещё не начаты";
     // Указателя полоса не ловит, и родной title на ней не покажется — он остаётся
     // для разбора окна (probe на гейте). Человеку показывается свой div выше.
     if (progressBar.title !== title) progressBar.title = title;
@@ -2444,7 +2821,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   };
   track(() => progressCursor(false));
   const onProgressMove = (event) => {
-    const inside = !state.dragging && progressHit(event.clientX, event.clientY);
+    // Над карточкой «руку» не ставим: кликать по ней нечего, а линия под ней
+    // может оказаться на том же месте у самого края окна.
+    const inside = !state.dragging && !progressCardHit(event.clientX, event.clientY) &&
+      progressHit(event.clientX, event.clientY);
     if (inside === progressState.hovering) return;
     progressState.hovering = inside;
     progressCursor(inside);
@@ -2454,6 +2834,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // целиком (preventDefault + stopPropagation), и полю ввода под ней оно не
   // достаётся. Мимо линии — не трогаем событие вовсе, только закрываем подсказку.
   const onProgressDown = (event) => {
+    // Попадание в карточку проверяем ДО закрытия: она прозрачна для мыши, и без
+    // этой проверки любой клик по ней самой её же и гасил бы. Событие при этом
+    // не трогаем — под карточкой живёт лента, и выделять в ней текст Элвису
+    // никто не мешает.
+    if (progressCardHit(event.clientX, event.clientY)) return;
     if (!progressHit(event.clientX, event.clientY)) { progressTipClose(); return; }
     event.preventDefault();
     event.stopPropagation();
@@ -5459,7 +5844,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       // «ждёт адресата»), под каким заголовком её ждут и когда штамповали (WF37).
       cashout: cashoutState(),
       // Полоса прогресса воркфлоу (раздел 2б): что вычитано из строки состояния
-      // последнего ответа и почему полосы нет, если её нет. total — доля всего
+      // последнего ответа и почему полосы нет (или почему она пустым контуром). total — доля всего
       // марафона в процентах, pct — процент текущего воркфлоу, segments — доли
       // нарисованных сегментов слева направо (в узком окне их сливают в один).
       progress: {
@@ -5472,8 +5857,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         // На чём сидит линия: "рамка" или запасное "строка инструментов".
         anchor: progressState.anchor,
         reason: progressState.reason,
-        // Подсказка: какой сегмент открыт кликом (с нуля) и открыта ли она.
-        tip: { segment: progressState.tipSegment, open: progressState.tipOpen },
+        // Карточка сегмента: какой сегмент открыт кликом (с нуля), открыта ли
+        // она, каким вариантом макета нарисована и дышит ли значок состояния.
+        tip: {
+          segment: progressState.tipSegment, open: progressState.tipOpen,
+          variant: PROGRESS_CARD_VARIANT, pulse: progressState.cardPulse,
+          card: progressState.tipOpen ? (progressState.cardText || null) : null,
+        },
       },
       // Сводка проектов из команды status: имя проекта, взятое из строки
       // состояния этого чата, и строки воркфлоу, которые уйдут в подсказку.
@@ -5583,7 +5973,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     codeCss, codePalette, contrastRatio, readableOn,
     chatKey, chatIdKey, chatTitleKey, chatEntry, migrateChatKey, sameSessionKey, restoreKeyOk, chatsThemes,
     sessionKey, themeKey, legacyKey, mapEntry, entryLayer, readThemeMap, writeThemeMap, liveRing, livePalette,
-    parseProgressText, progressShares, statusLines, statusFeedLines, statusKey, runWorkflowCommand, newWindowSegment,
+    parseProgressText, progressShares, progressFill, progressBlockAt, progressStages,
+    statusLines, statusBlocks, statusLineNumber, statusFeedLines, statusKey, runWorkflowCommand, newWindowSegment,
     newWindowSessionId, newWindowAtHome, newWindowStoreOk, setModuleImporter, newWindowScanStores,
     readCashout, runCashout, tryPasteCashout, cashoutStamp, cashoutMine,
     chatKind, chatPath, chatRowId, myChatId, readChatId, writeChatId, chatsMap, chatsScan, chatsFolder,
