@@ -1,0 +1,47 @@
+{
+ "project": "⚪PimpMyClaude",
+ "workflow": "WF37 «Ремонт Пимпа»",
+ "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf37-2026-09-07.md",
+ "fixtures": "/Users/elvis/_ElvisProjects/PimpMyClaude/tests/fixtures/cashout/",
+ "branch": "wf37",
+ "tag": "wf37-start",
+ "status": "идёт",
+ "started": "2026-09-07T18:09:00+05:00",
+ "watchdog": "watchdog-pimpmyclaude-wf37",
+ "orchestrator": "Fable 5.1 xhigh (чат «PimpMyClaude баги и улучшения», local_facfb20c)",
+ "models": "критик Opus max (сделано), кодинг Opus max ×2, проверка Opus max ×1; цифр баланса нет → клетки Fable на Opus max",
+ "script_path": null,
+ "run_id": null,
+ "resumes": 0,
+ "reconnaissance": "часть A (новое окно без хода модели) НЕ разведана — ждёт слова Элвиса «сейчас»; волна 1 идёт без части A (B + C)",
+ "batches": {
+  "P": {
+   "what": "страница: B2 Обкэшить по transfer/to/title, C1 folder в chats() на домашнем экране; тесты cashout/new-window/chat-id; README",
+   "model": "Opus 5 max",
+   "status": "идёт"
+  },
+  "S": {
+   "what": "Swift: B1 cashoutRoute + сиденья + transfer у new-window, C2 ChatPage.path/folder + targets на домашнем экране, C3 homeInterval; тесты; CHECKLIST",
+   "model": "Opus 5 max",
+   "status": "идёт"
+  },
+  "V": {
+   "what": "проверка по диффу wf37-start..HEAD → docs/verify-wf37-2026-09-07.md",
+   "model": "Opus 5 max",
+   "status": "ждёт P и S"
+  },
+  "A": {
+   "what": "часть A после разведки (мини-волна P2+S2)",
+   "model": "Opus 5 max",
+   "status": "ждёт разведки"
+  }
+ },
+ "next_steps": [
+  "гейт: tools/test.sh, bundle, подмена приложения, живые шаги (а)–(е) плана",
+  "CLAUDE.md контракты, коммиты на батч, слияние --no-ff, push",
+  "разведка части A при Элвисе → мини-волна"
+ ],
+ "journal": [
+  "18:09 · старт: ветка wf37, тег wf37-start, эталоны tests/fixtures/cashout, сторож, волна 1 (P ∥ S)"
+ ]
+}
