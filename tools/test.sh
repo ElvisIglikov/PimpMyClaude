@@ -3,7 +3,7 @@
 # Решение 5 плана WF24. Зовётся руками, строкой из docs/CHECKLIST.md; git-хука нет намеренно.
 # Использование: tools/test.sh [--js|--swift|--help]
 #   без ключа  — всё: сперва JS, потом Swift;
-#   --js       — node --check inject.js, сторожевые проверки, node --test по файлам tests/*.test.mjs;
+#   --js       — node --check inject.js, сторожевые проверки, node --test по файлам tests/*.test.mjs, тесты CLI «Пимп»;
 #   --swift    — cd app && swift build && swift test.
 # Любая красная проверка — ненулевой код возврата и стоп: не починил — не коммитим (слово Элвиса 05.09).
 set -euo pipefail
@@ -121,6 +121,9 @@ run_js() {
   JS_FILES="${#files[@]}"
   JS_CHECKS="$(awk '/^# pass [0-9]+$/ { n = $3 } END { print n + 0 }' "$out")"
   rm -f "$out"
+
+  # 8. CLI «Пимп» (WF36): те же фикстуры канала, что читает Swift-половина.
+  ( cd "$ROOT" && python3 -B -m unittest tests/pimp_cli_test.py ) || fail "python3 -m unittest tests/pimp_cli_test.py: красное (см. вывод выше)"  # -B: без __pycache__ в репозитории
 }
 
 run_swift() {

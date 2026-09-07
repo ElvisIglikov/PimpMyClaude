@@ -44,7 +44,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf35-a-1";
+  const VERSION = "wf36-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -4157,9 +4157,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   };
   // Шаг «папка»: поставить папку проекта и СВЕРИТЬ обратно. Отдаёт "ok",
   // "no-folder-ui" (нечем выбирать — стора нет) или "folder-missing" (выбор не
-  // встал). Проверок две: значение в сторе и чип на экране — но чип спрашиваем
-  // только там, где он вообще нашёлся до переключения (с прежней папкой): иначе
-  // «чипа не видно» значило бы отказ на ровном месте.
+  // встал). Правда одна — значение в сторе: он и есть то, с чем Claude заведёт
+  // сессию. Чип на экране — только пометка (WF36, #5544): его текст рисуется
+  // своим тактом и на глазах Элвиса отставал, а шаг из-за этого откатывался
+  // целиком. Чип спрашиваем там, где он нашёлся до переключения (с прежней
+  // папкой), и кладём в state.newWindow.chip: "ok" (сменился), "stale" (стор
+  // принял, а чип не догнал), "none" (чипа не видно вовсе). Сравнение остаётся
+  // ТОЧНЫМ: по префиксу «Dictator» совпал бы с «Dictatorik» — ложное ok.
   const newWindowPickFolder = async (folder, token) => {
     const store = await newWindowFindFolderStore(token);
     if (!newWindowLive(token) || !store) return "no-folder-ui";
@@ -4179,7 +4183,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       () => (newWindowChipShows(newWindowFolderName(want)) ? true : null), NEW_WINDOW_FOLDER_MS, token);
     if (!newWindowLive(token)) return "folder-missing";
     newWindowMark({ chip: chip ? "ok" : "stale" });
-    return chip ? "ok" : "folder-missing";
+    return "ok";
   };
 
   // Имя чата (WF16). Штатного действия в предзагруженных сторах claude.ai нет

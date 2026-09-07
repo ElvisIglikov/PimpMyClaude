@@ -33,7 +33,12 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
    `status.json` (диагностика лоадера, имя занято), `themes.json`, `my-themes.json`,
    `installed.json`, `workflow/` (комплект KICKOFF.md + WORKFLOW.md). Рядом лежит **`window-themes.json`**
    (WF35) — копия карты тем окон; лоадер его НЕ читает, это файл самого приложения
-   (`app/Sources/ClaudeAX/WindowThemeStore.swift`), см. контракт `themes-restore` ниже.
+   (`app/Sources/ClaudeAX/WindowThemeStore.swift`), см. контракт `themes-restore` ниже. Там же файлы WF36,
+   лоадеру тоже неизвестные: каталог **`pimp/`** — канал «Пимп» (`<id>.json` запрос, `<id>.taken` взят
+   в работу, `<id>.result.json` ответ; права 0600, файлы старше часа приложение убирает на тике) и
+   **`projects.json`** (`{"version":1,"projects":[{name,folder,lastUsed}]}` — свой список недавних проектов
+   для меню «🪟 Новое окно ▸» и для канала; переживает переустановку Claude, пропавшие с диска папки
+   не показываются, но из файла не удаляются).
    Источник правды — `claude-patch/` в репозитории; «Поставить» и `bundle.sh` копируют оттуда. Живой `inject.js`
    руками не править — только репозиторный, потом `cp` в Application Support (лоадер подхватит).
 3. **PimpMyClaude.app** — `app/` (SwiftPM, macOS 13+, Swift 5 mode). Таргеты: `Patcher`, `ClaudeAX`
@@ -137,6 +142,15 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
   дублирует в файл (`ClaudeActions.recordTheme`, три точки: `applyTheme`, «Раскрасить по кругу», цвет проекта);
   примерка не пишется никогда. Потолок файла — 32 КБ тела будущей команды (`StatusFeed.totalLimit`) плюс
   страховочные 200 ключей, вытеснение по `at`.
+- **Канал «Пимп» (WF36)** — не `command.json`, а свой каталог `pimp/`: файл на запрос, ответ рядом. Эталоны
+  побайтно — `tests/fixtures/pimp/*.json` (их читают ОБА конца: `tools/pimp.py` и `PimpChannel.swift`), там же
+  README с порядком ключей. Запрос `{"id","at","action":"new-window"|"arrange"|"projects"|"windows","from",…}`
+  (id = `<unix-мс>-<4 цифры>`, `from` — id чата агента из `CLAUDE_CODE_HOST_SESSION_ID`, пусто — «под этим»
+  деградирует в `right`); ответ `{"id","at","ok","error","fromResolved","screen",…}`, ошибки `stale`, `busy`,
+  `no-windows`, `project-missing`, `window-missing`, `too-small`, `bad-request`. Приложение на общем тике 2 с:
+  берёт запросы без ответа по `at`, исполняет младше 30 с и по одному, пишет `<id>.taken`. CLI ждёт ответ до 60 с;
+  нет `taken` за 5 с — «Пимп не запущен». Ожидания CLI переопределяются `MYCLAUDE_PIMP_WAIT`/`MYCLAUDE_PIMP_TAKEN`,
+  каталог — `MYCLAUDE_PIMP_DIR` (нужно тестам). Правда об исполнении — ответ на диске, не память процесса.
 - Старые: `cashout` (title), `collapse`, `expand`, `scroll`.
 - Хранилище тем на странице: localStorage `myclaude-themes-v1` — карта `{ключ: {theme, font, size, frame}}`, ключи
   **`id:<id чата>`** (главный ключ чата, WF35), `chat:<заголовок>` (тень — по ней живут окна, которые своего id ещё
@@ -160,8 +174,9 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
 
 - **`bash tools/test.sh`** — один прогон всего (WF24): `node --test tests/` (16 наборов, 187 проверок; страница гоняется в
   `node:vm` через люк `globalThis.__myclaudeTest` и стаб DOM `tests/dom.mjs`, путь к файлу — `MYCLAUDE_INJECT`) + сторожевые
-  grep-проверки inject.js + `swift test` (143). Красное = гейт не проходит. Чеклист гейта и «проверка на своём Маке» для
-  команды — `docs/CHECKLIST.md`.
+  grep-проверки inject.js + `python3 -m unittest tests/pimp_cli_test.py` (20 тестов CLI «Пимп», WF36; приложение подменяет
+  ниткой, каталог — `MYCLAUDE_PIMP_DIR`) + `swift test` (143). Красное = гейт не проходит. Чеклист гейта и «проверка на
+  своём Маке» для команды — `docs/CHECKLIST.md`.
 - `tools/bundle.sh release` → `app/.build/PimpMyClaude.app` (Developer ID). **Подмена без простоя:** сначала bundle,
   потом `pkill -f PimpMyClaude.app/Contents/MacOS; rm -rf /Applications/PimpMyClaude.app; ditto …; open …` — Элвис
   дважды ловил «минус не работает», когда приложение лежало во время сборки.
@@ -287,6 +302,10 @@ WF1–3 (03.09) ручка/меню/⌘Q в Hammerspoon → WF4 PimpMyClaude.app
    ≥ 0,7 с, `id` новый; палитры из `claude-patch/themes.json`; главное окно адресуется `title:""` + `match` по
    пути `/epitaxy/local_<id>` из `status.json`, попапы — `document.title`) — так делалось 05.09 23:45 для пяти окон.
 4. Полоска прогресса: если в окне `status().progress.reason` = «нет блока композера» — это #5474, не переустановка.
+5. Скилл «Пимп» (WF36): переустановка Claude сносит `~/.claude/skills/` — вернуть симлинк
+   `bash /Users/elvis/_ElvisProjects/PimpMyClaude/tools/install-skill.sh` (идемпотентно, стоит — молчит).
+   Проверка: `python3 tools/pimp.py projects` отвечает строкой, а не «Пимп не запущен». Список недавних проектов
+   (`projects.json`) переустановку переживает сам — он лежит в MyClaude, а не в Claude.
 
 ## Открытые хвосты (не сделано, задач в Trelvis на них нет — завести при старте)
 
@@ -311,7 +330,9 @@ WF1–3 (03.09) ручка/меню/⌘Q в Hammerspoon → WF4 PimpMyClaude.app
 
 ## Кто чем владеет при параллельных батчах (правило одного писателя)
 
-`claude-patch/inject.js` — всегда ОДИН агент на волну (5250 строк на старте WF35, 5425 после него; растёт каждой
-волной, сверяй `wc -l`; разделы 2а темы и ключи чата, 2б полоска, 2в живые цвета, 12 «Обкэшить»,
-12а Workflow, 12б новое окно, 12в «кто этот чат», 16 подписки). Swift — второй агент; `themes.json`, `bundle.sh` —
-у Swift-батча. Контракт команды фиксируется в плане до старта, менять — только на гейте.
+`claude-patch/inject.js` — всегда ОДИН агент на волну (5250 строк на старте WF35, 5425 после него, 5429 после
+WF36; растёт каждой волной, сверяй `wc -l`; разделы 2а темы и ключи чата, 2б полоска, 2в живые цвета,
+12 «Обкэшить», 12а Workflow, 12б новое окно, 12в «кто этот чат», 16 подписки). Swift — второй агент;
+`themes.json`, `bundle.sh` — у Swift-батча; `tools/pimp.py`, `skills/`, `tests/*.py` — у батча страницы.
+Эталоны канала `tests/fixtures/pimp/*.json` пишет один батч до старта, дальше они не меняются: на них стоят
+оба конца. Контракт команды фиксируется в плане до старта, менять — только на гейте.
