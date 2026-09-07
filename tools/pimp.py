@@ -11,7 +11,7 @@ tests/fixtures/pimp/*.json, они же правда для Swift-половин
 
 Команды:
   pimp.py open <проект> [--at left|middle|right|below|above|x,y]
-  pimp.py arrange
+  pimp.py arrange [--layout row|4|5|5x2|last]
   pimp.py projects
   pimp.py windows
 Общие ключи: --json — напечатать сырой ответ приложения вместо строки по-русски.
@@ -55,6 +55,17 @@ PLACE_WORDS = {
     "above": "над этим чатом",
 }
 POINT_RE = re.compile(r"^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$")
+
+# Раскладки (WF21). «last» — повторить последнюю выбранную: в ответе приложение
+# называет уже применённую, поэтому словами нужны все пять.
+LAYOUTS = ("row", "4", "5", "5x2", "last")
+LAYOUT_WORDS = {
+    "row": "как сейчас (лента)",
+    "4": "четыре в ряд",
+    "5": "пять в ряд",
+    "5x2": "в два ряда (5×2)",
+    "last": "как в прошлый раз",
+}
 
 ERRORS = {
     "stale": "Пимп не успел взять запрос вовремя — повтори",
@@ -198,7 +209,12 @@ def say_open(request: dict, data: dict) -> str:
     title = str(window.get("title") or "").strip() or request["project"]
     place = request["place"]
     where = PLACE_WORDS.get(place, f"в точку {place}")
-    if place in ("below", "above") and not data.get("fromResolved"):
+    skipped = data.get("skipped")
+    if isinstance(skipped, int) and skipped > 0:
+        # Свободной ячейки в раскладке не нашлось — окно осталось, где родилось;
+        # про место молчим, иначе соврём (WF21).
+        line = "Окно открыл, но в раскладке места нет — оставил поверх"
+    elif place in ("below", "above") and not data.get("fromResolved"):
         line = f"Открыл {title} справа: своего чата не нашёл, «{where}» не вышло"
     else:
         line = f"Открыл {title} {where}"
@@ -215,6 +231,10 @@ def say_error(request: dict, data: dict) -> str:
         if names:
             return f"Не нашёл проект «{request.get('project', '')}», есть: " + ", ".join(names)
         return f"Не нашёл проект «{request.get('project', '')}», и списка Пимп не дал"
+    if error == "too-small" and request["action"] == "arrange":
+        # У «расставить» тесно не окну, а всей раскладке — и лечится это иначе.
+        return ("Экран уже: столько окон в ряд не влезает — сделай окна уже "
+                "или выбери другую раскладку")
     known = ERRORS.get(error)
     if known:
         return known
@@ -229,11 +249,16 @@ def say_result(request: dict, data: dict) -> str:
         return say_open(request, data)
     if action == "arrange":
         windows = data.get("windows") or []
-        # Второй экран Пимп не раскладывает — и говорит об этом словами, а не
-        # молча (риск 3 плана WF36): «screen» в ответе для того и есть.
-        screen = "на главном экране" if data.get("screen") == "main" else "на экране"
-        return (f"Расставил {plural(len(windows), 'окно', 'окна', 'окон')} "
-                f"{screen}{minimized_note(data)}")
+        line = f"Расставил {plural(len(windows), 'окно', 'окна', 'окон')}"
+        # Раскладку называем ту, что применилась: «last» приложение разрешает
+        # в конкретную, и Элвис должен видеть, что именно вышло (WF21).
+        layout = LAYOUT_WORDS.get(str(data.get("layout") or ""))
+        if layout:
+            line += f": {layout}"
+        skipped = data.get("skipped")
+        if isinstance(skipped, int) and skipped > 0:
+            line += f", {skipped} не тронул — ячеек нет"
+        return line + minimized_note(data)
     if action == "projects":
         names = [str(item.get("name") or "").strip()
                  for item in (data.get("projects") or []) if isinstance(item, dict)]
@@ -297,7 +322,7 @@ def build_request(args) -> dict:
         request["project"] = args.project
         request["place"] = args.place
     elif args.action == "arrange":
-        request["layout"] = "row"
+        request["layout"] = args.layout
     return request
 
 
@@ -317,7 +342,9 @@ def main(argv=None) -> int:
     opener.add_argument("project", help="имя папки проекта или абсолютный путь")
     opener.add_argument("--at", dest="place", type=parse_place, default="right",
                         help="left | middle | right | below | above | x,y (по умолчанию right)")
-    subs.add_parser("arrange", parents=[common], help="расставить окна в ряд")
+    arranger = subs.add_parser("arrange", parents=[common], help="расставить окна по раскладке")
+    arranger.add_argument("--layout", choices=LAYOUTS, default="row",
+                          help="row | 4 | 5 | 5x2 | last (по умолчанию row — лента, как сейчас)")
     subs.add_parser("projects", parents=[common], help="список проектов, которые знает Пимп")
     subs.add_parser("windows", parents=[common], help="список окон Claude")
 

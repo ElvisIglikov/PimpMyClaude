@@ -128,6 +128,13 @@ class PimpCliTest(unittest.TestCase):
                          list(fixture("arrange.request.json").keys()))
         self.assertEqual(self.app.requests[0]["layout"], "row")
 
+    def test_arrange_request_layout(self):
+        # Раскладка едет тем же полем и не двигает порядок ключей (WF21).
+        self.call("arrange", "--layout", "5x2", result=fixture("arrange.result.json"))
+        self.assertEqual(list(self.app.requests[0].keys()),
+                         list(fixture("arrange.request.json").keys()))
+        self.assertEqual(self.app.requests[0]["layout"], "5x2")
+
     def test_projects_request(self):
         self.call("projects", result=fixture("projects.result.json"))
         self.assertEqual(list(self.app.requests[0].keys()),
@@ -155,6 +162,15 @@ class PimpCliTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("цвет не встал", done.stdout)
 
+    def test_open_without_cell(self):
+        # Ячейки в раскладке не нашлось — про «посередине» молчим: окно поверх.
+        answer = dict(fixture("new-window.result.json"))
+        answer["skipped"] = 1
+        done = self.call("open", "Dictator", "--at", "middle", result=answer)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(),
+                         "Окно открыл, но в раскладке места нет — оставил поверх")
+
     def test_project_missing(self):
         done = self.call("open", "Диктатор", result=fixture("new-window.error.json"))
         self.assertEqual(done.returncode, 1)
@@ -174,7 +190,28 @@ class PimpCliTest(unittest.TestCase):
     def test_arrange_ok(self):
         done = self.call("arrange", result=fixture("arrange.result.json"))
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(done.stdout.strip(), "Расставил 3 окна на главном экране")
+        self.assertEqual(done.stdout.strip(), "Расставил 3 окна: как сейчас (лента)")
+
+    def test_arrange_layout_and_skipped(self):
+        # Просили «как в прошлый раз» — называем ту раскладку, что применилась.
+        answer = dict(fixture("arrange.result.json"))
+        answer["layout"] = "5"
+        answer["skipped"] = 2
+        done = self.call("arrange", "--layout", "last", result=answer)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.app.requests[0]["layout"], "last")
+        self.assertEqual(done.stdout.strip(),
+                         "Расставил 3 окна: пять в ряд, 2 не тронул — ячеек нет")
+
+    def test_arrange_too_small(self):
+        # Тесно не окну, а раскладке: текст «Мало места…» тут не годится.
+        answer = dict(fixture("bad.result.json"))
+        answer["error"] = "too-small"
+        done = self.call("arrange", "--layout", "5", result=answer)
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout.strip(),
+                         "Экран уже: столько окон в ряд не влезает — "
+                         "сделай окна уже или выбери другую раскладку")
 
     def test_projects_ok(self):
         done = self.call("projects", result=fixture("projects.result.json"))
