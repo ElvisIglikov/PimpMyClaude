@@ -1,3 +1,6 @@
 Эталоны контракта канала «Пимп» (план WF36). Имена и типы полей — правда для tools/pimp.py (батч A) и PimpChannel.swift (батч B).
 Порядок ключей ответа: id, at, ok, error, fromResolved, screen, затем поля действия. Ошибки: stale, busy, no-windows, project-missing, window-missing, too-small, bad-request.
 Файлы: <id>.json — запрос, <id>.taken — взят в работу, <id>.result.json — ответ; каталог ~/Library/Application Support/MyClaude/pimp/.
+
+WF21 (08.09): запрос arrange — `id, at, action, from, layout` (layout: row | 4 | 5 | 5x2 | last; умолчание CLI — row); ответ arrange — `id, at, ok, error, fromResolved, screen, layout, windows, skipped, minimized` (layout — применённая раскладка, skipped — сколько окон не тронули за нехваткой ячеек). Ошибка too-small у arrange — ячейка уже minWindowWidth. Ответ new-window получает `skipped:1` ПОСЛЕ `layers` только когда в последней раскладке нет свободной ячейки (окно осталось, где родилось); эталон new-window.result.json без него — случай с ячейкой.
+WF41 (эталоны пишутся перед второй волной): arrange + `order` после layout; layouts `id, at, action, from`; layout-save `id, at, action, from, name`; layout-restore `id, at, action, from, name, fresh`; projects + `status` после from (только когда true).
