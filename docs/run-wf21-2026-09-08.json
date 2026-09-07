@@ -1,0 +1,28 @@
+{
+  "plan": "docs/plan-wf21-2026-09-08.md",
+  "mockup": "docs/mockup-wf21-v2.html",
+  "chat": "Полоска статуса проекта (Пимп), session local_e12ecb16-bd3f-41c5-9fa7-047b866ea3d6, Fable xhigh",
+  "watchdog": "watchdog-pimpmyclaude-0809 (крон в чате, 23 минута каждого часа)",
+  "branch": "main (пока только документы; ветка wf21 и тег wf21-start — перед кодингом)",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/f6f9e7b8-8fcb-41d3-a050-fb31d82c492d/workflows/scripts/wf21-mockup-v2-wf_65ba2980-01c.js",
+  "run_id": "wf_65ba2980-01c",
+  "status": "идёт",
+  "resumes": 0,
+  "balance": "цифр лимитов нет → считаем, что Fable обгоняет: критик Fable high, макет Opus max, проверка Opus max",
+  "next_steps": [
+    "макет v2 (агент Opus max) → проверить в браузере при 420 px → файл Элвису",
+    "план WF21+WF41 (оркестратор) → критик Fable high → правки",
+    "утром: презентация Элвису, одобрение → ветка wf21, тег, кодинг"
+  ],
+  "journal": [
+    "01:05 · Элвис: буквы по старому макету (1Б; 4/5/5×2 + как сейчас; 3А 4А 5А), «давай дожмём», голосом — в первую очередь, макет переделать по HTML.md; спать",
+    "01:12 · Диктатору (чат «Dictator»): только #5538, стоп; чату «Dictator 2»: ревизор по слову Элвиса, main подтянуть",
+    "01:18 · запущен макет v2 (Workflow, 1 агент Opus max); сторож поставлен; план пишет оркестратор",
+    "01:35 · критик плана запущен (Workflow wf_abda5f6d-e24, Fable high); Диктатор: #5538 уже починен со сборки 109 — закрыт, чат ждёт; «Dictator 2» ждёт от Элвиса «Ревизор» на Fable max",
+    "01:40 · вне прогона: ⚠️ как «жду» в полоске и StatusFeed (правило AGENTS.md 08.09), тесты 222 JS / 185 Swift зелёные, живой inject.js wf22-r-1; приложение с новым StatusFeed пересобрать на первом гейте WF21"
+  ],
+  "critic": {
+    "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/f6f9e7b8-8fcb-41d3-a050-fb31d82c492d/workflows/scripts/wf21-critic-wf_abda5f6d-e24.js",
+    "run_id": "wf_abda5f6d-e24"
+  }
+}
