@@ -1969,7 +1969,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       }
       if (!current) {
         // Шапка: три строки счёта, каждая начинается с числа.
-        if (head.length < STATUS_HEAD_LINES && /^\d/.test(line)) head.push(line);
+        if (head.length < STATUS_HEAD_LINES && /^[-*]?\s*\d/.test(line)) head.push(line.replace(/^[-*]\s*/, ""));
         continue;
       }
       if (!/^[-*]\s/.test(line)) continue;
@@ -2275,11 +2275,18 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // четверть, идущий даёт половину своей четверти. Ролей в блоке нет — считаем
   // по «шаги N из M»; нет и их — минимум, чтобы сегмент вообще был виден (#5543).
   const PROGRESS_MIN_FILL = 8;
+  // Потолок ширины карточки: в широком окне она остаётся такой же компактной, как в
+  // узком (слово Элвиса 07.09 22:50).
+  const PROGRESS_CARD_MAX_WIDTH = 400;
   const progressBlockFill = (block) => {
     if (!block) return null;
     if (block.state === "done") return 100;
     const { rows, now } = progressStages(block);
-    if (now >= 0) return (now + 0.5) * (100 / rows.length);
+    // Роли записаны все разом и без 💭, а «шаги 0 из M» — этапы ещё не пройдены:
+    // без этого сводка WF22 давала 87,5 % на нулевом шаге (проверка WF22, риск 1).
+    const marked = rows.some(row => row.role?.running);
+    const unstarted = !marked && block.steps != null && block.steps.done === 0;
+    if (now >= 0 && !unstarted) return (now + 0.5) * (100 / rows.length);
     if (block.steps && block.steps.total > 0) return block.steps.done / block.steps.total * 100;
     return null;
   };
@@ -2299,7 +2306,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // Совсем узкая полоса: сегменты по паре точек с зазором в три уже не
     // читаются — тогда честнее одна сплошная доля всего марафона.
     if (count > 1 && (width - (count - 1) * PROGRESS_SEG_GAP) / count < PROGRESS_SEG_MIN) {
-      return [Math.max(PROGRESS_MIN_FILL, info.total)];
+      const merged = info.state === "done" ? 100
+        : ((info.wf - 1) + progressFill(info) / 100) / Math.max(1, info.of) * 100;
+      return [Math.max(PROGRESS_MIN_FILL, merged)];
     }
     const fill = progressFill(info);
     const shares = [];
@@ -2573,7 +2582,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       // Только textContent: сводка приходит снаружи, и разметки в ней быть не должно.
       progressCardTitle.textContent = title;
       progressCardWhere.textContent = where;
-      progressCardPill.textContent = `${PROGRESS_CARD_ICONS[word] ?? "💭"} ${word}`;
+      // Слово Элвиса 07.09 22:50: бейдж называет этап — «идёт кодинг», «ждёт тебя».
+      const pill = word === "идёт" && stages.now >= 0 ? `идёт ${stages.rows[stages.now].label}`
+        : (word === "ждёт" ? "ждёт тебя" : word);
+      progressCardPill.textContent = `${PROGRESS_CARD_ICONS[word] ?? "💭"} ${pill}`;
       progressCardAbout.textContent = about;
       progressCardMeta.textContent = meta;
       progressCardMeta.hidden = meta === "";
@@ -2595,7 +2607,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       background: skin.back, color: skin.text, "border-color": skin.line, "box-shadow": skin.shadow,
       // Ширина — всё окно минус поля; потолок высоты 60 % окна, лишнее уходит
       // под обрез: прокрутки у прозрачного для мыши узла всё равно нет.
-      width: `${Math.max(120, innerWidth - 12)}px`, "max-height": `${Math.round(innerHeight * 0.6)}px`,
+      width: `${Math.max(120, Math.min(PROGRESS_CARD_MAX_WIDTH, innerWidth - 12))}px`, "max-height": `${Math.round(innerHeight * 0.6)}px`,
     })) progressTip.style.setProperty(name, value);
     for (const [name, value] of Object.entries(PROGRESS_CARD_VARIANT === "3A"
       // 3A — «таблица с цветной кромкой»: состояние читается кромкой слева.
@@ -2626,7 +2638,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const rect = progressTip.getBoundingClientRect();
     const height = rect.height || 0;
     const top = Math.max(6, progressState.box.top - height - 8);
-    progressTip.style.setProperty("left", "6px");
+    // В широком окне карточка не растёт (потолок PROGRESS_CARD_MAX_WIDTH) и стоит у
+    // левого края полосы, а не окна (слово Элвиса 22:50).
+    const cardWidth = rect.width || parseFloat(progressTip.style.getPropertyValue("width")) || 0;
+    const left = Math.max(6, Math.min(progressState.box.left, innerWidth - cardWidth - 6));
+    progressTip.style.setProperty("left", `${Math.round(left)}px`);
     progressTip.style.setProperty("top", `${Math.round(top)}px`);
   };
   const progressTipClose = () => {
@@ -2793,6 +2809,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Попадание по линии: ±4 точки по вертикали и своя ширина по горизонтали.
   const progressHit = (x, y) => {
     const box = progressState.box;
+    // Пустой контур (строки состояния нет) — только украшение: мышь не ловит,
+    // клик под ним доходит до страницы (проверка WF22).
+    if (!progressState.info) return false;
     if (!box || progressBar.style.display === "none") return false;
     if (y < box.top - PROGRESS_HIT_SLACK || y > box.top + PROGRESS_BAR_HEIGHT + PROGRESS_HIT_SLACK) return false;
     if (x < box.left || x > box.right) return false;

@@ -175,7 +175,7 @@ test("карточка влезает в узкое окно: ширина = о�
   const style = tip(loaded).style;
   assert.equal(style.getPropertyValue("width"), "355px", "367 − 12");
   assert.equal(style.getPropertyValue("max-height"), "480px", "60 % от 800");
-  assert.equal(style.getPropertyValue("left"), "6px");
+  assert.equal(style.getPropertyValue("left"), "6px", "в узком окне карточке места у полосы нет — к краю");
   assert.equal(style.getPropertyValue("white-space"), "normal", "текст переносится, а не режется");
   assert.equal(style.getPropertyValue("overflow"), "hidden", "прокрутки нет — лишнее уходит под обрез");
 });

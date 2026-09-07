@@ -91,7 +91,8 @@ test("progressShares: доли слева направо, готовые пол�
 });
 
 test("progressShares: в узком окне сегменты сливаются в одну долю", () => {
-  assert.deepEqual(shares({ wf: 3, of: 5, pct: 40, total: 52, state: "run" }, 30), [52]);
+  // Слитая полоса тоже считает долю по заливке текущего сегмента: (2 + 0,4) / 5 = 48 % (гейт WF22).
+  assert.deepEqual(shares({ wf: 3, of: 5, pct: 40, total: 52, state: "run" }, 30), [48]);
   assert.equal(shares({ wf: 3, of: 5, pct: 40, total: 52, state: "run" }, 400).length, 5, "в широком окне — все пять");
 });
 
