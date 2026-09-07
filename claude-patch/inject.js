@@ -4249,7 +4249,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   };
   const newWindowFindFolderStore = async token => {
     if (newWindowFolderStoreOk(newWindowFolderStore)) return newWindowFolderStore;
-    newWindowFolderStore = await newWindowScanStores(token, newWindowFolderStoreOk);
+    // Присваиваем только находку: прерванный по токену скан отдаёт null, и он не
+    // должен затирать стор, который тем временем нашла цепочка «Нового окна»
+    // (сканеров с WF37 два — проверка WF37, находка 1).
+    const found = await newWindowScanStores(token, newWindowFolderStoreOk);
+    if (found) newWindowFolderStore = found;
     return newWindowFolderStore;
   };
   // Хвостовой слэш путь не меняет: «…/Dictatorik» и «…/Dictatorik/» — одна папка.
@@ -4816,6 +4820,12 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Идущий поиск стора папки (WF37, см. chatsFolder): второго не заводим.
   let chatsFolderScanInFlight = null;
   track(() => { chatsFolderScanInFlight = null; });
+  // Неудача поиска запоминается: повтор не чаще раза в CHATS_FOLDER_RETRY_MS —
+  // иначе после релиза Claude, сменившего форму стора, скан всех адресов шёл бы
+  // каждый круг probe, раз в 4 с (проверка WF37, находка 2).
+  const CHATS_FOLDER_RETRY_MS = 60000;
+  let chatsFolderScanAt = 0;
+  track(() => { chatsFolderScanAt = 0; });
 
   const chatKind = () => (!themable ? "other" : isMainWindow() ? "main" : "popout");
   // Путь чужой страницы наружу не отдаём: у артефакта это data:-адрес целиком,
@@ -4967,11 +4977,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const chatsFolder = mayScan => {
     try {
       if (!isMainWindow() || !newWindowAtHome()) return null;
+      // Идёт «Новое окно»: чип показывает папку БУДУЩЕГО чата, а не выбор Элвиса, —
+      // покраска главного окна по ней мигала бы чужим цветом (проверка WF37, находка 3).
+      if (state.newWindow?.busy === true) return null;
       if (newWindowFolderStoreOk(newWindowFolderStore)) return newWindowFolderNow(newWindowFolderStore) || null;
-      if (mayScan && !chatsFolderScanInFlight) {
+      if (mayScan && !chatsFolderScanInFlight && Date.now() - chatsFolderScanAt >= CHATS_FOLDER_RETRY_MS) {
         // Токен берём ТЕКУЩИЙ и не увеличиваем: начался прогон «Нового окна» —
         // скан бросит работу сам (newWindowLive).
         const token = newWindowToken;
+        chatsFolderScanAt = Date.now();
         const done = () => { chatsFolderScanInFlight = null; };
         chatsFolderScanInFlight = Promise.resolve(newWindowFindFolderStore(token)).then(done, done);
       }

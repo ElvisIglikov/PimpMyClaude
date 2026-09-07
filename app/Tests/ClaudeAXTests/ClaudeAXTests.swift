@@ -1654,7 +1654,7 @@ final class ClaudeAXTests: XCTestCase {
     func testCashoutPayloadMainHome() throws {
         XCTAssertEqual(CommandChannel.payload(
             action: ClaudeCommand.cashout.rawValue,
-            fields: ClaudeActions.cashoutFields(title: "Claude"),
+            fields: ClaudeActions.cashoutFields(title: "Claude", match: ChatProbe.homePath),
             id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt),
                        try ClaudeAXTests.cashoutFixture("cashout-main-home.json"))
     }

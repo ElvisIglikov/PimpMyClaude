@@ -3,7 +3,7 @@
 Байты — как пишет CommandChannel.payload: без пробелов, id, action, at, затем поля в порядке контракта.
 
 - cashout-main.json — «Обкэшить» в главном окне с открытым чатом: scope, title, match (путь главного окна).
-- cashout-main-home.json — то же на домашнем экране: пути нет → scope, title.
+- cashout-main-home.json — то же на домашнем экране: пути чата нет → match:"/epitaxy" (гейт WF37: заголовком «Claude» команду взял бы и безымянный попап).
 - cashout-popout.json — «Обкэшить» в попапе, id чата известен из карты probe: scope, title, chat. match попапу не шлётся никогда.
 - cashout-popout-title.json — попап, id неизвестен: scope, title (адрес заголовком, как до WF37).
 - new-window-transfer.json — «Новое окно» из ветки «Обкэшить»: transfer:true стоит ПОСЛЕ name и ПЕРЕД слоями;

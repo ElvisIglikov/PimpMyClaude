@@ -154,9 +154,11 @@ final class ClaudeActions {
             case .main:
                 // Как и было по смыслу, только адрес точнее: путь страницы главного окна
                 // (`match`) не даст команде уйти веером безымянным попапам (критик Б1 WF15).
+                // Домашний экран (пути чата нет) адресуется путём `/epitaxy`: заголовком
+                // «Claude» команду взял бы и безымянный попап (проверка WF37, находка 4).
                 self.commands.write(action: "cashout",
-                                    fields: ClaudeActions.cashoutFields(title: title,
-                                                                        match: self.mainWindowMatch()))
+                                    fields: ClaudeActions.cashoutFields(
+                                        title: title, match: self.mainWindowMatch() ?? ChatProbe.homePath))
                 self.after(self.cashoutNewChatDelay) { self.newChat(window) }
             case .popout(let chat):
                 // ⌘N из попапа исполняет ГЛАВНОЕ окно — вместо него рождаем новое окно рядом
@@ -189,7 +191,7 @@ final class ClaudeActions {
 
     /// Поля команды после id, action, at: scope, title, match?, chat? (контракт части B плана
     /// WF37, эталоны `tests/fixtures/cashout/cashout-*.json`). Главному окну уходит `match`
-    /// (пути нет — только scope и title, как до WF37), попапу — `chat`, и никогда наоборот.
+    /// (домашний экран — путь `/epitaxy`), попапу — `chat`, и никогда наоборот.
     static func cashoutFields(title: String, match: String? = nil,
                               chat: String? = nil) -> [(key: String, value: CommandValue)] {
         var fields: [(key: String, value: CommandValue)] = [

@@ -110,7 +110,10 @@ public final class ClaudeAXController: ClaudeAXControlling {
         // Проект чата: папку знает индекс Claude Code, и новое окно родится в ней — с именем,
         // цветом и записью в `projects.json`, как у пункта «🪟 Новое окно ▸ проект».
         actions.projectForChat = { [weak self] chat in
-            guard let self = self, let folder = self.index.folder(for: chat) else { return nil }
+            // Папки нет на диске — проект не отдаём: цепочка встала бы молча, «Здесь же»
+            // честнее (проверка WF37, находка 6; то же сито, что у recentProjects).
+            guard let self = self, let folder = self.index.folder(for: chat),
+                  ProjectIndex.isDirectory(folder) else { return nil }
             return Project(folder: folder, name: folder.lastPathComponent,
                            lastFocusedAt: self.index.session(for: chat)?.lastFocusedAt ?? 0)
         }
