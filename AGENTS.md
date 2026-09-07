@@ -151,6 +151,18 @@ Hammerspoon-модули из его `init.lua` сняты 03.09.
   берёт запросы без ответа по `at`, исполняет младше 30 с и по одному, пишет `<id>.taken`. CLI ждёт ответ до 60 с;
   нет `taken` за 5 с — «Пимп не запущен». Ожидания CLI переопределяются `MYCLAUDE_PIMP_WAIT`/`MYCLAUDE_PIMP_TAKEN`,
   каталог — `MYCLAUDE_PIMP_DIR` (нужно тестам). Правда об исполнении — ответ на диске, не память процесса.
+- **Раскладки (WF21, 08.09)**: `ArrangeLayout.Mode` = `row` (лента, как раньше) | `4` | `5` | `5x2`; `frames(count:in:mode:)`
+  отдаёт ровно `min(count, ёмкость)` рамок, лишние окна не трогаются, `fits` — ячейка не уже `minWindowWidth`. Последняя
+  раскладка — `ThemeStore.arrangeMode` (UserDefaults `arrangeMode`), её повторяют ⌥⌘A, «▦ Расставить» и новое окно
+  (`PimpChannel.row`). Меню: первый пункт — `LayoutPickerView` (`LayoutPicker.swift`, четыре плитки, клик →
+  `cancelTracking` + действие ходом вперёд; серые при `!fits`), после него один разделитель. Канал: запрос `arrange`
+  `id,at,action,from,layout` (`row|4|5|5x2|last`), ответ `…,screen,layout,windows,skipped,minimized` (`layout` —
+  применённая), ошибка `too-small`; `new-window` без свободной ячейки — окно где родилось, `"skipped":1` после `layers`.
+  Страница: `popout-window` получил `chat` и `name` после `y` (порядок `scope,title,match?,x,y,chat?,name?`) — `chat`
+  здесь ГРУЗ (какой чат вынести), не адрес: `addressed()` зовётся без него; есть стор — прямой `openPopout({sessionId,
+  title:name})` без навигации; нет — строка сайдбара → вынос → обязательный `newWindowBack`; не нашёлся —
+  `status().newWindow.state = "chat-missing"`, нового чата нет. Приложению (WF41): `chat` как адрес этой команде не
+  слать, `name` слать всегда. Скилл: «расставь» = `--layout last`, «как сейчас» = `row`.
 - **`cashout` (WF37)**: `{…,"scope":"window","title":<AX>,"match"?:<путь главного окна>,"chat"?:<id чата>}`, порядок
   `scope, title, match?, chat?`; главному окну уходит `match` (на домашнем экране — `"/epitaxy"`), попапу — `chat`
   (если страница назвала свой id в карте probe; иначе только заголовок), никогда наоборот. Страница адресует через
