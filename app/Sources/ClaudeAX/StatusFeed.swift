@@ -236,13 +236,33 @@ final class StatusFeed {
         let starts = lines.indices.filter { isWorkflowHeading(lines[$0]) }
         guard let firstBlock = starts.first else { return prefix(text, bytes: limit) }
         let head = Array(lines[0..<firstBlock])
-        var cut: Int?
-        for start in starts.reversed() {
-            guard joinedSize(head + lines[start...]) <= limit else { break }
-            cut = start
+        // Блоки — диапазоны строк от заголовка до следующего заголовка.
+        var blocks: [Range<Int>] = []
+        for (index, start) in starts.enumerated() {
+            let end = index + 1 < starts.count ? starts[index + 1] : lines.count
+            blocks.append(start..<end)
         }
-        guard let start = cut else { return prefix(text, bytes: limit) }
-        return (head + lines[start...]).joined(separator: "\n")
+        let size: (Set<Int>) -> Int = { chosen in
+            joinedSize(head + chosen.sorted().flatMap { Array(lines[blocks[$0]]) })
+        }
+        // Живые блоки (💭 ✋ 🛑 в заголовке) едут ВСЕГДА, сколько бы запланированных ни стояло
+        // после них: на настоящем status.md идущий 22-й блок с 19 плановыми следом срез с
+        // начала отрезал бы ровно его (хвост батча S, гейт WF22). Потом — хвост блоков подряд.
+        var chosen = Set<Int>()
+        for index in blocks.indices.reversed() where isLiveHeading(lines[blocks[index].lowerBound]) {
+            if size(chosen.union([index])) <= limit { chosen.insert(index) }
+        }
+        for index in blocks.indices.reversed() where !chosen.contains(index) {
+            guard size(chosen.union([index])) <= limit else { break }
+            chosen.insert(index)
+        }
+        guard !chosen.isEmpty else { return prefix(text, bytes: limit) }
+        return (head + chosen.sorted().flatMap { Array(lines[blocks[$0]]) }).joined(separator: "\n")
+    }
+
+    /// Живой блок: идёт, ждёт Элвиса или упал — то, ради чего сводку и шлют.
+    static func isLiveHeading(_ line: String) -> Bool {
+        isWorkflowHeading(line) && ["💭", "✋", "🛑"].contains { line.contains($0) }
     }
 
     /// Размер строк, склеенных переводом строки, в байтах.

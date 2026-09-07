@@ -2047,6 +2047,34 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertFalse(StatusFeed.startsWithClock("шаги 1 из 3"))
     }
 
+    /// Идущий блок стоит в середине файла, а после него много запланированных (настоящий
+    /// docs/status.md 07.09: 💭 на 22-м из 41): срез с начала обязан оставить его всё равно.
+    func testStatusFeedKeepsRunningBlockCutFromStart() {
+        func keys(_ number: Int) -> String { String(number).map { "\($0)\u{FE0F}\u{20E3}" }.joined() }
+        func block(_ index: Int) -> String {
+            let state = index == 22 ? "💭 идёт" : (index < 22 ? "✅ готово" : "⬜ запланирован")
+            return "\(keys(index)) Workflow \(state)\n"
+                + "- о чём: строка про воркфлоу номер \(index)\n"
+                + "- шаги 1 из 3\n"
+                + String(repeating: "- кодинг · 2 агента · Opus max\n", count: 6)
+        }
+        let head = "# ⚪PimpMyClaude\nобновлено 22:40\n41 воркфлоу\n"
+        let text = head + (1...41).map(block).joined()
+        XCTAssertGreaterThan(text.utf8.count, StatusFeed.limit)
+        let slice = StatusFeed.slice(text)
+        XCTAssertLessThanOrEqual(slice.utf8.count, StatusFeed.limit)
+        XCTAssertTrue(slice.hasPrefix(head))
+        XCTAssertTrue(slice.contains("\(keys(22)) Workflow 💭 идёт"), "идущий блок отрезан")
+        XCTAssertTrue(slice.contains(block(22)), "идущий блок доехал не целым")
+        let kept = slice.components(separatedBy: "\n").filter { StatusFeed.isWorkflowHeading($0) }
+        XCTAssertEqual(kept.first.map { $0.hasPrefix(keys(22)) }, true, "живой блок первым после шапки")
+        XCTAssertTrue(kept.last?.hasPrefix(keys(41)) == true, "хвост файла на месте")
+        // Порядок — как в файле, без дыр внутри хвоста.
+        let numbers = kept.compactMap { line in (1...41).first { line.hasPrefix(keys($0) + " Workflow") } }
+        XCTAssertEqual(numbers, numbers.sorted())
+        XCTAssertEqual(Array(numbers.dropFirst()), Array((41 - numbers.count + 2)...41))
+    }
+
     func testStatusFeedCutsFromStart() {
         func keys(_ number: Int) -> String { String(number).map { "\($0)\u{FE0F}\u{20E3}" }.joined() }
         func block(_ index: Int) -> String {
