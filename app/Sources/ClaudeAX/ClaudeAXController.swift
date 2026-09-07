@@ -34,6 +34,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
     /// Свой список недавних проектов (план WF36, WF30 ч. 2, задача #5451): индекс чатов Claude
     /// переустановку не переживает, а файл рядом с `command.json` — переживает.
     private let projects = ProjectsStore()
+    /// Раскладки проектов (план WF41, задача #5620): файл рядом с `projects.json` — «Утро»,
+    /// «Разбор» и прочее, что Элвис запомнил.
+    private let layouts = LayoutsStore()
     /// Канал «Пимп» (план WF36, задача #5531): окна Claude из любого чата — файлами.
     /// Тикает на общем таймере, своего не заводит.
     private let pimp = PimpChannel()
@@ -154,6 +157,20 @@ public final class ClaudeAXController: ClaudeAXControlling {
         actions.onProjectUsed = { [weak self] project in
             self?.projects.note(project, at: Date())
         }
+        // «🗂 Раскладки ▸» в «⋯ Ещё ▸» (план WF41): список читаем на каждый показ меню —
+        // файл правит и сам Элвис. Возврат идёт очередью канала «Пимп»: работа там одна,
+        // и пункт меню не должен спорить с запросом из чата.
+        menu.savedLayouts = { [weak self] in self?.layouts.load() ?? [] }
+        menu.saveLayout = { [weak self] name in self?.saveLayout(named: name) }
+        menu.restoreLayout = { [weak self] layout, fresh in
+            guard let self = self else { return }
+            // Окна открываются по одному и работа идёт минуту и дольше: молчащий пункт
+            // выглядит сломанным (тот же довод, что у плашки «Нового окна»).
+            let started = self.pimp.startRestore(layout, fresh: fresh)
+            self.hud.show(started ? MenuModel.layoutRestoreNotice : MenuModel.layoutBusyNotice,
+                          seconds: MenuModel.newWindowNoticeSeconds)
+        }
+        menu.deleteLayout = { [weak self] layout in self?.layouts.delete(name: layout.name) }
         // Авто-цвет нового окна — на тех же условиях, что цвет проекта (план WF36 п. 4).
         actions.isProjectColorOn = { [weak self] in self?.projectPaint.enabled ?? false }
         actions.chatName = { [weak self] project in
@@ -214,7 +231,38 @@ public final class ClaudeAXController: ClaudeAXControlling {
             fitsLayout: { [weak self] mode in self?.actions.arrangeFits(mode) ?? true },
             place: { [weak self] moves in self?.actions.place(moves) },
             titleForChat: { [weak self] chat in self?.pimpTitle(forChat: chat) },
-            newWindowLayers: { [weak self] in self?.actions.lastNewWindowLayers ?? false })
+            newWindowLayers: { [weak self] in self?.actions.lastNewWindowLayers ?? false },
+            // Раскладки проектов (план WF41): файл наш, ячейки считает та же арифметика,
+            // что «Расставить», а закрытый чат выносит отдельным окном главное окно.
+            layouts: { [weak self] in self?.layouts.load() ?? [] },
+            saveLayout: { [weak self] layout in self?.layouts.save(layout) ?? false },
+            cells: { [weak self] mode, count in
+                self?.actions.arrangeCells(mode: mode, count: count) ?? []
+            },
+            isMainWindow: { [weak self] title in self?.actions.isMainWindowTitle(title) ?? false },
+            openChat: { [weak self] chat, name, origin in
+                self?.actions.popoutChat(chat: chat, name: name, origin: origin)
+            })
+    }
+
+    /// «💾 Сохранить эту раскладку…» (план WF41): тот же снимок, что у канала. Окно, чей чат
+    /// приложение не знает, отменяет запись целиком — вернулись бы не те чаты (#5455);
+    /// возвращаем строку для плашки, nil — записано.
+    private func saveLayout(named name: String) -> String? {
+        let windows = actions.pimpWindows().map {
+            pimpWindow(id: $0.id, title: $0.title, frame: $0.frame)
+        }
+        guard !windows.isEmpty else { return MenuModel.layoutNoWindowsAlert }
+        let mode = actions.themeStore.arrangeMode
+        let snapshot = LayoutsStore.snapshot(
+            name: name, at: Date(), mode: mode, windows: windows,
+            cells: actions.arrangeCells(mode: mode,
+                                        count: ArrangeLayout.capacity(of: mode) ?? windows.count),
+            isMain: actions.isMainWindowTitle)
+        guard snapshot.unknown.isEmpty else {
+            return MenuModel.layoutChatUnknownAlert(snapshot.unknown)
+        }
+        return layouts.save(snapshot.layout) ? nil : MenuModel.layoutWriteFailed
     }
 
     /// Окно канала: к заголовку и рамке добавляются чат и папка — их знает индекс Claude

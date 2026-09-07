@@ -174,6 +174,56 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(picked, [.four])
     }
 
+    /// «🗂 Раскладки ▸» — последний пункт «⋯ Ещё ▸» (план WF41): сохранить нынешние окна,
+    /// под ним имена сохранённых, у каждой — вернуть те же чаты, открыть новые, удалить.
+    func testSavedLayoutsMenu() throws {
+        var saved = 0
+        var restored: [(name: String, fresh: Bool)] = []
+        var deleted: [String] = []
+        var config = menuConfig()
+        config.layouts = [ClaudeAXTests.layout("Утро"), ClaudeAXTests.layout("Разбор")]
+        config.saveLayout = { saved += 1 }
+        config.restoreLayout = { restored.append((name: $0.name, fresh: $1)) }
+        config.deleteLayout = { deleted.append($0.name) }
+        let menu = MinimizeMenu.build(config: config)
+
+        let more = try XCTUnwrap(menu.items.first { $0.title == MenuModel.moreTitle }?.submenu)
+        let layouts = try XCTUnwrap(more.items.last?.submenu)
+        XCTAssertEqual(more.items.last?.title, MenuModel.savedLayoutsTitle)
+        XCTAssertNotNil(more.items.last?.image)
+        XCTAssertEqual(layouts.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Сохранить эту раскладку…", "—", "Утро", "Разбор"])
+        // Подсказка называет сетку и число окон — по ней раскладки различаются в лицо.
+        XCTAssertEqual(layouts.items.last?.toolTip, "5 в ряд · 2 окна")
+
+        let morning = try XCTUnwrap(layouts.items.first { $0.title == "Утро" }?.submenu)
+        XCTAssertEqual(morning.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Вернуть эти чаты", "Новые чаты по этим проектам", "—", "Удалить"])
+        click(layouts.items[0])
+        click(morning.items[0])
+        click(morning.items[1])
+        click(try XCTUnwrap(morning.items.last))
+        XCTAssertEqual(saved, 1)
+        XCTAssertEqual(restored.map { $0.name }, ["Утро", "Утро"])
+        XCTAssertEqual(restored.map { $0.fresh }, [false, true])
+        XCTAssertEqual(deleted, ["Утро"])
+
+        // Сохранённых раскладок нет — остаётся один пункт, разделителя нет вовсе.
+        var empty = menuConfig()
+        empty.layouts = []
+        let alone = try XCTUnwrap(MinimizeMenu.build(config: empty).items
+            .first { $0.title == MenuModel.moreTitle }?.submenu?.items.last?.submenu)
+        XCTAssertEqual(alone.items.map { $0.title }, ["Сохранить эту раскладку…"])
+    }
+
+    /// Раскладка для меню: два места по сетке «5 в ряд».
+    private static func layout(_ name: String) -> WindowLayout {
+        WindowLayout(name: name, at: PimpChannel.date("2026-09-08T03:00:00Z")!, mode: .five,
+                     cells: [LayoutCell(folder: "/tmp/Pimp", chat: "main", title: "Claude", cell: 0),
+                             LayoutCell(folder: "/tmp/Vkus", chat: "local_1", title: "Вкуснофф",
+                                        cell: 1)])
+    }
+
     func testOrderKeepsRowsLeftToRight() {
         let frames = [
             CGRect(x: 800, y: 0, width: 400, height: 400),   // 0 — правое верхнее
@@ -259,12 +309,14 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(items.map { $0.keyEquivalentModifierMask },
                        [[], [.command], [], [.command, .option], [.command, .option]])
 
-        // Четыре клавиши — внутри «⋯ Ещё ▸», в том же порядке, что в макете.
+        // Четыре клавиши — внутри «⋯ Ещё ▸», в том же порядке, что в макете; пятым пунктом
+        // «🗂 Раскладки ▸» (план WF41) — подменю, клавиши у него нет.
         let more = try XCTUnwrap(menu.items.first { $0.title == MenuModel.moreTitle }?.submenu)
         XCTAssertEqual(more.items.map { $0.title },
-                       ["Обкэшить", "Расставить", "Показать", "Прокрутить"])
-        XCTAssertEqual(more.items.map { $0.keyEquivalent }, ["n", "a", "s", "d"])
-        XCTAssertEqual(more.items.map { $0.keyEquivalentModifierMask },
+                       ["Обкэшить", "Расставить", "Показать", "Прокрутить", "Раскладки"])
+        let keyed = more.items.filter { !$0.hasSubmenu }
+        XCTAssertEqual(keyed.map { $0.keyEquivalent }, ["n", "a", "s", "d"])
+        XCTAssertEqual(keyed.map { $0.keyEquivalentModifierMask },
                        [[.command, .shift], [.command, .option], [.command, .option],
                         [.command, .option]])
         XCTAssertNotNil(menu.items.first { $0.title == MenuModel.moreTitle }?.image)
@@ -1915,6 +1967,20 @@ final class ClaudeAXTests: XCTestCase {
                        "{\"id\":\"1-0001\",\"action\":\"popout-window\","
                        + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"window\",\"title\":\"Привет\","
                        + "\"match\":\"/epitaxy/local_f44e46bb\",\"x\":120,\"y\":120}")
+
+        // «↩︎ Вернуть эти чаты» (план WF41): `chat` и `name` идут ПОСЛЕ `y`, а адрес у команды
+        // один — путь главного окна: поле `chat` для страницы значит «эта страница и есть тот
+        // чат», и закрытый разговор такую команду не взял бы вовсе.
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.popoutWindow.rawValue,
+            fields: ClaudeActions.popoutWindowFields(title: "", match: "/epitaxy/local_f44e46bb",
+                                                     x: 294, y: 34, chat: "local_gone",
+                                                     name: "Вкуснофф"),
+            id: "1-0002", at: Date(timeIntervalSince1970: 0)),
+                       "{\"id\":\"1-0002\",\"action\":\"popout-window\","
+                       + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"window\",\"title\":\"\","
+                       + "\"match\":\"/epitaxy/local_f44e46bb\",\"x\":294,\"y\":34,"
+                       + "\"chat\":\"local_gone\",\"name\":\"Вкуснофф\"}")
         // Путь берётся из диагностики лоадера: одна страница claude.ai — она и есть главное окно,
         // ни одной или несколько — nil, и адресация остаётся прежней (живой ~/Library не трогаем).
         XCTAssertNil(ClaudeActions.mainWindowMatch(statusURL: URL(fileURLWithPath: "/нет/такого")))

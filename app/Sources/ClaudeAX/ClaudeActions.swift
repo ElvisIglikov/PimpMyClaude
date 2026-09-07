@@ -424,14 +424,32 @@ final class ClaudeActions {
     }
 
     /// То же без первого сообщения: scope, title, match, x, y (решение Элвиса 04.09).
-    static func popoutWindowFields(title: String, match: String? = nil,
-                                   x: Int, y: Int) -> [(key: String, value: CommandValue)] {
+    /// `chat` и `name` (план WF41) идут ПОСЛЕ `y` и только у «Вернуть эти чаты»: они —
+    /// ГРУЗ команды, чей разговор вынести, а не адрес (адрес у неё всегда `match`).
+    static func popoutWindowFields(title: String, match: String? = nil, x: Int, y: Int,
+                                   chat: String? = nil,
+                                   name: String? = nil) -> [(key: String, value: CommandValue)] {
         var fields: [(key: String, value: CommandValue)] = [
             (key: "scope", value: .string(MenuModel.themeScopeWindow)),
             (key: "title", value: .string(title)),
         ]
         if let match = match { fields.append((key: "match", value: .string(match))) }
-        return fields + [(key: "x", value: .number(x)), (key: "y", value: .number(y))]
+        fields += [(key: "x", value: .number(x)), (key: "y", value: .number(y))]
+        if let chat = chat { fields.append((key: "chat", value: .string(chat))) }
+        if let name = name { fields.append((key: "name", value: .string(name))) }
+        return fields
+    }
+
+    /// «↩︎ Вернуть эти чаты» (план WF41): закрытый разговор выносит отдельным окном ГЛАВНОЕ
+    /// окно — оно одно умеет `openPopout`. Адресуем только путём (`match`): заголовок здесь
+    /// не нужен, а поле `chat` для страницы значит «эта страница и есть тот чат» (WF29) —
+    /// адресом ему быть нельзя, закрытый чат не взял бы команду вовсе.
+    /// Имя шлём всегда: у названного чата заголовок окна берётся из него.
+    func popoutChat(chat: String, name: String, origin: (x: Int, y: Int)) {
+        commands.write(action: ClaudeCommand.popoutWindow.rawValue,
+                       fields: ClaudeActions.popoutWindowFields(title: "", match: mainWindowMatch(),
+                                                                x: origin.x, y: origin.y,
+                                                                chat: chat, name: name))
     }
 
     /// Путь страницы ГЛАВНОГО окна (`/epitaxy/local_…`) для поля `match`. «Новое окно» и
@@ -1049,6 +1067,16 @@ final class ClaudeActions {
             ClaudeActions.setFrame(windows[order[index]], cell)
         }
         onWindowsMoved?()
+    }
+
+    /// Ячейки раскладки на экране, где стоят окна Claude (план WF41): их номера пишет
+    /// «💾 Сохранить эту раскладку…», по ним же «↩︎ Вернуть эти чаты» ставит окна.
+    /// Считаются той же арифметикой, что «Расставить», — иначе номер ячейки означал бы
+    /// одно при записи и другое при возврате.
+    func arrangeCells(mode: ArrangeLayout.Mode, count: Int) -> [CGRect] {
+        let frames = pimpWindows().map { $0.frame }
+        guard count > 0, let area = Screens.usableFrame(holding: frames) else { return [] }
+        return ArrangeLayout.frames(count: count, in: area, mode: mode, minCellWidth: cellWidth())
     }
 
     /// Влезает ли раскладка на главный экран (ячейка не уже `minWindowWidth`): по этому

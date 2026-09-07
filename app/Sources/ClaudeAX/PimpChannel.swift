@@ -43,7 +43,13 @@ struct PimpMove: Equatable {
 /// Запрос канала: `{"id","at","action","from",…}` (контракт плана WF36, эталоны
 /// `tests/fixtures/pimp/*.request.json`).
 struct PimpRequest: Equatable {
-    enum Action: String { case newWindow = "new-window", arrange, projects, windows }
+    enum Action: String {
+        case newWindow = "new-window", arrange, projects, windows
+        /// Раскладки проектов (план WF41): список, запомнить, вернуть.
+        case layouts
+        case layoutSave = "layout-save"
+        case layoutRestore = "layout-restore"
+    }
 
     let id: String
     /// Когда запрос написан: старше 30 с — «stale», исполнять поздно.
@@ -58,6 +64,15 @@ struct PimpRequest: Equatable {
     /// Только `arrange` (план WF21): раскладка; nil — `last`, то есть последняя выбранная,
     /// её подставляет приложение. Поля нет — лента (умолчание CLI).
     let layout: ArrangeLayout.Mode?
+    /// Только `arrange` (план WF41): порядок проектов — абсолютные пути или имена папок.
+    /// nil — поля не было, и ответ остаётся прежним (без `unknown` и `missing`).
+    let order: [String]?
+    /// Имя раскладки (`layout-save`, `layout-restore`).
+    let name: String
+    /// `layout-restore`: новые чаты по тем же папкам вместо тех же самых чатов.
+    let fresh: Bool
+    /// `projects`: просили ли сводку проектов (поле есть, только когда true).
+    let status: Bool
 }
 
 /// Ответ канала: `<id>.result.json` рядом с запросом. Порядок ключей побайтно —
@@ -124,6 +139,19 @@ struct PimpSeats {
     var titleForChat: (String) -> String? = { _ in nil }
     /// Ушли ли слои (цвет) с последней командой «новое окно» — поле `layers` ответа.
     var newWindowLayers: () -> Bool = { false }
+    /// Сохранённые раскладки (`layouts.json`), свежие первыми (план WF41).
+    var layouts: () -> [WindowLayout] = { [] }
+    /// Записать раскладку (перезапись по имени); false — файл не записался.
+    var saveLayout: (WindowLayout) -> Bool = { _ in false }
+    /// Ячейки раскладки на экране, где стоят окна: по ним считается номер ячейки окна
+    /// («Запомнить») и куда его ставить («Вернуть»).
+    var cells: (ArrangeLayout.Mode, Int) -> [CGRect] = { _, _ in [] }
+    /// Это главное окно Claude? В записи раскладки у него `chat:"main"`, и при возврате
+    /// ему ставится только рамка — чат мы не меняем.
+    var isMainWindow: (String) -> Bool = { _ in false }
+    /// Вынести названный чат отдельным окном в эту точку — команда `popout-window`
+    /// главному окну (план WF41, «Вернуть эти чаты»).
+    var openChat: (String, String, (x: Int, y: Int)) -> Void = { _, _, _ in }
 }
 
 /// Канал «Пимп» (план WF36, задача #5531): окна Claude из любого чата — файлами, без клавиатуры.
@@ -150,6 +178,10 @@ final class PimpChannel {
     static let freshSeconds: TimeInterval = 30
     /// Сколько ждём НОВОЕ окно Claude.
     static let newWindowSeconds: TimeInterval = 40
+    /// Сколько ждём окно чата, вынесенного «Вернуть эти чаты» (план WF41): страница зовёт
+    /// `openPopout` сразу, а запасной путь через строку сайдбара — секунды. Новые чаты
+    /// (`fresh`) ждут своё прежнее время: там создаётся сессия и уходит первое сообщение.
+    static let restoreWindowSeconds: TimeInterval = 15
     /// Файлы канала старше часа убираем.
     static let keepSeconds: TimeInterval = 3600
     /// Не чаще раза в минуту.
@@ -170,6 +202,10 @@ final class PimpChannel {
         case projectMissing = "project-missing"
         case windowMissing = "window-missing"
         case tooSmall = "too-small"
+        /// План WF41: чат окна приложению неизвестен — раскладку не пишем вовсе.
+        case chatUnknown = "chat-unknown"
+        /// План WF41: раскладки с таким именем нет.
+        case layoutMissing = "layout-missing"
     }
 
     /// Идущее «новое окно»: канал занят, пока не появится окно или не выйдут 40 с.
@@ -187,6 +223,36 @@ final class PimpChannel {
         let startedAt: Date
     }
 
+    /// Одно место раскладки в работе (план WF41): куда ставить окно и чьё оно.
+    private struct RestoreStep {
+        /// id чата или `main` — главное окно.
+        let chat: String
+        /// Папка проекта (для «✨ Новые чаты по этим проектам»).
+        let folder: String
+        let title: String
+        /// Рамка ячейки; nil — ячейки у записи не было (окно стояло не по сетке), и вернуть
+        /// его некуда.
+        let frame: CGRect?
+    }
+
+    /// Идущая «Вернуть раскладку»: канал занят, окна открываются ПО ОДНОМУ, и после каждого
+    /// метка `<id>.taken` переписывается — CLI считает ожидание от неё, а не от запроса.
+    private struct RestoreJob {
+        /// id запроса канала; nil — пункт меню, и отвечать некому.
+        let id: String?
+        let name: String
+        let fresh: Bool
+        /// Места, до которых ещё не дошли.
+        var queue: [RestoreStep]
+        /// Место, чьё окно сейчас ждём, снимок окон до него и время начала ожидания.
+        var waiting: RestoreStep?
+        var before: Set<CGWindowID> = []
+        var since: Date = .distantPast
+        var placed = 0
+        var opened = 0
+        var missing: [String] = []
+    }
+
     /// Запрос, взятый с диска: имя файла, тело и время для очереди.
     private struct Incoming {
         let url: URL
@@ -202,9 +268,21 @@ final class PimpChannel {
     var seats = PimpSeats()
 
     private var job: Job?
+    /// Идущая «Вернуть раскладку» (план WF41): вторая работа канала, такая же одиночная.
+    private var restore: RestoreJob?
     private var cleanedAt: Date?
     private(set) var served = 0
     private(set) var failed = 0
+
+    /// Канал занят: работа всегда одна — «новое окно» или возврат раскладки.
+    private var isBusy: Bool { job != nil || restore != nil }
+
+    /// Запрос, который сейчас исполняется; nil — канал свободен или работу начали из меню.
+    private var busyID: String? {
+        if let job = job { return job.id }
+        if let restore = restore { return restore.id }
+        return nil
+    }
 
     init(directory: URL = CommandChannel.directory
             .appendingPathComponent(PimpChannel.directoryName, isDirectory: true),
@@ -233,8 +311,11 @@ final class PimpChannel {
         let at = now()
         cleanup(at)
         if let current = job { advance(current, at: at) }
+        // Возврат раскладки идёт своими шагами (план WF41): по окну за раз, пока очередь
+        // не кончится. Канал при этом занят так же, как «новым окном».
+        if let current = restore { advanceRestore(current, at: at) }
         for incoming in pending() {
-            if let current = job, current.id == incoming.id { continue }
+            if busyID == incoming.id { continue }
             answer(incoming, at: at)
         }
     }
@@ -252,7 +333,7 @@ final class PimpChannel {
             // Метка «взял в работу» без ответа значит, что запрос уже исполняли, а приложение
             // перезапустили посреди работы: правда на диске, и повторять окно нельзя. CLI
             // сам скажет, что Пимп взял запрос и не ответил.
-            guard job?.id == id || !fileManager.fileExists(atPath: taken(for: id).path) else {
+            guard busyID == id || !fileManager.fileExists(atPath: taken(for: id).path) else {
                 continue
             }
             let url = directory.appendingPathComponent(name)
@@ -293,7 +374,7 @@ final class PimpChannel {
                   for: incoming.id)
             return
         }
-        guard job == nil else {
+        guard !isBusy else {
             reply(PimpAnswer(id: incoming.id, at: at, ok: false, error: Failure.busy.rawValue),
                   for: incoming.id)
             return
@@ -301,18 +382,29 @@ final class PimpChannel {
         // Метка «взял в работу»: по ней CLI отличает молчащего Пимпа от долгой работы.
         take(incoming.id)
         switch request.action {
-        case .projects: runProjects(id: incoming.id, at: at)
+        case .projects: runProjects(request, id: incoming.id, at: at)
         case .windows: runWindows(id: incoming.id, at: at)
         case .arrange: runArrange(request, id: incoming.id, at: at)
         case .newWindow: runNewWindow(request, id: incoming.id, at: at)
+        case .layouts: runLayouts(id: incoming.id, at: at)
+        case .layoutSave: runLayoutSave(request, id: incoming.id, at: at)
+        case .layoutRestore: runLayoutRestore(request, id: incoming.id, at: at)
         }
     }
 
-    /// Список проектов Claude знать не обязан — он лежит в нашем файле.
-    private func runProjects(id: String, at: Date) {
+    /// Список проектов Claude знать не обязан — он лежит в нашем файле. Просили сводку
+    /// (`status`, план WF41) — к каждому проекту добавляются открытые окна и строка из его
+    /// `status.md`; не просили — ответ прежний, побайтно (`projects.result.json`).
+    private func runProjects(_ request: PimpRequest, id: String, at: Date) {
         let list = seats.projects()
+        let windows = request.status ? seats.windows() : []
         reply(PimpAnswer(id: id, at: at, ok: true, fields: [
-            (key: "projects", value: .array(list.map { PimpChannel.projectValue($0) })),
+            (key: "projects", value: .array(list.map { project in
+                guard request.status else { return PimpChannel.projectValue(project) }
+                return PimpChannel.projectValue(
+                    project, chats: PimpChannel.chats(of: project, in: windows),
+                    state: PimpChannel.state(of: project.folder, fileManager: fileManager))
+            })),
         ]), for: id)
     }
 
@@ -342,11 +434,15 @@ final class PimpChannel {
             reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.tooSmall.rawValue), for: id)
             return
         }
-        let order = ArrangeLayout.order(of: windows.map { $0.frame })
-        let placed = seats.arrange(order.map { windows[$0].id }, mode)
+        let base = ArrangeLayout.order(of: windows.map { $0.frame })
+        // Порядок по проектам (план WF41): просили — окна названных папок идут первыми,
+        // не просили — прежний порядок по рамкам и ответ без `unknown`/`missing`.
+        let sorted = request.order.map { PimpChannel.order(of: windows, by: $0, base: base) }
+        let placed = seats.arrange((sorted?.order ?? base).map { windows[$0].id }, mode)
         reply(PimpAnswer(id: id, at: at, ok: true, fields: PimpChannel.arrangeFields(
             placed.windows.isEmpty ? windows : placed.windows, mode: mode,
-            skipped: placed.skipped, minimized: seats.minimized())), for: id)
+            skipped: placed.skipped, unknown: sorted?.unknown, missing: sorted?.missing,
+            minimized: seats.minimized())), for: id)
     }
 
     /// «Новое окно в проекте»: находим папку, зовём тот же путь, что пункт меню, и ждём
@@ -467,6 +563,173 @@ final class PimpChannel {
         return seats.arrange(ids, seats.arrangeMode()).windows.first { $0.id == window.id }?.frame
     }
 
+    // MARK: - раскладки проектов (план WF41)
+
+    /// «Какие раскладки»: имена, раскладка и сколько в ней мест. Свежие первыми — так их
+    /// отдаёт `LayoutsStore`.
+    private func runLayouts(id: String, at: Date) {
+        reply(PimpAnswer(id: id, at: at, ok: true,
+                         fields: PimpChannel.layoutsFields(seats.layouts())), for: id)
+    }
+
+    /// «Запомни раскладку как …»: снимок окон по ячейкам нынешней сетки. Окно, чей чат
+    /// приложение не знает, останавливает запись целиком (`chat-unknown`): вернулись бы
+    /// не те чаты, а половина раскладки хуже её отсутствия (#5455).
+    private func runLayoutSave(_ request: PimpRequest, id: String, at: Date) {
+        let windows = seats.windows()
+        guard seats.claudeRunning(), !windows.isEmpty else {
+            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            return
+        }
+        let mode = seats.arrangeMode()
+        let snapshot = LayoutsStore.snapshot(
+            name: request.name, at: at, mode: mode, windows: windows,
+            cells: seats.cells(mode, ArrangeLayout.capacity(of: mode) ?? windows.count),
+            isMain: seats.isMainWindow)
+        guard snapshot.unknown.isEmpty else {
+            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.chatUnknown.rawValue,
+                             fields: [(key: "windows",
+                                       value: .array(snapshot.unknown.map { .string($0) }))]),
+                  for: id)
+            return
+        }
+        guard seats.saveLayout(snapshot.layout) else {
+            // Файл не записался (нет прав, том только для чтения) — молчать нельзя.
+            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.badRequest.rawValue), for: id)
+            return
+        }
+        reply(PimpAnswer(id: id, at: at, ok: true, fields: PimpChannel.layoutSaveFields(
+            name: snapshot.layout.name, mode: mode, cells: snapshot.layout.cells.count)), for: id)
+    }
+
+    /// «Верни Утро»: те же чаты по тем же ячейкам (`fresh:false`) или новые чаты по тем же
+    /// папкам (`fresh:true`). Ответ уходит, когда очередь кончится, — до тех пор канал занят.
+    private func runLayoutRestore(_ request: PimpRequest, id: String, at: Date) {
+        let list = seats.layouts()
+        guard let layout = LayoutsStore.matching(name: request.name, in: list) else {
+            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.layoutMissing.rawValue,
+                             fields: [(key: "layouts",
+                                       value: .array(list.map { .string($0.name) }))]), for: id)
+            return
+        }
+        // Окна рождает главное окно Claude: без единого окна на экране открывать нечем.
+        guard seats.claudeRunning(), !seats.windows().isEmpty else {
+            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            return
+        }
+        begin(layout, fresh: request.fresh, id: id, at: at)
+    }
+
+    /// «↩︎ Вернуть эти чаты» из меню (план WF41, решение Р5): та же очередь, что у канала,
+    /// только отвечать некому — результат виден окнами на экране. Канал занят — не начинаем.
+    @discardableResult
+    func startRestore(_ layout: WindowLayout, fresh: Bool) -> Bool {
+        guard !isBusy, seats.claudeRunning(), !seats.windows().isEmpty else { return false }
+        begin(layout, fresh: fresh, id: nil, at: now())
+        return true
+    }
+
+    /// Очередь мест: сперва те, у кого есть ячейка, по возрастанию её номера; записи без
+    /// ячейки — в хвост (вернуть их некуда, и они честно уходят в `missing`).
+    private func begin(_ layout: WindowLayout, fresh: Bool, id: String?, at: Date) {
+        let count = (layout.cells.compactMap { $0.cell }.max()).map { $0 + 1 } ?? 0
+        let frames = count > 0 ? seats.cells(layout.mode, count) : []
+        let queue = layout.cells
+            .sorted { ($0.cell ?? Int.max) < ($1.cell ?? Int.max) }
+            .map { record -> RestoreStep in
+                let frame = record.cell.flatMap { frames.indices.contains($0) ? frames[$0] : nil }
+                return RestoreStep(chat: record.chat, folder: record.folder,
+                                   title: record.title, frame: frame)
+            }
+        advanceRestore(RestoreJob(id: id, name: layout.name, fresh: fresh, queue: queue), at: at)
+    }
+
+    /// Шаг возврата на тике: сперва досматриваем окно, которого ждём, потом разбираем
+    /// очередь, пока не упрёмся в место, ради которого окно надо открыть. Открытые окна
+    /// расставляются здесь же — ждать нечего.
+    private func advanceRestore(_ current: RestoreJob, at: Date) {
+        var job = current
+        if let step = job.waiting {
+            let windows = seats.windows()
+            if let fresh = windows.first(where: { !job.before.contains($0.id) }) {
+                if let frame = step.frame { seats.place([PimpMove(id: fresh.id, frame: frame)]) }
+                job.opened += 1
+                job.waiting = nil
+                beat(job.id)
+            } else if at.timeIntervalSince(job.since) >= waitSeconds(job) {
+                // Окна нет: чат закрыт совсем или страница ответила `chat-missing`. Ячейка
+                // остаётся пустой, новый чат вместо старого не заводим (#5455).
+                job.waiting = nil
+                job.missing.append(step.title)
+                beat(job.id)
+            } else {
+                restore = job
+                return
+            }
+        }
+        while !job.queue.isEmpty {
+            let step = job.queue.removeFirst()
+            guard let frame = step.frame else {
+                // Места у записи не было — возвращать некуда, так и говорим.
+                if !job.fresh { job.missing.append(step.title) }
+                continue
+            }
+            // Тот же чат уже на экране — просто ставим окно в ячейку. У «новых чатов»
+            // этой ветки нет вовсе: они открываются заново по папкам.
+            if !job.fresh, let window = PimpChannel.window(step.chat, in: seats.windows(),
+                                                           isMain: seats.isMainWindow) {
+                seats.place([PimpMove(id: window.id, frame: frame)])
+                job.placed += 1
+                beat(job.id)
+                continue
+            }
+            job.before = Set(seats.windows().map { $0.id })
+            job.since = at
+            job.waiting = step
+            if open(step, fresh: job.fresh, frame: frame) {
+                restore = job
+                return
+            }
+            // Открывать нечем: папки нет на диске (новые чаты) или это главное окно,
+            // которого на экране не нашлось. Ячейка остаётся пустой.
+            job.waiting = nil
+            if !job.fresh { job.missing.append(step.title) }
+        }
+        restore = nil
+        guard let id = job.id else { return }
+        reply(PimpAnswer(id: id, at: at, ok: true, fields: PimpChannel.restoreFields(
+            name: job.name, placed: job.placed, opened: job.opened, missing: job.missing)), for: id)
+    }
+
+    /// Сколько ждём окно шага: новый чат создаётся долго (сессия и первое сообщение),
+    /// вынос уже готового чата — секунды.
+    private func waitSeconds(_ job: RestoreJob) -> TimeInterval {
+        job.fresh ? PimpChannel.newWindowSeconds : PimpChannel.restoreWindowSeconds
+    }
+
+    /// Открыть окно места: «новые чаты» идут тем же путём, что «🪟 Новое окно ▸ проект»,
+    /// а «те же чаты» — командой `popout-window` главному окну. false — открывать нечем.
+    private func open(_ step: RestoreStep, fresh: Bool, frame: CGRect) -> Bool {
+        let origin = (x: Int(frame.minX.rounded()), y: Int(frame.minY.rounded()))
+        guard fresh else {
+            // Главное окно не открывают заново — оно либо есть на экране, либо его нет.
+            guard step.chat != LayoutsStore.mainChat else { return false }
+            seats.openChat(step.chat, step.title, origin)
+            return true
+        }
+        guard let project = PimpChannel.project(named: step.folder, in: seats.projects(),
+                                                fileManager: fileManager) else { return false }
+        seats.openNewWindow(project, origin)
+        return true
+    }
+
+    /// Сердцебиение долгой работы: CLI считает своё ожидание от времени файла `<id>.taken`,
+    /// а возврат раскладки открывает окна по одному и идёт дольше минуты (контракт WF41).
+    private func beat(_ id: String?) {
+        guard let id = id else { return }
+        take(id)
+    }
+
     // MARK: - файлы
 
     private func result(for id: String) -> URL {
@@ -557,6 +820,16 @@ final class PimpChannel {
         return title.flatMap { window(title: $0, in: windows) }
     }
 
+    /// Окно места раскладки (план WF41): главное окно узнаётся резолвером приложения
+    /// (`chat:"main"`), остальные — по id чата. Не нашли — окно закрыто.
+    static func window(_ chat: String, in windows: [PimpWindow],
+                       isMain: (String) -> Bool) -> PimpWindow? {
+        guard chat != LayoutsStore.mainChat else { return windows.first { isMain($0.title) } }
+        let wanted = chat.trimmingCharacters(in: .whitespaces)
+        guard !wanted.isEmpty else { return nil }
+        return windows.first { $0.chat == wanted }
+    }
+
     static func window(title: String, in windows: [PimpWindow]) -> PimpWindow? {
         let wanted = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return nil }
@@ -581,12 +854,99 @@ final class PimpChannel {
                 .number(Int(frame.width.rounded())), .number(Int(frame.height.rounded()))])
     }
 
-    static func projectValue(_ project: Project) -> CommandValue {
-        .object([
+    /// Проект в ответе: имя, папка, когда открывали. `chats` и `state` (план WF41) идут
+    /// ПОСЛЕ `lastUsed` и только когда просили сводку — иначе ответ остаётся прежним.
+    static func projectValue(_ project: Project, chats: [String]? = nil,
+                             state: String? = nil) -> CommandValue {
+        var fields: [(key: String, value: CommandValue)] = [
             (key: "name", value: .string(project.name)),
             (key: "folder", value: .string(project.folder.path)),
             (key: "lastUsed", value: .string(stampText(ProjectsStore.date(project.lastFocusedAt)))),
-        ])
+        ]
+        if let chats = chats {
+            fields.append((key: "chats", value: .array(chats.map { .string($0) })))
+        }
+        if let state = state { fields.append((key: "state", value: .string(state))) }
+        return .object(fields)
+    }
+
+    /// Открытые окна проекта для `projects --status`: заголовки окон, чья папка совпала.
+    /// Папку окна знает индекс чатов, поэтому неопознанные окна сюда не попадают.
+    static func chats(of project: Project, in windows: [PimpWindow]) -> [String] {
+        let folder = project.folder.standardizedFileURL.path
+        return windows.filter {
+            !$0.folder.isEmpty
+                && URL(fileURLWithPath: $0.folder, isDirectory: true).standardizedFileURL.path == folder
+        }
+        .map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    }
+
+    /// Сводка проекта — `docs/status.md`, а нет его — `audit/status.md`; нет и его — "".
+    static func state(of folder: URL, fileManager: FileManager = .default) -> String {
+        for name in statusFolders {
+            let url = folder.appendingPathComponent(name, isDirectory: true)
+                .appendingPathComponent(StatusFeed.statusFileName)
+            guard fileManager.fileExists(atPath: url.path) else { continue }
+            return state(try? String(contentsOf: url, encoding: .utf8))
+        }
+        return ""
+    }
+
+    /// Где искать сводку проекта (порядок важен: docs сильнее audit).
+    static let statusFolders = ["docs", "audit"]
+    static let statusCountWord = "воркфлоу"
+    static let statusDoneWord = "готово"
+    static let statusNowPrefix = "Сейчас:"
+
+    /// Строка `state`: два счёта из шапки status.md и строка «Сейчас:» — «41 воркфлоу ·
+    /// 27 готово · Сейчас: …». Сводку целиком читает `StatusFeed`, ему тут делать нечего.
+    /// Счётом считаем только строку, начинающуюся ОБЫЧНОЙ цифрой: «1️⃣ Workflow ✅ готово»
+    /// начинается с цифры-эмодзи и в шапку не лезет.
+    static func state(_ markdown: String?) -> String {
+        guard let text = markdown, !text.isEmpty else { return "" }
+        var counts: [String] = []
+        var now = ""
+        for raw in text.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if let head = line.first, head.isASCII, head.isNumber, counts.count < 2,
+               line.hasSuffix(statusCountWord) || line.hasSuffix(statusDoneWord) {
+                counts.append(line)
+            } else if now.isEmpty, line.hasPrefix(statusNowPrefix) {
+                now = line
+            }
+        }
+        return (counts + (now.isEmpty ? [] : [now])).joined(separator: " · ")
+    }
+
+    /// Порядок окон для `arrange` с `order` (план WF41): окна названных папок — первыми и
+    /// в этом порядке, остальные опознанные — за ними в прежнем порядке, окна без папки —
+    /// в хвост. Возвращает порядок индексов, число окон без папки и записи `order`, которым
+    /// окна не нашлось (как их прислали: их же называет CLI).
+    static func order(of windows: [PimpWindow], by entries: [String],
+                      base: [Int]) -> (order: [Int], unknown: Int, missing: [String]) {
+        var taken = Set<Int>()
+        var first: [Int] = []
+        var missing: [String] = []
+        for entry in entries {
+            let hits = base.filter { !taken.contains($0) && matches(folder: windows[$0].folder,
+                                                                    entry: entry) }
+            guard !hits.isEmpty else {
+                missing.append(entry)
+                continue
+            }
+            first += hits
+            taken.formUnion(hits)
+        }
+        let unknown = base.filter { windows[$0].folder.isEmpty }
+        let rest = base.filter { !taken.contains($0) && !windows[$0].folder.isEmpty }
+        return (order: first + rest + unknown, unknown: unknown.count, missing: missing)
+    }
+
+    /// Папка окна и запись `order`: абсолютный путь целиком или имя папки (контракт WF41).
+    static func matches(folder: String, entry: String) -> Bool {
+        guard !folder.isEmpty, !entry.isEmpty else { return false }
+        return folder == entry || URL(fileURLWithPath: folder).lastPathComponent == entry
     }
 
     static func windowsValue(_ windows: [PimpWindow]) -> CommandValue {
@@ -609,12 +969,52 @@ final class PimpChannel {
     /// Поля ответа `arrange` (план WF21): раскладка применённая (`last` уже разрешён),
     /// окна — только переставленные, `skipped` — сколько не тронули. Порядок побайтно —
     /// эталон `tests/fixtures/pimp/arrange.result.json`.
+    /// `unknown` и `missing` (план WF41) идут ПОСЛЕ `skipped` и только когда в запросе был
+    /// `order` — оба разом (эталон `arrange-order.result.json`).
     static func arrangeFields(_ windows: [PimpWindow], mode: ArrangeLayout.Mode, skipped: Int,
+                              unknown: Int? = nil, missing: [String]? = nil,
                               minimized: Int) -> [(key: String, value: CommandValue)] {
-        [(key: "layout", value: .string(mode.rawValue)),
-         (key: "windows", value: windowsValue(windows)),
-         (key: "skipped", value: .number(max(0, skipped))),
-         (key: "minimized", value: .number(max(0, minimized)))]
+        var fields: [(key: String, value: CommandValue)] = [
+            (key: "layout", value: .string(mode.rawValue)),
+            (key: "windows", value: windowsValue(windows)),
+            (key: "skipped", value: .number(max(0, skipped))),
+        ]
+        if let unknown = unknown {
+            fields.append((key: "unknown", value: .number(max(0, unknown))))
+            fields.append((key: "missing", value: .array((missing ?? []).map { .string($0) })))
+        }
+        fields.append((key: "minimized", value: .number(max(0, minimized))))
+        return fields
+    }
+
+    /// Поля ответа `layouts` (план WF41): имя, время, раскладка и сколько в ней мест.
+    static func layoutsFields(_ list: [WindowLayout]) -> [(key: String, value: CommandValue)] {
+        [(key: "layouts", value: .array(list.map { layout in
+            .object([
+                (key: "name", value: .string(layout.name)),
+                (key: "at", value: .string(stampText(layout.at))),
+                (key: "mode", value: .string(layout.mode.rawValue)),
+                (key: "cells", value: .number(layout.cells.count)),
+            ])
+        }))]
+    }
+
+    /// Поля ответа `layout-save`: имя, раскладка, сколько мест записано.
+    static func layoutSaveFields(name: String, mode: ArrangeLayout.Mode,
+                                 cells: Int) -> [(key: String, value: CommandValue)] {
+        [(key: "name", value: .string(name)),
+         (key: "mode", value: .string(mode.rawValue)),
+         (key: "cells", value: .number(max(0, cells)))]
+    }
+
+    /// Поля ответа `layout-restore`: имя, сколько окон уже стояло, сколько открыли заново
+    /// и чьи ячейки остались пустыми.
+    static func restoreFields(name: String, placed: Int, opened: Int,
+                              missing: [String]) -> [(key: String, value: CommandValue)] {
+        [(key: "name", value: .string(name)),
+         (key: "placed", value: .number(max(0, placed))),
+         (key: "opened", value: .number(max(0, opened))),
+         (key: "missing", value: .array(missing.map { .string($0) }))]
     }
 }
 
@@ -645,8 +1045,19 @@ extension PimpRequest {
             guard let mode = ArrangeLayout.Mode(rawValue: raw) else { return nil }
             layout = mode
         }
+        // Порядок проектов (план WF41): список папок — путями или именами. Поля нет (или
+        // в нём нет ни одной годной строки) — nil, и ответ `arrange` остаётся прежним.
+        let entries = (root["order"] as? [String])?
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty } ?? []
+        let name = (root["name"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // Раскладку без имени ни записать, ни найти — это `bad-request`.
+        if action == .layoutSave || action == .layoutRestore, name.isEmpty { return nil }
         return PimpRequest(id: id, at: at, action: action, from: from, project: project,
-                           place: place, layout: layout)
+                           place: place, layout: layout, order: entries.isEmpty ? nil : entries,
+                           name: name, fresh: root["fresh"] as? Bool ?? false,
+                           status: root["status"] as? Bool ?? false)
     }
 
     /// `place` запроса; поля нет или оно пустое — «справа» (умолчание CLI). Чужое слово —
