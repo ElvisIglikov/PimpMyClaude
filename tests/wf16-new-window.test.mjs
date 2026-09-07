@@ -178,15 +178,31 @@ test("папка: стор есть, чипа не видно — верим с�
     "без доверия папке Claude поднял бы окно вопроса");
 });
 
-test("папка: глухой стор и не сменившийся чип — честный отказ", async () => {
+// WF36, #5544: правда о папке — стор, а не чип. Глухой стор по-прежнему отказ;
+// отставший чип — только пометка, и шаг папки проходит.
+test("папка: глухой стор — отказ, отставший чип — пометка stale и шаг проходит", async () => {
   const deaf = folderWorld();
   assert.equal(
     await deaf.pick(folderStore("/Users/elvis/_ElvisProjects/PimpMyClaude", { deaf: true }), "/Users/elvis/_ElvisProjects/Dictatorik", []),
-    "folder-missing");
+    "folder-missing", "стор папку не принял — дальше идти нельзя");
+
   const stale = folderWorld();
+  const store = folderStore("/Users/elvis/_ElvisProjects/PimpMyClaude");
   assert.equal(
-    await stale.pick(folderStore("/Users/elvis/_ElvisProjects/PimpMyClaude"), "/Users/elvis/_ElvisProjects/Dictatorik", [chip("PimpMyClaude")]),
-    "folder-missing", "чип был и не сменился — стор нашли не тот");
+    await stale.pick(store, "/Users/elvis/_ElvisProjects/Dictatorik", [chip("PimpMyClaude")]),
+    "ok", "стор принял папку — чип отстал, но шаг проходит (#5544)");
+  assert.equal(store.getState().selectedFolder, "/Users/elvis/_ElvisProjects/Dictatorik");
+  assert.deepEqual(stale.marks.map(mark => mark.chip).filter(Boolean), ["stale"],
+    "отставший чип обязан быть помечен stale");
+
+  // Сравнение чипа точное: «Dictator» на месте «Dictatorik» — не совпадение.
+  const prefix = folderWorld();
+  assert.equal(
+    await prefix.pick(folderStore("/Users/elvis/_ElvisProjects/PimpMyClaude"), "/Users/elvis/_ElvisProjects/Dictatorik",
+      [chip("PimpMyClaude"), chip("Dictator")]),
+    "ok");
+  assert.deepEqual(prefix.marks.map(mark => mark.chip).filter(Boolean), ["stale"],
+    "чип по префиксу засчитан — сравнение смягчили");
 });
 
 test("папка: чип сменился — сошлось; хвостовой слэш пути не меняет", async () => {

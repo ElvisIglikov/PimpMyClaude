@@ -186,8 +186,11 @@ final class ClaudeActions {
     /// (страница должна успеть запомнить, где стояло главное окно), и только потом ⌘N.
     /// Окно адресуется AX-заголовком, как «Обкэшить»; пустой заголовок страница понимает
     /// как «окно в фокусе».
-    private func newWindow(_ window: AXUIElement?, project: Project? = nil) {
-        let origin = ClaudeActions.popoutOrigin(near: window.flatMap { AX.frame($0) })
+    private func newWindow(_ window: AXUIElement?, project: Project? = nil,
+                           origin fixed: (x: Int, y: Int)? = nil) {
+        // Точку могли задать снаружи (место «x,y» канала «Пимп», план WF36) — тогда окно
+        // родится там же, где его просили, и двигать его потом не придётся.
+        let origin = fixed ?? ClaudeActions.popoutOrigin(near: window.flatMap { AX.frame($0) })
         // Адресуем ГЛАВНОЕ окно, на каком бы окне ни нажали (дополнение 05.09 к плану WF19):
         // с попапа команда уходила с его заголовком, и её никто не исполнял. Пути не знаем —
         // адресуем заголовком, как раньше.
@@ -206,8 +209,10 @@ final class ClaudeActions {
             guard let self = self else { return }
             let layers = project.map {
                 ClaudeActions.newWindowLayers(project: self.projectView($0),
-                                              window: self.windowView(title: title))
+                                              window: self.windowView(title: title),
+                                              autoColor: self.autoProjectColor(for: $0))
             } ?? ProjectSettings()
+            self.lastNewWindowLayers = !layers.isEmpty
             self.commands.write(action: ClaudeCommand.newWindow.rawValue,
                                 fields: ClaudeActions.newWindowFields(title: title, match: match,
                                                                       x: origin.x, y: origin.y,
@@ -228,18 +233,47 @@ final class ClaudeActions {
     /// проекта, зовётся его именем и открывается уже в нужном цвете. Пункт меню зовёт этот
     /// метод мимо `perform` — отметку «была команда из меню» ставим сами, иначе фоновая
     /// покраска по проекту не замолчала бы на свои 2 с.
-    func newWindow(in project: Project, on window: AXUIElement?) {
+    func newWindow(in project: Project, on window: AXUIElement?,
+                   origin: (x: Int, y: Int)? = nil) {
         noteUserCommand()
-        newWindow(window ?? focusedWindow(), project: project)
+        // Папку открыли — она самая свежая в своём списке (план WF36, WF30 ч. 2). Точка одна
+        // на оба пути: и клик по пункту меню, и запрос канала «Пимп» идут сюда.
+        onProjectUsed?(project)
+        newWindow(window ?? focusedWindow(), project: project, origin: origin)
     }
 
     /// Чем красить новое окно (вопрос 2 макета WF16, ответ Элвиса — «1»): вид проекта из
-    /// `.pimpmyclaude.json`, а пока его нет — вид окна, из которого нажали. Пусто и там —
-    /// слоёв в команде не будет вовсе, окно откроется как у Claude.
-    static func newWindowLayers(project: ProjectSettings?, window: ProjectSettings) -> ProjectSettings {
-        guard let project = project, !project.isEmpty else { return window }
-        return project
+    /// `.pimpmyclaude.json`, а пока его нет — авто-цвет по имени папки (план WF36 п. 4),
+    /// и только если нет и его — вид окна, из которого нажали. Пусто везде — слоёв в команде
+    /// не будет вовсе, окно откроется как у Claude.
+    ///
+    /// Авто-цвет сильнее вида окна нарочно: без него окно рождалось цветом соседнего чата и
+    /// перекрашивалось в свой только через такты, когда `ProjectPaint` доберётся до него
+    /// через probe. Остальные слои (шрифт, размер, рамка) как были — от окна-источника.
+    static func newWindowLayers(project: ProjectSettings?, window: ProjectSettings,
+                                autoColor: Theme? = nil) -> ProjectSettings {
+        if let project = project, !project.isEmpty { return project }
+        guard let auto = autoColor else { return window }
+        return ProjectSettings(name: window.name, theme: .set(auto), font: window.font,
+                               size: window.size, frame: window.frame)
     }
+
+    /// Авто-цвет проекта для нового окна — ровно на тех же двух условиях, на которых красит
+    /// папки `ProjectPaint` (`ProjectPaint.swift:169,217`): включён тумблер «🗂 Цвет по
+    /// проекту» и не задан вид «всем окнам». Иначе цвет в команде спорил бы с тем, что
+    /// приложение красит дальше.
+    private func autoProjectColor(for project: Project) -> Theme? {
+        guard isProjectColorOn(), !hasAllWindowsView else { return nil }
+        return AutoPaint.projectTheme(folderName: project.folder.lastPathComponent)
+    }
+
+    /// Тумблер «🗂 Цвет по проекту». Живьём вешает `ClaudeAXController`; без него авто-цвета
+    /// нет вовсе — как было до WF36.
+    var isProjectColorOn: () -> Bool = { false }
+    /// Папку открыли: `ProjectsStore` запоминает её как свежую. Живьём вешает контроллер.
+    var onProjectUsed: ((Project) -> Void)?
+    /// Ушли ли слои с последней командой «новое окно» — поле `layers` ответа канала «Пимп».
+    private(set) var lastNewWindowLayers = false
 
     /// Вид окна, каким его помнит приложение: галки меню, а у окна после «Раскрасить по кругу» —
     /// его сгенерированная тема. Нужен «🪟 Новому окну ▸» у проекта без своего вида (план WF16).
@@ -917,14 +951,116 @@ final class ClaudeActions {
         guard !windows.isEmpty, let area = Screens.mainUsableFrame else { return }
         let frames = windows.map { AX.frame($0) ?? .zero }
         let order = ArrangeLayout.order(of: frames)
-        let cells = ArrangeLayout.frames(count: order.count, in: area)
+        let cells = ArrangeLayout.frames(count: order.count, in: area,
+                                         minCellWidth: cellWidth())
         for (index, windowIndex) in order.enumerated() {
             let cell = cells[index]
             let window = windows[windowIndex]
-            AX.set(window, kAXPositionAttribute, point: cell.origin)
-            AX.set(window, kAXSizeAttribute, size: cell.size)
+            ClaudeActions.setFrame(window, cell)
         }
         onWindowsMoved?()
+    }
+
+    /// Поставить окну рамку и УБЕДИТЬСЯ, что она встала (гейт WF36, 07.09): Electron молча
+    /// глотает `kAXPositionAttribute`, пока окно ещё едет (свежий popout, анимация) — на живом
+    /// прогоне три окна сузились по сетке, а с места не сдвинулись, и Элвис видел ровно это
+    /// («в ширину уменьшились, больше ничего не произошло»). Поэтому после записи читаем рамку
+    /// назад и повторяем до трёх раз с паузой; порядок «позиция → размер → позиция»: смена
+    /// размера у правого края может снова сдвинуть окно. Сон короткий и только при промахе —
+    /// в штатном случае вызов остаётся мгновенным.
+    static let frameRetries = 3
+    static let frameRetryPause: TimeInterval = 0.25
+    static let frameTolerance: CGFloat = 2
+
+    @discardableResult
+    static func setFrame(_ window: AXUIElement, _ frame: CGRect) -> Bool {
+        for attempt in 0..<frameRetries {
+            AX.set(window, kAXPositionAttribute, point: frame.origin)
+            AX.set(window, kAXSizeAttribute, size: frame.size)
+            AX.set(window, kAXPositionAttribute, point: frame.origin)
+            if let now = AX.frame(window), frameMatches(now, frame) { return true }
+            if attempt + 1 < frameRetries { Thread.sleep(forTimeInterval: frameRetryPause) }
+        }
+        return AX.frame(window).map { frameMatches($0, frame) } ?? false
+    }
+
+    static func frameMatches(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = frameTolerance) -> Bool {
+        abs(a.origin.x - b.origin.x) <= tolerance && abs(a.origin.y - b.origin.y) <= tolerance
+            && abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
+    }
+
+    // MARK: - канал «Пимп» (план WF36)
+
+    /// Окна Claude на экране для канала: номер окна Quartz, AX-элемент, заголовок и рамка.
+    /// Номер нужен, чтобы отличить НОВОЕ окно от прежних (по имени нельзя — переименование
+    /// чата может не удаться) и чтобы канал говорил номерами, не таская наружу AX.
+    /// Геометрия — из `CGWindowList` (один вызов), как у автопокраски; окно без AX-пары
+    /// пропускаем: двигать его нечем.
+    func pimpWindows() -> [(id: CGWindowID, window: AXUIElement, title: String, frame: CGRect)] {
+        guard let pid = app.pid else { return [] }
+        var out: [(id: CGWindowID, window: AXUIElement, title: String, frame: CGRect)] = []
+        for entry in ClaudeApp.onScreenFrames(pid: pid) {
+            guard let window = app.window(matching: entry.frame) else { continue }
+            out.append((id: entry.id, window: window,
+                        title: AX.string(window, kAXTitleAttribute) ?? "", frame: entry.frame))
+        }
+        return out
+    }
+
+    /// Свёрнутые окна: их «Расставить» не трогает — канал только считает их в ответе,
+    /// чтобы CLI сказал «одно окно свёрнуто, не считал».
+    func minimizedCount() -> Int {
+        app.windows().filter { AX.bool($0, kAXMinimizedAttribute) == true }.count
+    }
+
+    /// Расставить окна в ЗАДАННОМ порядке (номера окон Quartz). Возвращает окна с рамками,
+    /// которые им поставили: канал отдаёт их в ответе, не перечитывая экран (`CGWindowList`
+    /// после переезда отвечает не сразу).
+    @discardableResult
+    func arrange(ids: [CGWindowID]) -> [(id: CGWindowID, title: String, frame: CGRect)] {
+        let windows = pimpWindows()
+        let ordered = ids.compactMap { id in windows.first { $0.id == id } }
+        guard !ordered.isEmpty, let area = Screens.mainUsableFrame else { return [] }
+        let cells = ArrangeLayout.frames(count: ordered.count, in: area,
+                                         minCellWidth: cellWidth())
+        var out: [(id: CGWindowID, title: String, frame: CGRect)] = []
+        for (index, entry) in ordered.enumerated() {
+            ClaudeActions.setFrame(entry.window, cells[index])
+            out.append((id: entry.id, title: entry.title, frame: cells[index]))
+        }
+        onWindowsMoved?()
+        return out
+    }
+
+    /// Поставить окна по рамкам — деление столбца пополам («под этим»/«над этим»).
+    /// Остальные окна не трогаем вовсе.
+    @discardableResult
+    func place(_ moves: [PimpMove]) -> Int {
+        guard !moves.isEmpty else { return 0 }
+        let windows = pimpWindows()
+        var moved = 0
+        for move in moves {
+            guard let entry = windows.first(where: { $0.id == move.id }) else { continue }
+            ClaudeActions.setFrame(entry.window, move.frame)
+            moved += 1
+        }
+        if moved > 0 { onWindowsMoved?() }
+        return moved
+    }
+
+    /// Ширина ячейки «Расставить». Живьём — из claude.json, в тестах подставляется.
+    var cellWidth: () -> CGFloat = { ClaudeActions.minCellWidth() }
+
+    /// `minWindowWidth` из живого `claude.json` (его правит и сам Элвис, и лоадер берёт
+    /// ширину оттуда же): уже этой ширины Electron окно всё равно не сделает, а константа
+    /// 340 у `ArrangeLayout` про это не знает. Ключа нет или он битый — 360, как в патче.
+    static func minCellWidth(configURL: URL = CommandChannel.directory
+                                .appendingPathComponent(StatusFeed.configFileName)) -> CGFloat {
+        let data = try? Data(contentsOf: configURL)
+        let json = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+        guard let value = (json?["minWindowWidth"] as? NSNumber)?.doubleValue,
+              value.isFinite, value > 0 else { return 360 }
+        return CGFloat(value)
     }
 
     /// Все окна Claude вперёд, потом фокус обратно тому, из которого пришли.

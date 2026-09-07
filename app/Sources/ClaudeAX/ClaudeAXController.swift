@@ -31,6 +31,12 @@ public final class ClaudeAXController: ClaudeAXControlling {
     /// Темы окон на диске (план WF35, задача #5473): переустановка Claude стирает localStorage
     /// страниц, и все окна становились серыми. Файл живёт рядом с `command.json`.
     private let windowThemes = WindowThemeStore()
+    /// Свой список недавних проектов (план WF36, WF30 ч. 2, задача #5451): индекс чатов Claude
+    /// переустановку не переживает, а файл рядом с `command.json` — переживает.
+    private let projects = ProjectsStore()
+    /// Канал «Пимп» (план WF36, задача #5531): окна Claude из любого чата — файлами.
+    /// Тикает на общем таймере, своего не заводит.
+    private let pimp = PimpChannel()
 
     private var observers: [NSObjectProtocol] = []
     /// Заголовки окон, снятые в этом тике: их читает и канал probe, и покраска — второй
@@ -122,9 +128,17 @@ public final class ClaudeAXController: ClaudeAXControlling {
         // «🪟 Новое окно ▸ <проект>» (план WF16): папки — из индекса чатов, имя чата уникально
         // по ВСЕМ его заголовкам (критик В4), вид — из файла проекта. Страница ничего этого
         // не знает: ей всё приходит готовым в команде.
+        // Список читается из СВОЕГО файла (план WF36): индекс Claude доливает его на каждом
+        // тике и здесь же, перед показом меню, — а переустановку Claude переживает файл.
         menu.recentProjects = { [weak self] in
-            self?.index.recentProjects(limit: MenuModel.newWindowProjectsLimit) ?? []
+            self?.knownProjects(limit: MenuModel.newWindowProjectsLimit) ?? []
         }
+        // Открыли папку (клик по пункту меню или запрос канала) — она самая свежая.
+        actions.onProjectUsed = { [weak self] project in
+            self?.projects.note(project, at: Date())
+        }
+        // Авто-цвет нового окна — на тех же условиях, что цвет проекта (план WF36 п. 4).
+        actions.isProjectColorOn = { [weak self] in self?.projectPaint.enabled ?? false }
         actions.chatName = { [weak self] project in
             self?.index.uniqueChatName(project.name) ?? project.name
         }
@@ -136,6 +150,95 @@ public final class ClaudeAXController: ClaudeAXControlling {
         actions.projectView = { [weak self] project in
             self?.projectSettings.settings(in: project.folder)
         }
+        // Канал «Пимп» (план WF36): окна Claude из любого чата — файлами, без клавиатуры.
+        connectPimp()
+    }
+
+    // MARK: - канал «Пимп» (план WF36)
+
+    /// Недавние проекты для меню и канала: свой файл, долитый из индекса Claude. Файл не
+    /// записался (папки нет, прав нет) — отдаём индекс: список обязан остаться живым, как
+    /// до WF36.
+    private func knownProjects(limit: Int) -> [Project] {
+        projects.absorb(index.projects(), at: Date())
+        let stored = projects.recent(limit: limit)
+        return stored.isEmpty ? index.recentProjects(limit: limit) : stored
+    }
+
+    /// Сиденья канала: всё, что он спрашивает у приложения. AX наружу не отдаём — канал
+    /// говорит номерами окон Quartz, а окна двигает `ClaudeActions`.
+    private func connectPimp() {
+        pimp.seats = PimpSeats(
+            claudeRunning: { [weak self] in self?.app.running() != nil },
+            windows: { [weak self] in
+                guard let self = self else { return [] }
+                return self.actions.pimpWindows().map {
+                    self.pimpWindow(id: $0.id, title: $0.title, frame: $0.frame)
+                }
+            },
+            minimized: { [weak self] in self?.actions.minimizedCount() ?? 0 },
+            projects: { [weak self] in self?.knownProjects(limit: ProjectsStore.limit) ?? [] },
+            openNewWindow: { [weak self] project, origin in
+                // Тот же путь, что пункт меню «🪟 Новое окно ▸ проект»: окно берётся то,
+                // что в фокусе у Claude, а команда всё равно адресуется главному (`match`).
+                self?.actions.newWindow(in: project, on: nil, origin: origin)
+            },
+            arrange: { [weak self] ids in
+                guard let self = self else { return [] }
+                return self.actions.arrange(ids: ids).map {
+                    self.pimpWindow(id: $0.id, title: $0.title, frame: $0.frame)
+                }
+            },
+            place: { [weak self] moves in self?.actions.place(moves) },
+            titleForChat: { [weak self] chat in self?.pimpTitle(forChat: chat) },
+            newWindowLayers: { [weak self] in self?.actions.lastNewWindowLayers ?? false })
+    }
+
+    /// Окно канала: к заголовку и рамке добавляются чат и папка — их знает индекс Claude
+    /// и карта probe. Карта молчит (тумблер выключен, канал занят агентом) — обе строки пусты.
+    private func pimpWindow(id: CGWindowID, title: String, frame: CGRect) -> PimpWindow {
+        let chat = pimpChat(forTitle: title)
+        let folder = chat.flatMap { index.folder(for: $0) }?.path ?? ""
+        return PimpWindow(id: id, title: title, chat: chat ?? "", folder: folder, frame: frame)
+    }
+
+    /// Какой чат в окне с таким заголовком: главное окно носит заголовок своего чата
+    /// (тот же путь, что `ProjectPaint.windowKey`), попапы — по карте probe.
+    private func pimpChat(forTitle title: String) -> String? {
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return nil }
+        // Свежий ответ самой страницы сильнее адреса из status.json (решение 8 плана WF29).
+        if let page = chatProbe.pages.first(where: { $0.kind == .main
+            && $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == clean }),
+            let chat = page.chat, ChatProbe.isRecent(page, at: Date()) {
+            return chat
+        }
+        if let session = index.mainWindow()?.session, session.title == clean {
+            return session.sessionId
+        }
+        if let popout = chatProbe.chat(forTitle: clean) { return popout }
+        // Главное окно носит заглушку «Claude», а не имя чата (гейт WF36, живой результат
+        // `fromResolved:false` на запрос из главного окна): чат берём из индекса.
+        if ProjectIndex.isStub(clean) { return index.mainWindow()?.session?.sessionId }
+        return nil
+    }
+
+    /// Обратный ход: в каком окне чат `from` (поле запроса). Заголовок главного окна берём
+    /// из индекса — он живёт и без probe; попап знает только карта probe, а она замирает
+    /// вместе с тумблером «🗂 Цвет по проекту» (п. 7 «Что выяснено»), и тогда «под этим»
+    /// честно вырождается в «справа».
+    private func pimpTitle(forChat chat: String) -> String? {
+        let wanted = chat.trimmingCharacters(in: .whitespaces)
+        guard !wanted.isEmpty else { return nil }
+        if let session = index.mainWindow()?.session, session.sessionId == wanted,
+           !session.title.isEmpty, !ProjectIndex.isStub(session.title) {
+            return session.title
+        }
+        let titles = Set(chatProbe.pages
+            .filter { $0.kind == .popout && $0.chat == wanted }
+            .map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty })
+        return titles.count == 1 ? titles.first : nil
     }
 
     // MARK: - ClaudeAXControlling
@@ -159,6 +262,8 @@ public final class ClaudeAXController: ClaudeAXControlling {
         // Поколение возврата тем (решение 5 плана WF35): приложение только что поднялось,
         // и Claude мог за это время переустановиться.
         windowThemes.beginGeneration()
+        // Каталог канала «Пимп»: по нему CLI видит, что приложение вообще есть (план WF36).
+        pimp.start()
         observeActivation()
         claudeFrontmost = app.isFrontmost
         refreshHotkeys()
@@ -182,6 +287,11 @@ public final class ClaudeAXController: ClaudeAXControlling {
                 self.actions.sendThemesRestore(fields: fields)
             }
             self.projectPaint.tick()
+            // Свой список проектов доливается из индекса (план WF36, WF30 ч. 2): файл пишется,
+            // только когда состав или свежесть папок правда изменились.
+            self.projects.absorb(self.index.projects(), at: Date())
+            // Канал «Пимп» — на этом же тике: запросы из любого чата лежат файлами.
+            self.pimp.tick()
             self.tickTitles = nil
         }
         RunLoop.main.add(watchdog, forMode: .common)
@@ -250,7 +360,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         blockQuit=\(blockQuitEnabled) blocks=\(blockedQuits) hotkeys=\(hotkeys.count) \
         status=\(statusFeed.isRunning)/\(statusFeed.projectCount)/\(statusFeed.sentCount) \
         project=\(projectPaint.status) chats=\(chatProbe.status) themes=\(windowThemes.status) \
-        live=\(liveColorsStatus) lastCommand=\(actions.lastCommand)
+        pimp=\(pimp.status) live=\(liveColorsStatus) lastCommand=\(actions.lastCommand)
         """
     }
 
