@@ -11,10 +11,30 @@ struct ChatPage: Equatable {
     let chat: String?
     /// `document.title` страницы — он же AX-заголовок окна, им адресуется попап.
     let title: String
+    /// `location.pathname` страницы: `/epitaxy/local_…` в открытом чате, `/epitaxy` на
+    /// домашнем экране, `blank` у попапа (план WF37, часть C).
+    let path: String
     /// Что со стором попапов на странице: `ok`, `cache`, `busy`, `none`, `skip`.
     let store: String
+    /// Папка чипа над пустым полем ввода — её страница отдаёт ТОЛЬКО у главного окна и
+    /// только на домашнем экране (план WF37 C1); во всех остальных случаях nil.
+    let folder: String?
     /// Когда пришёл круг, в котором страница ответила.
     let at: Date
+
+    /// Новые поля — со значениями по умолчанию, чтобы прежние восемь конструкторов в тестах
+    /// остались как были (критик, мелочь 1 плана WF37). Автоматический memberwise-init для
+    /// `let` со значением по умолчанию Swift не заводит — отсюда свой.
+    init(kind: Kind, chat: String?, title: String, path: String = "", store: String,
+         folder: String? = nil, at: Date) {
+        self.kind = kind
+        self.chat = chat
+        self.title = title
+        self.path = path
+        self.store = store
+        self.folder = folder
+        self.at = at
+    }
 }
 
 /// Файловая часть канала probe. Живьём это два файла рядом с `command.json`, в тестах —
@@ -91,6 +111,15 @@ final class ChatProbe {
     static let foreignQuiet: TimeInterval = 60
     /// Чужой скрипт, которого не касались дольше — брошенный: канал забираем.
     static let foreignStale: TimeInterval = 600
+    /// Путь страницы главного окна на домашнем экране (`/epitaxy`): сессии у него нет, и
+    /// папку окна знает только сама страница — по чипу над пустым полем (план WF37, часть C).
+    static let homePath = "/epitaxy"
+    /// Пол частоты на домашнем экране: чип папки меняется молча, и 15 с там — это 15 с
+    /// серого окна (план WF37 C3). Меньше 4 с не выйдет: общий тик приложения — 2 с.
+    static let homeInterval: TimeInterval = 4
+    /// Потолок длины папки из ответа: путь приходит из чужой страницы, и складывать в поле
+    /// команды что попало нельзя.
+    static let folderLimit = 1024
     /// Ответ главного окна старше — берём чат из `status.json` (решение 8 плана WF29).
     /// Держать его дольше круга нельзя (находка 1 проверки WF29): переключили чат в главном
     /// окне — `status.json` знает об этом через 2 с, а карта probe обновится в лучшем случае
@@ -172,6 +201,14 @@ final class ChatProbe {
         at.timeIntervalSince(page.at) < mainChatSeconds
     }
 
+    /// Последний СВЕЖИЙ ответ главного окна говорит «я на домашнем экране» (план WF37 C3).
+    /// Не «Claude впереди» и не «сессии нет в индексе»: спрашивает страница о себе сама,
+    /// и как только она уедет в чат, частота вернётся к прежним 15 с (критик, важно 5).
+    static func isMainAtHome(_ pages: [ChatPage], at: Date) -> Bool {
+        guard let main = pages.last(where: { $0.kind == .main }) else { return false }
+        return main.path == homePath && isRecent(main, at: at)
+    }
+
     /// Чат попапа по AX-заголовку окна. Заголовок пустой или заглушка — nil (такой носит
     /// и главное окно, и безымянный попап); заголовок носят два окна — тоже nil, и неважно,
     /// назвали они разные чаты или второе не назвало ничего: лучше не покрасить, чем
@@ -250,8 +287,16 @@ final class ChatProbe {
         // затёр бы свежий (критик В2 плана WF29).
         if pendingNonce != nil, let wrote = lastWriteAt,
            at.timeIntervalSince(wrote) < ChatProbe.answerTimeout { return false }
-        if let wrote = lastWriteAt, at.timeIntervalSince(wrote) < ChatProbe.askInterval { return false }
+        // Пол частоты свой, пока главное окно стоит на домашнем экране (план WF37 C3):
+        // папку там меняют молча, и о смене чипа мы узнаём только следующим кругом.
+        // Признак берём из своей же карты — нового параметра у тика нет.
+        let home = ChatProbe.isMainAtHome(pages, at: at)
+        let floor = home ? ChatProbe.homeInterval : ChatProbe.askInterval
+        if let wrote = lastWriteAt, at.timeIntervalSince(wrote) < floor { return false }
         if !started { return true }
+        // Домашний экран — повод сам по себе: ни заголовки окон, ни состав чатов при смене
+        // папки чипа не меняются, и спросить об этом больше некому.
+        if home { return true }
         if mirrored { return true }
         if titles != self.titles { return true }
         if revision != self.revision { return true }
@@ -398,9 +443,23 @@ final class ChatProbe {
                 themes = WindowThemeStore.map(from: raw)
             }
             pages.append(ChatPage(kind: kind, chat: chatId(result["self"] as? String), title: title,
-                                  store: (result["store"] as? String) ?? "", at: at))
+                                  path: (result["path"] as? String) ?? "",
+                                  store: (result["store"] as? String) ?? "",
+                                  // Папку принимаем ТОЛЬКО у главного окна (план WF37 C2):
+                                  // у попапа и чужой страницы её и не бывает, а поверить
+                                  // чужой строке значило бы покрасить окно чужим проектом.
+                                  folder: kind == .main ? folderPath(result["folder"]) : nil,
+                                  at: at))
         }
         return (pages, themes)
+    }
+
+    /// Папка из ответа страницы: абсолютный путь и не длиннее `folderLimit`. Всё прочее —
+    /// nil: относительный путь пришёл бы из чужого стора, а на нём стоит покраска окна.
+    static func folderPath(_ value: Any?) -> String? {
+        guard let path = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              path.hasPrefix("/"), path.count <= folderLimit else { return nil }
+        return path
     }
 
     /// id чата из ответа страницы. Сито то же, что у адреса страницы в `ProjectIndex.page(url:)`:

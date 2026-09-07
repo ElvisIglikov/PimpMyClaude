@@ -83,8 +83,17 @@ private final class PaintRig {
 
     /// Ответ страницы: `at` — по часам стенда, чтобы протухание ответа было проверяемым.
     func page(_ kind: ChatPage.Kind, _ chat: String?, _ title: String,
-              store: String = ChatProbe.storeOK) -> ChatPage {
-        ChatPage(kind: kind, chat: chat, title: title, store: store, at: clock.now)
+              store: String = ChatProbe.storeOK, path: String = "",
+              folder: String? = nil) -> ChatPage {
+        ChatPage(kind: kind, chat: chat, title: title, path: path, store: store, folder: folder,
+                 at: clock.now)
+    }
+
+    /// Главное окно на домашнем экране (план WF37 C2): сессии у него нет вовсе, и папку
+    /// знает только страница — по чипу над пустым полем.
+    func home(_ folder: URL) -> ChatPage {
+        page(.main, nil, ProjectPaint.mainWindowTitle, path: ChatProbe.homePath,
+             folder: folder.standardizedFileURL.path)
     }
 
     /// Слои последней ушедшей команды: «t» — тема, «f» — шрифт, «s» — размер, «r» — рамка;
@@ -1316,7 +1325,7 @@ final class ProjectTests: XCTestCase {
         XCTAssertNil(popout.match, "попап адресуется чатом, а не путём главного окна")
         XCTAssertEqual(popout.title, "Bro Flow продолжение")
         XCTAssertEqual(popout.theme.value?.id, "arctic", "цвет своего проекта, а не соседнего")
-        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/1")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/1/home:—")
 
         // Второй тик молчит: отпечаток на месте.
         rig.clock.advance()
@@ -1337,7 +1346,7 @@ final class ProjectTests: XCTestCase {
 
         rig.paint.tick()
         XCTAssertEqual(rig.sent.map { $0.key }, ["main"], "попап обычного чата покрасили чужим цветом")
-        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/1/0")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/1/0/home:—")
 
         // И выбор темы в таком окне остаётся местным — в чужой файл он не уезжает.
         rig.paint.noteManualChoice(title: "Разговор ни о чём", theme: .set(ProjectTests.arctic),
@@ -1368,7 +1377,7 @@ final class ProjectTests: XCTestCase {
         XCTAssertEqual(rig.sent.count, 3)
         XCTAssertEqual(rig.sent.last?.key, "w:Dictatoric")
         XCTAssertEqual(rig.sent.last?.theme.value?.id, "arctic")
-        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/0")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/0/home:—")
     }
 
     /// Тест 24 плана (сторож #5448): у чата попапа сменилась папка — окно перекрашивается
@@ -1409,7 +1418,7 @@ final class ProjectTests: XCTestCase {
         rig.clock.advance()
         rig.paint.tick()
         XCTAssertEqual(rig.sent.count, 2, "переименование окна — не повод красить его заново")
-        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/1")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/1/home:—")
     }
 
     /// Тест 26 плана: побайтный порядок полей команды — scope, title, match, chat, preview,
@@ -1569,14 +1578,14 @@ final class ProjectTests: XCTestCase {
         rig.titles = ["Dictatoric"]
         rig.paint.tick()
         XCTAssertEqual(rig.sent.map { $0.key }, ["main", "w:Dictatoric"])
-        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/0")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/0/home:—")
 
         // probe принёс id того же окна.
         rig.pages = [rig.page(.popout, "local_b2", "Dictatoric")]
         rig.clock.advance()
         rig.paint.tick()
         XCTAssertEqual(rig.sent.count, 2, "переезд ключа не должен слать команду заново")
-        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/1", "на окно завели второй отпечаток")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/1/home:—", "на окно завели второй отпечаток")
 
         // id потерялся: страница перезапустила инжект, стор пропал, канал занял агент.
         rig.pages = []
@@ -1587,7 +1596,7 @@ final class ProjectTests: XCTestCase {
         XCTAssertNil(rig.sent.last?.chat)
         XCTAssertEqual(PaintRig.layers(try XCTUnwrap(rig.sent.last)), "t",
                        "вид уезжает заново, уже заголовком")
-        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/0")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/2/0/home:—")
     }
 
     /// Тест 31 плана (решение 7а): `status.json` разбирается по отпечатку, а не на каждом
@@ -1639,5 +1648,112 @@ final class ProjectTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: rig.store.url(in: pimp)), bytes, "битый файл снесли")
         XCTAssertEqual(rig.notices, [MenuModel.projectBroken("PimpMyClaude")])
         XCTAssertTrue(rig.store.registry().isEmpty)
+    }
+
+    // MARK: - цвет домашнего экрана (план WF37, часть C2, задача #5576)
+
+    /// Главное окно на домашнем экране красится папкой ЧИПА: сессии у него нет, и до WF37
+    /// оно не красилось вовсе — ровно случай со скриншота Элвиса.
+    func testTargetsMainFromProbeFolderOnHomeScreen() throws {
+        let rig = makeRig()
+        // Домашний экран: страницы чата в диагностике лоадера нет.
+        putStatus(rig.status, urls: [])
+        rig.store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(ProjectTests.indigo)),
+                        to: rig.folder("PimpMyClaude"))
+        rig.titles = [ProjectPaint.mainWindowTitle]
+        XCTAssertNil(rig.index.mainWindow(), "на домашнем экране сессии у главного окна нет")
+
+        rig.pages = [rig.home(rig.folder("PimpMyClaude"))]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.map { $0.key }, ["main"])
+        let main = try XCTUnwrap(rig.sent.last)
+        XCTAssertEqual(main.match, ChatProbe.homePath, "адресуем окно путём домашнего экрана")
+        XCTAssertNil(main.chat)
+        XCTAssertEqual(main.title, "", "заголовок у главного окна — заглушка, адресует match")
+        XCTAssertEqual(main.theme.value?.id, "indigo")
+        XCTAssertEqual(rig.paint.status, "on/—/1/0/home:PimpMyClaude")
+
+        // Папка та же — второй команды нет: отпечаток на месте.
+        rig.clock.advance()
+        rig.pages = [rig.home(rig.folder("PimpMyClaude"))]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
+
+        // Элвис сменил папку чипом — окно перекрашивается сразу, не дожидаясь чата (#5576).
+        rig.clock.advance()
+        rig.pages = [rig.home(rig.folder("Dictatorik"))]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2)
+        XCTAssertEqual(rig.sent.last?.key, "main")
+        XCTAssertEqual(rig.sent.last?.theme.value?.id,
+                       "project-\(AutoPaint.hue(forName: "Dictatorik"))",
+                       "у Dictatorik своего файла нет — авто-цвет по имени папки")
+
+        // Ответ протух (лоадер молчит, канал занят агентом) — ни красим, ни снимаем.
+        rig.clock.advance(ChatProbe.mainChatSeconds + 1)
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2)
+        XCTAssertEqual(rig.paint.status, "on/—/1/0/home:—")
+
+        // Папки в ответе нет вовсе (стор не нашёлся) — тоже молчим.
+        rig.clock.advance()
+        rig.pages = [rig.page(.main, nil, ProjectPaint.mainWindowTitle, path: ChatProbe.homePath)]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2)
+    }
+
+    /// В ОТКРЫТОМ чате папка едет из индекса, а не из ответа страницы: поведение WF29
+    /// побайтно прежнее (критик, важно 5 плана WF37).
+    func testProbeFolderIgnoredInOpenChat() throws {
+        let rig = makeRig()
+        rig.store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(ProjectTests.indigo)),
+                        to: rig.folder("PimpMyClaude"))
+        rig.store.write(ProjectSettings(name: "Dictatorik", theme: .set(ProjectTests.arctic)),
+                        to: rig.folder("Dictatorik"))
+        // Чат открыт (индекс знает local_a1), а страница зачем-то назвала папку чипа.
+        rig.pages = [rig.page(.main, "local_a1", "PimpMyClaude", path: "/epitaxy/local_a1",
+                              folder: rig.folder("Dictatorik").path)]
+
+        rig.paint.tick()
+        let main = try XCTUnwrap(rig.sent.last)
+        XCTAssertEqual(main.key, ProjectPaint.mainKey)
+        XCTAssertEqual(main.match, "/epitaxy/local_a1")
+        XCTAssertEqual(main.theme.value?.id, "indigo", "папка из ответа в открытом чате не в счёт")
+        XCTAssertEqual(rig.paint.status, "on/PimpMyClaude/1/0/home:—")
+
+        // И даже когда страница говорит «я на домашнем экране», а лоадер знает чат, —
+        // право за индексом: папка из ответа берётся ТОЛЬКО когда чата нет вовсе.
+        rig.clock.advance()
+        rig.pages = [rig.home(rig.folder("Dictatorik"))]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1, "цвет главного окна не поехал за чипом")
+        XCTAssertTrue(rig.paint.status.hasSuffix("/home:Dictatorik"),
+                      "в диагностике папка чипа видна — покраска ею всё равно не пользуется")
+    }
+
+    /// Чип может показывать подпапку проекта — поднимаемся к корню теми же приметами,
+    /// что и у чатов (риск 5 плана WF37).
+    func testProbeSubfolderClimbsToRoot() throws {
+        let rig = makeRig()
+        putStatus(rig.status, urls: [])
+        rig.store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(ProjectTests.indigo)),
+                        to: rig.folder("PimpMyClaude"))
+
+        rig.pages = [rig.home(rig.folder("PimpMyClaude").appendingPathComponent("app"))]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.map { $0.key }, ["main"])
+        XCTAssertEqual(rig.sent.last?.theme.value?.id, "indigo",
+                       "цвет проекта, а не отдельной подпапки app")
+        XCTAssertEqual(rig.paint.status, "on/—/1/0/home:PimpMyClaude")
+
+        // Папка без примет корня (и не под проектом) остаётся собой — как у сессий.
+        rig.clock.advance()
+        let alone = rig.box.appendingPathComponent("Сама по себе", isDirectory: true)
+        makeFolder(alone)
+        rig.pages = [rig.home(alone)]
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2)
+        XCTAssertEqual(rig.sent.last?.theme.value?.id,
+                       "project-\(AutoPaint.hue(forName: "Сама по себе"))")
     }
 }

@@ -63,14 +63,23 @@ private final class ProbeBox {
         resultVersion += 1
     }
 
-    /// Ответ страницы на наш круг.
+    /// Ответ страницы на наш круг. `path` и `folder` (план WF37, часть C) страница шлёт
+    /// всегда и только у главного окна соответственно — в тесте они необязательные.
     func page(kind: String, chat: String?, title: String, store: String,
-              nonce: String? = nil) -> [String: Any] {
+              nonce: String? = nil, path: String? = nil, folder: Any? = nil) -> [String: Any] {
         var payload: [String: Any] = ["v": 1, "nonce": nonce ?? self.nonce ?? "", "kind": kind,
                                       "title": title, "store": store]
         if let chat = chat { payload["self"] = chat }
+        if let path = path { payload["path"] = path }
+        if let folder = folder { payload["folder"] = folder }
         return ["id": 1, "url": kind == "main" ? "https://claude.ai/epitaxy/\(chat ?? "")"
                                                : "about:blank", "result": payload]
+    }
+
+    /// Главное окно на домашнем экране: путь `/epitaxy`, чата нет, папка — из чипа.
+    func home(folder: String = "/Users/elvis/_ElvisProjects/PimpMyClaude") -> [String: Any] {
+        page(kind: "main", chat: nil, title: "Claude", store: "ok", path: ChatProbe.homePath,
+             folder: folder)
     }
 }
 
@@ -331,5 +340,146 @@ final class ChatProbeTests: XCTestCase {
         XCTAssertNil(ChatProbe.chat(forTitle: "PimpMyClaude", in: [
             ChatPage(kind: .main, chat: "local_a1", title: "PimpMyClaude", store: "ok", at: clock.now),
         ]))
+    }
+
+    // MARK: - домашний экран (план WF37, части C2 и C3, задача #5576)
+
+    /// Эталоны ответа страницы лежат в репозитории — те же файлы читает батч страницы.
+    private static var fixtures: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("tests/fixtures/cashout", isDirectory: true)
+    }
+
+    /// Ответ лоадера с одной страницей: эталон кладётся внутрь как есть, побайтно.
+    private func loaderAnswer(_ name: String, url: String) throws -> (data: Data, nonce: String) {
+        let raw = try Data(contentsOf: ChatProbeTests.fixtures.appendingPathComponent(name))
+        let page = try XCTUnwrap(JSONSerialization.jsonObject(with: raw) as? [String: Any])
+        let nonce = try XCTUnwrap(page["nonce"] as? String)
+        let body: [String: Any] = ["at": "2026-09-07T18:00:00Z",
+                                   "results": [["id": 1, "url": url, "result": page]]]
+        return (try JSONSerialization.data(withJSONObject: body), nonce)
+    }
+
+    /// Папку из ответа принимаем только у главного окна: у попапа её и не бывает, а верить
+    /// чужой строке нельзя — на ней стоит цвет окна.
+    func testParseAnswerFolderMainOnly() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        box.answer([
+            box.home(),
+            box.page(kind: "popout", chat: "local_b2", title: "VkusnoffKz 2", store: "cache",
+                     path: "blank", folder: "/Users/elvis/_ElvisProjects/VkusnoffKz"),
+        ])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+
+        XCTAssertEqual(probe.pages.map { $0.path }, [ChatProbe.homePath, "blank"])
+        XCTAssertEqual(probe.pages.first?.folder, "/Users/elvis/_ElvisProjects/PimpMyClaude")
+        XCTAssertNil(probe.pages.last?.folder, "папку берём только у главного окна")
+
+        // Эталоны контракта побайтно: домашний экран, открытый чат и попап.
+        let home = try loaderAnswer("probe-answer-home.json", url: "https://claude.ai/epitaxy")
+        let atHome = ChatProbe.parseAnswer(home.data, nonce: home.nonce, at: clock.now)
+        XCTAssertEqual(atHome.pages.first?.kind, .main)
+        XCTAssertEqual(atHome.pages.first?.path, ChatProbe.homePath)
+        XCTAssertEqual(atHome.pages.first?.folder, "/Users/elvis/_ElvisProjects/PimpMyClaude")
+        XCTAssertNil(atHome.pages.first?.chat, "на домашнем экране чата нет вовсе")
+
+        let chat = try loaderAnswer("probe-answer-chat.json",
+                                    url: "https://claude.ai/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74")
+        let inChat = ChatProbe.parseAnswer(chat.data, nonce: chat.nonce, at: clock.now)
+        XCTAssertNil(inChat.pages.first?.folder, "в открытом чате папку даёт индекс, а не страница")
+        XCTAssertEqual(inChat.pages.first?.path,
+                       "/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74")
+
+        let popout = try loaderAnswer("probe-answer-popout.json", url: "about:blank")
+        let inPopout = ChatProbe.parseAnswer(popout.data, nonce: popout.nonce, at: clock.now)
+        XCTAssertEqual(inPopout.pages.first?.kind, .popout)
+        XCTAssertNil(inPopout.pages.first?.folder)
+        XCTAssertEqual(inPopout.pages.first?.path, "blank")
+    }
+
+    /// Сито папки: только абсолютный путь и не длиннее потолка. Всё прочее — nil.
+    func testParseAnswerFolderRejectsRelative() throws {
+        XCTAssertNil(ChatProbe.folderPath("_ElvisProjects/PimpMyClaude"))
+        XCTAssertNil(ChatProbe.folderPath("~/_ElvisProjects/PimpMyClaude"))
+        XCTAssertNil(ChatProbe.folderPath(""))
+        XCTAssertNil(ChatProbe.folderPath(nil))
+        XCTAssertNil(ChatProbe.folderPath(42), "не строка — не папка")
+        XCTAssertNil(ChatProbe.folderPath("/" + String(repeating: "a", count: ChatProbe.folderLimit)))
+        XCTAssertEqual(ChatProbe.folderPath("/" + String(repeating: "a",
+                                                         count: ChatProbe.folderLimit - 1))?.count,
+                       ChatProbe.folderLimit)
+        XCTAssertEqual(ChatProbe.folderPath("  /Users/elvis/_ElvisProjects/PimpMyClaude \n"),
+                       "/Users/elvis/_ElvisProjects/PimpMyClaude")
+
+        // То же через полный разбор ответа: кривую папку страница присылает — карта её не берёт.
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        box.answer([box.page(kind: "main", chat: nil, title: "Claude", store: "ok",
+                             path: ChatProbe.homePath, folder: "_ElvisProjects/PimpMyClaude")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(probe.pages.count, 1)
+        XCTAssertNil(probe.pages.first?.folder)
+        XCTAssertEqual(probe.pages.first?.path, ChatProbe.homePath)
+    }
+
+    /// Частота 4 с — только пока последний свежий ответ ГЛАВНОГО окна говорит «я на домашнем
+    /// экране» (критик, важно 5): уехало окно в чат — снова 15 с.
+    func testHomeIntervalOnlyWhileMainAtHome() throws {
+        XCTAssertLessThan(ChatProbe.homeInterval, ChatProbe.askInterval)
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+        box.answer([box.home()])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1, "пол частоты на домашнем экране — 4 с, прошло 2")
+
+        // Домашний экран — повод сам по себе: заголовок окна там заглушка, состав чатов
+        // при смене папки чипа не меняется, и спросить об этом больше некому.
+        clock.advance(ChatProbe.homeInterval)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 2)
+
+        // Элвис открыл чат — путь другой, и частота возвращается к прежним 15 с.
+        box.answer([box.page(kind: "main", chat: "local_a1", title: "Claude", store: "ok",
+                             path: "/epitaxy/local_a1")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 2)
+        clock.advance(ChatProbe.homeInterval + 1)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 2, "в открытом чате 4 с не действуют")
+        clock.advance(ChatProbe.askInterval)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 2, "и повода спрашивать в покое нет вовсе")
+        // Канал при этом живой: настоящий повод (сменился состав чатов) слышен сразу.
+        probe.tick(windowTitles: ["Claude"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 3)
+
+        // Правило признака отдельно: протухший ответ и попап домашним экраном не считаются.
+        let fresh = ChatPage(kind: .main, chat: nil, title: "Claude", path: ChatProbe.homePath,
+                             store: "ok", folder: "/tmp/Проект", at: clock.now)
+        XCTAssertTrue(ChatProbe.isMainAtHome([fresh], at: clock.now))
+        XCTAssertFalse(ChatProbe.isMainAtHome([fresh],
+                                              at: clock.now.addingTimeInterval(ChatProbe.mainChatSeconds + 1)),
+                       "протухший ответ канал не разгоняет")
+        XCTAssertFalse(ChatProbe.isMainAtHome([ChatPage(kind: .popout, chat: "local_b2",
+                                                        title: "VkusnoffKz 2", path: ChatProbe.homePath,
+                                                        store: "ok", at: clock.now)], at: clock.now),
+                       "попап на частоту не влияет")
+        XCTAssertFalse(ChatProbe.isMainAtHome([], at: clock.now))
     }
 }
