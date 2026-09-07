@@ -44,6 +44,15 @@ final class MinimizeMenu: NSObject {
     /// Недавние папки для «🪟 Новое окно ▸» (план WF16): их даёт `ProjectIndex` — единственный
     /// источник правды «папка ↔ сессия». Пусто — в подменю остаётся один пункт «Здесь же».
     var recentProjects: () -> [Project] = { [] }
+    /// Сохранённые раскладки для «🗂 Раскладки ▸» (план WF41): читаем на каждый показ меню —
+    /// файл правит и сам Элвис. Пусто — в подменю остаётся одно «💾 Сохранить эту раскладку…».
+    var savedLayouts: () -> [WindowLayout] = { [] }
+    /// Запомнить нынешнюю раскладку под именем; строка в ответе — плашка о том, почему не
+    /// записалось (nil — записано).
+    var saveLayout: (String) -> String? = { _ in nil }
+    /// «↩︎ Вернуть эти чаты» (false) и «✨ Новые чаты по этим проектам» (true).
+    var restoreLayout: (WindowLayout, Bool) -> Void = { _, _ in }
+    var deleteLayout: (WindowLayout) -> Void = { _ in }
 
     /// Открыто ли меню (или его модальный диалог): пока открыто, фоновая покраска по проекту
     /// молчит — не-preview команда сбила бы примерку темы мышью (критик В1 плана WF15).
@@ -197,6 +206,27 @@ final class MinimizeMenu: NSObject {
         config.projects = recentProjects()
         config.newWindowInProject = { [weak self] project in
             DispatchQueue.main.async { self?.actions.newWindow(in: project, on: window) }
+        }
+        // Полоса раскладок (план WF21): выбор закрепляется — его повторяют ⌥⌘A и «▦ Расставить».
+        // Отсрочки здесь нет: плитка сама закрывает меню и зовёт это ходом вперёд.
+        config.arrangeMode = actions.themeStore.arrangeMode
+        config.arrangeFits = { [weak self] mode in self?.actions.arrangeFits(mode) ?? true }
+        config.arrange = { [weak self] mode in
+            guard let self = self else { return }
+            self.actions.themeStore.arrangeMode = mode
+            self.actions.arrange(mode: mode)
+        }
+        // «🗂 Раскладки ▸» (план WF41): список читаем на каждый показ, диалог имени и возврат
+        // окон — ходом вперёд, как все диалоги: сперва должно закрыться меню.
+        config.layouts = savedLayouts()
+        config.saveLayout = { [weak self] in
+            DispatchQueue.main.async { self?.askAndSaveLayout(window: window) }
+        }
+        config.restoreLayout = { [weak self] layout, fresh in
+            DispatchQueue.main.async { self?.restoreLayout(layout, fresh) }
+        }
+        config.deleteLayout = { [weak self] layout in
+            DispatchQueue.main.async { self?.deleteLayout(layout) }
         }
         config.apply = { [weak self] scope, theme, font, size, frame in
             committed = true
@@ -356,6 +386,17 @@ final class MinimizeMenu: NSObject {
         }
     }
 
+    /// «💾 Сохранить эту раскладку…» (план WF41): имя спрашиваем тем же модальным диалогом,
+    /// что у своих тем; имя занято — раскладка перезаписывается (о том и подпись в диалоге).
+    /// Окно с неопознанным чатом отменяет запись целиком — об этом плашка.
+    private func askAndSaveLayout(window: AXUIElement) {
+        // Пока висит диалог, тик наведения не должен всплывать меню поверх него.
+        menuOpen = true
+        defer { menuOpen = false; app.focus(window: window) }
+        guard let name = MinimizeMenu.askLayoutName() else { return }
+        if let problem = saveLayout(name) { MinimizeMenu.warn(problem) }
+    }
+
     /// «🎚 Своя тема…» и «✏️ Изменить мою тему ▸» (решение 1.5 плана WF20). Ручки берутся
     /// у правимой темы, а для новой подбираются по нынешней теме этого окна. Красит панель
     /// ровно то окно, из меню которого её открыли.
@@ -402,6 +443,18 @@ final class MinimizeMenu: NSObject {
         var newWindowInProject: (Project) -> Void = { _ in }
         /// Клик по тумблеру «🗂 Цвет по проекту» — приходит уже перевёрнутым.
         var setProjectColor: (Bool) -> Void = { _ in }
+        /// Полоса раскладок первым пунктом (план WF21): какая раскладка выбрана сейчас,
+        /// влезает ли раскладка на экран (иначе плитка серая) и что делать по клику.
+        var arrangeMode: ArrangeLayout.Mode = .ribbon
+        var arrangeFits: (ArrangeLayout.Mode) -> Bool = { _ in true }
+        var arrange: (ArrangeLayout.Mode) -> Void = { _ in }
+        /// Сохранённые раскладки в «🗂 Раскладки ▸» (план WF41) и что делать по клику:
+        /// запомнить нынешние окна, вернуть те же чаты (`false`) или открыть новые (`true`),
+        /// удалить запись.
+        var layouts: [WindowLayout] = []
+        var saveLayout: () -> Void = {}
+        var restoreLayout: (WindowLayout, Bool) -> Void = { _, _ in }
+        var deleteLayout: (WindowLayout) -> Void = { _ in }
 
         /// Можно ли верить памяти приложения об этом окне — от этого зависит галка «Как у Claude».
         var windowMemoryTrusted: Bool { windowTitled && !windowAutoPainted }
@@ -447,6 +500,9 @@ final class MinimizeMenu: NSObject {
     static func build(config: MenuConfig) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+        // Полоса раскладок — самый первый пункт (план WF21), за ней один разделитель.
+        menu.addItem(layoutPickerItem(config))
+        menu.addItem(.separator())
         // Пункты из moreCommands на верхний уровень не рисуются, но из `MenuModel.entries`
         // не выпадают: по нему регистрируются Carbon-хоткеи (блокер Б1 критика).
         for entry in MenuModel.entries where !MenuModel.moreCommands.contains(entry.command) {
@@ -460,6 +516,16 @@ final class MinimizeMenu: NSObject {
         addSeparator(menu)
         menu.addItem(moreItem(config))
         return menu
+    }
+
+    /// Полоса раскладок (план WF21): пункт-вьюха, четыре картинки. Заголовок на экран не
+    /// выходит — его закрывает вьюха, — но он нужен VoiceOver и тестам структуры меню.
+    /// Клавиша ⌥⌘A остаётся на «▦ Расставить» в «⋯ Ещё ▸»: по view-пункту клавиатура
+    /// не ходит вовсе.
+    static func layoutPickerItem(_ config: MenuConfig) -> NSMenuItem {
+        let item = NSMenuItem(title: MenuModel.layoutsTitle, action: nil, keyEquivalent: "")
+        item.view = LayoutPickerView(config: config)
+        return item
     }
 
     /// Пункт-команда: иконка картинкой, клавиша — в keyEquivalent (её справа серым AppKit
@@ -515,13 +581,57 @@ final class MinimizeMenu: NSObject {
 
     /// «⋯ Ещё ▸» — редкое: Обкэшить, Расставить, Показать, Прокрутить (решение Элвиса 04.09:
     /// «давай все скроем»). Прячем только с глаз: ⇧⌘N, ⌥⌘A, ⌥⌘S и ⌥⌘D работают как раньше.
+    /// Пятым пунктом — «🗂 Раскладки ▸» (план WF41): им пользуются реже, чем плитками сверху.
     static func moreItem(_ config: MenuConfig) -> NSMenuItem {
         let submenu = NSMenu(title: MenuModel.moreTitle)
         submenu.autoenablesItems = false
         for entry in MenuModel.entries where MenuModel.moreCommands.contains(entry.command) {
             submenu.addItem(commandItem(entry, config))
         }
+        submenu.addItem(savedLayoutsItem(config))
         return submenuItem(title: MenuModel.moreTitle, icon: MenuModel.moreIcon, submenu: submenu)
+    }
+
+    /// «🗂 Раскладки ▸» (план WF41, решение Р5): «💾 Сохранить эту раскладку…», под ним имена
+    /// сохранённых, у каждой своё подменю — вернуть те же чаты, открыть новые по тем же
+    /// проектам, удалить. Сохранённых нет — остаётся один пункт «Сохранить…».
+    static func savedLayoutsItem(_ config: MenuConfig) -> NSMenuItem {
+        let submenu = NSMenu(title: MenuModel.savedLayoutsTitle)
+        submenu.autoenablesItems = false
+        let save = BlockMenuItem(title: MenuModel.saveLayoutTitle) { config.saveLayout() }
+        save.image = icon(MenuModel.saveLayoutIcon)
+        submenu.addItem(save)
+        if !config.layouts.isEmpty { submenu.addItem(.separator()) }
+        for layout in config.layouts {
+            let item = submenuItem(title: layout.name, icon: MenuModel.savedLayoutIcon,
+                                   submenu: layoutItems(config, layout))
+            item.toolTip = MenuModel.layoutHint(layout)
+            submenu.addItem(item)
+        }
+        return submenuItem(title: MenuModel.savedLayoutsTitle, icon: MenuModel.savedLayoutsIcon,
+                           submenu: submenu)
+    }
+
+    /// Что можно сделать с сохранённой раскладкой: те же чаты, новые чаты, а за разделителем —
+    /// «🗑 Удалить» (порядок макета WF41).
+    static func layoutItems(_ config: MenuConfig, _ layout: WindowLayout) -> NSMenu {
+        let submenu = NSMenu(title: layout.name)
+        submenu.autoenablesItems = false
+        let back = BlockMenuItem(title: MenuModel.restoreLayoutTitle) {
+            config.restoreLayout(layout, false)
+        }
+        back.image = icon(MenuModel.restoreLayoutIcon)
+        submenu.addItem(back)
+        let fresh = BlockMenuItem(title: MenuModel.freshLayoutTitle) {
+            config.restoreLayout(layout, true)
+        }
+        fresh.image = icon(MenuModel.freshLayoutIcon)
+        submenu.addItem(fresh)
+        submenu.addItem(.separator())
+        let drop = BlockMenuItem(title: MenuModel.deleteLayoutTitle) { config.deleteLayout(layout) }
+        drop.image = icon(MenuModel.deleteLayoutIcon)
+        submenu.addItem(drop)
+        return submenu
     }
 
     /// «🎨 Оформление ▸» — всё про вид ЭТОГО окна: свои темы сверху с галкой, цвет, шрифт,
@@ -970,6 +1080,26 @@ final class MinimizeMenu: NSObject {
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         let name = MyThemesStore.clean(name: field.stringValue)
+        return name.isEmpty ? nil : name
+    }
+
+    /// Имя раскладки (план WF41) — тот же модальный диалог, что у своих тем: приложение
+    /// LSUIElement, без `activate(ignoringOtherApps:)` окно уходит за Claude.
+    /// Второго вопроса про перезапись здесь нет: раскладка — снимок окон, а не собранная
+    /// руками тема, и о перезаписи сказано прямо в подписи диалога.
+    static func askLayoutName(default value: String = "") -> String? {
+        let alert = NSAlert()
+        alert.messageText = MenuModel.layoutNamePrompt
+        alert.informativeText = MenuModel.layoutNameHint
+        alert.addButton(withTitle: MenuModel.layoutSaveButton)
+        alert.addButton(withTitle: MenuModel.myThemeCancelButton)
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = value
+        alert.accessoryView = field
+        NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = LayoutsStore.clean(name: field.stringValue)
         return name.isEmpty ? nil : name
     }
 

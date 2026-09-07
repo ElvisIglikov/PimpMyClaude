@@ -18,7 +18,18 @@ private final class PimpRig {
 
     var opened: [(project: Project, origin: (x: Int, y: Int)?)] = []
     var arranged: [[CGWindowID]] = []
+    /// Раскладки, с которыми звали «Расставить» (план WF21), и последняя выбранная.
+    var layouts: [ArrangeLayout.Mode] = []
+    var mode = ArrangeLayout.Mode.ribbon
+    var fits = true
     var moved: [PimpMove] = []
+
+    /// Раскладки проектов (план WF41): файл-в-памяти, заголовок главного окна и просьбы
+    /// «вынеси этот чат отдельным окном».
+    var saved: [WindowLayout] = []
+    var canSave = true
+    var mainTitle = "Claude"
+    var popouts: [(chat: String, name: String, origin: (x: Int, y: Int))] = []
 
     func advance(_ seconds: TimeInterval) { now = now.addingTimeInterval(seconds) }
 
@@ -33,25 +44,46 @@ private final class PimpRig {
             openNewWindow: { [unowned self] project, origin in
                 self.opened.append((project: project, origin: origin))
             },
-            arrange: { [unowned self] ids in self.arrange(ids) },
+            arrange: { [unowned self] ids, mode in self.arrange(ids, mode) },
+            arrangeMode: { [unowned self] in self.mode },
+            fitsLayout: { [unowned self] _ in self.fits },
             place: { [unowned self] moves in self.place(moves) },
             titleForChat: { [unowned self] chat in self.titles[chat] },
-            newWindowLayers: { [unowned self] in self.layers })
+            newWindowLayers: { [unowned self] in self.layers },
+            layouts: { [unowned self] in self.saved },
+            saveLayout: { [unowned self] layout in
+                guard self.canSave else { return false }
+                self.saved = LayoutsStore.merge(layout, into: self.saved)
+                return true
+            },
+            cells: { [unowned self] mode, count in
+                _ = self
+                return ArrangeLayout.frames(count: count, in: PimpRig.area, mode: mode)
+            },
+            isMainWindow: { [unowned self] title in title == self.mainTitle },
+            openChat: { [unowned self] chat, name, origin in
+                self.popouts.append((chat: chat, name: name, origin: origin))
+            })
     }
 
     /// «Расставить»: та же арифметика, что в приложении, только окна двигаются в массиве.
-    private func arrange(_ ids: [CGWindowID]) -> [PimpWindow] {
+    /// Ячеек меньше, чем окон, — хвост остаётся где стоял, как в `ClaudeActions`.
+    private func arrange(_ ids: [CGWindowID],
+                         _ mode: ArrangeLayout.Mode) -> (windows: [PimpWindow], skipped: Int) {
         arranged.append(ids)
+        layouts.append(mode)
+        self.mode = mode
         let ordered = ids.compactMap { id in windows.first { $0.id == id } }
-        let cells = ArrangeLayout.frames(count: ordered.count, in: PimpRig.area)
+        let cells = ArrangeLayout.frames(count: ordered.count, in: PimpRig.area, mode: mode)
         var out: [PimpWindow] = []
-        for (index, window) in ordered.enumerated() {
+        for (index, cell) in cells.enumerated() {
+            let window = ordered[index]
             let placed = PimpWindow(id: window.id, title: window.title, chat: window.chat,
-                                    folder: window.folder, frame: cells[index])
+                                    folder: window.folder, frame: cell)
             out.append(placed)
             if let at = windows.firstIndex(where: { $0.id == window.id }) { windows[at] = placed }
         }
-        return out
+        return (windows: out, skipped: ordered.count - out.count)
     }
 
     private func place(_ moves: [PimpMove]) {
@@ -146,7 +178,22 @@ final class PimpChannelTests: XCTestCase {
             XCTAssertEqual(parsed.from, "", name)
             // Поля `place` у этих запросов нет — умолчание «справа», а не отказ.
             XCTAssertEqual(parsed.place, .right, name)
+            // `layout` — лента: у arrange он «row», у остальных поля нет вовсе (план WF21).
+            XCTAssertEqual(parsed.layout, .ribbon, name)
         }
+
+        // Раскладки (план WF21): свои слова, «last» — раскладку подставит приложение,
+        // чужое слово — не запрос (`bad-request`).
+        func arrange(_ layout: String) -> Data {
+            let body = "{\"id\":\"1-1\",\"at\":\"2026-09-07T11:20:00Z\",\"action\":\"arrange\","
+                + "\"from\":\"\",\"layout\":\"\(layout)\"}"
+            return Data(body.utf8)
+        }
+        XCTAssertEqual(PimpRequest.parse(arrange("4"))?.layout, .four)
+        XCTAssertEqual(PimpRequest.parse(arrange("5"))?.layout, .five)
+        XCTAssertEqual(PimpRequest.parse(arrange("5x2"))?.layout, .tenGrid)
+        XCTAssertNil(try XCTUnwrap(PimpRequest.parse(arrange(" LAST "))).layout)
+        XCTAssertNil(PimpRequest.parse(arrange("5x3")), "чужая раскладка — bad-request")
 
         // Чужое действие — `bad-request` (эталон bad.request.json: "action":"fly").
         XCTAssertNil(PimpRequest.parse(try fixture("bad.request.json")))
@@ -157,6 +204,33 @@ final class PimpChannelTests: XCTestCase {
         XCTAssertNil(PimpRequest.parse(Data("{\"id\":\"1-1\",\"action\":\"windows\"}".utf8)))
         // «Новое окно» без папки бессмысленно.
         XCTAssertNil(PimpRequest.parse(Data("{\"id\":\"1-1\",\"at\":\"2026-09-07T11:20:00Z\",\"action\":\"new-window\",\"project\":\" \"}".utf8)))
+
+        // Раскладки проектов (план WF41): порядок папок, список, запомнить, вернуть, сводка.
+        let ordered = try XCTUnwrap(PimpRequest.parse(fixture("arrange-order.request.json")))
+        XCTAssertEqual(ordered.action, .arrange)
+        XCTAssertEqual(ordered.layout, .five)
+        XCTAssertEqual(ordered.order, ["/Users/elvis/_ElvisProjects/VkusnoffKz", "SkilZZZ",
+                                       "/Users/elvis/_ElvisProjects/Dictator"])
+        // Поля `order` нет — nil, и ответ остаётся прежним (arrange.result.json).
+        XCTAssertNil(try XCTUnwrap(PimpRequest.parse(fixture("arrange.request.json"))).order)
+
+        let list = try XCTUnwrap(PimpRequest.parse(fixture("layouts.request.json")))
+        XCTAssertEqual(list.action, .layouts)
+        let save = try XCTUnwrap(PimpRequest.parse(fixture("layout-save.request.json")))
+        XCTAssertEqual(save.action, .layoutSave)
+        XCTAssertEqual(save.name, "Утро")
+        let back = try XCTUnwrap(PimpRequest.parse(fixture("layout-restore.request.json")))
+        XCTAssertEqual(back.action, .layoutRestore)
+        XCTAssertEqual(back.name, "Утро")
+        XCTAssertFalse(back.fresh)
+        let status = try XCTUnwrap(PimpRequest.parse(fixture("projects-status.request.json")))
+        XCTAssertEqual(status.action, .projects)
+        XCTAssertTrue(status.status)
+        // Поля `status` нет — сводку не просили.
+        XCTAssertFalse(try XCTUnwrap(PimpRequest.parse(fixture("projects.request.json"))).status)
+        // Раскладку без имени ни записать, ни найти — это bad-request.
+        XCTAssertNil(PimpRequest.parse(Data("{\"id\":\"1-1\",\"at\":\"2026-09-08T03:20:30Z\",\"action\":\"layout-save\",\"name\":\" \"}".utf8)))
+        XCTAssertNil(PimpRequest.parse(Data("{\"id\":\"1-1\",\"at\":\"2026-09-08T03:20:40Z\",\"action\":\"layout-restore\"}".utf8)))
 
         // Места: слова, точка (в том числе с долями — CLI их пропускает) и чужое слово.
         XCTAssertEqual(PimpRequest.place("left"), .left)
@@ -191,9 +265,11 @@ final class PimpChannelTests: XCTestCase {
             PimpWindow(id: 3, title: "Диктаторик",
                        frame: CGRect(x: 980, y: 34, width: 490, height: 859)),
         ]
+        // У «Расставить» свои поля (план WF21): раскладка, окна, пропущенные, свёрнутые.
         XCTAssertEqual(PimpAnswer(id: "1788780010000-0777",
                                   at: PimpChannel.date("2026-09-07T11:20:12Z")!, ok: true,
-                                  fields: PimpChannel.windowsFields(windows, minimized: 0)).json,
+                                  fields: PimpChannel.arrangeFields(windows, mode: .ribbon,
+                                                                    skipped: 0, minimized: 0)).json,
                        try fixtureText("arrange.result.json"))
 
         let list = [Project(folder: URL(fileURLWithPath: "/Users/elvis/_ElvisProjects/PimpMyClaude"),
@@ -207,7 +283,7 @@ final class PimpChannelTests: XCTestCase {
         XCTAssertEqual(PimpAnswer(id: "1788780020000-0102",
                                   at: PimpChannel.date("2026-09-07T11:20:22Z")!, ok: true,
                                   fields: [(key: "projects",
-                                            value: .array(list.map(PimpChannel.projectValue)))]).json,
+                                            value: .array(list.map { PimpChannel.projectValue($0) }))]).json,
                        try fixtureText("projects.result.json"))
 
         let one = [PimpWindow(id: 9, title: "Claude",
@@ -237,6 +313,95 @@ final class PimpChannelTests: XCTestCase {
                                     ["PimpMyClaude", "VkusnoffKz", "Dictator", "SkilZZZ"]
                                         .map { .string($0) }))]).json,
                        try fixtureText("new-window.error.json"))
+    }
+
+    // MARK: - 2а. эталоны контракта WF41: порядок проектов, раскладки, сводка
+
+    func testPimpLayoutAnswersMatchFixtures() throws {
+        // `arrange` с `order`: окна названных папок первыми, `unknown` и `missing` — ПОСЛЕ
+        // `skipped` и только когда порядок просили.
+        let byOrder = [
+            PimpWindow(id: 1, title: "VkusnoffKz 3",
+                       chat: "local_df06e2d9-3957-48d7-832e-b21a91c483da",
+                       folder: "/Users/elvis/_ElvisProjects/VkusnoffKz",
+                       frame: CGRect(x: 0, y: 34, width: 294, height: 860)),
+            PimpWindow(id: 2, title: "Claude", chat: "local_e12ecb16-bd3f-41c5-9fa7-047b866ea3d6",
+                       folder: "/Users/elvis/_ElvisProjects/PimpMyClaude",
+                       frame: CGRect(x: 294, y: 34, width: 294, height: 860)),
+            PimpWindow(id: 3, title: "Без папки",
+                       frame: CGRect(x: 588, y: 34, width: 294, height: 860)),
+        ]
+        XCTAssertEqual(PimpAnswer(id: "1788790010000-0811",
+                                  at: PimpChannel.date("2026-09-08T03:20:12Z")!, ok: true,
+                                  fields: PimpChannel.arrangeFields(
+                                    byOrder, mode: .five, skipped: 0, unknown: 1,
+                                    missing: ["SkilZZZ", "/Users/elvis/_ElvisProjects/Dictator"],
+                                    minimized: 0)).json,
+                       try fixtureText("arrange-order.result.json"))
+
+        // Список раскладок: имя, время, сетка и сколько в ней мест — свежие первыми.
+        let morning = PimpChannelTests.layout("Утро", at: "2026-09-08T03:00:00Z", mode: .five, cells: 2)
+        let review = PimpChannelTests.layout("Разбор", at: "2026-09-07T20:00:00Z", mode: .ribbon,
+                                          cells: 3)
+        XCTAssertEqual(PimpAnswer(id: "1788790020000-0102",
+                                  at: PimpChannel.date("2026-09-08T03:20:21Z")!, ok: true,
+                                  fields: PimpChannel.layoutsFields([morning, review])).json,
+                       try fixtureText("layouts.result.json"))
+
+        XCTAssertEqual(PimpAnswer(id: "1788790030000-0303",
+                                  at: PimpChannel.date("2026-09-08T03:20:31Z")!, ok: true,
+                                  fields: PimpChannel.layoutSaveFields(name: "Утро", mode: .five,
+                                                                       cells: 2)).json,
+                       try fixtureText("layout-save.result.json"))
+        XCTAssertEqual(PimpAnswer(id: "1788790030000-0304",
+                                  at: PimpChannel.date("2026-09-08T03:20:33Z")!, ok: false,
+                                  error: PimpChannel.Failure.chatUnknown.rawValue,
+                                  fields: [(key: "windows",
+                                            value: .array([.string("Диктаторик")]))]).json,
+                       try fixtureText("layout-save.error.json"))
+
+        XCTAssertEqual(PimpAnswer(id: "1788790040000-0404",
+                                  at: PimpChannel.date("2026-09-08T03:21:30Z")!, ok: true,
+                                  fields: PimpChannel.restoreFields(name: "Утро", placed: 1,
+                                                                    opened: 1,
+                                                                    missing: ["Диктаторик"])).json,
+                       try fixtureText("layout-restore.result.json"))
+        XCTAssertEqual(PimpAnswer(id: "1788790040000-0405",
+                                  at: PimpChannel.date("2026-09-08T03:21:40Z")!, ok: false,
+                                  error: PimpChannel.Failure.layoutMissing.rawValue,
+                                  fields: [(key: "layouts", value: .array(
+                                    ["Утро", "Разбор"].map { .string($0) }))]).json,
+                       try fixtureText("layout-restore.error.json"))
+
+        // `projects` со сводкой: `chats` и `state` — ПОСЛЕ `lastUsed`.
+        let pimp = Project(folder: URL(fileURLWithPath: "/Users/elvis/_ElvisProjects/PimpMyClaude"),
+                           name: "PimpMyClaude",
+                           lastFocusedAt: ProjectsStore.milliseconds(
+                            PimpChannel.date("2026-09-08T03:19:00Z")!))
+        let vkus = Project(folder: URL(fileURLWithPath: "/Users/elvis/_ElvisProjects/VkusnoffKz"),
+                           name: "VkusnoffKz",
+                           lastFocusedAt: ProjectsStore.milliseconds(
+                            PimpChannel.date("2026-09-07T10:02:00Z")!))
+        XCTAssertEqual(PimpAnswer(id: "1788790050000-0505",
+                                  at: PimpChannel.date("2026-09-08T03:20:51Z")!, ok: true,
+                                  fields: [(key: "projects", value: .array([
+                                    PimpChannel.projectValue(
+                                        pimp, chats: ["Claude"],
+                                        state: "41 воркфлоу · 27 готово · Сейчас: WF21 кодится"),
+                                    PimpChannel.projectValue(vkus, chats: ["VkusnoffKz 3"],
+                                                             state: ""),
+                                  ]))]).json,
+                       try fixtureText("projects-status.result.json"))
+    }
+
+    /// Раскладка для эталонов: столько-то пустых мест под именем.
+    private static func layout(_ name: String, at: String, mode: ArrangeLayout.Mode,
+                               cells: Int) -> WindowLayout {
+        WindowLayout(name: name, at: PimpChannel.date(at)!, mode: mode,
+                     cells: (0..<cells).map {
+                         LayoutCell(folder: "/tmp/p\($0)", chat: "local_\($0)",
+                                    title: "Окно \($0)", cell: $0)
+                     })
     }
 
     // MARK: - 3. место нового окна
@@ -409,6 +574,365 @@ final class PimpChannelTests: XCTestCase {
         XCTAssertEqual(result("300-0004", in: box)?["error"] as? String, "no-windows")
     }
 
+    // MARK: - 5а. раскладки «Расставить» (план WF21)
+
+    func testPimpChannelArrangesByLayout() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.windows = (1...6).map { id in
+            PimpWindow(id: CGWindowID(id), title: "Окно \(id)",
+                       frame: CGRect(x: CGFloat(id - 1) * 240, y: 34, width: 240, height: 859))
+        }
+        let channel = makeChannel(rig, in: box)
+
+        // «5 в ряд» на шести окнах: шестое остаётся где стояло, и об этом сказано числом.
+        write(request("900-0001", action: "arrange", at: rig.now, extra: ",\"layout\":\"5\""),
+              id: "900-0001", in: box)
+        channel.tick()
+        let five = try XCTUnwrap(result("900-0001", in: box))
+        XCTAssertEqual(five["ok"] as? Bool, true)
+        XCTAssertEqual(five["layout"] as? String, "5")
+        XCTAssertEqual((five["windows"] as? [[String: Any]])?.count, 5)
+        XCTAssertEqual(five["skipped"] as? Int, 1)
+        XCTAssertEqual(rig.window(1)?.frame, CGRect(x: 0, y: 34, width: 294, height: 859))
+        XCTAssertEqual(rig.window(6)?.frame, CGRect(x: 1200, y: 34, width: 240, height: 859))
+
+        // «last» — та же раскладка, что выбрали в прошлый раз; в ответе она названа.
+        rig.advance(1)
+        write(request("900-0002", action: "arrange", at: rig.now, extra: ",\"layout\":\"last\""),
+              id: "900-0002", in: box)
+        channel.tick()
+        XCTAssertEqual(result("900-0002", in: box)?["layout"] as? String, "5")
+        XCTAssertEqual(rig.layouts, [.five, .five])
+
+        // Раскладка на этот экран не влезает — `too-small`, окна не трогаем вовсе.
+        rig.advance(1)
+        rig.fits = false
+        write(request("900-0003", action: "arrange", at: rig.now, extra: ",\"layout\":\"5x2\""),
+              id: "900-0003", in: box)
+        channel.tick()
+        XCTAssertEqual(result("900-0003", in: box)?["error"] as? String, "too-small")
+        XCTAssertEqual(rig.layouts.count, 2, "окна не двигали")
+
+        // Чужое слово в `layout` — bad-request: наугад окна не ставим.
+        rig.advance(1)
+        rig.fits = true
+        write(request("900-0004", action: "arrange", at: rig.now, extra: ",\"layout\":\"5x3\""),
+              id: "900-0004", in: box)
+        channel.tick()
+        XCTAssertEqual(result("900-0004", in: box)?["error"] as? String, "bad-request")
+    }
+
+    /// Ячеек в последней раскладке меньше, чем окон: новое окно остаётся где родилось,
+    /// ответ всё равно `ok`, а поле `skipped` говорит, что его не двигали (план WF21).
+    func testPimpChannelKeepsNewWindowWhenNoCellLeft() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.projects = [PimpChannelTests.project("Dictator")]
+        rig.mode = .four
+        rig.windows = (1...4).map { id in
+            PimpWindow(id: CGWindowID(id), title: "Окно \(id)",
+                       frame: CGRect(x: CGFloat(id - 1) * 367, y: 34, width: 367, height: 859))
+        }
+        let channel = makeChannel(rig, in: box)
+
+        write(request("910-0001", action: "new-window", at: rig.now,
+                      extra: ",\"project\":\"Dictator\",\"place\":\"right\""),
+              id: "910-0001", in: box)
+        channel.tick()
+        rig.advance(3)
+        rig.windows.append(PimpWindow(id: 9, title: "Диктаторик",
+                                      frame: CGRect(x: 120, y: 120, width: 900, height: 700)))
+        channel.tick()
+
+        let answer = try XCTUnwrap(result("910-0001", in: box))
+        XCTAssertEqual(answer["ok"] as? Bool, true)
+        XCTAssertEqual(answer["skipped"] as? Int, 1)
+        XCTAssertEqual((answer["window"] as? [String: Any])?["frame"] as? [Int],
+                       [120, 120, 900, 700])
+        XCTAssertEqual(rig.layouts, [.four], "новое окно расставляют последней раскладкой")
+        XCTAssertEqual(rig.window(9)?.frame, CGRect(x: 120, y: 120, width: 900, height: 700))
+    }
+
+    // MARK: - 5б. раскладки проектов (план WF41)
+
+    /// `arrange` с `order`: окна названных папок встают первыми (папку узнаём и по пути,
+    /// и по имени), проект без окна уходит в `missing`, окна без папки — в хвост.
+    func testPimpChannelOrdersWindowsByProjects() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.windows = [
+            PimpWindow(id: 1, title: "Claude", chat: "local_p",
+                       folder: "/Users/elvis/_ElvisProjects/PimpMyClaude",
+                       frame: CGRect(x: 0, y: 34, width: 490, height: 859)),
+            PimpWindow(id: 2, title: "Без папки",
+                       frame: CGRect(x: 490, y: 34, width: 490, height: 859)),
+            PimpWindow(id: 3, title: "VkusnoffKz 3", chat: "local_v",
+                       folder: "/Users/elvis/_ElvisProjects/VkusnoffKz",
+                       frame: CGRect(x: 980, y: 34, width: 490, height: 859)),
+        ]
+        let channel = makeChannel(rig, in: box)
+
+        write(request("920-0001", action: "arrange", at: rig.now,
+                      extra: ",\"layout\":\"row\",\"order\":[\"VkusnoffKz\",\"SkilZZZ\"]"),
+              id: "920-0001", in: box)
+        channel.tick()
+
+        let answer = try XCTUnwrap(result("920-0001", in: box))
+        XCTAssertEqual(answer["ok"] as? Bool, true)
+        XCTAssertEqual(rig.arranged.first, [3, 1, 2],
+                       "Вкуснофф первым, потом опознанный Пимп, окно без папки — в хвост")
+        XCTAssertEqual(answer["unknown"] as? Int, 1)
+        XCTAssertEqual(answer["missing"] as? [String], ["SkilZZZ"])
+        XCTAssertEqual((answer["windows"] as? [[String: Any]])?.first?["title"] as? String,
+                       "VkusnoffKz 3")
+
+        // Абсолютный путь работает так же, как имя папки.
+        rig.advance(1)
+        write(request("920-0002", action: "arrange", at: rig.now,
+                      extra: ",\"layout\":\"row\",\"order\":"
+                        + "[\"/Users/elvis/_ElvisProjects/VkusnoffKz\"]"),
+              id: "920-0002", in: box)
+        channel.tick()
+        XCTAssertEqual(rig.arranged.last?.first, 3)
+
+        // Порядка не просили — ответ прежний, без `unknown` и `missing` (эталон arrange).
+        rig.advance(1)
+        write(request("920-0003", action: "arrange", at: rig.now, extra: ",\"layout\":\"row\""),
+              id: "920-0003", in: box)
+        channel.tick()
+        let plain = try XCTUnwrap(result("920-0003", in: box))
+        XCTAssertNil(plain["unknown"])
+        XCTAssertNil(plain["missing"])
+    }
+
+    /// «Запомни раскладку»: главное окно пишется как `main`, окно вне сетки — с пустой
+    /// ячейкой, а окно с неопознанным чатом отменяет запись целиком (`chat-unknown`).
+    func testPimpChannelSavesLayoutAndRefusesUnknownChat() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.mode = .five
+        let cells = ArrangeLayout.frames(count: 5, in: PimpRig.area, mode: .five)
+        rig.windows = [
+            PimpWindow(id: 1, title: "Claude", chat: "local_main", folder: "/tmp/Pimp",
+                       frame: cells[0]),
+            PimpWindow(id: 2, title: "Вкуснофф", chat: "local_v", folder: "/tmp/Vkus",
+                       frame: cells[1]),
+            PimpWindow(id: 3, title: "Диктаторик",
+                       frame: CGRect(x: 200, y: 200, width: 900, height: 700)),
+        ]
+        let channel = makeChannel(rig, in: box)
+
+        write(request("930-0001", action: "layout-save", at: rig.now, extra: ",\"name\":\"Утро\""),
+              id: "930-0001", in: box)
+        channel.tick()
+        let refused = try XCTUnwrap(result("930-0001", in: box))
+        XCTAssertEqual(refused["error"] as? String, "chat-unknown")
+        XCTAssertEqual(refused["windows"] as? [String], ["Диктаторик"])
+        XCTAssertTrue(rig.saved.isEmpty, "файл не тронут — вернулись бы не те чаты")
+
+        // Чат опознан — записываем: главное окно как `main`, окно вне сетки без ячейки.
+        rig.advance(1)
+        rig.windows[2] = PimpWindow(id: 3, title: "Диктаторик", chat: "local_d",
+                                    folder: "/tmp/Dict",
+                                    frame: CGRect(x: 200, y: 200, width: 900, height: 700))
+        write(request("930-0002", action: "layout-save", at: rig.now, extra: ",\"name\":\"Утро\""),
+              id: "930-0002", in: box)
+        channel.tick()
+        let saved = try XCTUnwrap(result("930-0002", in: box))
+        XCTAssertEqual(saved["ok"] as? Bool, true)
+        XCTAssertEqual(saved["mode"] as? String, "5")
+        XCTAssertEqual(saved["cells"] as? Int, 3)
+        let layout = try XCTUnwrap(rig.saved.first)
+        XCTAssertEqual(layout.cells.map { $0.chat }, ["main", "local_v", "local_d"])
+        XCTAssertEqual(layout.cells.map { $0.cell }, [0, 1, nil])
+        XCTAssertEqual(layout.cells.map { $0.folder }, ["/tmp/Pimp", "/tmp/Vkus", "/tmp/Dict"])
+
+        // Имя занято — перезапись, второй записи не заводим.
+        rig.advance(1)
+        write(request("930-0003", action: "layout-save", at: rig.now, extra: ",\"name\":\" утро \""),
+              id: "930-0003", in: box)
+        channel.tick()
+        XCTAssertEqual(rig.saved.count, 1)
+        XCTAssertEqual(rig.saved.first?.name, "утро")
+    }
+
+    /// «Верни Утро»: открытое окно встаёт в ячейку, закрытый чат главное окно выносит
+    /// попапом, а чат, окна для которого так и не появилось, уходит в `missing` — пустой
+    /// ячейкой, без подмены новым чатом (#5455). Окна идут ПО ОДНОМУ, и после каждого
+    /// переписывается метка `<id>.taken` (сердцебиение для CLI).
+    func testPimpChannelRestoresSameChats() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.mode = .five
+        let cells = ArrangeLayout.frames(count: 3, in: PimpRig.area, mode: .five)
+        rig.saved = [WindowLayout(name: "Утро", at: rig.now, mode: .five, cells: [
+            LayoutCell(folder: "/tmp/Pimp", chat: "main", title: "Claude", cell: 0),
+            LayoutCell(folder: "/tmp/Vkus", chat: "local_v", title: "Вкуснофф", cell: 1),
+            LayoutCell(folder: "/tmp/Dict", chat: "local_d", title: "Диктаторик", cell: 2),
+        ])]
+        rig.windows = [PimpWindow(id: 1, title: "Claude", chat: "local_main", folder: "/tmp/Pimp",
+                                  frame: CGRect(x: 300, y: 300, width: 900, height: 700))]
+        let channel = makeChannel(rig, in: box)
+
+        write(request("940-0001", action: "layout-restore", at: rig.now,
+                      extra: ",\"name\":\"Утро\",\"fresh\":false"), id: "940-0001", in: box)
+        channel.tick()
+        // Главное окно уже на экране — оно просто встало в свою ячейку; следом попросили
+        // вынести закрытый чат, и ответа пока нет.
+        XCTAssertEqual(rig.window(1)?.frame, cells[0])
+        XCTAssertEqual(rig.popouts.map { $0.chat }, ["local_v"])
+        XCTAssertEqual(rig.popouts.first?.name, "Вкуснофф")
+        XCTAssertEqual(rig.popouts.first?.origin.x, Int(cells[1].minX))
+        XCTAssertNil(result("940-0001", in: box))
+
+        // Пока идёт возврат, канал занят — остальным `busy`.
+        write(request("940-0002", action: "windows", at: rig.now), id: "940-0002", in: box)
+        channel.tick()
+        XCTAssertEqual(result("940-0002", in: box)?["error"] as? String, "busy")
+
+        // Метку убираем руками: после следующего окна она обязана появиться снова.
+        let taken = box.appendingPathComponent("940-0001.taken")
+        try FileManager.default.removeItem(at: taken)
+        rig.advance(3)
+        rig.windows.append(PimpWindow(id: 2, title: "Вкуснофф", chat: "local_v",
+                                      folder: "/tmp/Vkus",
+                                      frame: CGRect(x: 120, y: 120, width: 900, height: 700)))
+        channel.tick()
+        XCTAssertEqual(rig.window(2)?.frame, cells[1], "вынесенное окно встало в свою ячейку")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: taken.path), "сердцебиение")
+        XCTAssertEqual(rig.popouts.map { $0.chat }, ["local_v", "local_d"])
+
+        // Третье окно так и не появилось — ячейка остаётся пустой, чат назван в `missing`.
+        rig.advance(PimpChannel.restoreWindowSeconds + 1)
+        channel.tick()
+        let answer = try XCTUnwrap(result("940-0001", in: box))
+        XCTAssertEqual(answer["ok"] as? Bool, true)
+        XCTAssertEqual(answer["name"] as? String, "Утро")
+        XCTAssertEqual(answer["placed"] as? Int, 1)
+        XCTAssertEqual(answer["opened"] as? Int, 1)
+        XCTAssertEqual(answer["missing"] as? [String], ["Диктаторик"])
+        XCTAssertEqual(rig.windows.count, 2, "нового чата вместо старого не заводим")
+
+        // Канал снова свободен.
+        rig.advance(1)
+        write(request("940-0003", action: "windows", at: rig.now), id: "940-0003", in: box)
+        channel.tick()
+        XCTAssertEqual(result("940-0003", in: box)?["ok"] as? Bool, true)
+    }
+
+    /// «Новые чаты по этим проектам»: те же папки через сегодняшний путь «нового окна»,
+    /// по одному; открытые окна тех же чатов не переиспользуются, `missing` пуст.
+    func testPimpChannelOpensFreshChatsByFolders() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        let vkus = box.appendingPathComponent("Vkus", isDirectory: true)
+        try FileManager.default.createDirectory(at: vkus, withIntermediateDirectories: true)
+        rig.mode = .five
+        let cells = ArrangeLayout.frames(count: 2, in: PimpRig.area, mode: .five)
+        rig.saved = [WindowLayout(name: "Утро", at: rig.now, mode: .five, cells: [
+            LayoutCell(folder: vkus.path, chat: "local_v", title: "Вкуснофф", cell: 0),
+            LayoutCell(folder: box.appendingPathComponent("Нет").path, chat: "local_x",
+                       title: "Пропавший", cell: 1),
+        ])]
+        rig.windows = [PimpWindow(id: 1, title: "Claude", chat: "local_main",
+                                  frame: CGRect(x: 0, y: 34, width: 1470, height: 859))]
+        let channel = makeChannel(rig, in: box)
+
+        write(request("950-0001", action: "layout-restore", at: rig.now,
+                      extra: ",\"name\":\"Утро\",\"fresh\":true"), id: "950-0001", in: box)
+        channel.tick()
+        XCTAssertEqual(rig.opened.map { $0.project.folder.path }, [vkus.path])
+        XCTAssertEqual(rig.opened.first?.origin?.x, Int(cells[0].minX))
+        XCTAssertTrue(rig.popouts.isEmpty, "новые чаты попапом не выносят")
+
+        rig.advance(3)
+        rig.windows.append(PimpWindow(id: 2, title: "Vkus", chat: "local_new",
+                                      frame: CGRect(x: 120, y: 120, width: 900, height: 700)))
+        channel.tick()
+        // Второй папки нет на диске — открывать нечем, и ячейка просто пустует.
+        let answer = try XCTUnwrap(result("950-0001", in: box))
+        XCTAssertEqual(answer["opened"] as? Int, 1)
+        XCTAssertEqual(answer["placed"] as? Int, 0)
+        XCTAssertEqual(answer["missing"] as? [String], [], "у новых чатов пропавших нет")
+        XCTAssertEqual(rig.window(2)?.frame, cells[0])
+    }
+
+    /// «Какие раскладки» и «верни то, чего нет»: список свежими вперёд, отказ со списком имён.
+    func testPimpChannelListsLayoutsAndSaysMissing() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.windows = [PimpWindow(id: 1, title: "Claude", chat: "local_main")]
+        rig.saved = [
+            WindowLayout(name: "Утро", at: rig.now, mode: .five, cells: [
+                LayoutCell(folder: "/tmp/Pimp", chat: "main", title: "Claude", cell: 0)]),
+            WindowLayout(name: "Разбор", at: rig.now.addingTimeInterval(-3600), mode: .ribbon,
+                         cells: []),
+        ]
+        let channel = makeChannel(rig, in: box)
+
+        write(request("960-0001", action: "layouts", at: rig.now), id: "960-0001", in: box)
+        write(request("960-0002", action: "layout-restore", at: rig.now,
+                      extra: ",\"name\":\"Вечер\",\"fresh\":false"), id: "960-0002", in: box)
+        channel.tick()
+
+        let list = try XCTUnwrap(result("960-0001", in: box))
+        XCTAssertEqual((list["layouts"] as? [[String: Any]])?.compactMap { $0["name"] as? String },
+                       ["Утро", "Разбор"])
+        XCTAssertEqual((list["layouts"] as? [[String: Any]])?.compactMap { $0["cells"] as? Int },
+                       [1, 0])
+        let missing = try XCTUnwrap(result("960-0002", in: box))
+        XCTAssertEqual(missing["error"] as? String, "layout-missing")
+        XCTAssertEqual(missing["layouts"] as? [String], ["Утро", "Разбор"])
+    }
+
+    /// `projects --status`: у проекта появляются открытые окна и строка из его status.md;
+    /// без `status` ответ прежний, побайтно.
+    func testPimpProjectsCarryStatusAndChats() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        let folder = box.appendingPathComponent("Pimp", isDirectory: true)
+        let docs = folder.appendingPathComponent("docs", isDirectory: true)
+        try FileManager.default.createDirectory(at: docs, withIntermediateDirectories: true)
+        try Data("""
+        # ⚪PimpMyClaude
+        обновлено 03:25
+
+        41 воркфлоу
+        27 готово
+        42 ч потрачено
+
+        1️⃣ Workflow ✅ готово
+        - шаги 2 из 2
+
+        Сейчас: WF21 кодится
+        """.utf8).write(to: docs.appendingPathComponent("status.md"))
+        rig.projects = [Project(folder: folder, name: "Pimp", lastFocusedAt: 0)]
+        rig.windows = [PimpWindow(id: 1, title: "Claude", chat: "local_p", folder: folder.path),
+                       PimpWindow(id: 2, title: "Чужое", folder: "/tmp/other")]
+        let channel = makeChannel(rig, in: box)
+
+        write(request("970-0001", action: "projects", at: rig.now, extra: ",\"status\":true"),
+              id: "970-0001", in: box)
+        write(request("970-0002", action: "projects", at: rig.now), id: "970-0002", in: box)
+        channel.tick()
+
+        let one = try XCTUnwrap((result("970-0001", in: box)?["projects"] as? [[String: Any]])?.first)
+        XCTAssertEqual(one["chats"] as? [String], ["Claude"])
+        XCTAssertEqual(one["state"] as? String,
+                       "41 воркфлоу · 27 готово · Сейчас: WF21 кодится")
+        let plain = try XCTUnwrap((result("970-0002", in: box)?["projects"] as? [[String: Any]])?.first)
+        XCTAssertNil(plain["chats"])
+        XCTAssertNil(plain["state"])
+
+        // Сводки нет вовсе — пустая строка, а не отказ.
+        XCTAssertEqual(PimpChannel.state(of: box), "")
+        XCTAssertEqual(PimpChannel.state(nil), "")
+        // Строки блоков «✅ готово» в шапку не лезут: они начинаются с цифры-эмодзи.
+        XCTAssertEqual(PimpChannel.state("3 воркфлоу\n1 готово\n2️⃣ Workflow ✅ готово"),
+                       "3 воркфлоу · 1 готово")
+    }
+
     // MARK: - 6. новое окно посередине
 
     func testPimpChannelOpensWindowInTheMiddle() throws {
@@ -451,6 +975,8 @@ final class PimpChannelTests: XCTestCase {
         XCTAssertEqual(window["chat"] as? String, "local_new")
         XCTAssertEqual(window["frame"] as? [Int], [490, 34, 490, 859])
         XCTAssertEqual(answer["layers"] as? String, "ok")
+        // Ячейка нашлась — поля `skipped` в ответе нет вовсе (эталон new-window.result.json).
+        XCTAssertNil(answer["skipped"])
         XCTAssertEqual(rig.window(3)?.frame, CGRect(x: 490, y: 34, width: 490, height: 859))
     }
 
@@ -693,6 +1219,141 @@ final class PimpChannelTests: XCTestCase {
         XCTAssertEqual(PimpChannel.window(title: "Пимп", in: windows)?.id, 3)
         XCTAssertNil(PimpChannel.window(title: "Claude", in: windows), "заголовок носят двое")
         XCTAssertNil(PimpChannel.window(title: "  ", in: windows))
+    }
+}
+
+/// Раскладки проектов (`layouts.json`, план WF41, задача #5620): файл побайтно по эталону,
+/// перезапись по имени, лимит и снимок окон по ячейкам.
+final class LayoutsStoreTests: XCTestCase {
+    private func makeTemp() -> URL {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("layouts-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    /// Эталон контракта лежит в репозитории: его читают оба конца канала.
+    private func fixtureText() throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("tests/fixtures/pimp/layouts.json")
+        return try String(contentsOf: url, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func morning() -> WindowLayout {
+        WindowLayout(name: "Утро", at: PimpChannel.date("2026-09-08T03:00:00Z")!, mode: .five,
+                     cells: [
+                        LayoutCell(folder: "/Users/elvis/_ElvisProjects/PimpMyClaude",
+                                   chat: "main", title: "Claude", cell: 0),
+                        LayoutCell(folder: "/Users/elvis/_ElvisProjects/VkusnoffKz",
+                                   chat: "local_df06e2d9-3957-48d7-832e-b21a91c483da",
+                                   title: "VkusnoffKz 3", cell: 1),
+                        LayoutCell(folder: "/Users/elvis/_ElvisProjects/Dictator",
+                                   chat: "local_34211288-3534-44ed-aebe-ee9e4ca22226",
+                                   title: "Диктаторик", cell: nil),
+                     ])
+    }
+
+    private func review() -> WindowLayout {
+        WindowLayout(name: "Разбор", at: PimpChannel.date("2026-09-07T20:00:00Z")!, mode: .ribbon,
+                     cells: [LayoutCell(folder: "/Users/elvis/_ElvisProjects/PimpMyClaude",
+                                        chat: "main", title: "Claude", cell: 0)])
+    }
+
+    func testLayoutsStoreWritesContractBytes() throws {
+        let box = makeTemp()
+        let url = box.appendingPathComponent(LayoutsStore.fileName)
+        let store = LayoutsStore(url: url)
+        XCTAssertTrue(store.save(review()))
+        XCTAssertTrue(store.save(morning()))
+
+        // Порядок ключей побайтно: version, layouts; в записи — name, at, mode, cells;
+        // в месте — folder, chat, title, cell (окно вне сетки — null).
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), try fixtureText())
+        // Своё же и читаем: запись переживает перезапуск приложения.
+        XCTAssertEqual(store.load(), [morning(), review()])
+        XCTAssertEqual(store.layout(named: " утро ")?.cells.count, 3)
+        XCTAssertNil(store.layout(named: "Вечер"))
+        XCTAssertEqual(LayoutsStore.parse(try Data(contentsOf: url)).first?.mode, .five)
+    }
+
+    func testLayoutsStoreOverwritesByNameAndKeepsLimit() throws {
+        let box = makeTemp()
+        let store = LayoutsStore(url: box.appendingPathComponent(LayoutsStore.fileName))
+        store.save(morning())
+        // Имя занято (регистр и пробелы не в счёт) — перезапись, второй записи нет.
+        let later = WindowLayout(name: " утро ", at: PimpChannel.date("2026-09-08T04:00:00Z")!,
+                                 mode: .ribbon, cells: [])
+        XCTAssertTrue(store.save(later))
+        XCTAssertEqual(store.load().count, 1)
+        XCTAssertEqual(store.load().first?.mode, .ribbon)
+        XCTAssertEqual(store.load().first?.name, "утро")
+        // Пустое имя не записывается вовсе.
+        XCTAssertFalse(store.save(WindowLayout(name: "  ", at: Date(), mode: .five, cells: [])))
+
+        // Удаление: только своя запись, чужого имени файл не касается.
+        XCTAssertFalse(store.delete(name: "Вечер"))
+        XCTAssertTrue(store.delete(name: "УТРО"))
+        XCTAssertTrue(store.load().isEmpty)
+
+        // Больше тридцати раскладок не держим: уходит самая старая по `at`.
+        var list: [WindowLayout] = []
+        for index in 0..<(LayoutsStore.limit + 3) {
+            list = LayoutsStore.merge(WindowLayout(name: "р\(index)",
+                                                   at: Date(timeIntervalSince1970: Double(index)),
+                                                   mode: .five, cells: []), into: list)
+        }
+        XCTAssertEqual(list.count, LayoutsStore.limit)
+        XCTAssertEqual(list.first?.name, "р\(LayoutsStore.limit + 2)")
+        XCTAssertEqual(list.last?.name, "р3")
+    }
+
+    func testLayoutsStoreParseSkipsJunk() {
+        let json = """
+        {"version":1,"layouts":[{"name":"  "},\
+        {"name":"Утро","at":"2026-09-08T03:00:00Z","mode":"5x3","cells":[\
+        {"folder":"/tmp/a","chat":"main","title":"Claude","cell":0},\
+        {"folder":"/tmp/b","title":"Без чата","cell":1},\
+        {"chat":"local_c","title":"Без папки","cell":-2}]},\
+        {"name":"утро","at":"2026-09-08T02:00:00Z","mode":"row","cells":[]}]}
+        """
+        let list = LayoutsStore.parse(Data(json.utf8))
+        XCTAssertEqual(list.map { $0.name }, ["Утро"], "запись без имени и дубль имени мимо")
+        let layout = try? XCTUnwrap(list.first)
+        XCTAssertEqual(layout?.mode, .ribbon, "незнакомая сетка читается как лента")
+        XCTAssertEqual(layout?.cells.map { $0.chat }, ["main", "local_c"], "место без чата мимо")
+        XCTAssertEqual(layout?.cells.last?.cell, nil, "отрицательный номер ячейки — не номер")
+        XCTAssertTrue(LayoutsStore.parse(Data("{".utf8)).isEmpty)
+        XCTAssertTrue(LayoutsStore.parse(nil).isEmpty)
+    }
+
+    /// Снимок окон: номер ячейки — совпавшая рамка (допуск 2 pt), главное окно пишется как
+    /// `main`, окно с неопознанным чатом отменяет запись (его заголовок — в `unknown`).
+    func testLayoutsStoreSnapshotCountsCells() {
+        let cells = ArrangeLayout.frames(count: 3, in: CGRect(x: 0, y: 34, width: 1470, height: 859),
+                                         mode: .five)
+        let windows = [
+            PimpWindow(id: 1, title: "Claude", chat: "local_main", folder: "/tmp/Pimp",
+                       frame: cells[0]),
+            // Окно доехало не идеально: 2 pt внутри допуска — ячейка та же.
+            PimpWindow(id: 2, title: "Вкуснофф", chat: "local_v", folder: "/tmp/Vkus",
+                       frame: cells[1].offsetBy(dx: 2, dy: 0)),
+            PimpWindow(id: 3, title: "Гость",
+                       frame: CGRect(x: 500, y: 500, width: 900, height: 700)),
+        ]
+        let snapshot = LayoutsStore.snapshot(name: " Утро ", at: Date(), mode: .five,
+                                             windows: windows, cells: cells,
+                                             isMain: { $0 == "Claude" })
+        XCTAssertEqual(snapshot.unknown, ["Гость"])
+        XCTAssertEqual(snapshot.layout.name, "Утро")
+        XCTAssertEqual(snapshot.layout.cells.map { $0.chat }, ["main", "local_v"])
+        XCTAssertEqual(snapshot.layout.cells.map { $0.cell }, [0, 1])
+        // 3 pt — уже другое место, ячейки нет.
+        XCTAssertNil(LayoutsStore.cell(of: cells[2].offsetBy(dx: 3, dy: 0), in: cells))
+        XCTAssertEqual(LayoutsStore.cell(of: cells[2], in: cells), 2)
     }
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Тесты CLI «Пимп» (WF36): tools/pimp.py против эталонов канала.
+"""Тесты CLI «Пимп» (WF36, раскладки — WF21 и WF41): tools/pimp.py против эталонов канала.
 
 Приложения тут нет — вместо него нитка FakeApp: она ловит запрос в подставном
 каталоге (MYCLAUDE_PIMP_DIR), помечает его <id>.taken и кладёт рядом ответ,
@@ -33,13 +33,21 @@ def fixture(name: str) -> dict:
 
 
 class FakeApp(threading.Thread):
-    """Приложение на минималках: взял первый запрос — ответил по образцу."""
+    """Приложение на минималках: взял первый запрос — ответил по образцу.
 
-    def __init__(self, directory: Path, result: dict, taken: bool = True):
+    `beats` — сколько раз перезаписать <id>.taken перед ответом с паузой
+    `beat_s`: так приложение показывает, что открывает окна раскладки по одному
+    (heartbeat WF41), и CLI обязан ждать дальше.
+    """
+
+    def __init__(self, directory: Path, result: dict, taken: bool = True,
+                 beats: int = 0, beat_s: float = 0.0):
         super().__init__(daemon=True)
         self.dir = Path(directory)
         self.result = result
         self.taken = taken
+        self.beats = beats
+        self.beat_s = beat_s
         self.requests = []
         self.paths = []
         self._stop = threading.Event()
@@ -57,8 +65,13 @@ class FakeApp(threading.Thread):
                     continue
                 self.requests.append(request)
                 self.paths.append(path)
+                mark = self.dir / f"{request['id']}.taken"
                 if self.taken:
-                    (self.dir / f"{request['id']}.taken").write_text("", encoding="utf-8")
+                    mark.write_text("", encoding="utf-8")
+                for _ in range(self.beats):
+                    if self._stop.wait(self.beat_s):
+                        return
+                    mark.write_text("", encoding="utf-8")   # окно открыто, живы
                 answer = dict(self.result)
                 answer["id"] = request["id"]
                 body = json.dumps(answer, ensure_ascii=False, separators=(",", ":")) + "\n"
@@ -83,10 +96,11 @@ class PimpCliTest(unittest.TestCase):
             self.app.stop()
             self.app.join(timeout=2)
 
-    def call(self, *argv, result=None, session=CHAT, taken=True, wait="5", silent="2"):
+    def call(self, *argv, result=None, session=CHAT, taken=True, wait="5", silent="2",
+             beats=0, beat_s=0.0):
         if result is not None:
             self.dir.mkdir(parents=True, exist_ok=True)
-            self.app = FakeApp(self.dir, result, taken=taken)
+            self.app = FakeApp(self.dir, result, taken=taken, beats=beats, beat_s=beat_s)
             self.app.start()
         env = dict(os.environ)
         env["MYCLAUDE_PIMP_DIR"] = str(self.dir)
@@ -128,10 +142,57 @@ class PimpCliTest(unittest.TestCase):
                          list(fixture("arrange.request.json").keys()))
         self.assertEqual(self.app.requests[0]["layout"], "row")
 
+    def test_arrange_request_layout(self):
+        # Раскладка едет тем же полем и не двигает порядок ключей (WF21).
+        self.call("arrange", "--layout", "5x2", result=fixture("arrange.result.json"))
+        self.assertEqual(list(self.app.requests[0].keys()),
+                         list(fixture("arrange.request.json").keys()))
+        self.assertEqual(self.app.requests[0]["layout"], "5x2")
+
+    def test_arrange_order_request(self):
+        # Порядок проектов едет как дали — именами и путями вперемешку (WF41).
+        order = "/Users/elvis/_ElvisProjects/VkusnoffKz, SkilZZZ ,/Users/elvis/_ElvisProjects/Dictator"
+        self.call("arrange", "--layout", "5", "--order", order,
+                  result=fixture("arrange-order.result.json"))
+        request = self.app.requests[0]
+        sample = fixture("arrange-order.request.json")
+        self.assertEqual(list(request.keys()), list(sample.keys()), "порядок полей запроса")
+        self.assertEqual(request["order"], sample["order"])
+
     def test_projects_request(self):
         self.call("projects", result=fixture("projects.result.json"))
         self.assertEqual(list(self.app.requests[0].keys()),
                          list(fixture("projects.request.json").keys()))
+
+    def test_projects_status_request(self):
+        # Ключ status есть, только когда просили сводку.
+        self.call("projects", "--status", result=fixture("projects-status.result.json"))
+        request = self.app.requests[0]
+        self.assertEqual(list(request.keys()),
+                         list(fixture("projects-status.request.json").keys()))
+        self.assertIs(request["status"], True)
+
+    def test_layouts_request(self):
+        self.call("layouts", result=fixture("layouts.result.json"))
+        self.assertEqual(list(self.app.requests[0].keys()),
+                         list(fixture("layouts.request.json").keys()))
+        self.assertEqual(self.app.requests[0]["action"], "layouts")
+
+    def test_layout_save_request(self):
+        self.call("layout", "save", "Утро", result=fixture("layout-save.result.json"))
+        request = self.app.requests[0]
+        self.assertEqual(list(request.keys()),
+                         list(fixture("layout-save.request.json").keys()))
+        self.assertEqual(request["action"], "layout-save")
+        self.assertEqual(request["name"], "Утро")
+
+    def test_layout_restore_request(self):
+        self.call("layout", "restore", "Утро", result=fixture("layout-restore.result.json"))
+        request = self.app.requests[0]
+        self.assertEqual(list(request.keys()),
+                         list(fixture("layout-restore.request.json").keys()))
+        self.assertEqual(request["action"], "layout-restore")
+        self.assertIs(request["fresh"], False)
 
     # ---- что Пимп говорит на ответ ----------------------------------------
     def test_open_ok(self):
@@ -155,6 +216,15 @@ class PimpCliTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("цвет не встал", done.stdout)
 
+    def test_open_without_cell(self):
+        # Ячейки в раскладке не нашлось — про «посередине» молчим: окно поверх.
+        answer = dict(fixture("new-window.result.json"))
+        answer["skipped"] = 1
+        done = self.call("open", "Dictator", "--at", "middle", result=answer)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(),
+                         "Окно открыл, но в раскладке места нет — оставил поверх")
+
     def test_project_missing(self):
         done = self.call("open", "Диктатор", result=fixture("new-window.error.json"))
         self.assertEqual(done.returncode, 1)
@@ -164,7 +234,7 @@ class PimpCliTest(unittest.TestCase):
     def test_busy(self):
         done = self.call("open", "Dictator", result=fixture("busy.result.json"))
         self.assertEqual(done.returncode, 1)
-        self.assertEqual(done.stdout.strip(), "Пимп занят — открывает предыдущее окно")
+        self.assertEqual(done.stdout.strip(), "Пимп занят — открывает или возвращает окна")
 
     def test_bad_request(self):
         done = self.call("arrange", result=fixture("bad.result.json"))
@@ -174,12 +244,106 @@ class PimpCliTest(unittest.TestCase):
     def test_arrange_ok(self):
         done = self.call("arrange", result=fixture("arrange.result.json"))
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(done.stdout.strip(), "Расставил 3 окна на главном экране")
+        self.assertEqual(done.stdout.strip(), "Расставил 3 окна на главном экране: как сейчас (лента)")
+
+    def test_arrange_layout_and_skipped(self):
+        # Просили «как в прошлый раз» — называем ту раскладку, что применилась.
+        answer = dict(fixture("arrange.result.json"))
+        answer["layout"] = "5"
+        answer["skipped"] = 2
+        done = self.call("arrange", "--layout", "last", result=answer)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.app.requests[0]["layout"], "last")
+        self.assertEqual(done.stdout.strip(),
+                         "Расставил 3 окна на главном экране: пять в ряд, 2 не тронул — ячеек нет")
+
+    def test_arrange_too_small(self):
+        # Тесно не окну, а раскладке: текст «Мало места…» тут не годится.
+        answer = dict(fixture("bad.result.json"))
+        answer["error"] = "too-small"
+        done = self.call("arrange", "--layout", "5", result=answer)
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout.strip(),
+                         "Экран мал: столько окон в эту раскладку не влезает — "
+                         "сделай окна уже или выбери другую раскладку")
+
+    def test_arrange_order_ok(self):
+        # Кто встал первым, чьих окон не нашлось и сколько уехало в хвост.
+        order = ("/Users/elvis/_ElvisProjects/VkusnoffKz,SkilZZZ,"
+                 "/Users/elvis/_ElvisProjects/Dictator")
+        done = self.call("arrange", "--layout", "5", "--order", order,
+                         result=fixture("arrange-order.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(),
+                         "Расставил 3 окна на главном экране: пять в ряд — сперва "
+                         "VkusnoffKz; не нашёл окна: SkilZZZ, Dictator; "
+                         "1 без папки — в хвосте")
+
+    def test_layouts_ok(self):
+        done = self.call("layouts", result=fixture("layouts.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(),
+                         "Раскладки: Утро — пять в ряд, 2 окна · "
+                         "Разбор — как сейчас (лента), 3 окна")
+
+    def test_layouts_empty(self):
+        answer = dict(fixture("layouts.result.json"))
+        answer["layouts"] = []
+        done = self.call("layouts", result=answer)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(),
+                         "Раскладок пока нет — скажи «запомни раскладку как …»")
+
+    def test_layout_save_ok(self):
+        done = self.call("layout", "save", "Утро", result=fixture("layout-save.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), "Запомнил раскладку «Утро»: пять в ряд, 2 окна")
+
+    def test_layout_save_chat_unknown(self):
+        # Чат окна неизвестен — запоминать нечего, и Элвису сказано, что включить.
+        done = self.call("layout", "save", "Утро", result=fixture("layout-save.error.json"))
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout.strip(),
+                         "Не могу запомнить: не знаю, какой чат в окне «Диктаторик» — "
+                         "включи «Цвет по проекту» в меню Пимпа или подожди минуту")
+
+    def test_layout_restore_ok(self):
+        done = self.call("layout", "restore", "Утро",
+                         result=fixture("layout-restore.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(),
+                         "Вернул «Утро»: 1 стояло, 1 открыл; не нашёл чат: Диктаторик")
+
+    def test_layout_restore_fresh(self):
+        # «Новые чаты по Утру»: чатов из раскладки не ищем, потерянных нет.
+        answer = dict(fixture("layout-restore.result.json"))
+        answer["placed"] = 0
+        answer["opened"] = 2
+        answer["missing"] = []
+        done = self.call("layout", "restore", "Утро", "--new", result=answer)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIs(self.app.requests[0]["fresh"], True)
+        self.assertEqual(done.stdout.strip(), "Открыл новые чаты по раскладке «Утро»: 2")
+
+    def test_layout_missing(self):
+        done = self.call("layout", "restore", "Вечер",
+                         result=fixture("layout-restore.error.json"))
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout.strip(), "Раскладки «Вечер» нет, есть: Утро, Разбор")
 
     def test_projects_ok(self):
         done = self.call("projects", result=fixture("projects.result.json"))
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(done.stdout.strip(), "Проекты: PimpMyClaude, VkusnoffKz")
+
+    def test_projects_status_ok(self):
+        # Со сводкой — строка на проект: счёт воркфлоу и открытые окна.
+        done = self.call("projects", "--status", result=fixture("projects-status.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip().splitlines(),
+                         ["PimpMyClaude — 41 воркфлоу · 27 готово · Сейчас: WF21 кодится "
+                          "· окна: Claude",
+                          "VkusnoffKz — без сводки · окна: VkusnoffKz 3"])
 
     def test_windows_ok_with_minimized(self):
         done = self.call("windows", result=fixture("windows.result.json"))
@@ -224,6 +388,15 @@ class PimpCliTest(unittest.TestCase):
         worker.join(timeout=2)
         self.assertEqual(done.returncode, 1)
         self.assertIn("не ответил", done.stdout)
+
+    def test_wait_counted_from_heartbeat(self):
+        # Раскладка открывает окна по одному и после каждого бьёт <id>.taken:
+        # ждём от последнего удара, иначе сдались бы на первом окне (WF41).
+        done = self.call("layout", "restore", "Утро",
+                         result=fixture("layout-restore.result.json"),
+                         beats=4, beat_s=0.25, wait="0.5")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("Вернул «Утро»", done.stdout)
 
     def test_probe_warning(self):
         self.dir.mkdir(parents=True, exist_ok=True)

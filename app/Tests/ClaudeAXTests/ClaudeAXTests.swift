@@ -49,6 +49,20 @@ final class ClaudeAXTests: XCTestCase {
     // Десять команд: восемь исходных плюс «Новое окно» и «Вынести этот чат в окно» (план WF13).
     func testSkeleton() { XCTAssertEqual(ClaudeCommand.allCases.count, 10) }
 
+    /// Экран для «Расставить» — тот, где стоят окна, а не тот, где активное окно (08.09):
+    /// большинство центров, ничья — первый, ни одного попадания — первый (меню-бар).
+    func testScreensPickFollowsWindows() {
+        let laptop = CGRect(x: 0, y: 0, width: 1470, height: 956)
+        let tall = CGRect(x: -1060, y: -419, width: 1060, height: 1696)
+        let onLaptop = CGRect(x: 10, y: 40, width: 700, height: 800)
+        let onTall = CGRect(x: -900, y: 100, width: 500, height: 800)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [onLaptop, onLaptop, onTall]), 0)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [onTall, onTall, onLaptop]), 1)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [onLaptop, onTall]), 0)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: []), 0)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [CGRect(x: 5000, y: 5000, width: 10, height: 10)]), 0)
+    }
+
     // MARK: - «Расставить»
 
     func testColumnsKeepOneRowWhileCellsAreWideEnough() {
@@ -79,6 +93,135 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(cells[0], CGRect(x: 0, y: 0, width: 500, height: 400))
         XCTAssertEqual(cells[1], CGRect(x: 500, y: 0, width: 500, height: 400))
         XCTAssertEqual(cells[2], CGRect(x: 0, y: 400, width: 500, height: 400))
+    }
+
+    /// Раскладки «4», «5» и «5×2» (план WF21): сетка задана, рамок ровно столько, сколько
+    /// в ней мест, — лишним окнам их не достаётся, и трогать эти окна некому.
+    func testArrangeModesGiveFixedGrids() {
+        let area = CGRect(x: 0, y: 34, width: 1470, height: 860) // 15" Элвиса
+        XCTAssertEqual(ArrangeLayout.Mode.allCases.map { $0.rawValue }, ["row", "4", "5", "5x2"])
+        XCTAssertNil(ArrangeLayout.capacity(of: .ribbon), "лента берёт все окна")
+        let fixed: [ArrangeLayout.Mode] = [.four, .five, .tenGrid]
+        XCTAssertEqual(fixed.map { ArrangeLayout.capacity(of: $0) }, [4, 5, 10])
+
+        // «5 в ряд»: пять столбцов во всю высоту, шестому окну рамки нет.
+        let five = ArrangeLayout.frames(count: 6, in: area, mode: .five)
+        XCTAssertEqual(five.count, 5)
+        XCTAssertEqual(five[0], CGRect(x: 0, y: 34, width: 294, height: 860))
+        XCTAssertEqual(five[4].maxX, area.maxX)
+        // Окон меньше, чем ячеек, — сетка остаётся, окна не растягиваем.
+        XCTAssertEqual(ArrangeLayout.frames(count: 2, in: area, mode: .four).map { $0.width },
+                       [368, 367])
+
+        // «5×2»: слева направо, сверху вниз; ряд — вполовину высоты, одиннадцатому места нет.
+        let grid = ArrangeLayout.frames(count: 6, in: area, mode: .tenGrid)
+        XCTAssertEqual(grid[0], CGRect(x: 0, y: 34, width: 294, height: 430))
+        XCTAssertEqual(grid[5], CGRect(x: 0, y: 464, width: 294, height: 430))
+        XCTAssertEqual(ArrangeLayout.frames(count: 12, in: area, mode: .tenGrid).count, 10)
+        // Лента считает столбцы сама и рамку даёт каждому окну — счёт прежний.
+        XCTAssertEqual(ArrangeLayout.frames(count: 6, in: area, minCellWidth: 280).count, 6)
+
+        // Влезает ли раскладка: у Элвиса minWindowWidth 280 — пятёрка встаёт по 294; у команды
+        // 360 — пятёрка уже серая, а четвёрка (367) ещё нет. Лента влезает всегда.
+        XCTAssertTrue(ArrangeLayout.fits(.five, in: area, minCellWidth: 280))
+        XCTAssertTrue(ArrangeLayout.fits(.tenGrid, in: area, minCellWidth: 280))
+        XCTAssertFalse(ArrangeLayout.fits(.five, in: area, minCellWidth: 360))
+        XCTAssertTrue(ArrangeLayout.fits(.four, in: area, minCellWidth: 360))
+        XCTAssertTrue(ArrangeLayout.fits(.ribbon, in: area, minCellWidth: 999))
+
+        // Последняя раскладка живёт в настройках приложения; чужое слово в них — лента.
+        let store = ThemeStore(defaults: MemoryDefaults())
+        XCTAssertEqual(store.arrangeMode, .ribbon)
+        store.arrangeMode = .tenGrid
+        XCTAssertEqual(store.arrangeMode, .tenGrid)
+        let junk = MemoryDefaults()
+        junk.values[ThemeStore.arrangeModeKey] = "5x3"
+        XCTAssertEqual(ThemeStore(defaults: junk).arrangeMode, .ribbon)
+    }
+
+    /// Полоса раскладок — самый первый пункт меню (план WF21): четыре плитки в порядке
+    /// макета, выбранная отмечена, не влезающая на экран не нажимается.
+    func testLayoutPickerIsFirstMenuItem() throws {
+        var picked: [ArrangeLayout.Mode] = []
+        let done = expectation(description: "плитка выбрана")
+        var config = menuConfig()
+        config.arrangeMode = .five
+        config.arrangeFits = { $0 != .tenGrid }
+        config.arrange = { picked.append($0); done.fulfill() }
+        let menu = MinimizeMenu.build(config: config)
+
+        let item = try XCTUnwrap(menu.items.first)
+        XCTAssertEqual(item.title, MenuModel.layoutsTitle)
+        let picker = try XCTUnwrap(item.view as? LayoutPickerView)
+        XCTAssertTrue(menu.items[1].isSeparatorItem, "после полосы — разделитель")
+        XCTAssertFalse(menu.items[2].isSeparatorItem, "и только один")
+        XCTAssertEqual(picker.tiles.map { $0.mode }, [.four, .five, .tenGrid, .ribbon])
+        XCTAssertEqual(picker.tiles.map { $0.title },
+                       ["4 в ряд", "5 в ряд", "5 × 2", "как сейчас"])
+        XCTAssertEqual(picker.tiles.map { $0.isSelected }, [false, true, false, false])
+        XCTAssertEqual(picker.tiles.map { $0.isEnabled }, [true, true, false, true])
+
+        // Плитки идут слева направо, не наезжают друг на друга и не вылезают за пункт.
+        XCTAssertLessThan(picker.cell(of: 0).maxX, picker.cell(of: 1).minX)
+        XCTAssertLessThanOrEqual(picker.cell(of: 3).maxX, picker.bounds.maxX)
+        XCTAssertEqual(picker.index(at: NSPoint(x: picker.cell(of: 1).midX,
+                                                y: picker.bounds.midY)), 1)
+
+        // Серая плитка молчит; обычная зовёт обработчик ходом вперёд (меню уже закрылось).
+        picker.pick(2)
+        picker.pick(0)
+        waitForExpectations(timeout: 1)
+        XCTAssertEqual(picked, [.four])
+    }
+
+    /// «🗂 Раскладки ▸» — последний пункт «⋯ Ещё ▸» (план WF41): сохранить нынешние окна,
+    /// под ним имена сохранённых, у каждой — вернуть те же чаты, открыть новые, удалить.
+    func testSavedLayoutsMenu() throws {
+        var saved = 0
+        var restored: [(name: String, fresh: Bool)] = []
+        var deleted: [String] = []
+        var config = menuConfig()
+        config.layouts = [ClaudeAXTests.layout("Утро"), ClaudeAXTests.layout("Разбор")]
+        config.saveLayout = { saved += 1 }
+        config.restoreLayout = { restored.append((name: $0.name, fresh: $1)) }
+        config.deleteLayout = { deleted.append($0.name) }
+        let menu = MinimizeMenu.build(config: config)
+
+        let more = try XCTUnwrap(menu.items.first { $0.title == MenuModel.moreTitle }?.submenu)
+        let layouts = try XCTUnwrap(more.items.last?.submenu)
+        XCTAssertEqual(more.items.last?.title, MenuModel.savedLayoutsTitle)
+        XCTAssertNotNil(more.items.last?.image)
+        XCTAssertEqual(layouts.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Сохранить эту раскладку…", "—", "Утро", "Разбор"])
+        // Подсказка называет сетку и число окон — по ней раскладки различаются в лицо.
+        XCTAssertEqual(layouts.items.last?.toolTip, "5 в ряд · 2 окна")
+
+        let morning = try XCTUnwrap(layouts.items.first { $0.title == "Утро" }?.submenu)
+        XCTAssertEqual(morning.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Вернуть эти чаты", "Новые чаты по этим проектам", "—", "Удалить"])
+        click(layouts.items[0])
+        click(morning.items[0])
+        click(morning.items[1])
+        click(try XCTUnwrap(morning.items.last))
+        XCTAssertEqual(saved, 1)
+        XCTAssertEqual(restored.map { $0.name }, ["Утро", "Утро"])
+        XCTAssertEqual(restored.map { $0.fresh }, [false, true])
+        XCTAssertEqual(deleted, ["Утро"])
+
+        // Сохранённых раскладок нет — остаётся один пункт, разделителя нет вовсе.
+        var empty = menuConfig()
+        empty.layouts = []
+        let alone = try XCTUnwrap(MinimizeMenu.build(config: empty).items
+            .first { $0.title == MenuModel.moreTitle }?.submenu?.items.last?.submenu)
+        XCTAssertEqual(alone.items.map { $0.title }, ["Сохранить эту раскладку…"])
+    }
+
+    /// Раскладка для меню: два места по сетке «5 в ряд».
+    private static func layout(_ name: String) -> WindowLayout {
+        WindowLayout(name: name, at: PimpChannel.date("2026-09-08T03:00:00Z")!, mode: .five,
+                     cells: [LayoutCell(folder: "/tmp/Pimp", chat: "main", title: "Claude", cell: 0),
+                             LayoutCell(folder: "/tmp/Vkus", chat: "local_1", title: "Вкуснофф",
+                                        cell: 1)])
     }
 
     func testOrderKeepsRowsLeftToRight() {
@@ -154,7 +297,8 @@ final class ClaudeAXTests: XCTestCase {
         // Верхний уровень — пять пунктов-команд из entries; «Новое окно ▸» (план WF16),
         // «Оформление ▸» и «Ещё ▸» — с подменю, и клавиш сами не носят: ⌥⌘N уехала на
         // «Здесь же» внутри подменю (сторож — testNewWindowKeepsHotkeyEntry).
-        let items = menu.items.filter { !$0.isSeparatorItem && !$0.hasSubmenu }
+        // Полоса раскладок (план WF21) — пункт-вьюха: по нему клавиатура не ходит вовсе.
+        let items = menu.items.filter { !$0.isSeparatorItem && !$0.hasSubmenu && $0.view == nil }
         XCTAssertEqual(items.count, MenuModel.entries.count - MenuModel.moreCommands.count - 1)
         XCTAssertEqual(items.map { $0.title },
                        ["Workflow", "Новый чат", "Вынести этот чат в окно", "Развернуть",
@@ -165,12 +309,14 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(items.map { $0.keyEquivalentModifierMask },
                        [[], [.command], [], [.command, .option], [.command, .option]])
 
-        // Четыре клавиши — внутри «⋯ Ещё ▸», в том же порядке, что в макете.
+        // Четыре клавиши — внутри «⋯ Ещё ▸», в том же порядке, что в макете; пятым пунктом
+        // «🗂 Раскладки ▸» (план WF41) — подменю, клавиши у него нет.
         let more = try XCTUnwrap(menu.items.first { $0.title == MenuModel.moreTitle }?.submenu)
         XCTAssertEqual(more.items.map { $0.title },
-                       ["Обкэшить", "Расставить", "Показать", "Прокрутить"])
-        XCTAssertEqual(more.items.map { $0.keyEquivalent }, ["n", "a", "s", "d"])
-        XCTAssertEqual(more.items.map { $0.keyEquivalentModifierMask },
+                       ["Обкэшить", "Расставить", "Показать", "Прокрутить", "Раскладки"])
+        let keyed = more.items.filter { !$0.hasSubmenu }
+        XCTAssertEqual(keyed.map { $0.keyEquivalent }, ["n", "a", "s", "d"])
+        XCTAssertEqual(keyed.map { $0.keyEquivalentModifierMask },
                        [[.command, .shift], [.command, .option], [.command, .option],
                         [.command, .option]])
         XCTAssertNotNil(menu.items.first { $0.title == MenuModel.moreTitle }?.image)
@@ -641,10 +787,11 @@ final class ClaudeAXTests: XCTestCase {
         config.deleteMyTheme = { deleted.append($0.id) }
         let menu = MinimizeMenu.build(config: config)
 
-        // MARK: верхний уровень — шесть команд, «Оформление ▸» и «Ещё ▸», три разделителя
+        // MARK: верхний уровень — полоса раскладок, шесть команд, «Оформление ▸» и «Ещё ▸»
         XCTAssertEqual(menu.items.map { $0.isSeparatorItem ? "—" : $0.title },
-                       ["Workflow", "Новый чат", "Новое окно", "Вынести этот чат в окно", "—",
-                        "Развернуть", "Свернуть", "—", "Оформление", "—", "Ещё"])
+                       ["Раскладки", "—", "Workflow", "Новый чат", "Новое окно",
+                        "Вынести этот чат в окно", "—", "Развернуть", "Свернуть", "—",
+                        "Оформление", "—", "Ещё"])
         // «Новое окно» стало подменю в WF16 — верхний уровень при этом не вырос ни на пункт.
         XCTAssertEqual(menu.items.filter { $0.hasSubmenu }.map { $0.title },
                        ["Новое окно", "Оформление", "Ещё"])
@@ -1820,6 +1967,20 @@ final class ClaudeAXTests: XCTestCase {
                        "{\"id\":\"1-0001\",\"action\":\"popout-window\","
                        + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"window\",\"title\":\"Привет\","
                        + "\"match\":\"/epitaxy/local_f44e46bb\",\"x\":120,\"y\":120}")
+
+        // «↩︎ Вернуть эти чаты» (план WF41): `chat` и `name` идут ПОСЛЕ `y`, а адрес у команды
+        // один — путь главного окна: поле `chat` для страницы значит «эта страница и есть тот
+        // чат», и закрытый разговор такую команду не взял бы вовсе.
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.popoutWindow.rawValue,
+            fields: ClaudeActions.popoutWindowFields(title: "", match: "/epitaxy/local_f44e46bb",
+                                                     x: 294, y: 34, chat: "local_gone",
+                                                     name: "Вкуснофф"),
+            id: "1-0002", at: Date(timeIntervalSince1970: 0)),
+                       "{\"id\":\"1-0002\",\"action\":\"popout-window\","
+                       + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"window\",\"title\":\"\","
+                       + "\"match\":\"/epitaxy/local_f44e46bb\",\"x\":294,\"y\":34,"
+                       + "\"chat\":\"local_gone\",\"name\":\"Вкуснофф\"}")
         // Путь берётся из диагностики лоадера: одна страница claude.ai — она и есть главное окно,
         // ни одной или несколько — nil, и адресация остаётся прежней (живой ~/Library не трогаем).
         XCTAssertNil(ClaudeActions.mainWindowMatch(statusURL: URL(fileURLWithPath: "/нет/такого")))

@@ -424,14 +424,34 @@ final class ClaudeActions {
     }
 
     /// То же без первого сообщения: scope, title, match, x, y (решение Элвиса 04.09).
-    static func popoutWindowFields(title: String, match: String? = nil,
-                                   x: Int, y: Int) -> [(key: String, value: CommandValue)] {
+    /// `chat` и `name` (план WF41) идут ПОСЛЕ `y` и только у «Вернуть эти чаты»: они —
+    /// ГРУЗ команды, чей разговор вынести, а не адрес (адрес у неё всегда `match`).
+    static func popoutWindowFields(title: String, match: String? = nil, x: Int, y: Int,
+                                   chat: String? = nil,
+                                   name: String? = nil) -> [(key: String, value: CommandValue)] {
         var fields: [(key: String, value: CommandValue)] = [
             (key: "scope", value: .string(MenuModel.themeScopeWindow)),
             (key: "title", value: .string(title)),
         ]
         if let match = match { fields.append((key: "match", value: .string(match))) }
-        return fields + [(key: "x", value: .number(x)), (key: "y", value: .number(y))]
+        fields += [(key: "x", value: .number(x)), (key: "y", value: .number(y))]
+        if let chat = chat { fields.append((key: "chat", value: .string(chat))) }
+        if let name = name { fields.append((key: "name", value: .string(name))) }
+        return fields
+    }
+
+    /// «↩︎ Вернуть эти чаты» (план WF41): закрытый разговор выносит отдельным окном ГЛАВНОЕ
+    /// окно — оно одно умеет `openPopout`. Адресуем только путём (`match`): заголовок здесь
+    /// не нужен, а поле `chat` для страницы значит «эта страница и есть тот чат» (WF29) —
+    /// адресом ему быть нельзя, закрытый чат не взял бы команду вовсе.
+    /// Имя шлём всегда: у названного чата заголовок окна берётся из него.
+    func popoutChat(chat: String, name: String, origin: (x: Int, y: Int)) {
+        commands.write(action: ClaudeCommand.popoutWindow.rawValue,
+                       // Главное окно на домашнем экране пути в индексе не имеет — тогда
+                       // адрес `/epitaxy`, как у «Обкэшить» (WF37); без match команду не взял бы никто.
+                       fields: ClaudeActions.popoutWindowFields(title: "", match: mainWindowMatch() ?? ChatProbe.homePath,
+                                                                x: origin.x, y: origin.y,
+                                                                chat: chat, name: name))
     }
 
     /// Путь страницы ГЛАВНОГО окна (`/epitaxy/local_…`) для поля `match`. «Новое окно» и
@@ -1033,19 +1053,40 @@ final class ClaudeActions {
 
     /// Ровная сетка по главному экрану. Порядок окон сохраняется (см. ArrangeLayout.order).
     /// Свёрнутые и спрятанные не трогаем; чужие приложения — тоже (в отличие от ElvisOS).
-    func arrange() {
+    /// ⌥⌘A и пункт «▦ Расставить» повторяют последнюю раскладку (план WF21).
+    func arrange() { arrange(mode: themeStore.arrangeMode) }
+
+    /// То же по заданной раскладке — её выбирают плиткой в меню. Ячеек меньше, чем окон
+    /// («4» при пяти окнах), — хвост порядка не трогаем вовсе, окна стоят где стояли.
+    func arrange(mode: ArrangeLayout.Mode) {
         let windows = app.visibleWindows()
-        guard !windows.isEmpty, let area = Screens.mainUsableFrame else { return }
         let frames = windows.map { AX.frame($0) ?? .zero }
+        guard !windows.isEmpty, let area = Screens.usableFrame(holding: frames) else { return }
         let order = ArrangeLayout.order(of: frames)
-        let cells = ArrangeLayout.frames(count: order.count, in: area,
+        let cells = ArrangeLayout.frames(count: order.count, in: area, mode: mode,
                                          minCellWidth: cellWidth())
-        for (index, windowIndex) in order.enumerated() {
-            let cell = cells[index]
-            let window = windows[windowIndex]
-            ClaudeActions.setFrame(window, cell)
+        for (index, cell) in cells.enumerated() {
+            ClaudeActions.setFrame(windows[order[index]], cell)
         }
         onWindowsMoved?()
+    }
+
+    /// Ячейки раскладки на экране, где стоят окна Claude (план WF41): их номера пишет
+    /// «💾 Сохранить эту раскладку…», по ним же «↩︎ Вернуть эти чаты» ставит окна.
+    /// Считаются той же арифметикой, что «Расставить», — иначе номер ячейки означал бы
+    /// одно при записи и другое при возврате.
+    func arrangeCells(mode: ArrangeLayout.Mode, count: Int) -> [CGRect] {
+        let frames = pimpWindows().map { $0.frame }
+        guard count > 0, let area = Screens.usableFrame(holding: frames) else { return [] }
+        return ArrangeLayout.frames(count: count, in: area, mode: mode, minCellWidth: cellWidth())
+    }
+
+    /// Влезает ли раскладка на главный экран (ячейка не уже `minWindowWidth`): по этому
+    /// плитка в меню гаснет, а канал «Пимп» отвечает `too-small`. Экрана не знаем — не мешаем.
+    func arrangeFits(_ mode: ArrangeLayout.Mode) -> Bool {
+        let frames = app.visibleWindows().compactMap { AX.frame($0) }
+        guard let area = Screens.usableFrame(holding: frames) else { return true }
+        return ArrangeLayout.fits(mode, in: area, minCellWidth: cellWidth())
     }
 
     /// Поставить окну рамку и УБЕДИТЬСЯ, что она встала (гейт WF36, 07.09): Electron молча
@@ -1100,23 +1141,26 @@ final class ClaudeActions {
         app.windows().filter { AX.bool($0, kAXMinimizedAttribute) == true }.count
     }
 
-    /// Расставить окна в ЗАДАННОМ порядке (номера окон Quartz). Возвращает окна с рамками,
-    /// которые им поставили: канал отдаёт их в ответе, не перечитывая экран (`CGWindowList`
-    /// после переезда отвечает не сразу).
+    /// Расставить окна в ЗАДАННОМ порядке (номера окон Quartz) по заданной раскладке.
+    /// Возвращает окна с рамками, которые им поставили (канал отдаёт их в ответе, не
+    /// перечитывая экран — `CGWindowList` после переезда отвечает не сразу), и сколько
+    /// окон осталось без ячейки: их не двигали вовсе.
     @discardableResult
-    func arrange(ids: [CGWindowID]) -> [(id: CGWindowID, title: String, frame: CGRect)] {
+    func arrange(ids: [CGWindowID], mode: ArrangeLayout.Mode)
+        -> (placed: [(id: CGWindowID, title: String, frame: CGRect)], skipped: Int) {
         let windows = pimpWindows()
         let ordered = ids.compactMap { id in windows.first { $0.id == id } }
-        guard !ordered.isEmpty, let area = Screens.mainUsableFrame else { return [] }
-        let cells = ArrangeLayout.frames(count: ordered.count, in: area,
+        guard !ordered.isEmpty,
+              let area = Screens.usableFrame(holding: ordered.map { $0.frame }) else { return ([], 0) }
+        let cells = ArrangeLayout.frames(count: ordered.count, in: area, mode: mode,
                                          minCellWidth: cellWidth())
         var out: [(id: CGWindowID, title: String, frame: CGRect)] = []
-        for (index, entry) in ordered.enumerated() {
-            ClaudeActions.setFrame(entry.window, cells[index])
-            out.append((id: entry.id, title: entry.title, frame: cells[index]))
+        for (index, cell) in cells.enumerated() {
+            ClaudeActions.setFrame(ordered[index].window, cell)
+            out.append((id: ordered[index].id, title: ordered[index].title, frame: cell))
         }
         onWindowsMoved?()
-        return out
+        return (placed: out, skipped: ordered.count - out.count)
     }
 
     /// Поставить окна по рамкам — деление столбца пополам («под этим»/«над этим»).

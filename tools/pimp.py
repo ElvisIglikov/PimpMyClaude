@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Пимп из любого чата (WF36): открыть окно Claude, расставить окна, спросить
-проекты и окна — не трогая мышь и клавиатуру.
+"""Пимп из любого чата (WF36): открыть окно Claude, расставить окна, запомнить
+и вернуть раскладку, спросить проекты и окна — не трогая мышь и клавиатуру.
 
 Как это работает. Клавиши жмёт само приложение PimpMyClaude, а разговаривают с
 ним файлами: сюда кладётся запрос `<id>.json`, приложение на общем тике (2 с)
@@ -11,17 +11,23 @@ tests/fixtures/pimp/*.json, они же правда для Swift-половин
 
 Команды:
   pimp.py open <проект> [--at left|middle|right|below|above|x,y]
-  pimp.py arrange
-  pimp.py projects
+  pimp.py arrange [--layout row|4|5|5x2|last] [--order Проект,Проект,…]
+  pimp.py layouts
+  pimp.py layout save <имя>
+  pimp.py layout restore <имя> [--new]
+  pimp.py projects [--status]
   pimp.py windows
 Общие ключи: --json — напечатать сырой ответ приложения вместо строки по-русски.
 
-На выход — ОДНА строка по-русски; код возврата 0 (сделал) или 1 (не вышло).
+На выход — ОДНА строка по-русски (у «projects --status» — строка на проект);
+код возврата 0 (сделал) или 1 (не вышло).
 Свой чат берётся из CLAUDE_CODE_HOST_SESSION_ID: её нет (субагент, чужой
 терминал) — «под этим» и «над этим» деградируют в «справа», и это сказано вслух.
 
 Ожидания настраиваются переменными окружения (нужны только тестам):
-MYCLAUDE_PIMP_WAIT — сколько секунд ждать ответ (по умолчанию 60),
+MYCLAUDE_PIMP_WAIT — сколько секунд ждать ответ (по умолчанию 60); счёт идёт от
+последнего удара <id>.taken, а не от запроса: раскладка открывает окна по
+одному и после каждого перезаписывает метку (WF41),
 MYCLAUDE_PIMP_TAKEN — за сколько секунд приложение обязано взять запрос (5).
 """
 
@@ -56,9 +62,20 @@ PLACE_WORDS = {
 }
 POINT_RE = re.compile(r"^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$")
 
+# Раскладки (WF21). «last» — повторить последнюю выбранную: в ответе приложение
+# называет уже применённую, поэтому словами нужны все пять.
+LAYOUTS = ("row", "4", "5", "5x2", "last")
+LAYOUT_WORDS = {
+    "row": "как сейчас (лента)",
+    "4": "четыре в ряд",
+    "5": "пять в ряд",
+    "5x2": "в два ряда (5×2)",
+    "last": "как в прошлый раз",
+}
+
 ERRORS = {
     "stale": "Пимп не успел взять запрос вовремя — повтори",
-    "busy": "Пимп занят — открывает предыдущее окно",
+    "busy": "Пимп занят — открывает или возвращает окна",
     "no-windows": "Claude не запущен или окон нет",
     "window-missing": "Чат создал, а окно не появилось — вынеси его в окно руками",
     "too-small": "Мало места: окно не делится пополам",
@@ -150,12 +167,19 @@ def wait_result(directory: Path, request_id: str):
     <id>.taken: приложение не работает (или не видит каталог). "bad" — файл
     есть, а JSON в нём так и не собрался: недописанный файл даём дочитать
     (BROKEN_GRACE_S), но ждать из-за него всю минуту не станем.
+
+    Терпение считаем от ПОСЛЕДНЕГО признака жизни, а не от запроса: приложение
+    перезаписывает <id>.taken после каждого открытого окна (heartbeat, WF41), и
+    возврат раскладки из пяти чатов честно занимает минуты. Метка не двигается —
+    ждём ровно MYCLAUDE_PIMP_WAIT, как раньше.
     """
     result = directory / f"{request_id}.result.json"
     taken = directory / f"{request_id}.taken"
     limit = seconds("MYCLAUDE_PIMP_WAIT", RESULT_WAIT_S)
     silent_at = seconds("MYCLAUDE_PIMP_TAKEN", TAKEN_WAIT_S)
     started = time.monotonic()
+    last_beat = started         # когда мы в последний раз видели признак жизни
+    beat_stamp = None           # mtime метки, по которому этот удар уже засчитан
     seen_taken = False
     broken_since = None
     while True:
@@ -173,12 +197,19 @@ def wait_result(directory: Path, request_id: str):
                     broken_since = now
                 elif now - broken_since >= BROKEN_GRACE_S:
                     return "bad", raw
-        if not seen_taken:
-            seen_taken = taken.exists()
-        spent = time.monotonic() - started
-        if not seen_taken and spent >= silent_at:
+        try:
+            stamp = taken.stat().st_mtime
+        except OSError:
+            stamp = None
+        if stamp is not None:
+            seen_taken = True
+            if stamp != beat_stamp:
+                beat_stamp = stamp
+                last_beat = time.monotonic()
+        now = time.monotonic()
+        if not seen_taken and now - started >= silent_at:
             return "silent", ""
-        if spent >= limit:
+        if now - last_beat >= limit:
             return "timeout", ""
         time.sleep(POLL_S)
 
@@ -193,12 +224,37 @@ def parse_place(value: str) -> str:
         "место — left, middle, right, below, above или «x,y» (без пробелов)")
 
 
+def parse_order(value: str) -> list:
+    """«Вкуснофф первым, потом Скиллз» — список папок через запятую.
+
+    Имена и пути уходят приложению как дали: сопоставляет их с проектами скилл
+    (по `pimp.py projects`), а Swift сверяет папку целиком или её имя (WF41).
+    """
+    items = [part.strip() for part in (value or "").split(",")]
+    items = [part for part in items if part]
+    if not items:
+        raise argparse.ArgumentTypeError(
+            "порядок — имена папок или пути через запятую, например VkusnoffKz,SkilZZZ")
+    return items
+
+
+def short_name(entry: str) -> str:
+    """Проект в строке для Элвиса — последней папкой пути: он называет её так."""
+    name = str(entry).strip().rstrip("/")
+    return name.rsplit("/", 1)[-1] or name
+
+
 def say_open(request: dict, data: dict) -> str:
     window = data.get("window") if isinstance(data.get("window"), dict) else {}
     title = str(window.get("title") or "").strip() or request["project"]
     place = request["place"]
     where = PLACE_WORDS.get(place, f"в точку {place}")
-    if place in ("below", "above") and not data.get("fromResolved"):
+    skipped = data.get("skipped")
+    if isinstance(skipped, int) and skipped > 0:
+        # Свободной ячейки в раскладке не нашлось — окно осталось, где родилось;
+        # про место молчим, иначе соврём (WF21).
+        line = "Окно открыл, но в раскладке места нет — оставил поверх"
+    elif place in ("below", "above") and not data.get("fromResolved"):
         line = f"Открыл {title} справа: своего чата не нашёл, «{where}» не вышло"
     else:
         line = f"Открыл {title} {where}"
@@ -215,10 +271,120 @@ def say_error(request: dict, data: dict) -> str:
         if names:
             return f"Не нашёл проект «{request.get('project', '')}», есть: " + ", ".join(names)
         return f"Не нашёл проект «{request.get('project', '')}», и списка Пимп не дал"
+    if error == "too-small" and request["action"] == "arrange":
+        # У «расставить» тесно не окну, а всей раскладке — и лечится это иначе.
+        return ("Экран мал: столько окон в эту раскладку не влезает — сделай окна "
+                "уже или выбери другую раскладку")
+    if error == "chat-unknown":
+        # Чата окна приложение не знает — запоминать нечего: вернулись бы не те
+        # чаты. Лечится тумблером «🗂 Цвет по проекту» и свободным probe.js (WF41).
+        titles = [str(title).strip() for title in (data.get("windows") or [])
+                  if str(title).strip()]
+        where = ", ".join(f"«{title}»" for title in titles)
+        if len(titles) == 1:
+            what = f"не знаю, какой чат в окне {where}"
+        elif titles:
+            what = f"не знаю, какие чаты в окнах {where}"
+        else:
+            what = "не знаю, какие чаты в окнах"
+        return (f"Не могу запомнить: {what} — включи «Цвет по проекту» "
+                "в меню Пимпа или подожди минуту")
+    if error == "layout-missing":
+        names = [str(name).strip() for name in (data.get("layouts") or [])
+                 if str(name).strip()]
+        asked = request.get("name", "")
+        if names:
+            return f"Раскладки «{asked}» нет, есть: " + ", ".join(names)
+        return f"Раскладки «{asked}» нет, и сохранённых пока нет"
     known = ERRORS.get(error)
     if known:
         return known
     return f"Пимп отказал: {error}" if error else "Пимп отказал молча"
+
+
+def say_arrange(request: dict, data: dict) -> str:
+    windows = data.get("windows") or []
+    line = f"Расставил {plural(len(windows), 'окно', 'окна', 'окон')}"
+    # Второй экран Пимп не раскладывает — и говорит об этом словами (риск 3 WF36).
+    if data.get("screen") == "main":
+        line += " на главном экране"
+    # Раскладку называем ту, что применилась: «last» приложение разрешает
+    # в конкретную, и Элвис должен видеть, что именно вышло (WF21).
+    layout = LAYOUT_WORDS.get(str(data.get("layout") or ""))
+    if layout:
+        line += f": {layout}"
+    # Просили порядок проектов (WF41): кто встал первым, кого не нашли, сколько
+    # окон без папки уехало в хвост. Не просили — строка прежняя.
+    order = request.get("order") or []
+    missing = [str(item) for item in (data.get("missing") or [])]
+    if order:
+        first = [short_name(item) for item in order if item not in missing]
+        if first:
+            line += " — сперва " + ", ".join(first)
+    skipped = data.get("skipped")
+    if isinstance(skipped, int) and skipped > 0:
+        line += f", {skipped} не тронул — ячеек нет"
+    if order:
+        if missing:
+            line += "; не нашёл окна: " + ", ".join(short_name(item) for item in missing)
+        unknown = data.get("unknown")
+        if isinstance(unknown, int) and unknown > 0:
+            line += f"; {unknown} без папки — в хвосте"
+    return line + minimized_note(data)
+
+
+def say_layouts(data: dict) -> str:
+    parts = []
+    for item in (data.get("layouts") or []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        mode = LAYOUT_WORDS.get(str(item.get("mode") or ""), "")
+        cells = item.get("cells")
+        cells = plural(cells, "окно", "окна", "окон") if isinstance(cells, int) else ""
+        tail = ", ".join(part for part in (mode, cells) if part)
+        parts.append(f"{name} — {tail}" if tail else name)
+    if not parts:
+        return "Раскладок пока нет — скажи «запомни раскладку как …»"
+    return "Раскладки: " + " · ".join(parts)
+
+
+def say_layout_save(data: dict) -> str:
+    name = str(data.get("name") or "").strip()
+    mode = LAYOUT_WORDS.get(str(data.get("mode") or ""), "")
+    cells = data.get("cells")
+    cells = plural(cells, "окно", "окна", "окон") if isinstance(cells, int) else ""
+    tail = ", ".join(part for part in (mode, cells) if part)
+    line = f"Запомнил раскладку «{name}»"
+    return f"{line}: {tail}" if tail else line
+
+
+def say_layout_restore(request: dict, data: dict) -> str:
+    name = str(data.get("name") or "").strip() or str(request.get("name") or "")
+    placed = data.get("placed") if isinstance(data.get("placed"), int) else 0
+    opened = data.get("opened") if isinstance(data.get("opened"), int) else 0
+    missing = [str(title).strip() for title in (data.get("missing") or [])
+               if str(title).strip()]
+    # Чат из раскладки закрыт совсем — ячейка осталась пустой, чужой чат туда
+    # не подставляется (#5455): говорим об этом вслух.
+    tail = ""
+    if missing:
+        tail = ("; не нашёл " + ("чат: " if len(missing) == 1 else "чаты: ")
+                + ", ".join(missing))
+    if request.get("fresh"):
+        return f"Открыл новые чаты по раскладке «{name}»: {opened}{tail}"
+    return f"Вернул «{name}»: {placed} стояло, {opened} открыл{tail}"
+
+
+def say_project(item: dict) -> str:
+    """Строка проекта в «projects --status»: сводка status.md и открытые окна."""
+    name = str(item.get("name") or "").strip()
+    state = str(item.get("state") or "").strip() or "без сводки"
+    chats = [str(chat).strip() for chat in (item.get("chats") or []) if str(chat).strip()]
+    windows = "окна: " + ", ".join(chats) if chats else "окон нет"
+    return f"{name} — {state} · {windows}"
 
 
 def say_result(request: dict, data: dict) -> str:
@@ -228,19 +394,22 @@ def say_result(request: dict, data: dict) -> str:
     if action == "new-window":
         return say_open(request, data)
     if action == "arrange":
-        windows = data.get("windows") or []
-        # Второй экран Пимп не раскладывает — и говорит об этом словами, а не
-        # молча (риск 3 плана WF36): «screen» в ответе для того и есть.
-        screen = "на главном экране" if data.get("screen") == "main" else "на экране"
-        return (f"Расставил {plural(len(windows), 'окно', 'окна', 'окон')} "
-                f"{screen}{minimized_note(data)}")
+        return say_arrange(request, data)
+    if action == "layouts":
+        return say_layouts(data)
+    if action == "layout-save":
+        return say_layout_save(data)
+    if action == "layout-restore":
+        return say_layout_restore(request, data)
     if action == "projects":
-        names = [str(item.get("name") or "").strip()
-                 for item in (data.get("projects") or []) if isinstance(item, dict)]
-        names = [name for name in names if name]
-        if not names:
+        items = [item for item in (data.get("projects") or []) if isinstance(item, dict)
+                 and str(item.get("name") or "").strip()]
+        if not items:
             return "Проектов Пимп пока не знает — открой чат в папке проекта"
-        return "Проекты: " + ", ".join(names)
+        if request.get("status"):
+            # Со сводкой строка на проект: в одну её не уложить (WF41).
+            return "\n".join(say_project(item) for item in items)
+        return "Проекты: " + ", ".join(str(item["name"]).strip() for item in items)
     if action == "windows":
         titles = [str(item.get("title") or "").strip() or "без имени"
                   for item in (data.get("windows") or []) if isinstance(item, dict)]
@@ -297,7 +466,17 @@ def build_request(args) -> dict:
         request["project"] = args.project
         request["place"] = args.place
     elif args.action == "arrange":
-        request["layout"] = "row"
+        request["layout"] = args.layout
+        # Порядка не просили — ключа нет вовсе (arrange.request.json).
+        if args.order:
+            request["order"] = args.order
+    elif args.action == "layout-save":
+        request["name"] = args.name
+    elif args.action == "layout-restore":
+        request["name"] = args.name
+        request["fresh"] = args.fresh
+    elif args.action == "projects" and args.status:
+        request["status"] = True
     return request
 
 
@@ -317,8 +496,24 @@ def main(argv=None) -> int:
     opener.add_argument("project", help="имя папки проекта или абсолютный путь")
     opener.add_argument("--at", dest="place", type=parse_place, default="right",
                         help="left | middle | right | below | above | x,y (по умолчанию right)")
-    subs.add_parser("arrange", parents=[common], help="расставить окна в ряд")
-    subs.add_parser("projects", parents=[common], help="список проектов, которые знает Пимп")
+    arranger = subs.add_parser("arrange", parents=[common], help="расставить окна по раскладке")
+    arranger.add_argument("--layout", choices=LAYOUTS, default="row",
+                          help="row | 4 | 5 | 5x2 | last (по умолчанию row — лента, как сейчас)")
+    arranger.add_argument("--order", type=parse_order, default=None,
+                          help="какие проекты первыми, через запятую: VkusnoffKz,SkilZZZ")
+    subs.add_parser("layouts", parents=[common], help="список сохранённых раскладок")
+    layout = subs.add_parser("layout", parents=[common], help="запомнить раскладку и вернуть её")
+    layout_subs = layout.add_subparsers(dest="op", required=True)
+    saver = layout_subs.add_parser("save", parents=[common], help="запомнить нынешние окна")
+    saver.add_argument("name", help="имя раскладки, например «Утро»")
+    restorer = layout_subs.add_parser("restore", parents=[common], help="вернуть раскладку")
+    restorer.add_argument("name", help="имя раскладки")
+    restorer.add_argument("--new", action="store_true", dest="fresh",
+                          help="не те же чаты, а новые по тем же проектам")
+    lister = subs.add_parser("projects", parents=[common],
+                             help="список проектов, которые знает Пимп")
+    lister.add_argument("--status", action="store_true",
+                        help="ещё и сводка status.md с открытыми окнами проекта")
     subs.add_parser("windows", parents=[common], help="список окон Claude")
 
     # Кодов у нас всего два: 0 — сделал, 1 — не вышло. Ругань argparse
@@ -330,7 +525,9 @@ def main(argv=None) -> int:
             raise
         print("Не понял команду — «pimp.py --help» покажет, что умею")
         return 1
-    args.action = {"open": "new-window"}.get(args.command, args.command)
+    # «layout save/restore» — одно действие канала из двух слов.
+    args.action = (f"layout-{args.op}" if args.command == "layout"
+                   else {"open": "new-window"}.get(args.command, args.command))
     return run(build_request(args), getattr(args, "as_json", False))
 
 

@@ -153,6 +153,66 @@ enum MenuModel {
     /// уже не пробежать глазами.
     static let newWindowProjectsLimit = 8
 
+    // MARK: - полоса раскладок (план WF21, слова Элвиса 08.09)
+
+    /// Первый пункт меню — четыре картинки: «4 в ряд», «5 в ряд», «5 × 2» и «как сейчас»
+    /// (лента). Заголовок пункта на экран не выходит — его рисует `LayoutPickerView`, —
+    /// но он нужен VoiceOver и тестам структуры меню.
+    static let layoutsTitle = "Раскладки"
+    /// Подписи под плитками, в порядке полосы.
+    static func layoutTitle(_ mode: ArrangeLayout.Mode) -> String {
+        switch mode {
+        case .four: return "4 в ряд"
+        case .five: return "5 в ряд"
+        case .tenGrid: return "5 × 2"
+        case .ribbon: return "как сейчас"
+        }
+    }
+
+    /// Порядок плиток — как в макете: сетки, потом лента.
+    static let layoutOrder: [ArrangeLayout.Mode] = [.four, .five, .tenGrid, .ribbon]
+    /// Раскладка на этом экране дала бы ячейки уже `minWindowWidth` — плитка серая.
+    static let layoutTooSmallHint = "экран уже"
+
+    // MARK: - раскладки проектов (план WF41, решение Р5)
+
+    /// «🗂 Раскладки ▸» — последним пунктом «⋯ Ещё ▸»: запомнить нынешние окна под именем
+    /// и вернуть их же потом. У каждой сохранённой раскладки своё подменю.
+    static let savedLayoutsTitle = "Раскладки"
+    static let savedLayoutsIcon = "🗂"
+    static let savedLayoutIcon = "▦"
+    static let saveLayoutTitle = "Сохранить эту раскладку…"
+    static let saveLayoutIcon = "💾"
+    static let restoreLayoutTitle = "Вернуть эти чаты"
+    static let restoreLayoutIcon = "↩︎"
+    static let freshLayoutTitle = "Новые чаты по этим проектам"
+    static let freshLayoutIcon = "✨"
+    static let deleteLayoutTitle = "Удалить"
+    static let deleteLayoutIcon = "🗑"
+    static let layoutNamePrompt = "Имя раскладки"
+    static let layoutNameHint = "Запомню, какой чат в каком месте стоит: «Утро», «Разбор». "
+        + "Имя как у сохранённой — перезапишу её."
+    static let layoutSaveButton = "Сохранить"
+    /// Окон Claude на экране нет — запоминать нечего.
+    static let layoutNoWindowsAlert = "Не нашёл окон Claude — запоминать нечего"
+    /// Возврат идёт по одному окну и занимает минуту и дольше — молчать нельзя.
+    static let layoutRestoreNotice = "Возвращаю окна, по одному…"
+    static let layoutBusyNotice = "Занят — открываю окна по прошлой просьбе"
+    static let layoutWriteFailed = "Не удалось записать layouts.json в Application Support/MyClaude"
+
+    /// Чат окна приложению неизвестен: раскладку не пишем вовсе — вернулись бы не те чаты
+    /// (#5455). Лечится тумблером «🗂 Цвет по проекту» и свободным probe.js.
+    static func layoutChatUnknownAlert(_ titles: [String]) -> String {
+        let names = titles.filter { !$0.isEmpty }.map { "«\($0)»" }.joined(separator: ", ")
+        let tail = names.isEmpty ? "" : " (\(names))"
+        return "Не знаю, какие чаты в окнах\(tail) — включи «🗂 Цвет по проекту» и попробуй снова"
+    }
+
+    /// Подсказка у сохранённой раскладки: какая сетка и сколько в ней окон.
+    static func layoutHint(_ layout: WindowLayout) -> String {
+        layoutTitle(layout.mode) + " · " + "\(layout.cells.count) " + windowsWord(layout.cells.count)
+    }
+
     // MARK: - оформление (WF5 → WF6, переложено в WF14)
 
     /// Всё про вид окна — в одном подменю «🎨 Оформление ▸» (вариант А макета WF14):

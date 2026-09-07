@@ -22,6 +22,30 @@ enum Screens {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return nil }
         return flip(rect: screen.visibleFrame)
     }
+
+    /// Рабочая область экрана, на котором СТОЯТ окна (по центрам рамок, большинство) — по ней
+    /// «Расставить» считает сетку. `mainUsableFrame` для этого не годится: `NSScreen.main` —
+    /// экран с активным окном, и с ним окна Claude уезжали на второй монитор, стоило Элвису
+    /// щёлкнуть там что-то (08.09 03:10). Окна ни на одном экране — экран с меню-баром.
+    static func usableFrame(holding frames: [CGRect]) -> CGRect? {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return nil }
+        let index = pick(screens: screens.map { flip(rect: $0.frame) }, for: frames)
+        return flip(rect: screens[index].visibleFrame)
+    }
+
+    /// Чистый выбор экрана (его гоняют тесты): индекс экрана, где центров рамок больше всего;
+    /// ничья — меньший индекс; ни одного попадания или рамок нет — 0 (экран с меню-баром).
+    static func pick(screens: [CGRect], for frames: [CGRect]) -> Int {
+        var counts = [Int](repeating: 0, count: screens.count)
+        for frame in frames {
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            if let hit = screens.firstIndex(where: { $0.contains(center) }) { counts[hit] += 1 }
+        }
+        var best = 0
+        for (index, count) in counts.enumerated() where count > counts[best] { best = index }
+        return best
+    }
 }
 
 /// Окно Claude на экране: номер (CGWindowID) и рамка в перевёрнутых координатах.

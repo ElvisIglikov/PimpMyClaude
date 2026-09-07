@@ -9,6 +9,42 @@ enum ArrangeLayout {
     /// Разброс по вертикали, внутри которого окна считаются одним рядом.
     static let rowTolerance: CGFloat = 60
 
+    /// Раскладка «Расставить» (план WF21, слова Элвиса 08.09): лента считает столбцы сама,
+    /// у остальных сетка задана и лишние окна не трогаются вовсе. Строки — те же, что в
+    /// поле `layout` канала «Пимп» (`tools/pimp.py`).
+    enum Mode: String, CaseIterable {
+        case ribbon = "row"
+        case four = "4"
+        case five = "5"
+        case tenGrid = "5x2"
+    }
+
+    /// Сетка фиксированной раскладки: столбцы × ряды. У ленты их нет (nil) — она считает
+    /// столбцы по числу окон (`columns(count:width:)`).
+    static func grid(of mode: Mode) -> (cols: Int, rows: Int)? {
+        switch mode {
+        case .ribbon: return nil
+        case .four: return (cols: 4, rows: 1)
+        case .five: return (cols: 5, rows: 1)
+        case .tenGrid: return (cols: 5, rows: 2)
+        }
+    }
+
+    /// Сколько окон помещается в раскладку; лента берёт все (nil).
+    static func capacity(of mode: Mode) -> Int? { grid(of: mode).map { $0.cols * $0.rows } }
+
+    /// Ниже этой высоты ячейку не даём: лоадер подменяет только ширину минимума окна,
+    /// высоту Electron держит сам (тот же порог, что у деления столбца «под этим»).
+    static let minCellHeight: CGFloat = 360
+
+    /// Влезает ли раскладка на экран: ячейка не уже `minCellWidth` и не ниже
+    /// `minCellHeight`. Лента влезает всегда — узкие ячейки она разводит по рядам сама.
+    static func fits(_ mode: Mode, in area: CGRect, minCellWidth: CGFloat) -> Bool {
+        guard let grid = grid(of: mode) else { return true }
+        return area.width / CGFloat(grid.cols) >= minCellWidth
+            && area.height / CGFloat(grid.rows) >= minCellHeight
+    }
+
     /// Столбцы для n окон: сначала все в один ряд во всю высоту, ряды появляются
     /// только когда ячейка стала бы уже minCellWidth (слово Элвиса 03.09: «правильная
     /// четвёрка — четыре столбца во всю высоту, не 2×2»).
@@ -21,12 +57,22 @@ enum ArrangeLayout {
 
     /// Прямоугольники ячеек в порядке окон. Границы считаются от долей рамки
     /// (floor(x + 0.5), как в Lua), поэтому плитки стыкуются без щелей и наползаний.
-    static func frames(count: Int, in area: CGRect,
+    ///
+    /// Рамок ровно `min(count, ёмкость)`: у «4», «5» и «5×2» сетка задана, окон меньше —
+    /// лишние ячейки остаются пустыми (окна не растягиваем), окон больше — хвост рамок
+    /// не получает и остаётся где стоял (слово Элвиса 08.09: «лишние не трогаем»).
+    static func frames(count: Int, in area: CGRect, mode: Mode = .ribbon,
                        minCellWidth: CGFloat = minCellWidth) -> [CGRect] {
         guard count > 0, area.width > 0, area.height > 0 else { return [] }
-        let cols = columns(count: count, width: area.width, minCellWidth: minCellWidth)
-        let rows = Int(ceil(Double(count) / Double(cols)))
-        return (0..<count).map { i in
+        let taken = min(count, capacity(of: mode) ?? count)
+        let cols: Int, rows: Int
+        if let grid = grid(of: mode) {
+            (cols, rows) = grid
+        } else {
+            cols = columns(count: taken, width: area.width, minCellWidth: minCellWidth)
+            rows = Int(ceil(Double(taken) / Double(cols)))
+        }
+        return (0..<taken).map { i in
             let col = CGFloat(i % cols), row = CGFloat(i / cols)
             let x0 = area.minX + (col * area.width / CGFloat(cols) + 0.5).rounded(.down)
             let x1 = area.minX + ((col + 1) * area.width / CGFloat(cols) + 0.5).rounded(.down)
