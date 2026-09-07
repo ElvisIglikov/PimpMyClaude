@@ -28,11 +28,15 @@
 // new-window и popout-window открывают чат отдельным окном — новый (⌘N от
 // приложения, папка проекта, первое сообщение, отправка, имя чата и его цвет
 // вперёд) или уже открытый (раздел «12б»). Страница ещё и говорит, КАКОЙ в ней
-// чат: window.__myclaude.chats() отдаёт id чата этой страницы и карту попапов,
-// попап спрашивает его у окна-родителя (раздел «12в»), а команда theme может
+// чат: window.__myclaude.chats() отдаёт id чата этой страницы, карту попапов и
+// папку чипа домашнего экрана, попап спрашивает свой id у окна-родителя
+// (раздел «12в»), а команда theme может
 // адресовать окно этим id — полем chat. Команда live-colors катит окно по
 // цветовому кругу: цвет считается на странице от стенных часов, палитры
-// приходят кольцом опорных точек (раздел «2в»).
+// приходят кольцом опорных точек (раздел «2в»). «Обкэшить» из подчинённого
+// окна (WF37) не вставляет перенос себе, а помечает его «ждёт адресата»:
+// адресата назовёт цепочка «Нового окна», и перенос ляжет в НОВОЕ окно
+// (раздел «12»).
 //
 // Логика ступеней, порогов и кликов перенесена из донора ElvisOS
 // (~/_ElvisProjects/ElvisOS/Resources/claude-chat-cleaner-inject.js, разделы
@@ -44,7 +48,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf36-a-1";
+  const VERSION = "wf37-p-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -153,6 +157,12 @@
   const REVIVE_MS = 5000;
   const CASHOUT_FRESH_MS = 90000;
   const CASHOUT_TICK_MS = 300;
+  // Перенос из подчинённого окна (WF37): пока цепочка «Нового окна» не назвала
+  // адресата, запись помечена этим словом. Своё окно она узнаёт по id чата, а
+  // срок ей считается от ШТАМПА, а не от нажатия: между нажатием и рождением
+  // нового чата проходит несколько секунд работы цепочки.
+  const CASHOUT_PENDING = "pending";
+  const CASHOUT_STAMP_FRESH_MS = 60000;
   // Ниже этой высоты сосед рамки — пустая обёртка, а не строка модели.
   const MODEL_ROW_MIN_HEIGHT = 8;
   // Признак рамки поля — скругление: у Claude Code это 10px, у контейнеров
@@ -266,6 +276,9 @@
     dragNatural: NATURAL_FALLBACK,
     clickTimer: 0,
     cashoutTimer: 0,
+    // Спрашивал ли сторож переноса окно-родителя, какой в нём чат (WF37).
+    // Один вопрос на запись, а не на каждый тик (см. cashoutAskParent).
+    cashoutAsked: false,
     giveUpTimer: 0,
     // Прокрутка ленты: кто едет, до какой высоты доехали и сколько доборов
     // осталось. Кадр и таймер добора снимаются вместе, одним clearScrollWatch.
@@ -3722,8 +3735,31 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       const data = JSON.parse(raw);
       const at = Number(data?.at);
       const text = typeof data?.text === "string" ? data.text : "";
-      return text && Number.isFinite(at) ? { at, text } : null;
+      if (!text || !Number.isFinite(at)) return null;
+      const record = { at, text };
+      // Поля переноса (WF37, эталоны tests/fixtures/cashout): to — кому запись
+      // предназначена (CASHOUT_PENDING — адресата ещё нет), title — заголовок
+      // строки сайдбара нового чата, stampedAt — когда штамповали. Поля to нет
+      // — это обычная запись главного окна, и правила у неё прежние.
+      const to = typeof data?.to === "string" ? data.to.trim() : "";
+      if (!to) return record;
+      record.to = to;
+      record.title = typeof data?.title === "string" ? data.title.trim() : "";
+      const stampedAt = Number(data?.stampedAt);
+      record.stampedAt = Number.isFinite(stampedAt) ? stampedAt : null;
+      return record;
     } catch { return null; }
+  };
+  // Слепок записи для гейта (status().cashout): есть ли она, кому адресована,
+  // под каким заголовком её ждут и когда штамповали.
+  const cashoutState = () => {
+    const record = readCashout();
+    return {
+      record: record != null,
+      to: record?.to ?? null,
+      title: record?.title || null,
+      stampedAt: record?.stampedAt ?? null,
+    };
   };
   // Курсор в самое начало поля: вставка ложится ПЕРЕД черновиком и не затирает
   // его. Пустому полю это ничего не стоит.
@@ -3774,15 +3810,58 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     } catch {}
     return insertLanded(editor, probe, before);
   };
+  // «Эта запись — мне?» (WF37). true — да, false — точно нет, null — сказать
+  // нечего: своего id окно ещё не знает, а заголовок не совпал.
+  // Заголовок — второй, запасной признак: попап получает его от сессии в момент
+  // выноса, и до первого ответа probe это единственное, чем он себя знает.
+  // Заглушки («Claude», «New chat») в сопоставлении не участвуют вовсе — их
+  // носят разные чаты во всех окнах разом.
+  const cashoutMine = record => {
+    const id = myChatId();
+    if (id && id === record.to) return true;
+    const title = windowTitle();
+    if (title && record.title === title && !THEME_TITLE_STUBS.has(title.toLowerCase())) return true;
+    return id ? false : null;
+  };
+  // Попап узнаёт свой id только у окна-родителя (раздел 12в), и сторож спрашивает
+  // его РОВНО один раз на запись: ответ ложится в кэш myclaude-chat-v1, и
+  // следующий тик берёт id уже оттуда. Не ответили — ждём круга probe от
+  // приложения, а не долбим родителя каждые 300 мс.
+  const cashoutAskParent = () => {
+    if (state.cashoutAsked) return;
+    state.cashoutAsked = true;
+    try { Promise.resolve(chatsAsk(true)).catch(() => {}); } catch {}
+  };
   const tryPasteCashout = () => {
     const record = readCashout();
     if (record == null) return "нет записи";
-    if (Date.now() - record.at > CASHOUT_FRESH_MS) { clearCashout(); return "запись протухла"; }
+    if (record.to != null) {
+      // Перенос из подчинённого окна (WF37, #5575) адресован НОВОМУ окну,
+      // которое родит цепочка «Нового окна». Главное окно такие записи не
+      // трогает вовсе: ⌘N в нём случается по десять раз на дню, и перенос
+      // уехал бы в чат, где Элвис работает.
+      if (isMainWindow()) return "перенос не главному окну";
+      if (record.to === CASHOUT_PENDING) {
+        // Цепочка сорвалась и адресата так и не назвала: запись умирает молча
+        // по общему сроку от нажатия (риск 3 плана WF37).
+        if (Date.now() - record.at > CASHOUT_FRESH_MS) { clearCashout(); return "запись протухла"; }
+        return "адресат не назначен";
+      }
+      if (record.stampedAt == null || Date.now() - record.stampedAt > CASHOUT_STAMP_FRESH_MS) {
+        clearCashout();
+        return "перенос протух";
+      }
+      const mine = cashoutMine(record);
+      if (mine === null) { cashoutAskParent(); return "чат не опознан"; }
+      if (!mine) return "перенос не в это окно";
+    } else if (Date.now() - record.at > CASHOUT_FRESH_MS) { clearCashout(); return "запись протухла"; }
     const editor = state.editor?.isConnected ? state.editor : findEditor();
     if (!editor?.isConnected) return "нет редактора";
     // Вставляем только в свежий чат и только в пустое поле: иначе перенос
-    // затёр бы чужой черновик или лёг посреди разговора.
-    if (!isFreshChat()) return "чат не свежий";
+    // затёр бы чужой черновик или лёг посреди разговора. Свежесть чата
+    // спрашиваем только у записи БЕЗ адресата: у переноса окно названо
+    // поимённо, а первым сообщением в нём может оказаться что угодно.
+    if (record.to == null && !isFreshChat()) return "чат не свежий";
     if (editorText(editor)) return "в поле черновик";
     // Поле заведомо пустое — вставлять с начала незачем.
     if (!insertIntoEditor(editor, record.text, false)) return "вставка не удалась";
@@ -3799,13 +3878,22 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Сторож вставки. ⌘N может открыть новый чат и в этом же окне (страница не
   // перезагружается, инжект заново не приходит), поэтому ждём появления свежего
   // чата, а не одного лишь момента установки. Живёт ровно пока запись свежая.
+  const CASHOUT_WATCH_DONE = new Set([
+    "вставлено", "запись протухла", "нет записи",
+    // Перенос протух или достался главному окну — ждать в этом окне больше
+    // нечего: свою запись главное окно заведёт заново, вместе со сторожем.
+    "перенос протух", "перенос не главному окну",
+  ]);
   const armCashoutWatch = () => {
     clearCashoutWatch();
     if (readCashout() == null) return;
+    // Вопрос родителю — один на запись, а не на сторожа: новая запись имеет
+    // право спросить заново (см. cashoutAskParent).
+    state.cashoutAsked = false;
     state.cashoutTimer = setInterval(() => {
       if (!state.alive) { clearCashoutWatch(); return; }
       const result = tryPasteCashout();
-      if (result === "вставлено" || result === "запись протухла" || result === "нет записи") clearCashoutWatch();
+      if (CASHOUT_WATCH_DONE.has(result)) clearCashoutWatch();
     }, CASHOUT_TICK_MS);
   };
   const runCashout = () => {
@@ -3816,8 +3904,38 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (draft) parts.push(draft);
     const text = parts.join("\n\n");
     if (!text) return false;
-    try { localStorage.setItem(CASHOUT_KEY, JSON.stringify({ at: Date.now(), text })); } catch { return false; }
-    armCashoutWatch();
+    // Из подчинённого окна перенос уезжает в НОВОЕ окно (WF37, #5575): ⌘N в
+    // попапе исполняет главное окно Claude, и старый путь бил по чату, где
+    // Элвис ведёт диктовку. Адресата назовёт цепочка «Нового окна»
+    // (cashoutStamp), поэтому здесь только пометка «ждёт адресата». Своего
+    // сторожа донор не заводит и чужого не оставляет: вставлять перенос ему
+    // некуда, а тикать 300 мс впустую незачем.
+    const transfer = !isMainWindow();
+    const record = transfer
+      ? { at: Date.now(), text, to: CASHOUT_PENDING }
+      : { at: Date.now(), text };
+    try { localStorage.setItem(CASHOUT_KEY, JSON.stringify(record)); } catch { return false; }
+    if (transfer) clearCashoutWatch(); else armCashoutWatch();
+    return true;
+  };
+  // Штамп переноса (WF37): цепочка «Нового окна» с полем transfer называет
+  // адресата записи, оставленной попапом-донором, — id только что рождённого
+  // чата и заголовок его строки сайдбара. Записи без пометки «ждёт адресата»
+  // не трогаем вовсе: чужой перенос и обычная запись главного окна обязаны
+  // остаться как были (критик плана, блокер 2).
+  const cashoutStamp = (id, title) => {
+    const record = readCashout();
+    if (record == null || record.to !== CASHOUT_PENDING) return false;
+    const chat = typeof id === "string" ? id.trim() : "";
+    if (!chat) return false;
+    const stamped = {
+      at: record.at,
+      text: record.text,
+      to: chat,
+      title: typeof title === "string" ? title.trim() : "",
+      stampedAt: Date.now(),
+    };
+    try { localStorage.setItem(CASHOUT_KEY, JSON.stringify(stamped)); } catch { return false; }
     return true;
   };
 
@@ -4326,8 +4444,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     newWindowMark({ back: ok ? (row ? "row" : "history") : "back-failed" });
   };
 
-  // Команда «Новое окно», контракт WF16 (расширение WF13): {id,
-  // action:"new-window", at, scope:"window", title, x, y, text, folder, name,
+  // Команда «Новое окно», контракт WF16 (расширение WF13), с WF37 —
+  // необязательное transfer после name: {id, action:"new-window", at,
+  // scope:"window", title, match?, x, y, text, folder, name, transfer?,
   // theme?, font?, size?, frame?}. Исполняет только ГЛАВНОЕ окно и только
   // адресованное заголовком: страниц claude.ai может оказаться две, и обе
   // завели бы по чату.
@@ -4352,6 +4471,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // Длину имени режем ровно так же, как её режет строка сайдбара
     // (newWindowRowTitle): иначе сверка заголовка не сошлась бы никогда.
     const name = typeof detail?.name === "string" ? detail.name.trim().slice(0, 200) : "";
+    // Перенос «Обкэшить» (WF37): поле есть ТОЛЬКО у ветки «Обкэшить» из попапа
+    // и разбирается строго. Любая другая правда (строка "true", 1, объект)
+    // переносом не считается: ⌥⌘N, «▸ проект», «Здесь же» и канал «Пимп» чужую
+    // запись переноса не трогают вовсе (критик плана, блокер 2).
+    const transfer = detail?.transfer === true;
     const layers = {};
     for (const layer of THEME_LAYERS) {
       if (detail && layer in detail) layers[layer] = LAYER_NORMALIZE[layer](detail[layer]);
@@ -4369,6 +4493,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       // от этого прогона, а что осталось от прошлого.
       folder: folder || null, chip: null, name: name || null, rename: null, title: null,
       layers: Object.keys(layers).length ? Object.keys(layers) : null,
+      // WF37: разобрано ли поле transfer и удалось ли штампануть перенос.
+      transfer: transfer || null, stamped: null,
     });
     // Мягкая осечка: чат создан и вынесен, но имя или цвет не задались. Роняет
     // не цепочку, а только итоговый статус — плашки у неё нет.
@@ -4562,6 +4688,12 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         }
       }
 
+      // 6г. Перенос «Обкэшить» (WF37): запись донора ждала адресата — теперь он
+      // есть. Штамп стоит ДО openPopout, чтобы новое окно нашло готовую запись
+      // уже на инжекте, и только при transfer: обычное «Новое окно» чужой
+      // перенос не трогает вовсе.
+      if (transfer) newWindowMark({ stamped: cashoutStamp(id, title) });
+
       // 7. Отдельное окно.
       newWindowMark({ step: "popout" });
       try { newWindowOpenPopout(store, id, title, x, y); }
@@ -4681,6 +4813,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const chatsState = { map: null, at: 0, store: null };
   // Идущий скан: на него садятся все, кто попросил, пока он не кончился.
   let chatsScanInFlight = null;
+  // Идущий поиск стора папки (WF37, см. chatsFolder): второго не заводим.
+  let chatsFolderScanInFlight = null;
+  track(() => { chatsFolderScanInFlight = null; });
 
   const chatKind = () => (!themable ? "other" : isMainWindow() ? "main" : "popout");
   // Путь чужой страницы наружу не отдаём: у артефакта это data:-адрес целиком,
@@ -4816,8 +4951,37 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // ПУСТУЮ карту и подсунул бы приложению ложное «Элвис снял всё сам».
   const chatsThemes = () => (isMainWindow() ? readThemeMap() : null);
 
-  // Ответ probe.js. Контракт (план WF29, решение 4) — побайтно:
-  //   {v, nonce, kind, self, path, row, title, popouts:[{id,title}], store, at}
+  // Папка домашнего экрана (WF37, #5576). Пока чат не открыт, сессии на диске
+  // нет, и приложению папку взять неоткуда — окно оставалось некрашеным, хотя
+  // чип над полем ввода проект уже показывает. Этот выбор (папка БУДУЩЕГО чата)
+  // живёт в сторе claude.ai, и его же ставит цепочка «Нового окна»
+  // (newWindowFolderStore, раздел 12б).
+  // Отдаёт папку ТОЛЬКО главное окно и ТОЛЬКО на домашнем экране: в открытом
+  // чате правду говорит индекс сессий (там выбор чипа не значит ничего), а у
+  // попапа своего выбора нет вовсе.
+  // Стор ещё не найден — ищем его В ФОНЕ (один скан на все круги, чужие модули
+  // исполняются по разу) и честно отвечаем null: скан идёт около секунды, а
+  // ответ probe ждать не может. Поле scan команды тут ни при чём — оно про
+  // карту попапов; фоновый поиск заводит любой круг probe, а status() — никогда
+  // (mayScan = false): он обещан синхронным слепком из кэша.
+  const chatsFolder = mayScan => {
+    try {
+      if (!isMainWindow() || !newWindowAtHome()) return null;
+      if (newWindowFolderStoreOk(newWindowFolderStore)) return newWindowFolderNow(newWindowFolderStore) || null;
+      if (mayScan && !chatsFolderScanInFlight) {
+        // Токен берём ТЕКУЩИЙ и не увеличиваем: начался прогон «Нового окна» —
+        // скан бросит работу сам (newWindowLive).
+        const token = newWindowToken;
+        const done = () => { chatsFolderScanInFlight = null; };
+        chatsFolderScanInFlight = Promise.resolve(newWindowFindFolderStore(token)).then(done, done);
+      }
+      return null;
+    } catch { return null; }
+  };
+
+  // Ответ probe.js. Контракт (план WF29, решение 4; WF37 дописал folder после
+  // store) — побайтно:
+  //   {v, nonce, kind, self, path, row, title, popouts:[{id,title}], store, folder, at}
   // WF35 дописывает в ХВОСТ необязательное themes (карта тем главного окна):
   // контракт выше остаётся побайтно прежним, а «поля нет» приложение отличает
   // от «карта пуста».
@@ -4839,6 +5003,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         title: windowTitle(),
         popouts: popouts ?? [],
         store,
+        folder: chatsFolder(true),
         at: Date.now(),
         ...(themes ? { themes } : {}),
       };
@@ -5094,13 +5259,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // всех окнах»; слово Элвиса 03.09 13:30). Только «Обкэшить» адресована окну в фокусе.
     if (action === "collapse") { setStage(STAGE_COLLAPSED); return; }
     if (action === "expand") { setStage(STAGE_NORMAL); return; }
-    // «Обкэшить» адресована одному окну. Окно «Open in new window» (about:blank) может
-    // не считать себя в фокусе, поэтому сверяем заголовок окна, который присылает
-    // Hammerspoon; фокус — запасной критерий, когда заголовка нет.
+    // «Обкэшить» адресована одному окну — с WF37 через общий addressed()
+    // (match → chat → заголовок/фокус, #5535), а не своей проверкой заголовка.
+    // Заголовок один на два окна разом: главное окно с открытым названным чатом
+    // и безымянный попап носят его одинаково, и команда уходила веером им обоим
+    // (критик плана, блокер 3).
     if (action === "cashout") {
-      const title = typeof detail?.title === "string" ? detail.title.trim() : "";
-      const mine = title ? (document.title || "").trim() === title : document.hasFocus();
-      if (mine) runCashout();
+      if (addressed(detail)) runCashout();
       return;
     }
     // «Workflow» — тоже одному окну (заголовок из AX, запасной критерий — фокус):
@@ -5276,7 +5441,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       scrollRuns: state.scrollRuns,
       timeRuns: state.timeRuns,
       timeWatched: Boolean(state.timeTarget),
-      cashout: readCashout() != null,
+      // «Обкэшить»: есть ли запись переноса, кому она адресована (id чата или
+      // «ждёт адресата»), под каким заголовком её ждут и когда штамповали (WF37).
+      cashout: cashoutState(),
       // Полоса прогресса воркфлоу (раздел 2б): что вычитано из строки состояния
       // последнего ответа и почему полосы нет, если её нет. total — доля всего
       // марафона в процентах, pct — процент текущего воркфлоу, segments — доли
@@ -5320,6 +5487,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         row: chatRowId(),
         popouts: chatsState.map ? chatsState.map.length : 0,
         store: chatsState.store,
+        // Папка чипа домашнего экрана (WF37) — только из кэша: скана status()
+        // не запускает, стор ещё не найден — null.
+        folder: chatsFolder(false),
         at: chatsState.at || null,
       },
       // Возврат тем (WF35): когда приезжала команда themes-restore, сколько
@@ -5401,7 +5571,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     sessionKey, themeKey, legacyKey, mapEntry, entryLayer, readThemeMap, writeThemeMap, liveRing, livePalette,
     parseProgressText, progressShares, statusLines, statusFeedLines, statusKey, runWorkflowCommand, newWindowSegment,
     newWindowSessionId, newWindowAtHome, newWindowStoreOk, setModuleImporter, newWindowScanStores,
-    chatKind, chatPath, chatRowId, myChatId, readChatId, writeChatId, chatsMap, chatsScan, popoutChat, chats });
+    readCashout, runCashout, tryPasteCashout, cashoutStamp, cashoutMine,
+    chatKind, chatPath, chatRowId, myChatId, readChatId, writeChatId, chatsMap, chatsScan, chatsFolder,
+    popoutChat, chats });
 
   // Всё, что ниже, трогает живую страницу и может бросить на неготовой
   // разметке. Такое падение не должно оставлять в окне зомби: установка

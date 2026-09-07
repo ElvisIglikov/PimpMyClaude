@@ -5,7 +5,13 @@
 // (план WF24, решение 3).
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { loadInject, loadInner } from "./load.mjs";
+
+const CASHOUT_KEY = "myclaude-cashout";
+const fixture = name => JSON.parse(readFileSync(new URL(`./fixtures/cashout/${name}.json`, import.meta.url), "utf8"));
+// Запись донора «Обкэшить», которая ждёт адресата (WF37).
+const pending = () => JSON.stringify({ ...fixture("record-pending"), at: Date.now() });
 
 // Команда «нового окна» асинхронная и запускается «в фон» (newWindowStart), так
 // что после отправки события даём микрозадачам добежать до первой охраны.
@@ -137,4 +143,69 @@ test("popout проверяет контракт команды раньше, ч
   popup.dom.command({ id: "p2", action: "popout-window", at: "now", scope: "window", title: "Второе окно", x: "10", y: "20" });
   await drain();
   assert.equal(popup.api.status().newWindow.state, "bad-command", "строки вместо чисел — это битая команда");
+});
+
+// ---- Перенос «Обкэшить» (WF37) ---------------------------------------------
+// Цепочка «Нового окна» с полем transfer называет адресата записи, оставленной
+// попапом-донором: id только что рождённого чата и заголовок его строки
+// сайдбара. Полный прогон цепочки в стабе не воспроизвести (он весь про
+// асинхронную вёрстку claude.ai) — проверяем разбор поля и сам штамп.
+
+test("штамп переноса: to, title и stampedAt поверх записи «ждёт адресата»", () => {
+  const loaded = loadInject({
+    href: "https://claude.ai/epitaxy/local_abc", title: "Claude",
+    storage: { local: { [CASHOUT_KEY]: pending() } },
+  });
+  const before = Date.now();
+  assert.equal(loaded.inner.cashoutStamp("local_9f1c2a3b-5d6e-4f70-8a9b-0c1d2e3f4a5b", "VkusnoffKz 3"), true);
+  const record = JSON.parse(loaded.win.localStorage.getItem(CASHOUT_KEY));
+  const sample = fixture("record-stamped");
+  assert.deepEqual(Object.keys(record), Object.keys(sample), "порядок ключей — по эталону");
+  assert.equal(record.to, sample.to);
+  assert.equal(record.title, sample.title);
+  assert.equal(record.text, sample.text, "текст переноса донора не переписывается");
+  assert.ok(record.stampedAt >= before, "свежесть переноса считается от штампа");
+});
+
+test("штамп трогает только запись «ждёт адресата»", () => {
+  const cases = [
+    ["обычная запись главного окна", JSON.stringify({ ...fixture("record-main"), at: Date.now() })],
+    ["чужой перенос, уже штампованный", JSON.stringify({ ...fixture("record-stamped"), at: Date.now() })],
+  ];
+  for (const [what, raw] of cases) {
+    const loaded = loadInject({
+      href: "https://claude.ai/epitaxy/local_abc", title: "Claude", storage: { local: { [CASHOUT_KEY]: raw } },
+    });
+    assert.equal(loaded.inner.cashoutStamp("local_new", "Новый чат 2"), false, what);
+    assert.equal(loaded.win.localStorage.getItem(CASHOUT_KEY), raw, `${what}: запись не тронута`);
+  }
+  const empty = loadInject({ href: "https://claude.ai/epitaxy/local_abc", title: "Claude" });
+  assert.equal(empty.inner.cashoutStamp("local_new", "Новый чат 2"), false, "записи нет вовсе");
+  const noId = loadInject({
+    href: "https://claude.ai/epitaxy/local_abc", title: "Claude",
+    storage: { local: { [CASHOUT_KEY]: pending() } },
+  });
+  assert.equal(noId.inner.cashoutStamp("", "Новый чат 2"), false, "адресата без id не бывает");
+  assert.equal(JSON.parse(noId.win.localStorage.getItem(CASHOUT_KEY)).to, "pending");
+});
+
+test("поле transfer разбирается строго", async () => {
+  const loaded = loadInject({
+    href: "https://claude.ai/epitaxy/local_abc", title: "Claude",
+    storage: { local: { [CASHOUT_KEY]: pending() } },
+  });
+  const mark = async detail => {
+    loaded.dom.command(command(detail));
+    const snapshot = loaded.api.status().newWindow.transfer;
+    await drain();
+    return snapshot;
+  };
+  assert.equal(await mark({ transfer: true }), true, "ветка «Обкэшить»");
+  for (const [what, value] of [["поля нет", undefined], ["строка", "true"], ["число", 1], ["ложь", false]]) {
+    assert.equal(await mark({ transfer: value }), null, what);
+  }
+  // Прогон без transfer чужую запись переноса не трогает вовсе: ⌥⌘N, «▸ проект»,
+  // «Здесь же» и канал «Пимп» поля не шлют (критик плана, блокер 2).
+  assert.equal(JSON.parse(loaded.win.localStorage.getItem(CASHOUT_KEY)).to, "pending");
+  assert.equal(loaded.api.status().newWindow.stamped, null, "до штампа цепочка не дошла — стора нет");
 });

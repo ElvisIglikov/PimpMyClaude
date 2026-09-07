@@ -9,6 +9,7 @@
 // поэтому у импортёра есть сиденье (setModuleImporter, решение 4 плана).
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { loadInject, plain } from "./load.mjs";
 
 const MAIN = "https://claude.ai/epitaxy/local_aaa";
@@ -209,4 +210,108 @@ test("status().chat синхронный и из кэша", async () => {
   assert.equal(after.popouts, 1);
   assert.equal(typeof after.at, "number");
   assert.equal(counter.imports, 1);
+});
+
+// ---- Папка домашнего экрана (WF37, задача #5576) ----------------------------
+// Пока чат не открыт, сессии на диске нет и приложению папку взять неоткуда —
+// главное окно оставалось некрашеным, хотя чип над полем ввода проект уже
+// показывает. Этот выбор живёт в сторе claude.ai, и ответ chats() теперь его
+// называет — но только у главного окна и только на домашнем экране.
+const fixture = name => JSON.parse(readFileSync(new URL(`./fixtures/cashout/${name}.json`, import.meta.url), "utf8"));
+const drain = async () => { for (let step = 0; step < 4; step += 1) await new Promise(setImmediate); };
+
+// Домашний экран со стором папки. folder === null — стор, который нам не
+// годится (папку выбирать нечем): такой же ответ null, только навсегда.
+const homeWindow = (folder = "/Users/elvis/_ElvisProjects/PimpMyClaude", options = {}) => {
+  const loaded = loadInject({
+    href: "https://claude.ai/epitaxy",
+    title: "Claude",
+    html: dom => ({ input: dom.document.body.add("div", { attrs: { "data-testid": "code-prompt-input" } }) }),
+    ...options,
+  });
+  loaded.dom.modules("https://claude.ai/assets/v1/chunk-1.js");
+  const state = folder == null
+    ? { theme: "dark" }
+    : { selectedFolder: folder, setLocalSelectedFolder: () => {}, setTrustedSelectedFolder: () => {} };
+  const store = () => {};
+  store.getState = () => state;
+  const counter = { imports: 0 };
+  loaded.inner.setModuleImporter(() => { counter.imports += 1; return Promise.resolve({ Store: store }); });
+  return { loaded, counter, state };
+};
+
+test("папка домашнего экрана: первый круг — скан, второй — путь", async () => {
+  const home = homeWindow("/Users/elvis/_ElvisProjects/PimpMyClaude/");
+  const first = plain(await home.loaded.api.chats({ nonce: "f1" }));
+  assert.equal(first.folder, null, "скан идёт около секунды — ответ probe его не ждёт");
+  await drain();
+  const second = plain(await home.loaded.api.chats({ nonce: "f2" }));
+  assert.equal(second.folder, "/Users/elvis/_ElvisProjects/PimpMyClaude", "хвостовой слэш папку не меняет");
+  assert.equal(home.loaded.api.status().chat.folder, second.folder, "то же поле в status()");
+  const third = plain(await home.loaded.api.chats({ nonce: "f3" }));
+  assert.equal(third.folder, second.folder);
+  assert.equal(home.counter.imports, 1, "стор ищется один раз — чужие модули по разу");
+});
+
+test("папки нет: стор не годится — null и молчание", async () => {
+  const home = homeWindow(null);
+  assert.equal(plain(await home.loaded.api.chats({ nonce: "f4" })).folder, null);
+  await drain();
+  assert.equal(plain(await home.loaded.api.chats({ nonce: "f5" })).folder, null, "выбирать папку нечем");
+  assert.equal(home.loaded.api.status().chat.folder, null);
+
+  const empty = homeWindow("");
+  await drain();
+  await empty.loaded.api.chats({ nonce: "f6" });
+  await drain();
+  assert.equal(plain(await empty.loaded.api.chats({ nonce: "f7" })).folder, null, "пустой выбор — не папка");
+});
+
+test("status() папку из кэша берёт, а скана не запускает", async () => {
+  const home = homeWindow();
+  assert.equal(home.loaded.api.status().chat.folder, null, "стор ещё не найден");
+  assert.equal(home.counter.imports, 0, "status() чужих модулей не исполняет");
+  await home.loaded.api.chats({ nonce: "f8" });
+  await drain();
+  assert.equal(home.loaded.api.status().chat.folder, "/Users/elvis/_ElvisProjects/PimpMyClaude");
+});
+
+test("папку называет только главное окно и только на домашнем экране", async () => {
+  const chat = homeWindow("/Users/elvis/_ElvisProjects/PimpMyClaude", { href: MAIN, title: "Pimp" });
+  await chat.loaded.api.chats({ nonce: "f9" });
+  await drain();
+  const open = plain(await chat.loaded.api.chats({ nonce: "f10" }));
+  assert.equal(open.folder, null, "в открытом чате правду говорит индекс сессий");
+  assert.equal(chat.counter.imports, 0, "и стор папки в открытом чате не ищется вовсе");
+
+  const parent = mainWindow([["local_c4abc832", "Bro Flow продолжение"]]);
+  const popup = loadInject({ href: "about:blank", title: "Bro Flow продолжение", opener: parent.loaded.win });
+  assert.equal(plain(await popup.api.chats({ scan: true, nonce: "f11" })).folder, null, "у попапа своего выбора нет");
+
+  const stranger = homeWindow("/Users/elvis/_ElvisProjects/PimpMyClaude", { href: "data:text/html,<p>артефакт</p>" });
+  assert.equal(plain(await stranger.loaded.api.chats({ scan: true, nonce: "f12" })).folder, null, "чужая страница");
+});
+
+test("порядок ключей ответа — по эталонам probe-answer-*", async () => {
+  const home = homeWindow();
+  await home.loaded.api.chats({ nonce: "f13" });
+  await drain();
+  assert.deepEqual(
+    Object.keys(plain(await home.loaded.api.chats({ nonce: "f14" }))),
+    Object.keys(fixture("probe-answer-home")),
+    "folder стоит после store и перед at, themes — в хвосте",
+  );
+
+  const parent = mainWindow([["local_4dae798d-aed9-42d7-bd1b-3631eb360c07", "VkusnoffKz 2"]]);
+  assert.deepEqual(
+    Object.keys(plain(await parent.loaded.api.chats({ scan: true, nonce: "f15" }))),
+    Object.keys(fixture("probe-answer-chat")),
+  );
+
+  const popup = loadInject({ href: "about:blank", title: "VkusnoffKz 2", opener: parent.loaded.win });
+  assert.deepEqual(
+    Object.keys(plain(await popup.api.chats({ scan: true, nonce: "f16" }))),
+    Object.keys(fixture("probe-answer-popout")),
+    "карты тем у попапа нет — и поля themes тоже",
+  );
 });
