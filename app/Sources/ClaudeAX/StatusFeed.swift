@@ -19,7 +19,7 @@ struct StatusProject: Equatable {
 final class StatusFeed {
     /// Опрос файлов.
     static let interval: TimeInterval = 60
-    /// Не больше 6 КБ сырого markdown на проект.
+    /// Не больше 6 КБ сжатого markdown на проект (лишнее отрезается с начала файла).
     static let limit = 6 * 1024
     /// Общий потолок команды — 32 КБ на все проекты вместе (критик п. 6 плана WF9).
     static let totalLimit = 32 * 1024
@@ -103,10 +103,12 @@ final class StatusFeed {
         return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath, isDirectory: true)
     }
 
-    /// Проекты по алфавиту; у проекта берётся первая найденная сводка из docs/audit/work.
+    /// Проекты — свежими вперёд (по времени правки status.md; одинаковое время — по имени);
+    /// у проекта берётся первая найденная сводка из docs/audit/work. Текст сжимается
+    /// (`compact`) и режется до 6 КБ с начала файла (`slice`) — решение E плана WF22.
     static func scan(root: URL, fileManager: FileManager = .default) -> [StatusProject] {
         guard let names = try? fileManager.contentsOfDirectory(atPath: root.path) else { return [] }
-        var projects: [StatusProject] = []
+        var found: [(project: StatusProject, date: Date)] = []
         for name in names.sorted() where !name.hasPrefix(".") {
             let project = root.appendingPathComponent(name, isDirectory: true)
             let candidates = statusFolders.map {
@@ -116,9 +118,15 @@ final class StatusFeed {
             guard let url = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }),
                   let text = try? String(contentsOf: url, encoding: .utf8),
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            projects.append(StatusProject(name: name, text: slice(text)))
+            let compacted = compact(text)
+            guard !compacted.isEmpty else { continue }
+            let date = (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+            found.append((StatusProject(name: name, text: slice(compacted)), date ?? .distantPast))
         }
-        return projects
+        // Свежие первыми: общий потолок 32 КБ достаётся живым проектам, а не голове алфавита.
+        return found.sorted { left, right in
+            left.date == right.date ? left.project.name < right.project.name : left.date > right.date
+        }.map { $0.project }
     }
 
     /// Общий потолок команды (критик п. 6 плана WF9): проекты кладутся по порядку, пока
@@ -162,9 +170,11 @@ final class StatusFeed {
                 (key: "projects", value: .array(items))]
     }
 
+    /// Хэш содержимого, а не порядка: проекты едут свежими вперёд, и «потрогали файл» не должно
+    /// слать ту же сводку заново — поэтому считаем по копии, отсортированной по имени.
     static func digest(_ projects: [StatusProject]) -> String {
         var hasher = SHA256()
-        for project in projects {
+        for project in projects.sorted(by: { $0.name < $1.name }) {
             hasher.update(data: Data(project.name.utf8))
             hasher.update(data: Data([0]))
             hasher.update(data: Data(project.text.utf8))
@@ -173,21 +183,92 @@ final class StatusFeed {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Срез до 6 КБ по границе блоков «N️⃣ Workflow»: половинчатый блок в подсказке ни к чему.
-    /// Ни один блок целиком не влез — режем по знакам, чтобы не порвать UTF-8.
+    /// Сжатие сводки перед отправкой (решение E плана WF22): в блоке Workflow остаются
+    /// заголовок «N️⃣ Workflow …», «- о чём», «- шаги», строка времени «- ЧЧ:ММ → …» и строки
+    /// ролей «- роль · …»; пустые строки и хвост «Сейчас:»/«Ждёт Элвиса:» выкидываются, шапка
+    /// файла (имя, «обновлено», счётчики) остаётся целиком. Строки едут как есть — экранирование
+    /// команды не трогаем.
+    static func compact(_ text: String) -> String {
+        var kept: [String] = []
+        var inBlocks = false
+        for line in text.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { continue }
+            if isWorkflowHeading(trimmed) {
+                inBlocks = true
+                kept.append(line)
+            } else if isTailLine(trimmed) {
+                continue
+            } else if !inBlocks || isBlockLine(trimmed) {
+                kept.append(line)
+            }
+        }
+        return kept.joined(separator: "\n")
+    }
+
+    /// Хвост сводки для Элвиса — полоске не нужен.
+    static func isTailLine(_ line: String) -> Bool {
+        line.hasPrefix("Сейчас:") || line.hasPrefix("Ждёт Элвиса")
+    }
+
+    /// Строка блока, которая едет: «- о чём…», «- шаги…», время «- 13:05 → …» и роль «- роль · …».
+    static func isBlockLine(_ line: String) -> Bool {
+        guard line.hasPrefix("- ") else { return false }
+        let body = line.dropFirst(2).trimmingCharacters(in: .whitespaces)
+        if body.hasPrefix("о чём") || body.hasPrefix("шаги") { return true }
+        return startsWithClock(body) || body.contains(" · ")
+    }
+
+    /// Начало строки времени: «13:05 → закончит…».
+    static func startsWithClock(_ text: String) -> Bool {
+        let head = Array(text.prefix(5))
+        guard head.count == 5, head[2] == ":" else { return false }
+        return [0, 1, 3, 4].allSatisfy { head[$0].isASCII && head[$0].isNumber }
+    }
+
+    /// Срез до 6 КБ по границе блоков «N️⃣ Workflow» — режем **с начала** файла: шапка остаётся,
+    /// а из блоков едут последние (живое важнее истории; решение E плана WF22).
+    /// Блоков нет вовсе или ни один не влез вместе с шапкой — режем по знакам с головы,
+    /// чтобы не порвать UTF-8.
     static func slice(_ text: String, limit: Int = limit) -> String {
         guard text.utf8.count > limit else { return text }
         let lines = text.components(separatedBy: "\n")
-        var bytes = 0
-        var cut = 0 // сколько строк точно влезает: граница перед последним уместившимся блоком
-        for (index, line) in lines.enumerated() {
-            let size = line.utf8.count + (index > 0 ? 1 : 0)
-            if bytes + size > limit { break }
-            if index > 0, isWorkflowHeading(line) { cut = index }
-            bytes += size
+        let starts = lines.indices.filter { isWorkflowHeading(lines[$0]) }
+        guard let firstBlock = starts.first else { return prefix(text, bytes: limit) }
+        let head = Array(lines[0..<firstBlock])
+        // Блоки — диапазоны строк от заголовка до следующего заголовка.
+        var blocks: [Range<Int>] = []
+        for (index, start) in starts.enumerated() {
+            let end = index + 1 < starts.count ? starts[index + 1] : lines.count
+            blocks.append(start..<end)
         }
-        guard cut > 0 else { return prefix(text, bytes: limit) }
-        return lines[0..<cut].joined(separator: "\n")
+        let size: (Set<Int>) -> Int = { chosen in
+            joinedSize(head + chosen.sorted().flatMap { Array(lines[blocks[$0]]) })
+        }
+        // Живые блоки (💭 ✋ 🛑 в заголовке) едут ВСЕГДА, сколько бы запланированных ни стояло
+        // после них: на настоящем status.md идущий 22-й блок с 19 плановыми следом срез с
+        // начала отрезал бы ровно его (хвост батча S, гейт WF22). Потом — хвост блоков подряд.
+        var chosen = Set<Int>()
+        for index in blocks.indices.reversed() where isLiveHeading(lines[blocks[index].lowerBound]) {
+            if size(chosen.union([index])) <= limit { chosen.insert(index) }
+        }
+        for index in blocks.indices.reversed() where !chosen.contains(index) {
+            guard size(chosen.union([index])) <= limit else { break }
+            chosen.insert(index)
+        }
+        guard !chosen.isEmpty else { return prefix(text, bytes: limit) }
+        return (head + chosen.sorted().flatMap { Array(lines[blocks[$0]]) }).joined(separator: "\n")
+    }
+
+    /// Живой блок: идёт, ждёт Элвиса или упал — то, ради чего сводку и шлют.
+    static func isLiveHeading(_ line: String) -> Bool {
+        isWorkflowHeading(line) && ["💭", "✋", "🛑"].contains { line.contains($0) }
+    }
+
+    /// Размер строк, склеенных переводом строки, в байтах.
+    private static func joinedSize(_ lines: [String]) -> Int {
+        guard !lines.isEmpty else { return 0 }
+        return lines.reduce(lines.count - 1) { $0 + $1.utf8.count }
     }
 
     /// Начало блока: строка вроде «3️⃣ Workflow ✅ готово» — цифра-клавиша (или 🔟) с начала.

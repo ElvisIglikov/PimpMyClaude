@@ -1,0 +1,45 @@
+{
+ "project": "⚪PimpMyClaude",
+ "workflow": "WF22 «Полоска v3»",
+ "plan": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/plan-wf22-2026-09-07.md",
+ "mockup": "/Users/elvis/_ElvisProjects/PimpMyClaude/docs/mockup-wf22-cards.html (буква Элвиса ждёт; по умолчанию 3A)",
+ "branch": "wf22",
+ "tag": "wf22-start",
+ "status": "финиш",
+ "started": "2026-09-07T19:46:00+05:00",
+ "watchdog": "watchdog-pimpmyclaude-wf22",
+ "orchestrator": "Fable 5.1 xhigh (чат «PimpMyClaude баги и улучшения», local_facfb20c)",
+ "models": "критик Opus max (сделано), макет Fable xhigh (сделано), кодинг Opus max ×2, проверка Opus max",
+ "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/fff36f1e-9e69-4044-8f51-947c72df8f04/workflows/scripts/pimpmyclaude-wf22-wave1-wf_988d13a9-6b2.js",
+ "run_id": "wf_988d13a9-6b2",
+ "resumes": 1,
+ "batches": {
+  "P": {
+   "what": "страница: разбор сводки в объекты, соединение по значку, заливка по этапам, пульс animate(), карточка 3A",
+   "model": "Opus 5 max",
+   "status": "готово"
+  },
+  "S": {
+   "what": "Swift: StatusFeed сжимает блоки и режет с начала, порядок по mtime, digest по имени",
+   "model": "Opus 5 max",
+   "status": "готово → коммит 6f8ee42"
+  },
+  "V": {
+   "what": "проверка по диффу wf22-start..HEAD → docs/verify-wf22-2026-09-07.md",
+   "model": "Opus 5 max",
+   "status": "готово"
+  }
+ },
+ "next_steps": [
+  "Элвис смотрит полоску и карточку; буква 3B/3C — точечная правка вида",
+  "правило 💭 у идущей роли и «о чём» человеческим языком — чат Max (#5632)"
+ ],
+ "journal": [
+  "19:46 · старт: ветка wf22, тег, сторож, волна 1 (P ∥ S) по плану после критика; карточка по умолчанию 3A",
+  "~20:05 · S готов (184 Swift); P и V упали: «session limit · resets 10pm»",
+  "22:42 · сторож: огрызок P откачен (inject.js, dom.mjs, idempotent), S закоммичен 6f8ee42; resume волны (P и V заново, S из кэша), resumes=1",
+  "23:20 · P готов (222 JS), V: механика есть, 4 «важно» → гейт",
+  "23:28 · гейт: бейдж с этапом, карточка ≤ 400 px у полосы, контур не ловит мышь, этапы при «шаги 0», слитая полоса, счётчики-пункты; tools/test.sh зелёный (222 JS + 20 Py + 185 Swift); inject.js живой wf22-p-1; сборка 1.4.0 (8) подменена; памятка; слияние в main, push; сторож снят"
+ ],
+ "watchdog_cron_id": "03e16a37 (41 * * * *)"
+}

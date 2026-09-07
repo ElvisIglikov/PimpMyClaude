@@ -83,13 +83,16 @@ test("мусор и пустота разбор не роняют", () => {
 
 test("progressShares: доли слева направо, готовые полные, будущие пустые", () => {
   assert.deepEqual(shares({ wf: 3, of: 5, pct: 40, total: 52, state: "run" }, 400), [100, 100, 40, 0, 0]);
-  assert.deepEqual(shares({ wf: 1, of: 3, pct: 0, total: 0, state: "run" }, 400), [0, 0, 0]);
+  // WF22: идущий сегмент никогда не пуст — без процентов и без сводки ему
+  // достаётся минимум в 8 %, иначе текущего воркфлоу на полосе не видно (#5543).
+  assert.deepEqual(shares({ wf: 1, of: 3, pct: 0, total: 0, state: "run" }, 400), [8, 0, 0]);
   assert.deepEqual(shares({ wf: 2, of: 4, pct: 10, total: 37, state: "done" }, 400), [100, 100, 100, 100],
     "✅ закрашивает все сегменты");
 });
 
 test("progressShares: в узком окне сегменты сливаются в одну долю", () => {
-  assert.deepEqual(shares({ wf: 3, of: 5, pct: 40, total: 52, state: "run" }, 30), [52]);
+  // Слитая полоса тоже считает долю по заливке текущего сегмента: (2 + 0,4) / 5 = 48 % (гейт WF22).
+  assert.deepEqual(shares({ wf: 3, of: 5, pct: 40, total: 52, state: "run" }, 30), [48]);
   assert.equal(shares({ wf: 3, of: 5, pct: 40, total: 52, state: "run" }, 400).length, 5, "в широком окне — все пять");
 });
 
@@ -151,4 +154,191 @@ test("имя проекта сверяется по буквам и цифрам
   assert.equal(inner.statusKey("Vkusnoff-Kz"), "vkusnoffkz");
   assert.equal(inner.statusKey("⚪ Другое!"), "другое");
   assert.equal(inner.statusKey(null), "");
+});
+
+// ---- WF22: разбор сводки в объекты, заливка по этапам, пульс ---------------
+// Сводка-образец: два готовых воркфлоу, идущий с пометкой 💭 у своего этапа и
+// запланированный. Номера трёхзначной цепочкой — их и читает statusBlocks.
+const FEED = [
+  "# ⚪PimpMyClaude",
+  "обновлено 19:46",
+  "",
+  "41 воркфлоу",
+  "26 готово",
+  "39 ч",
+  "",
+  "3️⃣5️⃣ Workflow ✅ готово",
+  "- о чём: темы по id чата",
+  "- шаги 3 из 3",
+  "- 10:45 → 11:00 · 15 мин",
+  "- планирование · 3 агента · Opus max",
+  "- кодинг · 2 агента · Opus max",
+  "- проверка · 1 агент · Opus max",
+  "",
+  "3️⃣6️⃣ Workflow ✅ готово",
+  "- о чём: «Пимп, открой окно»",
+  "- шаги 3 из 3",
+  "- 16:00 → 17:20 · 1,3 ч",
+  "- планирование · я · Fable high",
+  "- критика · 1 агент · Opus max",
+  "- кодинг · 2 агента · Opus max",
+  "- проверка · 2 агента · Opus max",
+  "",
+  "3️⃣7️⃣ Workflow 💭 идёт",
+  "- о чём: полоска v3 — идущий этап дышит",
+  "- шаги 1 из 3",
+  "- 18:09 → 18:50 · 25 мин",
+  "- планирование · я · Fable xhigh",
+  "- критика · 1 агент · Opus max",
+  "- кодинг · 2 агента · Opus max 💭",
+  "- проверка · 🔴 **Fable max**",
+  "",
+  "3️⃣8️⃣ Workflow ⬜ запланирован",
+  "- о чём: перестройка страницы",
+  "- кодинг · 1 агент · Opus max",
+].join("\n");
+
+// Страница для живых проверок: композер Claude Code и последний ответ со строкой
+// состояния. Строки нет — полоса обязана стоять пустым контуром (PROGRESS.md, п. 1).
+const page = line => dom => {
+  const parts = dom.composer({ top: 620 });
+  dom.document.body.add("div", {
+    attrs: { "data-testid": "assistant-message" },
+    rect: { left: 100, top: 200, width: 1000, height: 300 },
+    text: line ? `Готово.\n\n${line}` : "Привет, чем займёмся?",
+  });
+  return parts;
+};
+const open = line => loadInject({
+  html: page(line), title: "PimpMyClaude", geometry: { viewport: { width: 1200, height: 800 } },
+});
+const cellsOf = loaded => loaded.dom.query("#myclaude-progress-bar").children;
+const fillOf = (loaded, index) => cellsOf(loaded)[index].children[1];
+const glowOf = (loaded, index) => cellsOf(loaded)[index].children[2];
+const withFeed = (text, name = "PimpMyClaude") => {
+  const loaded = loadInject({ title: name });
+  loaded.dom.command({ id: `s-${name}`, action: "status", at: "now", scope: "all", projects: [{ name, text }] });
+  return loaded;
+};
+const RUN_LINE = "💭⚪[PimpMyClaude](docs/status.md) · WF 3 из 8 · идёт💭";
+
+test("statusBlocks: номер — цепочка клавиш, а не первая из них", () => {
+  const text = [
+    "2️⃣9️⃣ Workflow ✅ готово", "- о чём: чат по id",
+    "🔟 Workflow ✅ готово", "- о чём: автопокраска",
+    "4️⃣0️⃣ Workflow ⬜ запланирован", "- о чём: голосом",
+  ].join("\n");
+  assert.deepEqual(plain(inner.statusBlocks(text)).map(block => block.number), [29, 10, 40]);
+  assert.equal(inner.statusLineNumber("1️⃣2️⃣ ✅ · размер шрифта"), 12);
+  assert.equal(inner.statusLineNumber("- о чём: это не заголовок"), null);
+});
+
+test("statusBlocks: состояние, «о чём», шаги, время и роли объектами", () => {
+  const blocks = plain(inner.statusBlocks(FEED));
+  assert.deepEqual(blocks.map(block => block.number), [35, 36, 37, 38]);
+  assert.deepEqual(blocks.map(block => block.state), ["done", "done", "run", "todo"]);
+  const run = blocks[2];
+  assert.equal(run.icon, "💭");
+  assert.equal(run.about, "полоска v3 — идущий этап дышит");
+  assert.deepEqual(run.steps, { done: 1, total: 3 });
+  assert.equal(run.time, "18:09 → 18:50 · 25 мин");
+  assert.deepEqual(run.roles.map(role => role.role), ["планирование", "критика", "кодинг", "проверка"]);
+  assert.deepEqual(run.roles[0], { role: "планирование", agents: "я", model: "Fable", effort: "xhigh", running: false });
+  assert.deepEqual(run.roles[2], { role: "кодинг", agents: "2 агента", model: "Opus", effort: "max", running: true },
+    "💭 в конце строки роли — пометка идущего этапа");
+  assert.deepEqual(run.roles[3], { role: "проверка", agents: "", model: "Fable", effort: "max", running: false },
+    "🔴 и **жирное** — разметка сводки, а не имя модели");
+});
+
+test("statusLine остаётся прежней: строки подсказки знак в знак", () => {
+  const lines = plain(inner.statusLines(FEED));
+  assert.equal(lines[2], "3️⃣7️⃣ 💭 · полоска v3 — идущий этап дышит · планирование · критика · кодинг · проверка");
+  assert.equal(lines[3], "3️⃣8️⃣ ⬜ · перестройка страницы · кодинг");
+});
+
+test("заливка идущего сегмента: по этапам, по шагам, минимум восемь процентов", () => {
+  const byStages = withFeed(FEED);
+  const info = { wf: 3, of: 5, pct: null, total: 0, state: "run", project: "PimpMyClaude" };
+  assert.equal(byStages.inner.progressFill(info), 62.5,
+    "план и критик пройдены, кодинг идёт — две четверти плюс половина третьей");
+
+  const bySteps = withFeed(["9️⃣ Workflow 💭 идёт", "- о чём: ролей ещё нет", "- шаги 1 из 4"].join("\n"));
+  assert.equal(bySteps.inner.progressFill(info), 25, "ролей нет — считаем по «шаги N из M»");
+
+  const bare = withFeed(["9️⃣ Workflow 💭 идёт", "- о чём: ни ролей, ни шагов"].join("\n"));
+  assert.equal(bare.inner.progressFill(info), 8, "нечем считать — минимум, чтобы сегмент был виден");
+  assert.equal(bare.inner.progressFill({ ...info, pct: 40 }), 40, "процент из строки состояния сильнее сводки");
+  assert.equal(bare.inner.progressFill({ ...info, state: "done" }), 100);
+});
+
+test("пульс: дышит слой свечения идущего сегмента, а не тень заливки", () => {
+  const loaded = open(RUN_LINE);
+  const live = loaded.dom.running();
+  assert.equal(live.length, 1, "дышит ровно один сегмент");
+  assert.equal(live[0].node, glowOf(loaded, 2), "и это слой свечения третьего сегмента");
+  assert.equal(live[0].options.duration, 2400);
+  assert.equal(live[0].options.iterations, Infinity);
+  assert.deepEqual(plain(live[0].frames).map(frame => frame.opacity), ["0.35", "0.8", "0.35"]);
+  assert.ok(plain(live[0].frames).every(frame => Object.keys(frame).join() === "opacity"),
+    "в кадрах только прозрачность: box-shadow не анимируем");
+  assert.equal(glowOf(loaded, 7).style.getPropertyValue("box-shadow"), "none", "пустому сегменту светиться нечем");
+
+  loaded.api.dispose();
+  assert.equal(loaded.dom.running().length, 0, "dispose() гасит анимацию");
+});
+
+test("пульс: ждёт и упал стоят, «готово» дышит всей зелёной полосой", () => {
+  const wait = open("✋⚪[PimpMyClaude](docs/status.md) · WF 3 из 8 · жду✋");
+  assert.equal(wait.dom.running().length, 0, "жёлтый сегмент не дышит");
+  assert.equal(fillOf(wait, 2).style.getPropertyValue("background"), "#f5c542");
+
+  const fail = open("🛑⚪[PimpMyClaude](docs/status.md) · WF 3 из 8 · упал🛑");
+  assert.equal(fail.dom.running().length, 0, "красный сегмент не дышит");
+  assert.equal(fillOf(fail, 2).style.getPropertyValue("background"), "#ef4444");
+
+  const done = open("✅⚪[PimpMyClaude](docs/status.md) · WF 8 из 8 · готово✅");
+  assert.equal(done.dom.running().length, 8, "готово дышит целиком — это сигнал продолжать");
+  assert.equal(fillOf(done, 0).style.getPropertyValue("background"), "#4dbb7d", "и вся полоса зелёная");
+  assert.equal(fillOf(done, 7).style.getPropertyValue("background"), "#4dbb7d");
+});
+
+test("пульс гаснет в скрытом окне и при «поменьше движения»", () => {
+  const loaded = open(RUN_LINE);
+  assert.equal(loaded.dom.running().length, 1);
+  loaded.document.hidden = true;
+  loaded.document.dispatchEvent({ type: "visibilitychange" });
+  assert.equal(loaded.dom.running().length, 0, "в скрытом окне полоса не дышит");
+  loaded.document.hidden = false;
+  loaded.document.dispatchEvent({ type: "visibilitychange" });
+  assert.equal(loaded.dom.running().length, 1, "окно вернулось — вернулся и пульс");
+
+  loaded.win.__reducedMotion = true;
+  const again = loaded.reload();
+  assert.equal(again.error, null);
+  assert.equal(loaded.dom.running().length, 0, "prefers-reduced-motion — пульса нет вовсе");
+});
+
+test("новый чат без строки состояния: один пустой контур, а не пропавшая полоса", () => {
+  const loaded = open(null);
+  const bar = loaded.dom.query("#myclaude-progress-bar");
+  assert.equal(bar.style.getPropertyValue("display"), "flex", "полоса на месте");
+  assert.deepEqual(plain(loaded.api.status().progress.segments), [0], "один сегмент и тот пустой");
+  assert.equal(fillOf(loaded, 0).style.getPropertyValue("width"), "0%");
+  assert.equal(loaded.dom.running().length, 0, "контуру дышать нечем");
+  assert.match(loaded.api.status().progress.reason, /пустой контур/, "причина названа честно");
+});
+
+test("сводка: точное имя проекта выигрывает, префикс — только когда он один", () => {
+  const loaded = loadInject({ title: "X" });
+  loaded.dom.command({
+    id: "s2", action: "status", at: "now", scope: "all",
+    projects: [
+      { name: "VkusnoffKz-deploy", text: "1️⃣ Workflow ✅ готово\n- о чём: деплой" },
+      { name: "VkusnoffKz", text: "1️⃣ Workflow ✅ готово\n- о чём: сайт" },
+    ],
+  });
+  assert.match(plain(loaded.inner.statusFeedLines("VkusnoffKz"))[0], /сайт/, "точное имя сильнее алфавита");
+  assert.match(plain(loaded.inner.statusFeedLines("VkusnoffKz-deploy"))[0], /деплой/);
+  assert.deepEqual(plain(loaded.inner.statusFeedLines("Vkusnoff")), [],
+    "два соседа по началу имени — молчим, а не выбираем случайного");
 });
