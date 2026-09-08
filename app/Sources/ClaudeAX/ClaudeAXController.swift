@@ -242,6 +242,11 @@ public final class ClaudeAXController: ClaudeAXControlling {
             isMainWindow: { [weak self] title in self?.actions.isMainWindowTitle(title) ?? false },
             openChat: { [weak self] chat, name, origin in
                 self?.actions.popoutChat(chat: chat, name: name, origin: origin)
+            },
+            // Возврат раскладки из МЕНЮ ответа не пишет никому: без этой плашки пункт
+            // «↩︎ Вернуть эти чаты» молчал до конца работы и после неё (#5689).
+            notice: { [weak self] text in
+                self?.hud.show(text, seconds: MenuModel.newWindowNoticeSeconds)
             })
     }
 
@@ -261,6 +266,12 @@ public final class ClaudeAXController: ClaudeAXControlling {
             isMain: actions.isMainWindowTitle)
         guard snapshot.unknown.isEmpty else {
             return MenuModel.layoutChatUnknownAlert(snapshot.unknown)
+        }
+        // Ни одно окно не попало в ячейку сетки — записывать нечего, такая раскладка вернула
+        // бы ноль окон (#5728). Канал отвечает на это `not-arranged`; пункт меню до сих пор
+        // писал пустышку.
+        guard LayoutsStore.placedCells(snapshot.layout) > 0 else {
+            return MenuModel.layoutNotArrangedAlert
         }
         return layouts.save(snapshot.layout) ? nil : MenuModel.layoutWriteFailed
     }

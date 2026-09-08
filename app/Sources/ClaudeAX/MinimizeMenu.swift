@@ -833,19 +833,30 @@ final class MinimizeMenu: NSObject {
     /// «почему мои темы отделены полоской, а светлые от тёмных нет»).
     /// `includeMyThemes` — секция МОИ ТЕМЫ сверху: у окна она уехала на уровень «Оформление ▸»,
     /// у «Всем окнам ▸» осталась здесь, иначе свою тему нельзя было бы дать всем окнам (блокер Б2).
+    ///
+    /// Пока крутятся живые цвета, весь список погашен и сверху стоит та же строка «сначала
+    /// выключи живые цвета», что у «🌈 Раскрасить по кругу ▸» (критик В13): выбор цвета
+    /// страница закрепляет в карте, а живой слой перекрывает его через четверть секунды —
+    /// со стороны это мёртвая кнопка, и Элвис не догадывается, что мешает крутёж (#5742).
     static func themeList(_ config: MenuConfig, scope: String,
                           includeMyThemes: Bool = false) -> NSMenu {
         let all = scope == MenuModel.themeScopeAll
         let selected = all ? config.allThemeID : config.windowThemeID
+        let live = config.liveColors.on
         let submenu = NSMenu(title: MenuModel.colorTitle)
         submenu.autoenablesItems = false
         // Предпросмотр по наведению — только в списке окна: красить все окна на наведении
         // шумно (план WF8 п. 2), поэтому у «Всем окнам ▸» ни делегата, ни примерок у пунктов.
         if !all { submenu.delegate = PreviewMenuDelegate.shared }
+        if live { submenu.addItem(header(MenuModel.autoPaintLiveHint)) }
 
         if includeMyThemes, !config.myThemes.isEmpty {
             submenu.addItem(header(MenuModel.myThemesHeader))
-            for my in config.myThemes { submenu.addItem(myThemeItem(config, my, scope: scope)) }
+            for my in config.myThemes {
+                let item = myThemeItem(config, my, scope: scope)
+                item.isEnabled = !live
+                submenu.addItem(item)
+            }
             submenu.addItem(.separator())
         }
 
@@ -856,6 +867,7 @@ final class MinimizeMenu: NSObject {
         reset.preview = all ? nil : { config.previewTheme(nil) }
         reset.state = resetState(config, all: all, windowEmpty: config.windowThemeID == nil,
                                  allEmpty: config.allThemeID == nil)
+        reset.isEnabled = !live
         submenu.addItem(reset)
 
         for (title, themes) in [(MenuModel.darkThemesHeader, config.themes.filter { !$0.isLight }),
@@ -870,6 +882,7 @@ final class MinimizeMenu: NSObject {
                 item.preview = all ? nil : { config.previewTheme(theme) }
                 item.image = swatch(palette: theme.palette)
                 item.state = theme.id == selected ? .on : .off
+                item.isEnabled = !live
                 submenu.addItem(item)
             }
         }

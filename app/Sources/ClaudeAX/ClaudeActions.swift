@@ -480,13 +480,17 @@ final class ClaudeActions {
     /// Куда поставить новое окно: угол окна под кнопкой + 40/40 в точках **Quartz** (начало —
     /// левый верхний угол главного экрана, y вниз) — ровно те же координаты, что у Electron
     /// в `initialPosition`. Координаты AppKit (снизу вверх) брать нельзя: окно уедет за экран.
-    /// Обрезаем по рабочей области главного экрана так, чтобы окно влезло целиком.
-    static func popoutOrigin(near frame: CGRect?,
-                             area: CGRect? = Screens.mainUsableFrame) -> (x: Int, y: Int) {
+    ///
+    /// Обрезаем по рабочей области ТОГО экрана, где стоит окно-источник, так, чтобы окно
+    /// влезло целиком. `Screens.mainUsableFrame` для этого не годится: `NSScreen.main` — экран
+    /// активного окна ЛЮБОГО приложения, и новое окно уезжало на второй монитор, стоило Элвису
+    /// щёлкнуть там что-нибудь (#5731) — та же болезнь, что чинили у «Расставить» 08.09.
+    /// `area` задают тесты; без неё экран считается сам.
+    static func popoutOrigin(near frame: CGRect?, area: CGRect? = nil) -> (x: Int, y: Int) {
         guard let frame = frame else { return popoutWindowFallback }
         var x = frame.origin.x + popoutWindowOffset
         var y = frame.origin.y + popoutWindowOffset
-        if let area = area {
+        if let area = area ?? Screens.usableFrame(holding: [frame]) {
             x = min(max(x, area.minX), max(area.minX, area.maxX - popoutWindowSize.width))
             y = min(max(y, area.minY), max(area.minY, area.maxY - popoutWindowSize.height))
         }
@@ -1054,7 +1058,25 @@ final class ClaudeActions {
     /// Ровная сетка по главному экрану. Порядок окон сохраняется (см. ArrangeLayout.order).
     /// Свёрнутые и спрятанные не трогаем; чужие приложения — тоже (в отличие от ElvisOS).
     /// ⌥⌘A и пункт «▦ Расставить» повторяют последнюю раскладку (план WF21).
-    func arrange() { arrange(mode: themeStore.arrangeMode) }
+    ///
+    /// Раскладку, которая на ЭТОМ экране не влезает, не ставим вовсе (#5733): ячейки вышли бы
+    /// уже, чем Electron умеет, окна налезли бы друг на друга, а последнее уехало за край.
+    /// Плитка в меню такую раскладку гасит, канал «Пимп» отвечает `too-small` — у хоткея
+    /// проверки не было. Кладём лентой (она разводит узкие ячейки по рядам сама) и говорим.
+    func arrange() {
+        // Окон на экране нет (все свёрнуты, Claude спрятан) — раскладывать нечего, и плашке
+        // тогда взяться неоткуда. Список окон кэширован секунду, лишнего обхода AX нет.
+        guard !app.visibleWindows().isEmpty else { return }
+        let asked = themeStore.arrangeMode
+        let mode = ClaudeActions.arrangeLayout(asked, fits: arrangeFits(asked))
+        if mode != asked { onWarning?(MenuModel.arrangeTooSmallNotice) }
+        arrange(mode: mode)
+    }
+
+    /// Какую раскладку ставить на самом деле: не влезла — лента. Чистая, её и гоняют тесты.
+    static func arrangeLayout(_ mode: ArrangeLayout.Mode, fits: Bool) -> ArrangeLayout.Mode {
+        fits ? mode : .ribbon
+    }
 
     /// То же по заданной раскладке — её выбирают плиткой в меню. Ячеек меньше, чем окон
     /// («4» при пяти окнах), — хвост порядка не трогаем вовсе, окна стоят где стояли.
@@ -1094,22 +1116,42 @@ final class ClaudeActions {
     /// прогоне три окна сузились по сетке, а с места не сдвинулись, и Элвис видел ровно это
     /// («в ширину уменьшились, больше ничего не произошло»). Поэтому после записи читаем рамку
     /// назад и повторяем до трёх раз с паузой; порядок «позиция → размер → позиция»: смена
-    /// размера у правого края может снова сдвинуть окно. Сон короткий и только при промахе —
-    /// в штатном случае вызов остаётся мгновенным.
+    /// размера у правого края может снова сдвинуть окно.
     static let frameRetries = 3
     static let frameRetryPause: TimeInterval = 0.25
     static let frameTolerance: CGFloat = 2
 
+    /// Чем откладывается повтор. Живьём — главная очередь ходом вперёд; раньше здесь стоял
+    /// `Thread.sleep`, и на пяти окнах приложение (меню-бар, плашки, хоткеи) замирало до
+    /// 2,5 с — сон умножался на число окон, а через `setFrame` ходят и «Расставить», и канал
+    /// «Пимп», и возврат раскладок (#5557). В тестах расписание подставляется.
+    static var frameSchedule: (TimeInterval, @escaping () -> Void) -> Void = { delay, block in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
+    }
+
+    /// `true` — рамка встала с первого захода. Не встала — повтор уходит на `frameSchedule`,
+    /// и ответ этого вызова про него ничего не знает (окна двигают, не спрашивая результат).
     @discardableResult
-    static func setFrame(_ window: AXUIElement, _ frame: CGRect) -> Bool {
-        for attempt in 0..<frameRetries {
-            AX.set(window, kAXPositionAttribute, point: frame.origin)
-            AX.set(window, kAXSizeAttribute, size: frame.size)
-            AX.set(window, kAXPositionAttribute, point: frame.origin)
-            if let now = AX.frame(window), frameMatches(now, frame) { return true }
-            if attempt + 1 < frameRetries { Thread.sleep(forTimeInterval: frameRetryPause) }
-        }
-        return AX.frame(window).map { frameMatches($0, frame) } ?? false
+    static func setFrame(_ window: AXUIElement, _ frame: CGRect, attempt: Int = 0) -> Bool {
+        AX.set(window, kAXPositionAttribute, point: frame.origin)
+        AX.set(window, kAXSizeAttribute, size: frame.size)
+        AX.set(window, kAXPositionAttribute, point: frame.origin)
+        let now = AX.frame(window)
+        if let now = now, frameMatches(now, frame) { return true }
+        guard attempt + 1 < frameRetries, needsFrameRetry(now: now, want: frame) else { return false }
+        frameSchedule(frameRetryPause) { setFrame(window, frame, attempt: attempt + 1) }
+        return false
+    }
+
+    /// Стоит ли повторять: только когда не встала ПОЗИЦИЯ — её Electron глотает у окна,
+    /// которое ещё едет. Размер он зажимает осознанно (минимальная ширина окна), и на узкой
+    /// сетке повторы уходили на него впустую — весь бюджет на каждое окно (#5733). Рамки
+    /// нет вовсе (окно закрылось, AX молчит) — повторять некому.
+    static func needsFrameRetry(now: CGRect?, want: CGRect,
+                                tolerance: CGFloat = frameTolerance) -> Bool {
+        guard let now = now else { return false }
+        return abs(now.origin.x - want.origin.x) > tolerance
+            || abs(now.origin.y - want.origin.y) > tolerance
     }
 
     static func frameMatches(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = frameTolerance) -> Bool {
@@ -1127,12 +1169,36 @@ final class ClaudeActions {
     func pimpWindows() -> [(id: CGWindowID, window: AXUIElement, title: String, frame: CGRect)] {
         guard let pid = app.pid else { return [] }
         var out: [(id: CGWindowID, window: AXUIElement, title: String, frame: CGRect)] = []
+        var pairs: [CGWindowID: AXUIElement] = [:]
         for entry in ClaudeApp.onScreenFrames(pid: pid) {
-            guard let window = app.window(matching: entry.frame) else { continue }
-            out.append((id: entry.id, window: window,
-                        title: AX.string(window, kAXTitleAttribute) ?? "", frame: entry.frame))
+            guard let pair = ClaudeActions.pimpPair(byFrame: app.window(matching: entry.frame),
+                                                    remembered: pimpPairs[entry.id],
+                                                    quartz: entry.frame) else { continue }
+            pairs[entry.id] = pair.window
+            out.append((id: entry.id, window: pair.window,
+                        title: AX.string(pair.window, kAXTitleAttribute) ?? "", frame: pair.frame))
         }
+        pimpPairs = pairs
         return out
+    }
+
+    /// Пары «номер окна Quartz → AX-окно» с прошлого обхода (#5684). Пропавшие с экрана окна
+    /// в памяти не остаются: карта собирается заново на каждом обходе.
+    private var pimpPairs: [CGWindowID: AXUIElement] = [:]
+
+    /// Какое AX-окно отвечает записи `CGWindowList` и с какой рамкой: сперва совпадение по
+    /// рамке, а нет его — пара, запомненная по номеру окна, и её ЖИВАЯ рамка из AX.
+    /// Зачем: сразу после переезда `CGWindowList` ещё отдаёт СТАРЫЕ координаты, совпадения
+    /// не находится, и окно пропадало из списка целиком — на «расставь» сразу после «расставь»
+    /// канал отвечал «окон нет» (#5684, гейт WF21). Номер окна живёт, пока живо само окно.
+    /// Запомненная пара без рамки — окно закрылось, её забываем.
+    /// Чистая: AX сюда подаёт `pimpWindows`, а тесты — свои замыкания.
+    static func pimpPair(byFrame: AXUIElement?, remembered: AXUIElement?, quartz: CGRect,
+                         liveFrame: (AXUIElement) -> CGRect? = { AX.frame($0) })
+        -> (window: AXUIElement, frame: CGRect)? {
+        if let window = byFrame { return (window, quartz) }
+        guard let known = remembered, let live = liveFrame(known) else { return nil }
+        return (known, live)
     }
 
     /// Свёрнутые окна: их «Расставить» не трогает — канал только считает их в ответе,

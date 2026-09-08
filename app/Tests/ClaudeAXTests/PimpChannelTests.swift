@@ -1142,7 +1142,9 @@ final class PimpChannelTests: XCTestCase {
         rig.windows = [PimpWindow(id: 1, title: "Claude", chat: "local_main")]
         rig.saved = [
             WindowLayout(name: "Утро", at: rig.now, mode: .five, cells: [
-                LayoutCell(folder: "/tmp/Pimp", chat: "main", title: "Claude", cell: 0)]),
+                LayoutCell(folder: "/tmp/Pimp", chat: "main", title: "Claude", cell: 0),
+                // Место без ячейки в списке не считаем: вернётся оно ничем (#5728).
+                LayoutCell(folder: "/tmp/Vkus", chat: "local_v", title: "Вкуснофф", cell: nil)]),
             WindowLayout(name: "Разбор", at: rig.now.addingTimeInterval(-3600), mode: .ribbon,
                          cells: []),
         ]

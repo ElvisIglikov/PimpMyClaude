@@ -173,6 +173,9 @@ enum MenuModel {
     static let layoutOrder: [ArrangeLayout.Mode] = [.four, .five, .tenGrid, .ribbon]
     /// Раскладка на этом экране дала бы ячейки уже `minWindowWidth` — плитка серая.
     static let layoutTooSmallHint = "экран уже"
+    /// ⌥⌘A и «▦ Расставить» повторяют последнюю раскладку, а она бывает с чужого экрана
+    /// (#5733): на узком она дала бы налезающие окна. Кладём лентой и говорим плашкой.
+    static let arrangeTooSmallNotice = "Экран мал для этой сетки — разложил лентой"
 
     // MARK: - раскладки проектов (план WF41, решение Р5)
 
@@ -195,6 +198,9 @@ enum MenuModel {
     static let layoutSaveButton = "Сохранить"
     /// Окон Claude на экране нет — запоминать нечего.
     static let layoutNoWindowsAlert = "Не нашёл окон Claude — запоминать нечего"
+    /// Ни одно окно не попало в ячейку сетки: такая раскладка вернула бы ноль окон, и писать
+    /// её нечего (#5728). Те же слова, что у канала «Пимп» (`tools/pimp.py`).
+    static let layoutNotArrangedAlert = "Окна стоят не по сетке — сперва расставь их, потом запоминай раскладку"
     /// Возврат идёт по одному окну и занимает минуту и дольше — молчать нельзя.
     static let layoutRestoreNotice = "Возвращаю окна, по одному…"
     static let layoutBusyNotice = "Занят — открываю окна по прошлой просьбе"

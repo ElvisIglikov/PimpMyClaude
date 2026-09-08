@@ -9,28 +9,24 @@ description: «Пимп, открой…» — окна Claude из любого
 
 ## Как звать
 
-Через Bash. Путь к CLI НЕ набирай руками и не запоминай: он считается от самого скилла, поэтому
-работает у любого, кто поставил скилл через `tools/install-skill.sh` (у каждого свой каталог с
-репозиторием). Подставляй эту строку целиком, вместе с кавычками:
+Через Bash. Путь к CLI НЕ набирай руками и не запоминай чужой: он считается от самого скилла,
+поэтому работает у любого, у кого скилл поставлен через `tools/install-skill.sh` — у каждого свой
+каталог с репозиторием. Оболочка между вызовами не сохраняется, поэтому кусок `$(readlink …)`
+идёт в КАЖДУЮ команду целиком, вместе с кавычками:
 
 ```
-PIMP="$(dirname "$(readlink ~/.claude/skills/pimp || echo ~/.claude/skills/pimp)")/../tools/pimp.py"
+python3 "$(readlink ~/.claude/skills/pimp)/../../tools/pimp.py" open <проект> --at <место>
+python3 "$(readlink ~/.claude/skills/pimp)/../../tools/pimp.py" arrange [--layout <раскладка>] [--order <Проект,Проект>]
+python3 "$(readlink ~/.claude/skills/pimp)/../../tools/pimp.py" layouts
+python3 "$(readlink ~/.claude/skills/pimp)/../../tools/pimp.py" layout save <имя>
+python3 "$(readlink ~/.claude/skills/pimp)/../../tools/pimp.py" layout restore <имя> [--new]
+python3 "$(readlink ~/.claude/skills/pimp)/../../tools/pimp.py" projects [--status]
+python3 "$(readlink ~/.claude/skills/pimp)/../../tools/pimp.py" windows
 ```
 
-Оболочка между вызовами не сохраняется, поэтому в каждой команде путь считается заново:
-
-```
-python3 "$(dirname "$(readlink ~/.claude/skills/pimp || echo ~/.claude/skills/pimp)")/../tools/pimp.py" open <проект> --at <место>
-python3 "$(dirname "$(readlink ~/.claude/skills/pimp || echo ~/.claude/skills/pimp)")/../tools/pimp.py" arrange [--layout <раскладка>] [--order <Проект,Проект>]
-python3 "$(dirname "$(readlink ~/.claude/skills/pimp || echo ~/.claude/skills/pimp)")/../tools/pimp.py" layouts
-python3 "$(dirname "$(readlink ~/.claude/skills/pimp || echo ~/.claude/skills/pimp)")/../tools/pimp.py" layout save <имя>
-python3 "$(dirname "$(readlink ~/.claude/skills/pimp || echo ~/.claude/skills/pimp)")/../tools/pimp.py" layout restore <имя> [--new]
-python3 "$(dirname "$(readlink ~/.claude/skills/pimp || echo ~/.claude/skills/pimp)")/../tools/pimp.py" projects [--status]
-python3 "$(dirname "$(readlink ~/.claude/skills/pimp || echo ~/.claude/skills/pimp)")/../tools/pimp.py" windows
-```
-
-Ответ «нет такого файла» значит, что скилл лежит копией, а не симлинком: скажи об этом Элвису —
-чинится одним `bash <репозиторий>/tools/install-skill.sh`. Сам путь не выдумывай.
+Ответ «can't open file … No such file» значит, что скилл лежит копией, а не симлинком: скажи об
+этом Элвису — чинится одним `bash <репозиторий>/tools/install-skill.sh`. Путь не выдумывай и не
+подставляй чужой домашний каталог.
 
 На выход — одна строка по-русски (у `projects --status` — строка на проект); её и передай Элвису
 своими словами, ничего не додумывая.

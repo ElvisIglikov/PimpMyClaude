@@ -233,6 +233,103 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(ArrangeLayout.order(of: frames), [1, 0, 2])
     }
 
+    /// ⌥⌘A и «▦ Расставить» повторяют последнюю раскладку — а выбрана она бывает на другом,
+    /// более широком экране (#5733). Не влезла — кладём лентой и говорим плашкой: плитка в
+    /// меню такую раскладку и раньше гасила, канал «Пимп» отвечал `too-small`, и только у
+    /// хоткея проверки не было — окна налезали друг на друга.
+    func testArrangeFallsBackToRibbonWhenGridDoesNotFit() {
+        XCTAssertEqual(ClaudeActions.arrangeLayout(.five, fits: true), .five)
+        XCTAssertEqual(ClaudeActions.arrangeLayout(.five, fits: false), .ribbon)
+        XCTAssertEqual(ClaudeActions.arrangeLayout(.tenGrid, fits: false), .ribbon)
+        // Лента влезает всегда — её на ленту не подменяют и плашки про неё не бывает.
+        XCTAssertEqual(ClaudeActions.arrangeLayout(.ribbon, fits: true), .ribbon)
+        // Тот самый случай: экран Элвиса при минимуме окна 360 пятёрку уже не держит.
+        let laptop = CGRect(x: 0, y: 34, width: 1470, height: 860)
+        XCTAssertFalse(ArrangeLayout.fits(.five, in: laptop, minCellWidth: 360))
+        XCTAssertTrue(ArrangeLayout.fits(.ribbon, in: laptop, minCellWidth: 360))
+        XCTAssertTrue(MenuModel.arrangeTooSmallNotice.contains("лентой"))
+    }
+
+    /// «Посередине» у сетки с рядами — середина ПЕРВОГО ряда, а не всего порядка (#5560):
+    /// в «5×2» с девятью окнами середина всего порядка давала место 5, то есть начало
+    /// нижнего ряда, — а Элвис просил середину.
+    func testInsertIndexTakesMiddleOfFirstRow() {
+        // Лента рядов не задаёт — счёт прежний, как в WF36.
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .middle, count: 9), 5)
+        XCTAssertNil(ArrangeLayout.grid(of: .ribbon)?.cols)
+        // «5×2»: в первом ряду пять мест, середина — третье.
+        let cols = ArrangeLayout.grid(of: .tenGrid)?.cols
+        XCTAssertEqual(cols, 5)
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .middle, count: 9, columns: cols), 2)
+        // Окон меньше, чем мест в ряду, — считаем по окнам, как раньше.
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .middle, count: 2, columns: cols), 1)
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .middle, count: 3, columns: 4), 2)
+        // Края не двигаются: слева — первым, справа — последним во всём порядке.
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .left, count: 9, columns: cols), 0)
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .right, count: 9, columns: cols), 9)
+        // Мусорное число столбцов счёт не роняет.
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .middle, count: 4, columns: 0), 2)
+    }
+
+    /// Повторы `setFrame` больше не спят на главной нити (#5557): сон стоял в цикле по окнам
+    /// и умножался на их число — до 2,5 с замершего меню-бара на пяти окнах, а через тот же
+    /// `setFrame` ходят «Расставить», канал «Пимп» и возврат раскладок. И повторять стоит
+    /// только промах ПОЗИЦИИ: размер Electron зажимает осознанно (#5733).
+    func testSetFrameRetriesWithoutSleepingOnMainThread() {
+        let want = CGRect(x: 100, y: 100, width: 800, height: 600)
+        // Позиция не встала — окно ещё едет, повтор нужен (грабли гейта WF36).
+        XCTAssertTrue(ClaudeActions.needsFrameRetry(now: CGRect(x: 140, y: 100, width: 800, height: 600),
+                                                    want: want))
+        // Встала позиция, но не размер — это Electron, повторять нечего.
+        XCTAssertFalse(ClaudeActions.needsFrameRetry(now: CGRect(x: 100, y: 100, width: 360, height: 600),
+                                                     want: want))
+        // Допуск тот же, что у `frameMatches`.
+        XCTAssertFalse(ClaudeActions.needsFrameRetry(now: CGRect(x: 102, y: 98, width: 800, height: 600),
+                                                     want: want))
+        // Рамки нет вовсе (окно закрылось) — повторять некому.
+        XCTAssertFalse(ClaudeActions.needsFrameRetry(now: nil, want: want))
+
+        // Вызов на окне, которого нет: AX молчит, и мы возвращаемся сразу — до WF43 здесь
+        // сгорали два `Thread.sleep` по 0,25 с прямо в главной нити.
+        var scheduled: [TimeInterval] = []
+        let live = ClaudeActions.frameSchedule
+        ClaudeActions.frameSchedule = { delay, _ in scheduled.append(delay) }
+        defer { ClaudeActions.frameSchedule = live }
+        let started = Date()
+        XCTAssertFalse(ClaudeActions.setFrame(AXUIElementCreateApplication(999_999), want))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.1, "повторы всё ещё спят на нити")
+        XCTAssertTrue(scheduled.isEmpty, "мёртвому окну повтор не назначаем")
+        XCTAssertEqual(ClaudeActions.frameRetryPause, 0.25)
+    }
+
+    /// Сразу после переезда `CGWindowList` ещё отдаёт СТАРЫЕ рамки: совпадения по рамке нет,
+    /// и окно пропадало из списка целиком — «расставь» сразу после «расставь» отвечала
+    /// «окон нет» (#5684, гейт WF21). Теперь берётся пара, запомненная по номеру окна.
+    func testPimpPairKeepsWindowWhileQuartzCatchesUp() throws {
+        let moved = AXUIElementCreateApplication(999_998)
+        let other = AXUIElementCreateApplication(999_997)
+        let stale = CGRect(x: 0, y: 34, width: 900, height: 700)
+        let live = CGRect(x: 735, y: 34, width: 735, height: 860)
+
+        // Совпало по рамке — берём его и координаты Quartz, как раньше.
+        let byFrame = try XCTUnwrap(ClaudeActions.pimpPair(byFrame: other, remembered: moved,
+                                                           quartz: stale, liveFrame: { _ in live }))
+        XCTAssertTrue(CFEqual(byFrame.window, other))
+        XCTAssertEqual(byFrame.frame, stale)
+
+        // Не совпало (Quartz отстал) — запомненная пара и её ЖИВАЯ рамка из AX.
+        let remembered = try XCTUnwrap(ClaudeActions.pimpPair(byFrame: nil, remembered: moved,
+                                                              quartz: stale, liveFrame: { _ in live }))
+        XCTAssertTrue(CFEqual(remembered.window, moved))
+        XCTAssertEqual(remembered.frame, live)
+
+        // Пара без рамки — окно закрылось; пары не было вовсе — записи нет (как до WF43).
+        XCTAssertNil(ClaudeActions.pimpPair(byFrame: nil, remembered: moved, quartz: stale,
+                                            liveFrame: { _ in nil }))
+        XCTAssertNil(ClaudeActions.pimpPair(byFrame: nil, remembered: nil, quartz: stale,
+                                            liveFrame: { _ in live }))
+    }
+
     // MARK: - клавиши
 
     func testMenuKeysMatchReadme() {
@@ -2024,6 +2121,34 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(above.y, 25)
     }
 
+    /// Новое окно рождается на экране ОКНА-ИСТОЧНИКА (#5731): `NSScreen.main` — это экран
+    /// активного окна любого приложения, и с ним «🪟 Новое окно» и «Обкэшить» из попапа
+    /// уезжали на второй монитор — та же болезнь, что чинили у «Расставить» 08.09.
+    func testPopoutOriginStaysOnSourceWindowScreen() {
+        let laptop = CGRect(x: 0, y: 34, width: 1470, height: 860)
+        let external = CGRect(x: 1470, y: 0, width: 1920, height: 1080)
+        let source = CGRect(x: 2000, y: 200, width: 900, height: 700)
+        // Экран источника выбирает тот же `pick`, что и «Расставить».
+        XCTAssertEqual(Screens.pick(screens: [laptop, external], for: [source]), 1)
+
+        let right = ClaudeActions.popoutOrigin(near: source, area: external)
+        XCTAssertEqual(right.x, 2040) // уступ 40/40 на своём экране ничем не обрезан
+        XCTAssertEqual(right.y, 240)
+        // По главному экрану ту же точку прижало бы к правому краю ноутбука — это и был #5731.
+        let wrong = ClaudeActions.popoutOrigin(near: source, area: laptop)
+        XCTAssertEqual(wrong.x, 570) // 1470 − 900
+        XCTAssertLessThan(CGFloat(wrong.x), external.minX)
+
+        // Без подсказки экран считается сам, а не берётся «как есть»: точка обрезана рабочей
+        // областью того экрана, где стоит источник (на одном мониторе он единственный).
+        if let area = Screens.usableFrame(holding: [source]) {
+            let auto = ClaudeActions.popoutOrigin(near: source)
+            XCTAssertGreaterThanOrEqual(CGFloat(auto.x), area.minX)
+            XCTAssertLessThanOrEqual(CGFloat(auto.x),
+                                     max(area.minX, area.maxX - ClaudeActions.popoutWindowSize.width))
+        }
+    }
+
     func testWorkflowKitLandsInApplicationSupport() throws {
         // Комплект из бандла (в тесте — из репозитория) ложится рядом с command.json.
         let source = ClaudeAXTests.repositoryRoot
@@ -3547,6 +3672,38 @@ final class ClaudeAXTests: XCTestCase {
         let plain = try autoPaint(menuConfig())
         XCTAssertNil(plain.items.first { $0.title == MenuModel.autoPaintLiveHint })
         XCTAssertTrue(plain.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.isEnabled })
+    }
+
+    /// То же и у «🎨 Цвет ▸» (#5742): при живых цветах выбор темы был мёртвой кнопкой —
+    /// примерка под курсором видна, клик записывается в карту, а крутёж перекрывает его
+    /// через четверть секунды, и догадаться, что мешает, неоткуда. Гасим список и говорим.
+    func testColorListDimsWhileLiveColorsRun() throws {
+        var config = menuConfig()
+        config.liveColors = LiveColorsState(on: true, mode: .sync, period: 300, tone: .dark, epoch: 1)
+        func colors(_ config: MinimizeMenu.MenuConfig, all: Bool) throws -> NSMenu {
+            let appearance = try XCTUnwrap(MinimizeMenu.build(config: config).items
+                .first { $0.title == MenuModel.appearanceTitle }?.submenu)
+            let level = all
+                ? try XCTUnwrap(appearance.items
+                    .first { $0.title == MenuModel.allWindowsTitle }?.submenu)
+                : appearance
+            return try XCTUnwrap(level.items.first { $0.title == MenuModel.colorTitle }?.submenu)
+        }
+        // И у окна, и у «Всем окнам ▸» (там в списке ещё и МОИ ТЕМЫ — они тоже темы).
+        for all in [false, true] {
+            let dimmed = try colors(config, all: all)
+            XCTAssertEqual(dimmed.items.first?.title, MenuModel.autoPaintLiveHint)
+            XCTAssertNotNil(dimmed.items.first { $0.title == MenuModel.themeResetTitle })
+            let clickable = dimmed.items.compactMap { $0 as? BlockMenuItem }
+            XCTAssertFalse(clickable.isEmpty)
+            XCTAssertTrue(clickable.allSatisfy { !$0.isEnabled },
+                          "\(all ? "всем окнам" : "окну"): пункт цвета остался живым")
+        }
+
+        // Крутёж выключен — подсказки нет, весь список работает как раньше.
+        let plain = try colors(menuConfig(), all: true)
+        XCTAssertNil(plain.items.first { $0.title == MenuModel.autoPaintLiveHint })
+        XCTAssertTrue(plain.items.compactMap { $0 as? BlockMenuItem }.allSatisfy { $0.isEnabled })
     }
 
     func testLiveColorsGoOutAsOneCommandAndAreRemembered() throws {

@@ -592,10 +592,14 @@ final class PimpChannel {
     private func row(_ place: PimpPlace, window: PimpWindow, in windows: [PimpWindow]) -> CGRect? {
         let others = windows.indices.filter { windows[$0].id != window.id }
         let order = ArrangeLayout.order(of: others.map { windows[$0].frame })
-        let index = ArrangeLayout.insertIndex(of: place, count: others.count)
+        let mode = seats.arrangeMode()
+        // «Посередине» у сетки с рядами — середина ПЕРВОГО ряда (#5560): по всему порядку
+        // окно уезжало в нижний ряд, хотя Элвис просил середину.
+        let index = ArrangeLayout.insertIndex(of: place, count: others.count,
+                                              columns: ArrangeLayout.grid(of: mode)?.cols)
         let full = ArrangeLayout.insert(order: order, count: others.count, at: index)
         let ids = full.map { $0 == others.count ? window.id : windows[others[$0]].id }
-        return seats.arrange(ids, seats.arrangeMode()).windows.first { $0.id == window.id }?.frame
+        return seats.arrange(ids, mode).windows.first { $0.id == window.id }?.frame
     }
 
     // MARK: - раскладки проектов (план WF41)
@@ -1097,13 +1101,15 @@ final class PimpChannel {
     }
 
     /// Поля ответа `layouts` (план WF41): имя, время, раскладка и сколько в ней мест.
+    /// «Мест» — тех, у кого есть номер ячейки: столько окон и вернётся, и ровно это число
+    /// назвал `layout-save` при записи (#5728).
     static func layoutsFields(_ list: [WindowLayout]) -> [(key: String, value: CommandValue)] {
         [(key: "layouts", value: .array(list.map { layout in
             .object([
                 (key: "name", value: .string(layout.name)),
                 (key: "at", value: .string(stampText(layout.at))),
                 (key: "mode", value: .string(layout.mode.rawValue)),
-                (key: "cells", value: .number(layout.cells.count)),
+                (key: "cells", value: .number(LayoutsStore.placedCells(layout))),
             ])
         }))]
     }
