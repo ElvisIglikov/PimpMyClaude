@@ -504,8 +504,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
         autoAllow.history.map { "\($0.at)  \($0.heading)  [\($0.button)] ok=\($0.ok)" }
     }
 
-    /// Команды и действия, которые авто-Allow никогда не подтверждает (#5736; сравнение по
-    /// началу команды диалога, а не по всему заголовку — #5779).
+    /// Команды и действия, которые авто-Allow никогда не подтверждает (#5736; сравнение с
+    /// командой диалога, а не со всем заголовком — #5779; слово ловится в любом её месте,
+    /// а имена инструментов живут отдельным списком — #5786).
     public var blockedHeadings: [String] {
         get { autoAllow.blockActionPatterns }
         set { autoAllow.blockActionPatterns = newValue }

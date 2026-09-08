@@ -150,6 +150,26 @@ final class ClaudeApp {
         }
     }
 
+    /// Служебное окно Electron, а не окно чата (#5791). У КАЖДОГО экземпляра Claude в выдаче
+    /// оконного сервера лежит пара безымянных окон 800×600 по координатам 335,164, и по
+    /// одному размеру их от настоящего чата не отличить (замер ElvisOS); имя окна сервер
+    /// отдаёт только при разрешении «Запись экрана», значит решать по имени нельзя вовсе.
+    /// Заодно мимо идут прозрачные (палитры Electron держат alpha 0) и мелочь меньше 200×150 —
+    /// прежний порог 120×120 пускал сюда и то, и другое, а «Обкэшить» отдаёт рамку донора
+    /// ПЕРВОМУ незнакомому окну и потом закрывает донора. Чистая — её и гоняют тесты.
+    static let serviceWindowFrame = CGRect(x: 335, y: 164, width: 800, height: 600)
+    static let minWindowSize = CGSize(width: 200, height: 150)
+    static let minWindowAlpha: CGFloat = 0.05
+
+    static func isServiceWindow(frame: CGRect, alpha: CGFloat) -> Bool {
+        if alpha < minWindowAlpha { return true }
+        if frame.width < minWindowSize.width || frame.height < minWindowSize.height { return true }
+        return abs(frame.minX - serviceWindowFrame.minX) < 1
+            && abs(frame.minY - serviceWindowFrame.minY) < 1
+            && abs(frame.width - serviceWindowFrame.width) < 1
+            && abs(frame.height - serviceWindowFrame.height) < 1
+    }
+
     /// Рамки окон Claude спереди назад (решение 7 плана: геометрия из CGWindowList, а не из AX —
     /// один вызов на тик вместо двух AX-обращений на каждое окно).
     /// Заголовки окон отсюда не берём: `kCGWindowName` требует разрешения на запись экрана.
@@ -163,18 +183,43 @@ final class ClaudeApp {
             guard let number = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { continue }
             guard let bounds = info[kCGWindowBounds as String] as? NSDictionary else { continue }
             guard let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { continue }
-            // Служебные окошки Electron мимо: настоящее окно Claude не уже 360 px.
-            guard rect.width >= 120, rect.height >= 120 else { continue }
+            let alpha = (info[kCGWindowAlpha as String] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 1
+            guard !isServiceWindow(frame: rect, alpha: alpha) else { continue }
             out.append(ClaudeWindowFrame(id: number, frame: rect))
         }
         return out
     }
 
-    /// `hs.window:focus()` — сделать окно главным и поднять приложение.
+    /// Шаг подъёма окна вперёд.
+    enum FocusStep: Equatable {
+        /// Активировать сам Claude.
+        case activate
+        /// `kAXRaiseAction` — поднять окно среди окон Claude.
+        case raise
+        /// `kAXMain` + `kAXFocused`.
+        case main
+        case focused
+    }
+
+    /// Порядок подъёма окна вперёд. Чистая величина — её и гоняют тесты.
+    ///
+    /// Активация ПЕРВОЙ (#5791): `kAXRaiseAction` поднимает окно только среди окон своего
+    /// приложения, и пока Claude не активирован, его окна так и остаются под чужими — у
+    /// ElvisOS это выглядело как «нажимаю, появляется одно окно, надо жать раза три».
+    /// Одного подъёма мало и внутри Claude: без `kAXMain` и `kAXFocused` Electron возвращает
+    /// вперёд своё прежнее ключевое окно.
+    static let focusSteps: [FocusStep] = [.activate, .raise, .main, .focused]
+
+    /// `hs.window:focus()` — поднять приложение и сделать окно главным.
     func focus(window: AXUIElement) {
-        AX.set(window, kAXMainAttribute, bool: true)
-        AX.perform(window, kAXRaiseAction)
-        running()?.activate(options: [])
+        for step in ClaudeApp.focusSteps {
+            switch step {
+            case .activate: running()?.activate(options: [])
+            case .raise: AX.perform(window, kAXRaiseAction)
+            case .main: AX.set(window, kAXMainAttribute, bool: true)
+            case .focused: AX.set(window, kAXFocusedAttribute, bool: true)
+            }
+        }
     }
 
     /// `hs.eventtap.keyStroke(mods, key, 0, app)` — событие адресуется процессу Claude,

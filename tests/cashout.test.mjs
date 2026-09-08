@@ -76,7 +76,7 @@ test("главное окно пишет запись без адресата и
   assert.equal(main.counters.intervals, before + 1, "сторож вставки на месте — ⌘N откроет чат в этом же окне");
   assert.deepEqual(plain(main.api.status().cashout),
     { record: true, to: null, title: null, stampedAt: null, refusal: null,
-      delivery: "ждём", files: { want: 0, sent: 0, done: 0 } },
+      delivery: "ждём", deliveryAt: null, files: { want: 0, sent: 0, done: 0 } },
     "запись есть, доезд ещё не подтверждён");
 });
 
@@ -138,6 +138,25 @@ test("перенос ложится в окно, узнанное по заго�
   });
   assert.equal(stub.inner.tryPasteCashout(), "чат не опознан", "по «Claude» окно не опознаётся");
   assert.notEqual(stored(stub), null, "чужой перенос не съеден");
+});
+
+// Знаешь свой номер чата — заголовок больше не спасает (#5787). Заголовок
+// попапа это снимок имени чата на момент выноса: чат переименовали, и то же имя
+// носит уже другое окно — чужой перенос уезжал бы в разговор, где Элвис работает.
+test("свой id сильнее заголовка: чужой перенос не присваивается", () => {
+  const popup = page({
+    href: POPOUT, title: "VkusnoffKz 3", draft: "", answer: "",
+    storage: {
+      // Заголовок совпал с записью, а адресована она другому чату.
+      local: { [CASHOUT_KEY]: stamped({ to: "local_other", title: "VkusnoffKz 3" }) },
+      session: { "myclaude-chat-v1": JSON.stringify({ id: "local_new", title: "VkusnoffKz 3" }) },
+    },
+  });
+  assert.equal(popup.inner.tryPasteCashout(), "перенос не в это окно",
+    "свой номер чата известен и не сошёлся — запись не наша");
+  assert.equal(popup.parts.editor.textContent, "", "поле не тронуто");
+  assert.notEqual(stored(popup), null, "и запись цела: её ждёт своё окно");
+  assert.equal(popup.api.status().cashout.delivery, "ждём", "подтверждать этому окну нечего");
 });
 
 test("запись «ждёт адресата» не вставляется никуда", () => {
@@ -346,18 +365,31 @@ test("приговор прошлого переноса не подтвержд
     "и после чистки: чужой перенос это окно не подтверждает");
 });
 
-test("свой приговор живёт дольше ожидания приложения, но не вечно", () => {
+// Щель, которую закрывает #5788: «Обкэшить» нажали, а команда до страницы не
+// дошла — записи не создал никто. Приложение спрашивает все окна, и соседнее,
+// куда перенос лёг минуту назад, отвечало «вставлено» — донора закрывали по
+// ответу про ПРОШЛЫЙ перенос, и текст Элвиса пропадал. Слово живёт ровно
+// столько, сколько прожила бы сама запись, и названо вместе со своей записью.
+test("приговор живёт не дольше самой записи", () => {
   const popup = page({
     href: POPOUT, title: "VkusnoffKz 3", draft: "", answer: "",
     storage: { local: { [CASHOUT_KEY]: stamped() } },
   });
+  const at = JSON.parse(popup.win.localStorage.getItem(CASHOUT_KEY)).at;
   popup.inner.tryPasteCashout();
   popup.parts.editor.__text = `${ANSWER}\n\n${DRAFT}`;
   step(popup);
-  // Приложение ждёт доезда до 120 с (ClaudeActions.cashoutWaitSeconds) — всё это
-  // время слово обязано стоять, даже когда запись уже стёрта.
-  jump(popup, 120000);
+  assert.equal(popup.api.status().cashout.delivery, "вставлено");
+  assert.equal(popup.api.status().cashout.deliveryAt, at, "слово названо вместе со своей записью");
+
+  // Круг probe приложения — секунды: всё это время слово стоит, хотя запись уже
+  // стёрта (её чистит сам доезд).
+  jump(popup, 30000);
   assert.equal(popup.api.status().cashout.delivery, "вставлено", "приложение успевает услышать доезд");
-  jump(popup, 151000);
-  assert.equal(popup.api.status().cashout.delivery, "", "а через срок жизни записи слово гаснет само");
+  // А дальше запись переноса уже не прожила бы: штампу больше 60 с
+  // (CASHOUT_STAMP_FRESH_MS), значит и подтверждать этим словом нечего.
+  jump(popup, 31000);
+  assert.equal(popup.api.status().cashout.delivery, "",
+    "запись столько не живёт — и слово о ней замолкает");
+  assert.equal(popup.api.status().cashout.deliveryAt, null, "и записи, о которой оно было, тоже нет");
 });

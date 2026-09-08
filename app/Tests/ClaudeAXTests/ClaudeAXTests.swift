@@ -344,6 +344,82 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(ClaudeActions.frameRetryPause, 0.25)
     }
 
+    /// Урок ElvisOS (#5791, пункт «а»): СВЕЖЕМУ окну рамка ставится «размер → позиция →
+    /// размер». Система урезает запомненную с прошлого раза высоту по нижнему краю экрана
+    /// (под Dock), а повторный размер после позиции глотает — нижний ряд стабильно получал
+    /// 488 точек вместо 434. Окну, которое уже стоит на экране, порядок прежний: последним
+    /// словом обязана быть позиция, иначе смена размера у правого края снова его сдвинет.
+    func testFreshWindowGetsSizeBeforePosition() {
+        let want = CGRect(x: 100, y: 500, width: 700, height: 434)
+        XCTAssertEqual(ClaudeActions.frameSteps(want, fresh: true),
+                       [.size(want.size), .position(want.origin), .size(want.size)])
+        XCTAssertEqual(ClaudeActions.frameSteps(want, fresh: false),
+                       [.position(want.origin), .size(want.size), .position(want.origin)])
+        // Порядок по умолчанию — прежний: «Расставить» и канал «Пимп» ничего не заметили.
+        XCTAssertEqual(ClaudeActions.frameSteps(want, fresh: false), {
+            var steps: [ClaudeActions.FrameStep] = []
+            steps.append(.position(want.origin))
+            steps.append(.size(want.size))
+            steps.append(.position(want.origin))
+            return steps
+        }())
+        // Повтор идёт тем же порядком: `fresh` доезжает до следующего захода.
+        var scheduled = 0
+        let live = ClaudeActions.frameSchedule
+        ClaudeActions.frameSchedule = { _, _ in scheduled += 1 }
+        defer { ClaudeActions.frameSchedule = live }
+        XCTAssertFalse(ClaudeActions.setFrame(AXUIElementCreateApplication(999_999), want,
+                                              fresh: true))
+        XCTAssertEqual(scheduled, 0, "мёртвому окну повтор не назначаем")
+    }
+
+    /// Урок ElvisOS (#5791, пункт «в»): у каждого экземпляра Claude в выдаче оконного сервера
+    /// лежит пара безымянных служебных окон 800×600 по координатам 335,164 — по размеру их от
+    /// чата не отличить, а имя сервер отдаёт только при разрешении «Запись экрана». Плюс
+    /// прозрачные и мелочь меньше 200×150: прежний порог 120×120 пускал их все, а «Обкэшить»
+    /// отдаёт рамку донора ПЕРВОМУ незнакомому окну и потом закрывает донора.
+    func testServiceWindowsAreNotTakenForChats() {
+        XCTAssertTrue(ClaudeApp.isServiceWindow(frame: CGRect(x: 335, y: 164, width: 800, height: 600),
+                                                alpha: 1))
+        XCTAssertTrue(ClaudeApp.isServiceWindow(frame: CGRect(x: 100, y: 100, width: 700, height: 500),
+                                                alpha: 0))
+        XCTAssertTrue(ClaudeApp.isServiceWindow(frame: CGRect(x: 100, y: 100, width: 180, height: 500),
+                                                alpha: 1), "мелочь по ширине")
+        XCTAssertTrue(ClaudeApp.isServiceWindow(frame: CGRect(x: 100, y: 100, width: 700, height: 140),
+                                                alpha: 1), "мелочь по высоте")
+        // Настоящее окно чата ровно того же размера, но в другом месте экрана — трогать нельзя.
+        XCTAssertFalse(ClaudeApp.isServiceWindow(frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                                                 alpha: 1))
+        XCTAssertFalse(ClaudeApp.isServiceWindow(frame: CGRect(x: 335, y: 164, width: 294, height: 900),
+                                                 alpha: 1), "узкая ячейка раскладки — это чат")
+        // Порог прозрачности — граница, а не «почти ноль»: окно чата с лёгкой прозрачностью
+        // окном чата и остаётся.
+        XCTAssertTrue(ClaudeApp.isServiceWindow(frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                                                alpha: 0.04))
+        XCTAssertFalse(ClaudeApp.isServiceWindow(frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                                                 alpha: 0.05))
+        XCTAssertEqual(ClaudeApp.serviceWindowFrame, CGRect(x: 335, y: 164, width: 800, height: 600))
+        XCTAssertEqual(ClaudeApp.minWindowSize, CGSize(width: 200, height: 150))
+        XCTAssertEqual(ClaudeApp.minWindowAlpha, 0.05)
+    }
+
+    /// Урок ElvisOS (#5791, пункт «б»): `kAXRaiseAction` поднимает окно только среди окон
+    /// своего приложения — пока Claude не активирован, его окна остаются под чужими
+    /// («нажимаю, появляется одно окно, надо жать раза три»). Значит активация ПЕРВОЙ.
+    /// И одного подъёма мало внутри самого Claude: без `kAXMain` и `kAXFocused` Electron
+    /// возвращает вперёд своё прежнее ключевое окно.
+    func testFocusActivatesBeforeRaising() {
+        let steps = ClaudeApp.focusSteps
+        XCTAssertEqual(steps.first, .activate, "подъём до активации не поднимает над чужими")
+        let raise = try? XCTUnwrap(steps.firstIndex(of: .raise))
+        let activate = try? XCTUnwrap(steps.firstIndex(of: .activate))
+        XCTAssertNotNil(raise)
+        XCTAssertNotNil(activate)
+        if let raise = raise, let activate = activate { XCTAssertLessThan(activate, raise) }
+        XCTAssertTrue(steps.contains(.main))
+        XCTAssertTrue(steps.contains(.focused))
+    }
+
     /// Сразу после переезда `CGWindowList` ещё отдаёт СТАРЫЕ рамки: совпадения по рамке нет,
     /// и окно пропадало из списка целиком — «расставь» сразу после «расставь» отвечала
     /// «окон нет» (#5684, гейт WF21). Теперь берётся пара, запомненная по номеру окна.
@@ -2479,6 +2555,75 @@ final class ClaudeAXTests: XCTestCase {
         let auto = AutoAllow(app: ClaudeApp(), hud: HUD())
         XCTAssertEqual(auto.timeoutCount, 0)
         XCTAssertEqual(auto.blockedCount, 0)
+    }
+
+    /// #5786: опасное ловится в ЛЮБОМ месте команды, а не только в её начале. До этого
+    /// «git rm -r src» и «find . -delete» проходили молча — слово стояло в середине; ключи
+    /// с дефисами не читались вовсе. Имя инструмента проверяется целиком: у Элвиса боевая
+    /// касса, и `kaspi_payment_create` жать самому нельзя.
+    func testAutoAllowCatchesDangerAnywhereInCommand() {
+        let auto = AutoAllow(app: ClaudeApp(), hud: HUD())
+        let list = auto.blockActionPatterns
+        let tools = auto.blockToolPatterns
+        for heading in ["Allow Bash to run git rm -r src?",
+                        "Allow Bash to run find . -delete?",
+                        "Allow Bash to run find . -name '*.log' --delete?",
+                        "Allow Bash to run rm -rf build?",
+                        "Allow Bash to run sudo rm -rf /?",
+                        // Перенаправление затирает файл целиком.
+                        "Allow Bash to run echo hi > /etc/hosts?",
+                        "Allow Bash to run cat a.txt >> b.txt?",
+                        // Склейка без пробелов — тоже цепочка команд.
+                        "Allow Bash to run cd build&&rm -rf *?",
+                        // Имя инструмента: опасное слово в СЕРЕДИНЕ имени.
+                        "Claude wants to use kaspi_payment_create",
+                        "Allow Claude to use stripe_refund_create?",
+                        "Allow Claude to use mcp__kaspi__invoice_send?"] {
+            XCTAssertTrue(AutoAllow.isBlocked(heading: heading, patterns: list, tools: tools),
+                          heading)
+        }
+        // И ни одного нового немого диалога: слово внутри ИМЕНИ командой не считается.
+        for heading in ["Claude wants to read refunds.md",
+                        "Claude wants to edit invoice.ts",
+                        "Allow Read of delete-old-orders.sql?",
+                        "Allow Bash to run cat payments/README.md?",
+                        "Claude wants to write src/payment-form.tsx",
+                        "Allow Bash to run npm run build --watch?",
+                        // Склейка потоков — не запись в файл: без неё не обходится ни один прогон.
+                        "Allow Bash to run swift test 2>&1 | tail -5?",
+                        // Стрелка в тексте перенаправлением не считается.
+                        "Allow Bash to run node -e 'a=>a'?",
+                        "Claude wants to use form_submit",
+                        "Claude wants to use Read"] {
+            XCTAssertFalse(AutoAllow.isBlocked(heading: heading, patterns: list, tools: tools),
+                           heading)
+        }
+        // Пустой список команд по-прежнему значит «подтверждать всё», как до #5736.
+        XCTAssertFalse(AutoAllow.isBlocked(heading: "rm -rf /", patterns: [], tools: []))
+    }
+
+    /// Разбор команды на слова и её приметы — чистые куски правила #5786. Ведущие дефисы
+    /// ключей снимаются, склейки распадаются, а имя инструмента отличается от имени файла
+    /// тем, что стоит одно: без глагола впереди, без пути и без расширения.
+    func testAutoAllowSplitsCommandIntoWords() {
+        XCTAssertEqual(AutoAllow.words(of: "git rm -r src"), ["git", "rm", "r", "src"])
+        XCTAssertEqual(AutoAllow.words(of: "find . --delete"), ["find", ".", "delete"])
+        XCTAssertEqual(AutoAllow.words(of: "cd build&&rm -rf *"), ["cd", "build", "rm", "rf", "*"])
+        XCTAssertTrue(AutoAllow.hasRedirect("echo hi > file"))
+        XCTAssertTrue(AutoAllow.hasRedirect("cat a >> b"))
+        XCTAssertFalse(AutoAllow.hasRedirect("node -e 'a=>b'"))
+        XCTAssertFalse(AutoAllow.hasRedirect("test a->b"))
+        XCTAssertFalse(AutoAllow.hasRedirect("test a >= b"))
+        XCTAssertFalse(AutoAllow.hasRedirect("swift test 2>&1"), "склейка потоков — не файл")
+        XCTAssertFalse(AutoAllow.hasRedirect("swift test > &1"))
+        XCTAssertTrue(AutoAllow.containsPhrase("git push --force", "git push"))
+        XCTAssertFalse(AutoAllow.containsPhrase("git pushes nothing", "git push"))
+        XCTAssertEqual(AutoAllow.toolName(of: "kaspi_payment_create"), "kaspi_payment_create")
+        XCTAssertNil(AutoAllow.toolName(of: "read refunds.md"), "два слова — это не инструмент")
+        XCTAssertNil(AutoAllow.toolName(of: "invoice.ts"), "расширение — это файл")
+        XCTAssertNil(AutoAllow.toolName(of: "src/payment.ts"), "путь — это файл")
+        XCTAssertTrue(AutoAllow.looksLikeFileName("delete-old-orders.sql"))
+        XCTAssertFalse(AutoAllow.looksLikeFileName("kaspi_payment_create"))
     }
 
     /// Сторож (критик В2 плана WF16 — повтор блокера Б1 из WF14): подменю не должно стоить

@@ -27,18 +27,35 @@ final class AutoAllow {
     /// Элвиса по странице ревизии, вариант A вопроса 7 — #5736). Список короткий и живёт в
     /// коде: настроек и панелей у него нет.
     ///
-    /// Сравнение — с НАЧАЛОМ команды, которую диалог подтверждает (`action(of:)` + `isBlocked`),
-    /// а не с любым местом заголовка. До #5779 слово ловилось где угодно, и «Claude wants to
-    /// read refunds.md» глушил авто-Allow на ровном месте: у VkusnoffKz оплаты, счета и
-    /// возвраты — это имена файлов в каждом втором вопросе. Теперь ловятся команды (`rm -rf …`,
-    /// `delete from …`) и имена инструментов (`payment_create`), а хвосты путей — нет.
-    /// «force push» из списка ушёл: команда всегда начинается с `git push`.
+    /// Сравнение — с командой, которую диалог подтверждает (`action(of:)` + `isBlocked`), а
+    /// правило у каждого узора своё (#5786):
+    /// одно слово (`rm`, `delete`) ловится ЦЕЛЫМ СЛОВОМ в любом месте команды, ведущие дефисы
+    /// у ключей сняты — так ловятся и `git rm -r src`, и `find . -delete`, и `rm -rf build`;
+    /// фраза (`git push`, `drop table`) — теми же целыми словами подряд;
+    /// `>` — перенаправление вывода (`echo x > файл`), стрелки `->` и `=>` за него не считаются.
+    /// Именно СЛОВО, а не подстрока и не начало строки: до #5786 сравнивалось начало команды,
+    /// и опасное в середине («git rm -r src») проходило молча; а до #5779 слово ловилось где
+    /// угодно, и «Claude wants to read refunds.md» глушил авто-Allow на ровном месте — у
+    /// VkusnoffKz оплаты, счета и возвраты это имена файлов в каждом втором вопросе.
+    /// «force push» из списка ушёл: команда всегда начинается с `git push`; «sudo rm» тоже —
+    /// слово `rm` теперь ловится в любом месте.
+    /// Обратная сторона выбрана нарочно: `grep -rn 'delete' src` тоже останется Элвису —
+    /// один лишний клик дешевле стёртой папки, а `find . -exec rm -rf {} \;` иначе прошёл бы.
     /// Заголовок диалога не опознан (`heading` вернул пустую строку) — жмём, как раньше:
     /// иначе авто-Allow замолчал бы на любой незнакомой разметке.
     var blockActionPatterns: [String] = [
-        "rm ", "sudo rm", "delete", "drop table", "drop database",
-        "git push", "payment", "refund", "invoice",
+        "rm", "delete", "drop table", "drop database",
+        "git push", "payment", "refund", "invoice", AutoAllow.redirectPattern,
     ]
+    /// Деньги и внешние сервисы в ИМЕНИ инструмента (`kaspi_payment_create`, `refund_create` —
+    /// #5786): имя приходит одним словом, без глагола впереди и без пути, поэтому здесь узор
+    /// ищется в ЛЮБОМ месте имени, а не с его начала — иначе `kaspi_payment_create` проходил
+    /// молча, а у Элвиса это боевая касса. Слов команд тут нет нарочно: `rm` подстрокой попал
+    /// бы в `form_submit`.
+    var blockToolPatterns: [String] = AutoAllow.defaultToolPatterns
+    static let defaultToolPatterns = ["payment", "refund", "invoice"]
+    /// Узор списка, у которого нет слова: перенаправление вывода.
+    static let redirectPattern = ">"
 
     private let app: ClaudeApp
     private let hud: HUD
@@ -102,7 +119,8 @@ final class AutoAllow {
             cut = cut || found.timedOut
             for hit in found.hits {
                 let head = AutoAllow.heading(of: hit.element)
-                if AutoAllow.isBlocked(heading: head, patterns: blockActionPatterns) {
+                if AutoAllow.isBlocked(heading: head, patterns: blockActionPatterns,
+                                       tools: blockToolPatterns) {
                     // Не жмём и говорим, почему: диалог остаётся Элвису, а молчаливого
                     // «ничего не происходит» больше нет (#5736).
                     if head != lastBlockedHeading {
@@ -137,9 +155,10 @@ final class AutoAllow {
     /// «… to run », «… wants to use » — после этих слов начинается сама команда, даже если
     /// перед ними стоит имя инструмента («Allow Bash to run …»).
     static let actionMarkers = [" to run ", " to use ", " to execute ", " to call ", " to launch "]
-    /// Одно действие бывает цепочкой: `cd build && rm -rf *` — опасна вторая команда, и
-    /// начало у неё своё.
-    static let commandSeparators = CharacterSet(charactersIn: ";|&`\n")
+    /// Разделители слов команды: пробелы, шелловские склейки, кавычки и скобки. Склейка без
+    /// пробелов (`cd build&&rm -rf *`) обязана распасться — иначе `rm` спрячется внутри слова.
+    static let wordSeparators = CharacterSet(charactersIn: ";|&`()[]{}\"'=,<>")
+        .union(.whitespacesAndNewlines)
 
     /// Что диалог на самом деле подтверждает, без вопросительной обёртки и в нижнем регистре:
     /// «Allow Bash to run rm -rf build?» → «rm -rf build», «Claude wants to edit invoice.md» →
@@ -165,19 +184,93 @@ final class AutoAllow {
         return text.trimmingCharacters(in: .whitespaces)
     }
 
-    /// Диалог из списка исключений? Чистая, её и гоняют тесты. Сравнивается НАЧАЛО команды
-    /// (`action(of:)`), а не любое место заголовка: иначе имя файла (`refunds.md`,
-    /// `delete-old.sql`) глушило бы авто-Allow без всякой причины (#5779).
-    /// Регистр не важен: заголовок приходит из разметки Claude, список написан строчными.
-    static func isBlocked(heading: String, patterns: [String]) -> Bool {
-        guard !heading.isEmpty, !patterns.isEmpty else { return false }
-        let wanted = patterns.map { $0.lowercased() }
-        for command in action(of: heading).components(separatedBy: commandSeparators) {
-            let clean = command.trimmingCharacters(in: .whitespaces)
-            guard !clean.isEmpty else { continue }
-            if wanted.contains(where: { clean.hasPrefix($0) }) { return true }
+    /// Слова команды: разделители сняты, ведущие дефисы ключей тоже (`--delete` и `-delete`
+    /// → `delete`), пустые куски выброшены. Чистая, её и гоняют тесты.
+    static func words(of command: String) -> [String] {
+        command.components(separatedBy: wordSeparators).compactMap { part in
+            var word = part
+            while word.first == "-" { word.removeFirst() }
+            return word.isEmpty ? nil : word
+        }
+    }
+
+    /// Перенаправление вывода В ФАЙЛ: `> файл`, `>> файл`, `2> файл` — файл переписывается
+    /// целиком. Не в счёт: стрелки `->`, `=>` и `>=` из обычного текста вопроса и склейка
+    /// потоков `2>&1`, без которой не обходится ни один прогон тестов, — там файла нет.
+    static func hasRedirect(_ command: String) -> Bool {
+        let chars = Array(command)
+        for (index, ch) in chars.enumerated() where ch == ">" {
+            let before: Character? = index > 0 ? chars[index - 1] : nil
+            if before == "-" || before == "=" || before == "<" { continue }
+            var next = index + 1
+            while next < chars.count, chars[next] == ">" || chars[next] == " " { next += 1 }
+            let after: Character? = next < chars.count ? chars[next] : nil
+            if after == "=" || after == "&" { continue }
+            return true
         }
         return false
+    }
+
+    /// Фраза (`git push`) в любом месте команды, но целыми словами: `git pushes` не в счёт.
+    static func containsPhrase(_ command: String, _ phrase: String) -> Bool {
+        guard !phrase.isEmpty else { return false }
+        var from = command.startIndex
+        while let found = command.range(of: phrase, range: from..<command.endIndex) {
+            let openLeft = found.lowerBound == command.startIndex
+                || !isWordCharacter(command[command.index(before: found.lowerBound)])
+            let openRight = found.upperBound == command.endIndex
+                || !isWordCharacter(command[found.upperBound])
+            if openLeft && openRight { return true }
+            from = command.index(after: found.lowerBound)
+        }
+        return false
+    }
+
+    private static func isWordCharacter(_ ch: Character) -> Bool {
+        ch.isLetter || ch.isNumber || ch == "_"
+    }
+
+    /// Имя инструмента, если диалог спрашивает про инструмент: команда из ОДНОГО слова, без
+    /// косой черты и без расширения файла (`kaspi_payment_create`, `refund_create`). Этим оно
+    /// и отличается от имени файла: у файла впереди стоит глагол («read refunds.md»), а сам он
+    /// несёт путь или расширение. Чистая, её и гоняют тесты.
+    static func toolName(of command: String) -> String? {
+        let parts = words(of: command)
+        guard parts.count == 1, let name = parts.first,
+              !name.contains("/"), !looksLikeFileName(name) else { return nil }
+        return name
+    }
+
+    /// Похоже на имя файла: точка не первым знаком и после неё короткое расширение.
+    static func looksLikeFileName(_ name: String) -> Bool {
+        guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return false }
+        let ext = name[name.index(after: dot)...]
+        return !ext.isEmpty && ext.count <= 5 && ext.allSatisfy { $0.isLetter || $0.isNumber }
+    }
+
+    /// Диалог из списка исключений? Чистая, её и гоняют тесты. Сравнивается КОМАНДА диалога
+    /// (`action(of:)`), а не любое место заголовка: иначе имя файла (`refunds.md`,
+    /// `delete-old.sql`) глушило бы авто-Allow без всякой причины (#5779). Опасное слово при
+    /// этом ловится в ЛЮБОМ месте команды, а имя инструмента — в любом месте имени (#5786).
+    /// Регистр не важен: заголовок приходит из разметки Claude, список написан строчными.
+    /// Пустой список команд значит «подтверждать всё», как до #5736.
+    static func isBlocked(heading: String, patterns: [String],
+                          tools: [String] = defaultToolPatterns) -> Bool {
+        guard !heading.isEmpty else { return false }
+        let command = action(of: heading)
+        guard !command.isEmpty else { return false }
+        let commandWords = Set(words(of: command))
+        for pattern in patterns.map({ $0.lowercased() }) where !pattern.isEmpty {
+            if pattern == redirectPattern {
+                if hasRedirect(command) { return true }
+            } else if pattern.contains(" ") {
+                if containsPhrase(command, pattern) { return true }
+            } else if commandWords.contains(pattern) {
+                return true
+            }
+        }
+        guard let tool = toolName(of: command) else { return false }
+        return tools.contains { !$0.isEmpty && tool.contains($0.lowercased()) }
     }
 
     // MARK: - обход дерева

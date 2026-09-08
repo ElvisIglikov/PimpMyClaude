@@ -373,7 +373,8 @@ final class ClaudeActions {
                                            title: String, frame: CGRect)]) {
         guard let born = windows.first(where: { $0.id == fresh }) else { return }
         AX.timeout(born.window, ClaudeActions.axWindowTimeout)
-        ClaudeActions.setFrame(born.window, job.frame)
+        // Окно родилось секунду назад — рамка ставится порядком свежего окна (#5791).
+        ClaudeActions.setFrame(born.window, job.frame, fresh: true)
         onWindowsMoved?()
         after(ClaudeActions.cashoutSettlePause) { [weak self] in
             guard let self = self else { return }
@@ -1376,8 +1377,7 @@ final class ClaudeActions {
     /// глотает `kAXPositionAttribute`, пока окно ещё едет (свежий popout, анимация) — на живом
     /// прогоне три окна сузились по сетке, а с места не сдвинулись, и Элвис видел ровно это
     /// («в ширину уменьшились, больше ничего не произошло»). Поэтому после записи читаем рамку
-    /// назад и повторяем до трёх раз с паузой; порядок «позиция → размер → позиция»: смена
-    /// размера у правого края может снова сдвинуть окно.
+    /// назад и повторяем до трёх раз с паузой; порядок записи — `frameSteps`.
     static let frameRetries = 3
     static let frameRetryPause: TimeInterval = 0.25
     static let frameTolerance: CGFloat = 2
@@ -1390,17 +1390,42 @@ final class ClaudeActions {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
     }
 
+    /// Один шаг постановки рамки: что именно пишем окну.
+    enum FrameStep: Equatable {
+        case position(CGPoint)
+        case size(CGSize)
+    }
+
+    /// Порядок записи рамки. Чистая — её и гоняют тесты.
+    ///
+    /// Окну, которое уже стоит на экране, — «позиция → размер → позиция»: смена размера у
+    /// правого края может снова сдвинуть окно, и последним словом обязана быть позиция.
+    /// СВЕЖЕМУ окну — «размер → позиция → размер» (урок ElvisOS, #5791): его сперва просят
+    /// ужаться, пока оно ещё стоит высоко, и только потом двигают вниз. Иначе система урезает
+    /// запомненную с прошлого раза высоту по нижнему краю ЭКРАНА (под Dock), а повторный
+    /// размер после позиции уже глотает — у ElvisOS нижний ряд стабильно получал 488 точек
+    /// вместо 434.
+    static func frameSteps(_ frame: CGRect, fresh: Bool) -> [FrameStep] {
+        fresh ? [.size(frame.size), .position(frame.origin), .size(frame.size)]
+              : [.position(frame.origin), .size(frame.size), .position(frame.origin)]
+    }
+
     /// `true` — рамка встала с первого захода. Не встала — повтор уходит на `frameSchedule`,
     /// и ответ этого вызова про него ничего не знает (окна двигают, не спрашивая результат).
+    /// `fresh` — окно только что родилось (см. `frameSteps`); повтор идёт тем же порядком.
     @discardableResult
-    static func setFrame(_ window: AXUIElement, _ frame: CGRect, attempt: Int = 0) -> Bool {
-        AX.set(window, kAXPositionAttribute, point: frame.origin)
-        AX.set(window, kAXSizeAttribute, size: frame.size)
-        AX.set(window, kAXPositionAttribute, point: frame.origin)
+    static func setFrame(_ window: AXUIElement, _ frame: CGRect, fresh: Bool = false,
+                         attempt: Int = 0) -> Bool {
+        for step in frameSteps(frame, fresh: fresh) {
+            switch step {
+            case .position(let origin): AX.set(window, kAXPositionAttribute, point: origin)
+            case .size(let size): AX.set(window, kAXSizeAttribute, size: size)
+            }
+        }
         let now = AX.frame(window)
         if let now = now, frameMatches(now, frame) { return true }
         guard attempt + 1 < frameRetries, needsFrameRetry(now: now, want: frame) else { return false }
-        frameSchedule(frameRetryPause) { setFrame(window, frame, attempt: attempt + 1) }
+        frameSchedule(frameRetryPause) { setFrame(window, frame, fresh: fresh, attempt: attempt + 1) }
         return false
     }
 
