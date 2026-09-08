@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Яркие цвета и список цветов — ⚪PimpMyClaude</title>
+<style>
+:root{--bg:#0f1115;--card:#171a21;--line:#262b36;--ink:#e8ebf2;--dim:#98a0b3;--acc:#ffb020;
+--acc2:#7aa2f7;--ok:#9ece6a;--warn:#e0af68;--bad:#f07178}
+*{box-sizing:border-box}
+body{margin:0 auto;background:var(--bg);color:var(--ink);max-width:760px;padding:18px 14px 70px;
+font:16px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text",Segoe UI,sans-serif;overflow-x:hidden}
+h1{font-size:30px;line-height:1.15;margin:0 0 6px}
+.sub{color:var(--dim);font-size:14px;margin:0 0 20px}
+h2{font-size:34px;line-height:1.08;margin:46px 0 6px;letter-spacing:-.5px}
+h2 .n{color:var(--acc)}
+h3{font-size:20px;margin:24px 0 8px}
+p{margin:8px 0}
+.big{font-size:17px}
+small,.small{color:var(--dim);font-size:14px}
+nav{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+nav a{display:block;color:var(--ink);text-decoration:none;padding:5px 0;font-size:16px}
+nav a b{color:var(--acc);display:inline-block;min-width:26px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:14px 0}
+ul{padding-left:20px;margin:8px 0}li{margin:5px 0}
+
+/* ——— маленькие образцы нынешних тем ——— */
+.chips{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin:10px 0}
+.chip{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 8px}
+.sw{height:26px;border-radius:7px;background:var(--c-bg);display:flex;align-items:center;
+gap:5px;padding:0 7px;border:1px solid rgba(255,255,255,.07)}
+.sw i{width:9px;height:9px;border-radius:50%;background:var(--c-acc);flex:none}
+.sw b{height:5px;border-radius:3px;background:var(--c-fg);opacity:.55;flex:1}
+.chip .cn{font-size:13px;margin-top:5px}
+.chip .cc{font-size:11px;color:var(--dim)}
+.chip .cc.low{color:var(--bad)}
+.chip .cc.high{color:var(--warn)}
+
+/* ——— большая карточка новой палитры ——— */
+.pals{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin:14px 0}
+.pal{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;overflow:hidden}
+.pal-h{display:flex;align-items:baseline;gap:8px;margin:0 0 9px}
+.pal-h .nm{font-size:20px;font-weight:600}
+.pal-h .tp{font-size:12px;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:1px 8px}
+.chat{display:flex;border-radius:12px;overflow:hidden;border:1px solid rgba(0,0,0,.35);
+background:var(--w-bg);color:var(--w-fg);font-size:12px;line-height:1.4}
+.side{width:86px;flex:none;background:var(--w-side);padding:8px 7px}
+.side .lo{font-size:10px;color:var(--w-muted);margin-bottom:6px;letter-spacing:.04em}
+.srow{display:flex;align-items:center;gap:5px;padding:3px 4px;border-radius:6px;margin-bottom:2px;
+color:var(--w-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+.srow i{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none;opacity:.7}
+.srow.on{background:var(--w-panel);color:var(--w-fg)}
+.srow.on i{background:var(--w-acc);opacity:1}
+.main{flex:1;min-width:0;padding:9px 9px 10px}
+.bub{background:var(--w-panel);border-radius:10px;padding:6px 9px;margin:0 0 7px;display:inline-block;max-width:100%}
+.ans{margin:0 0 8px}
+.ans a{color:var(--w-acc);text-decoration:underline;text-underline-offset:2px}
+.code{background:var(--w-csurf);border:1px solid var(--w-cbord);border-radius:9px;padding:7px 8px;margin:0 0 8px;
+font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--w-fg);overflow-x:auto;white-space:pre}
+.code .k{color:var(--w-kw)}.code .s{color:var(--w-str)}.code .n{color:var(--w-num)}
+.code .t{color:var(--w-ttl)}.code .c{color:var(--w-cmt)}
+.inp{border:1px solid var(--w-acc);border-radius:10px;padding:6px 9px;color:var(--w-muted);background:var(--w-panel)}
+.nums{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.nums span{font-size:12px;border:1px solid var(--line);border-radius:20px;padding:2px 9px;color:var(--dim)}
+.nums span b{color:var(--ink);font-weight:600}
+.nums span.ok{border-color:#2f4a2a}
+.hex{font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim);margin-top:7px;
+word-break:break-all}
+
+/* ——— меню ——— */
+.menus{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin:12px 0}
+.menu{background:#1e2027;border:1px solid #33363f;border-radius:10px;padding:5px 0;
+box-shadow:0 12px 28px rgba(0,0,0,.45);font-size:14px}
+.menu .mt{font-size:12px;color:var(--dim);padding:4px 12px 6px;border-bottom:1px solid #2a2d35;margin-bottom:4px}
+.mi{display:flex;align-items:center;gap:8px;padding:5px 12px;white-space:nowrap}
+.mi .g{flex:1;overflow:hidden;text-overflow:ellipsis}
+.mi .ar{color:var(--dim)}
+.mi.hd{color:var(--dim);font-size:11px;letter-spacing:.09em}
+.mi.hd.caps{color:#f07178}
+.mi.sel{background:#3a3f4b;border-radius:6px;margin:0 5px;padding:5px 7px}
+.mi .ck{width:12px;color:var(--acc)}
+.msep{height:1px;background:#2f323b;margin:5px 10px}
+.dotm{width:13px;height:13px;border-radius:50%;flex:none;border:2px solid var(--d-acc);background:var(--d-bg)}
+.tag{display:inline-block;font-size:11px;color:#0f1115;background:var(--acc);border-radius:20px;
+padding:1px 8px;vertical-align:middle;margin-left:6px}
+.tag.old{background:#4a4f5c;color:var(--ink)}
+
+/* ——— варианты ответов ——— */
+.v{border-left:3px solid var(--acc2);padding:2px 0 2px 12px;margin:14px 0}
+.v .t{font-weight:600;font-size:18px}
+.v.rec{border-left-color:var(--ok)}
+.v.rec .t::after{content:" (рекомендую)";color:var(--ok);font-weight:400;font-size:14px}
+.v p{margin:3px 0;color:var(--dim);font-size:15px}
+.v p.minus::before{content:"минус: ";color:var(--warn)}
+.ans-box{background:#1b2030;border:1px solid var(--acc);border-radius:14px;padding:16px;margin-top:36px;font-size:19px}
+details{margin-top:26px;color:var(--dim);font-size:13px}
+details pre{overflow-x:auto;background:#0c0e12;border:1px solid var(--line);border-radius:10px;padding:10px;
+font:11px/1.5 ui-monospace,Menlo,monospace}
+@media (max-width:430px){
+  h2{font-size:28px}
+  .side{width:70px}
+  .pals{grid-template-columns:1fr}
+}
+</style></head><body>
+
+<h1>Яркие цвета для окон</h1>
+<p class="sub">сделал: макет · Opus 5 max · 08.09.2026</p>
+
+<nav>
+<a href="#s1"><b>1</b> Что есть сейчас — 24 цвета</a>
+<a href="#s2"><b>2</b> Новый набор «Яркие» — 9 цветов</a>
+<a href="#s3"><b>3</b> Как это будет в меню</a>
+<a href="#s4"><b>4</b> Вопрос 1: что делать со старыми</a>
+<a href="#s5"><b>5</b> Вопрос 2: где держать «Мои темы»</a>
+<a href="#s6"><b>6</b> Вопрос 3: жёлтый и оранжевый на светлом</a>
+<a href="#s7"><b>7</b> Решено, не переспрашиваю</a>
+</nav>
+
+<h2 id="s1"><span class="n">1</span> Что есть сейчас</h2>
+<p class="big">Двадцать четыре цвета: пятнадцать тёмных и девять светлых. Вот они, мелко —
+чтобы было видно, от чего отталкиваемся.</p>
+
+<h3>Тёмные, 15</h3>
+<div class="chips"><div class="chip"><div class="sw" style="--c-bg:#3b1414;--c-acc:#ff5c5c;--c-fg:#ffe4e4"><i></i><b></b></div><div class="cn">Красная</div><div class="cc ">акцент 5,4 · цветность 15 %</div></div><div class="chip"><div class="sw" style="--c-bg:#3a2010;--c-acc:#ff9147;--c-fg:#f9e9dc"><i></i><b></b></div><div class="cn">Оранжевая</div><div class="cc ">акцент 6,7 · цветность 16 %</div></div><div class="chip"><div class="sw" style="--c-bg:#3a2e0c;--c-acc:#ffc83d;--c-fg:#fdf4d9"><i></i><b></b></div><div class="cn">Жёлтая</div><div class="cc ">акцент 8,6 · цветность 18 %</div></div><div class="chip"><div class="sw" style="--c-bg:#0f2e22;--c-acc:#46d18b;--c-fg:#dff5e9"><i></i><b></b></div><div class="cn">Зелёная</div><div class="cc ">акцент 7,5 · цветность 12 %</div></div><div class="chip"><div class="sw" style="--c-bg:#0b1f0b;--c-acc:#1eff5a;--c-fg:#b8ffca"><i></i><b></b></div><div class="cn">Матрица</div><div class="cc ">акцент 12,8 · цветность 8 %</div></div><div class="chip"><div class="sw" style="--c-bg:#0d3033;--c-acc:#2fe0d6;--c-fg:#dcfbf8"><i></i><b></b></div><div class="cn">Бирюзовая</div><div class="cc ">акцент 8,6 · цветность 15 %</div></div><div class="chip"><div class="sw" style="--c-bg:#1a1b26;--c-acc:#7aa2f7;--c-fg:#a9b1d6"><i></i><b></b></div><div class="cn">Токийская ночь</div><div class="cc ">акцент 6,8 · цветность 5 %</div></div><div class="chip"><div class="sw" style="--c-bg:#122446;--c-acc:#5b9bff;--c-fg:#e4ecfb"><i></i><b></b></div><div class="cn">Синяя</div><div class="cc ">акцент 5,5 · цветность 20 %</div></div><div class="chip"><div class="sw" style="--c-bg:#221640;--c-acc:#b57bff;--c-fg:#efe7ff"><i></i><b></b></div><div class="cn">Фиолетовая</div><div class="cc ">акцент 5,8 · цветность 16 %</div></div><div class="chip"><div class="sw" style="--c-bg:#282a36;--c-acc:#bd93f9;--c-fg:#f8f8f2"><i></i><b></b></div><div class="cn">Дракула</div><div class="cc ">акцент 5,9 · цветность 5 %</div></div><div class="chip"><div class="sw" style="--c-bg:#2c1c3a;--c-acc:#d8a7ff;--c-fg:#f5e9ff"><i></i><b></b></div><div class="cn">Сиреневая</div><div class="cc ">акцент 8,2 · цветность 12 %</div></div><div class="chip"><div class="sw" style="--c-bg:#3b1a2f;--c-acc:#ff8ec4;--c-fg:#ffe6f3"><i></i><b></b></div><div class="cn">Розовая</div><div class="cc ">акцент 7,2 · цветность 13 %</div></div><div class="chip"><div class="sw" style="--c-bg:#3c0f1d;--c-acc:#f4335f;--c-fg:#ffe0e7"><i></i><b></b></div><div class="cn">Малиновая</div><div class="cc low">акцент 4,3 · цветность 18 %</div></div><div class="chip"><div class="sw" style="--c-bg:#2e2018;--c-acc:#d9a066;--c-fg:#f3e7db"><i></i><b></b></div><div class="cn">Коричневая</div><div class="cc ">акцент 6,9 · цветность 9 %</div></div><div class="chip"><div class="sw" style="--c-bg:#131518;--c-acc:#a8b3c4;--c-fg:#e6e8ec"><i></i><b></b></div><div class="cn">Серая</div><div class="cc ">акцент 8,6 · цветность 2 %</div></div></div>
+
+<h3>Светлые, 9</h3>
+<div class="chips"><div class="chip"><div class="sw" style="--c-bg:#fff1e8;--c-acc:#d9611c;--c-fg:#3a2216"><i></i><b></b></div><div class="cn">Персиковая</div><div class="cc low">акцент 3,3 · цветность 9 %</div></div><div class="chip"><div class="sw" style="--c-bg:#fbfae4;--c-acc:#7f8c00;--c-fg:#2c2f14"><i></i><b></b></div><div class="cn">Лимонная</div><div class="cc low">акцент 3,5 · цветность 9 %</div></div><div class="chip"><div class="sw" style="--c-bg:#fbf6e9;--c-acc:#b07d2b;--c-fg:#33291a"><i></i><b></b></div><div class="cn">Кремовая</div><div class="cc low">акцент 3,3 · цветность 7 %</div></div><div class="chip"><div class="sw" style="--c-bg:#e9f8f1;--c-acc:#0f8f5e;--c-fg:#12291f"><i></i><b></b></div><div class="cn">Мятная</div><div class="cc low">акцент 3,7 · цветность 6 %</div></div><div class="chip"><div class="sw" style="--c-bg:#e9f3ff;--c-acc:#1f6feb;--c-fg:#10223a"><i></i><b></b></div><div class="cn">Небесная</div><div class="cc low">акцент 4,1 · цветность 9 %</div></div><div class="chip"><div class="sw" style="--c-bg:#f3f8ff;--c-acc:#0066ff;--c-fg:#07152a"><i></i><b></b></div><div class="cn">Светлая</div><div class="cc ">акцент 4,5 · цветность 5 %</div></div><div class="chip"><div class="sw" style="--c-bg:#f3eefb;--c-acc:#7c4dff;--c-fg:#241a33"><i></i><b></b></div><div class="cn">Лавандовая</div><div class="cc low">акцент 4,2 · цветность 5 %</div></div><div class="chip"><div class="sw" style="--c-bg:#fbe9f0;--c-acc:#e13c78;--c-fg:#3a1f2b"><i></i><b></b></div><div class="cn">Сакура</div><div class="cc low">акцент 3,5 · цветность 7 %</div></div><div class="chip"><div class="sw" style="--c-bg:#f9eef0;--c-acc:#c0607f;--c-fg:#33212a"><i></i><b></b></div><div class="cn">Пудровая</div><div class="cc low">акцент 3,5 · цветность 4 %</div></div></div>
+
+<div class="card">
+<p class="big"><b>Почему они кажутся блёклыми.</b></p>
+<ul>
+<li>У девяти светлых фон почти белый: <b>цветность 4–9 %</b>. Цвет там есть только на бумаге —
+глазом это белая страница с еле заметным оттенком.</li>
+<li>У восьми из девяти светлых <b>ссылки и кнопки бледнее нормы</b> — 3,4–4,2 вместо 4,5. Их плохо видно.</li>
+<li>У тёмных цветность разная — <b>от 2 % у «Серой» до 20 % у «Синей»</b>, но даже сильные из них
+это «почти чёрный с оттенком». У новых ярких тёмных — 22–25 %.</li>
+</ul>
+<p class="small">Цветность — насколько фон отличается от серого. 0 % — чистый серый, 100 % — открытая краска.
+Контраст — во сколько раз буква ярче фона; всё, что ниже 4,5, читается плохо.</p>
+</div>
+
+<h2 id="s2"><span class="n">2</span> Новый набор «Яркие»</h2>
+<p class="big">Девять штук. Первыми — те, что ты назвал: <b>оранжевый и жёлтый</b>, каждого по два —
+один на тёмном окне, один на светлом. Дальше пять сочных на тёмном.</p>
+<p>Каждый показан так, как выглядит в чате: боковая колонка, твой вопрос пузырём, ответ со ссылкой,
+кусок кода и поле ввода. Цвета кода не выдуманы — они посчитаны тем же способом, что в программе.</p>
+<p class="small">Все девять проверены числом: акцент к фону <b>5,2–5,4</b> (норма 4,5–6 на тёмном
+и 4,5–7 на светлом), подсветка кода не ниже <b>4,5</b>, насыщенность фона тёмных — в норме 45–60 %.
+Числа подписаны под каждым.</p>
+
+<div class="pals"><div class="pal"><div class="pal-h"><span class="nm">🥭 Манго</span><span class="tp">тёмная</span></div><div class="chat" style="--w-bg:#512b15;--w-fg:#fce9de;--w-side:#3a1d0c;--w-panel:#6b3c22;--w-acc:#fd8b27;--w-muted:#be8c6f;--w-csurf:#603c27;--w-cbord:#924f1c;--w-kw:#d59de6;--w-str:#98c379;--w-num:#d8aa7e;--w-ttl:#78baf0;--w-cmt:#979eaa"><div class="side"><div class="lo">Чаты</div><div class="srow on"><i></i>Пимп</div><div class="srow"><i></i>Кафе</div><div class="srow"><i></i>Бот</div><div class="srow"><i></i>Задачи</div></div><div class="main"><div class="bub">Сделай цвета поярче</div><div class="ans">Готово. Вот <a href="#s2">новый набор</a> — жёлтый и оранжевый первыми.</div><pre class="code"><span class="k">const</span> цвет = <span class="s">&quot;Манго&quot;</span>;
+<span class="t">покрасить</span>(цвет, <span class="n">9</span>); <span class="c">// ярко</span></pre><div class="inp">Напиши сообщение…</div></div></div><div class="nums"><span class="ok">акцент к фону <b>5,2</b> · норма 4,5–6</span><span>текст к фону <b>10,5</b></span><span class="ok">код <b>4,5</b> · норма 4,5</span><span class="ok">насыщенность фона <b>59 %</b> · норма 45–60</span></div></div><div class="pal"><div class="pal-h"><span class="nm">🍯 Мёд</span><span class="tp">тёмная</span></div><div class="chat" style="--w-bg:#503c14;--w-fg:#fcf2de;--w-side:#38290c;--w-panel:#695121;--w-acc:#e6ad02;--w-muted:#bca069;--w-csurf:#5f4c26;--w-cbord:#89670d;--w-kw:#deb1eb;--w-str:#a6cb8b;--w-num:#dfb995;--w-ttl:#8fc6f3;--w-cmt:#a5abb5"><div class="side"><div class="lo">Чаты</div><div class="srow on"><i></i>Пимп</div><div class="srow"><i></i>Кафе</div><div class="srow"><i></i>Бот</div><div class="srow"><i></i>Задачи</div></div><div class="main"><div class="bub">Сделай цвета поярче</div><div class="ans">Готово. Вот <a href="#s2">новый набор</a> — жёлтый и оранжевый первыми.</div><pre class="code"><span class="k">const</span> цвет = <span class="s">&quot;Мёд&quot;</span>;
+<span class="t">покрасить</span>(цвет, <span class="n">9</span>); <span class="c">// ярко</span></pre><div class="inp">Напиши сообщение…</div></div></div><div class="nums"><span class="ok">акцент к фону <b>5,2</b> · норма 4,5–6</span><span>текст к фону <b>9,5</b></span><span class="ok">код <b>4,5</b> · норма 4,5</span><span class="ok">насыщенность фона <b>60 %</b> · норма 45–60</span></div></div><div class="pal"><div class="pal-h"><span class="nm">🍋 Лимонад</span><span class="tp">светлая</span></div><div class="chat" style="--w-bg:#ffeb85;--w-fg:#322b08;--w-side:#ffe45e;--w-panel:#fff7cf;--w-acc:#b12c00;--w-muted:#7f7234;--w-csurf:#f3df7e;--w-cbord:#e1a252;--w-kw:#982eb7;--w-str:#486a2f;--w-num:#855528;--w-ttl:#1264a9;--w-cmt:#5c6370"><div class="side"><div class="lo">Чаты</div><div class="srow on"><i></i>Пимп</div><div class="srow"><i></i>Кафе</div><div class="srow"><i></i>Бот</div><div class="srow"><i></i>Задачи</div></div><div class="main"><div class="bub">Сделай цвета поярче</div><div class="ans">Готово. Вот <a href="#s2">новый набор</a> — жёлтый и оранжевый первыми.</div><pre class="code"><span class="k">const</span> цвет = <span class="s">&quot;Лимонад&quot;</span>;
+<span class="t">покрасить</span>(цвет, <span class="n">9</span>); <span class="c">// ярко</span></pre><div class="inp">Напиши сообщение…</div></div></div><div class="nums"><span class="ok">акцент к фону <b>5,4</b> · норма 4,5–7</span><span>текст к фону <b>11,8</b></span><span class="ok">код <b>4,6</b> · норма 4,5</span><span class="ok">цветность фона <b>48 %</b> · у нынешних светлых 4–9 %</span></div></div><div class="pal"><div class="pal-h"><span class="nm">🧃 Апельсин</span><span class="tp">светлая</span></div><div class="chat" style="--w-bg:#ffcb8f;--w-fg:#321f08;--w-side:#ffb969;--w-panel:#ffedd9;--w-acc:#a31000;--w-muted:#815d35;--w-csurf:#f3c187;--w-cbord:#dc8459;--w-kw:#83289e;--w-str:#3e5b29;--w-num:#764b23;--w-ttl:#105792;--w-cmt:#5c6370"><div class="side"><div class="lo">Чаты</div><div class="srow on"><i></i>Пимп</div><div class="srow"><i></i>Кафе</div><div class="srow"><i></i>Бот</div><div class="srow"><i></i>Задачи</div></div><div class="main"><div class="bub">Сделай цвета поярче</div><div class="ans">Готово. Вот <a href="#s2">новый набор</a> — жёлтый и оранжевый первыми.</div><pre class="code"><span class="k">const</span> цвет = <span class="s">&quot;Апельсин&quot;</span>;
+<span class="t">покрасить</span>(цвет, <span class="n">9</span>); <span class="c">// ярко</span></pre><div class="inp">Напиши сообщение…</div></div></div><div class="nums"><span class="ok">акцент к фону <b>5,4</b> · норма 4,5–7</span><span>текст к фону <b>10,6</b></span><span class="ok">код <b>4,6</b> · норма 4,5</span><span class="ok">цветность фона <b>44 %</b> · у нынешних светлых 4–9 %</span></div></div><div class="pal"><div class="pal-h"><span class="nm">🍏 Лайм</span><span class="tp">тёмная</span></div><div class="chat" style="--w-bg:#374912;--w-fg:#f2fcde;--w-side:#25320a;--w-panel:#4c631f;--w-acc:#7ed102;--w-muted:#95b457;--w-csurf:#485924;--w-cbord:#527d0c;--w-kw:#e2b9ed;--w-str:#b0d199;--w-num:#e3c1a1;--w-ttl:#9dcdf4;--w-cmt:#abb0ba"><div class="side"><div class="lo">Чаты</div><div class="srow on"><i></i>Пимп</div><div class="srow"><i></i>Кафе</div><div class="srow"><i></i>Бот</div><div class="srow"><i></i>Задачи</div></div><div class="main"><div class="bub">Сделай цвета поярче</div><div class="ans">Готово. Вот <a href="#s2">новый набор</a> — жёлтый и оранжевый первыми.</div><pre class="code"><span class="k">const</span> цвет = <span class="s">&quot;Лайм&quot;</span>;
+<span class="t">покрасить</span>(цвет, <span class="n">9</span>); <span class="c">// ярко</span></pre><div class="inp">Напиши сообщение…</div></div></div><div class="nums"><span class="ok">акцент к фону <b>5,2</b> · норма 4,5–6</span><span>текст к фону <b>9,3</b></span><span class="ok">код <b>4,5</b> · норма 4,5</span><span class="ok">насыщенность фона <b>60 %</b> · норма 45–60</span></div></div><div class="pal"><div class="pal-h"><span class="nm">🪸 Коралл</span><span class="tp">тёмная</span></div><div class="chat" style="--w-bg:#541915;--w-fg:#fce0de;--w-side:#3d100c;--w-panel:#6d2722;--w-acc:#fd7661;--w-muted:#c27b76;--w-csurf:#632b27;--w-cbord:#943c32;--w-kw:#d090e3;--w-str:#98c379;--w-num:#d29d6a;--w-ttl:#61aeee;--w-cmt:#8c93a1"><div class="side"><div class="lo">Чаты</div><div class="srow on"><i></i>Пимп</div><div class="srow"><i></i>Кафе</div><div class="srow"><i></i>Бот</div><div class="srow"><i></i>Задачи</div></div><div class="main"><div class="bub">Сделай цвета поярче</div><div class="ans">Готово. Вот <a href="#s2">новый набор</a> — жёлтый и оранжевый первыми.</div><pre class="code"><span class="k">const</span> цвет = <span class="s">&quot;Коралл&quot;</span>;
+<span class="t">покрасить</span>(цвет, <span class="n">9</span>); <span class="c">// ярко</span></pre><div class="inp">Напиши сообщение…</div></div></div><div class="nums"><span class="ok">акцент к фону <b>5,2</b> · норма 4,5–6</span><span>текст к фону <b>11,0</b></span><span class="ok">код <b>4,6</b> · норма 4,5</span><span class="ok">насыщенность фона <b>60 %</b> · норма 45–60</span></div></div><div class="pal"><div class="pal-h"><span class="nm">🌸 Фуксия</span><span class="tp">тёмная</span></div><div class="chat" style="--w-bg:#53163c;--w-fg:#fcdef1;--w-side:#3d0c2b;--w-panel:#6d2251;--w-acc:#fd69cc;--w-muted:#c277a7;--w-csurf:#62284c;--w-cbord:#943673;--w-kw:#d090e3;--w-str:#98c379;--w-num:#d29d6a;--w-ttl:#61aeee;--w-cmt:#8c93a1"><div class="side"><div class="lo">Чаты</div><div class="srow on"><i></i>Пимп</div><div class="srow"><i></i>Кафе</div><div class="srow"><i></i>Бот</div><div class="srow"><i></i>Задачи</div></div><div class="main"><div class="bub">Сделай цвета поярче</div><div class="ans">Готово. Вот <a href="#s2">новый набор</a> — жёлтый и оранжевый первыми.</div><pre class="code"><span class="k">const</span> цвет = <span class="s">&quot;Фуксия&quot;</span>;
+<span class="t">покрасить</span>(цвет, <span class="n">9</span>); <span class="c">// ярко</span></pre><div class="inp">Напиши сообщение…</div></div></div><div class="nums"><span class="ok">акцент к фону <b>5,2</b> · норма 4,5–6</span><span>текст к фону <b>10,9</b></span><span class="ok">код <b>4,5</b> · норма 4,5</span><span class="ok">насыщенность фона <b>58 %</b> · норма 45–60</span></div></div><div class="pal"><div class="pal-h"><span class="nm">⚡ Электрик</span><span class="tp">тёмная</span></div><div class="chat" style="--w-bg:#143c50;--w-fg:#def2fc;--w-side:#0c2938;--w-panel:#215169;--w-acc:#02baf2;--w-muted:#6ca2bd;--w-csurf:#264c5f;--w-cbord:#0d6c8e;--w-kw:#d9a5e8;--w-str:#98c379;--w-num:#daaf85;--w-ttl:#7dbcf1;--w-cmt:#9aa1ac"><div class="side"><div class="lo">Чаты</div><div class="srow on"><i></i>Пимп</div><div class="srow"><i></i>Кафе</div><div class="srow"><i></i>Бот</div><div class="srow"><i></i>Задачи</div></div><div class="main"><div class="bub">Сделай цвета поярче</div><div class="ans">Готово. Вот <a href="#s2">новый набор</a> — жёлтый и оранжевый первыми.</div><pre class="code"><span class="k">const</span> цвет = <span class="s">&quot;Электрик&quot;</span>;
+<span class="t">покрасить</span>(цвет, <span class="n">9</span>); <span class="c">// ярко</span></pre><div class="inp">Напиши сообщение…</div></div></div><div class="nums"><span class="ok">акцент к фону <b>5,2</b> · норма 4,5–6</span><span>текст к фону <b>10,2</b></span><span class="ok">код <b>4,5</b> · норма 4,5</span><span class="ok">насыщенность фона <b>60 %</b> · норма 45–60</span></div></div><div class="pal"><div class="pal-h"><span class="nm">🔮 Ультрафиолет</span><span class="tp">тёмная</span></div><div class="chat" style="--w-bg:#381655;--w-fg:#eedefc;--w-side:#270d3f;--w-panel:#4b236e;--w-acc:#c674fe;--w-muted:#a078c2;--w-csurf:#482864;--w-cbord:#6e3a95;--w-kw:#cd88e1;--w-str:#98c379;--w-num:#d19a66;--w-ttl:#61aeee;--w-cmt:#848c9a"><div class="side"><div class="lo">Чаты</div><div class="srow on"><i></i>Пимп</div><div class="srow"><i></i>Кафе</div><div class="srow"><i></i>Бот</div><div class="srow"><i></i>Задачи</div></div><div class="main"><div class="bub">Сделай цвета поярче</div><div class="ans">Готово. Вот <a href="#s2">новый набор</a> — жёлтый и оранжевый первыми.</div><pre class="code"><span class="k">const</span> цвет = <span class="s">&quot;Ультрафиолет&quot;</span>;
+<span class="t">покрасить</span>(цвет, <span class="n">9</span>); <span class="c">// ярко</span></pre><div class="inp">Напиши сообщение…</div></div></div><div class="nums"><span class="ok">акцент к фону <b>5,2</b> · норма 4,5–6</span><span>текст к фону <b>11,7</b></span><span class="ok">код <b>4,6</b> · норма 4,5</span><span class="ok">насыщенность фона <b>59 %</b> · норма 45–60</span></div></div></div>
+
+<div class="card">
+<p class="big"><b>Почему жёлтый на тёмном не может быть неоновым.</b></p>
+<p>Чистый неоновый жёлтый на тёмном фоне даёт контраст 8–9 — это выше нашего потолка 6, и от такой ссылки
+через полчаса режет глаза. Поэтому «Мёд» — насыщенное золото, а по-настоящему открытый жёлтый живёт
+на светлом фоне: это «Лимонад». То же с оранжевым: «Манго» тёмное, «Апельсин» светлый.</p>
+</div>
+
+<h2 id="s3"><span class="n">3</span> Как это будет в меню</h2>
+<p class="big">Сейчас «Цвет» — один список: двадцать четыре цвета подряд, заголовки в нём капсом.
+Будет три коротких списка, названия обычными буквами — как пишет Claude.</p>
+
+<div class="menus">
+<div>
+<div class="menu"><div class="mt">сейчас · один длинный список</div>
+<div class="mi"><span class="ck"></span><span class="g">Как у Claude</span></div>
+<div class="msep"></div>
+<div class="mi hd caps">ТЁМНЫЕ</div>
+<div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#ff5c5c;--d-bg:#3b1414"></span><span class="g">Красная</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#ff9147;--d-bg:#3a2010"></span><span class="g">Оранжевая</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#ffc83d;--d-bg:#3a2e0c"></span><span class="g">Жёлтая</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#46d18b;--d-bg:#0f2e22"></span><span class="g">Зелёная</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#1eff5a;--d-bg:#0b1f0b"></span><span class="g">Матрица</span></div>
+<div class="mi"><span class="ck"></span><span class="g" style="color:#98a0b3">…ещё 10</span></div>
+<div class="msep"></div>
+<div class="mi hd caps">СВЕТЛЫЕ</div>
+<div class="mi"><span class="ck"></span><span class="g" style="color:#98a0b3">…ещё 9</span></div>
+</div>
+<p class="small">Двадцать четыре цвета в одном столбце, заголовки кричат капсом.</p>
+</div>
+
+<div>
+<div class="menu"><div class="mt">будет · три списка</div>
+<div class="mi"><span class="ck"></span><span class="g">Как у Claude</span></div>
+<div class="msep"></div>
+<div class="mi"><span class="ck"></span><span class="g">🌙&nbsp; Тёмные</span><span class="ar">▸</span></div>
+<div class="mi"><span class="ck"></span><span class="g">☀️&nbsp; Светлые</span><span class="ar">▸</span></div>
+<div class="mi sel"><span class="ck">✓</span><span class="g">✨&nbsp; Яркие</span><span class="ar">▸</span></div>
+</div>
+<p class="small">Галочка стоит на том списке, откуда взят цвет окна, — искать по всем трём не надо.</p>
+</div>
+
+<div>
+<div class="menu"><div class="mt">✨ Яркие ▸</div>
+<div class="mi sel"><span class="ck">✓</span><span class="dotm" style="--d-acc:#fd8b27;--d-bg:#512b15"></span><span class="g">Манго</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#e6ad02;--d-bg:#503c14"></span><span class="g">Мёд</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#b12c00;--d-bg:#ffeb85"></span><span class="g">Лимонад</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#a31000;--d-bg:#ffcb8f"></span><span class="g">Апельсин</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#7ed102;--d-bg:#374912"></span><span class="g">Лайм</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#fd7661;--d-bg:#541915"></span><span class="g">Коралл</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#fd69cc;--d-bg:#53163c"></span><span class="g">Фуксия</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#02baf2;--d-bg:#143c50"></span><span class="g">Электрик</span></div><div class="mi"><span class="ck"></span><span class="dotm" style="--d-acc:#c674fe;--d-bg:#381655"></span><span class="g">Ультрафиолет</span></div>
+</div>
+<p class="small">Наведение мышью примеряет цвет на окно, как сейчас.</p>
+</div>
+</div>
+
+<div class="card">
+<p><b>Написание.</b> Сейчас в меню стоят «ТЁМНЫЕ», «СВЕТЛЫЕ», «МОИ ТЕМЫ» капсом. Станет
+«Тёмные», «Светлые», «Яркие», «Мои темы» — обычными буквами, как у Claude в его меню.</p>
+<p><b>«Как у Claude»</b> (сбросить цвет) остаётся первой строкой, до всех трёх списков, — как сейчас.</p>
+<p><b>«Мои темы»</b> (те, что ты сохранил сам) сейчас живут отдельным списком выше, в «Оформлении».
+Что с ними делать — вопрос 2.</p>
+</div>
+
+<h2 id="s4"><span class="n">4</span> Вопрос 1: что делать со старыми</h2>
+<p>Девять светлых почти белые, и ссылки в них бледнее нормы.</p>
+<div class="v rec"><div class="t">1. Оставить все двадцать четыре, яркие добавить третьим списком</div>
+<p>Ничего не пропадёт: где стоит старый цвет, там он и останется.</p>
+<p class="minus">цветов станет тридцать три, списка три вместо двух.</p></div>
+<div class="v"><div class="t">2. Спрятать восемь самых бледных светлых</div>
+<p>В меню останется только то, что реально видно.</p>
+<p class="minus">если такой цвет стоит в каком-то окне — там он слетит на обычный.</p></div>
+<div class="v"><div class="t">3. Оставить только яркие, старые убрать совсем</div>
+<p>Коротко и сочно, выбирать не из чего.</p>
+<p class="minus">перекрасятся почти все окна разом.</p></div>
+
+<h2 id="s5"><span class="n">5</span> Вопрос 2: где держать «Мои темы»</h2>
+<p>Это те цвета, которые ты сохранил сам через «Сохранить как мою тему».</p>
+<div class="v rec"><div class="t">1. Оставить, где сейчас — отдельным списком выше «Цвета»</div>
+<p>Свои цвета остаются на один клик ближе, чем все остальные, и ничего не надо переучивать.</p>
+<p class="minus">свои цвета и остальные лежат в двух разных местах.</p></div>
+<div class="v"><div class="t">2. Убрать внутрь «Цвета» четвёртым списком: Мои темы · Тёмные · Светлые · Яркие</div>
+<p>Все цвета в одном месте, меню «Оформление» становится короче.</p>
+<p class="minus">до своего цвета на один шаг дальше, чем сейчас.</p></div>
+
+<h2 id="s6"><span class="n">6</span> Вопрос 3: жёлтый и оранжевый на светлом</h2>
+<p>«Лимонад» и «Апельсин» — единственные, где жёлтый и оранжевый открытые, а не приглушённые
+(цветность 44–48 % против 4–9 % у нынешних светлых).</p>
+<div class="v rec"><div class="t">1. Взять оба</div>
+<p>Это и есть тот самый жёлтый и оранжевый, который ты просил; на тёмном фоне так ярко не выходит.</p>
+<p class="minus">светлое окно к вечеру утомляет сильнее тёмного.</p></div>
+<div class="v"><div class="t">2. Взять только семь тёмных</div>
+<p>Все окна остаются тёмными, глазам ровнее.</p>
+<p class="minus">самого яркого жёлтого в наборе не будет вовсе.</p></div>
+<div class="v"><div class="t">3. Взять, но сделать их мягче</div>
+<p>Жёлтый и оранжевый остаются, но спокойнее.</p>
+<p class="minus">поедут в сторону нынешних бледных — ради чего и затевалось, то и потеряем.</p></div>
+
+<h2 id="s7"><span class="n">7</span> Решено, не переспрашиваю</h2>
+<ul class="big">
+<li>Названия списков — обычными буквами: «Тёмные», «Светлые», «Яркие». Капса не будет.</li>
+<li>Имена ярких: Манго, Мёд, Лимонад, Апельсин, Лайм, Коралл, Фуксия, Электрик, Ультрафиолет.</li>
+<li>Каждый яркий проверен числом: ссылки читаются, код читается, фон окрашен по норме проекта.</li>
+<li>Наведение мышью примеряет цвет, клик закрепляет — как сейчас.</li>
+<li>Яркие подхватятся всем, что уже умеет цвет: «Всем окнам», цвет по проекту, «Раскрасить по кругу».</li>
+<li>Ни один старый цвет без твоего слова не удаляю.</li>
+</ul>
+
+<div class="ans-box">
+Ответь одной фразой на каждый из трёх вопросов — или скажи номера тех, где я не угадал.
+</div>
+
+<details><summary>Для агента, который будет это кодить: точные палитры</summary>
+<pre>[
+  {
+    "id": "mango",
+    "name": "Манго",
+    "type": "dark",
+    "palette": {
+      "accent": "#fd8b27",
+      "background": "#512b15",
+      "foreground": "#fce9de",
+      "sidebar": "#3a1d0c",
+      "panel": "#6b3c22",
+      "muted": "#be8c6f"
+    }
+  },
+  {
+    "id": "honey",
+    "name": "Мёд",
+    "type": "dark",
+    "palette": {
+      "accent": "#e6ad02",
+      "background": "#503c14",
+      "foreground": "#fcf2de",
+      "sidebar": "#38290c",
+      "panel": "#695121",
+      "muted": "#bca069"
+    }
+  },
+  {
+    "id": "lemonade",
+    "name": "Лимонад",
+    "type": "light",
+    "palette": {
+      "accent": "#b12c00",
+      "background": "#ffeb85",
+      "foreground": "#322b08",
+      "sidebar": "#ffe45e",
+      "panel": "#fff7cf",
+      "muted": "#7f7234"
+    }
+  },
+  {
+    "id": "orangeade",
+    "name": "Апельсин",
+    "type": "light",
+    "palette": {
+      "accent": "#a31000",
+      "background": "#ffcb8f",
+      "foreground": "#321f08",
+      "sidebar": "#ffb969",
+      "panel": "#ffedd9",
+      "muted": "#815d35"
+    }
+  },
+  {
+    "id": "lime",
+    "name": "Лайм",
+    "type": "dark",
+    "palette": {
+      "accent": "#7ed102",
+      "background": "#374912",
+      "foreground": "#f2fcde",
+      "sidebar": "#25320a",
+      "panel": "#4c631f",
+      "muted": "#95b457"
+    }
+  },
+  {
+    "id": "coral",
+    "name": "Коралл",
+    "type": "dark",
+    "palette": {
+      "accent": "#fd7661",
+      "background": "#541915",
+      "foreground": "#fce0de",
+      "sidebar": "#3d100c",
+      "panel": "#6d2722",
+      "muted": "#c27b76"
+    }
+  },
+  {
+    "id": "fuchsia",
+    "name": "Фуксия",
+    "type": "dark",
+    "palette": {
+      "accent": "#fd69cc",
+      "background": "#53163c",
+      "foreground": "#fcdef1",
+      "sidebar": "#3d0c2b",
+      "panel": "#6d2251",
+      "muted": "#c277a7"
+    }
+  },
+  {
+    "id": "electric",
+    "name": "Электрик",
+    "type": "dark",
+    "palette": {
+      "accent": "#02baf2",
+      "background": "#143c50",
+      "foreground": "#def2fc",
+      "sidebar": "#0c2938",
+      "panel": "#215169",
+      "muted": "#6ca2bd"
+    }
+  },
+  {
+    "id": "ultra",
+    "name": "Ультрафиолет",
+    "type": "dark",
+    "palette": {
+      "accent": "#c674fe",
+      "background": "#381655",
+      "foreground": "#eedefc",
+      "sidebar": "#270d3f",
+      "panel": "#4b236e",
+      "muted": "#a078c2"
+    }
+  }
+]</pre>
+<p>Тип, порядок ключей и вид записи — как в <code>claude-patch/themes.json</code>. Числа контраста
+посчитаны той же арифметикой, что в <code>inject.js</code> (mixHex / readableOn / contrastRatio).
+Цвета кода в макете получены через <code>codePalette</code>, то есть это не рисунок, а расчёт.</p>
+</details>
+
+</body></html>

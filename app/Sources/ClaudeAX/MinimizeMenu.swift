@@ -215,6 +215,12 @@ final class MinimizeMenu: NSObject {
         // Отсрочки здесь нет: плитка сама закрывает меню и зовёт это ходом вперёд.
         config.arrangeMode = actions.themeStore.arrangeMode
         config.arrangeFits = { [weak self] mode in self?.actions.arrangeFits(mode) ?? true }
+        // Тот же список окон, по которому работает «Расставить» (свёрнутые в него не входят):
+        // по рамкам плитка «как сейчас» рисует настоящее положение окон (#5798), по их числу
+        // собирается полоса (#5800). Список кэширован секунду — лишнего обхода AX нет.
+        let onScreen = app.visibleWindows().compactMap { AX.frame($0) }
+        config.windowFrames = onScreen
+        config.windowArea = Screens.usableFrame(holding: onScreen)
         config.arrange = { [weak self] mode in
             guard let self = self else { return }
             self.actions.themeStore.arrangeMode = mode
@@ -318,6 +324,14 @@ final class MinimizeMenu: NSObject {
         // activate() на macOS 14+ без yield со стороны Claude приложение не активирует —
         // нужен именно ignoringOtherApps, как делает Hammerspoon перед popupMenu.
         NSApp.activate(ignoringOtherApps: true)
+        // …но `activate` только ПРОСИТ активность, а приезжает она событием (#5797). Меню,
+        // поднятое до её приезда, AppKit гасит через четверть секунды: снаружи это «мигнуло
+        // и пропало». Ровно это Элвис поймал 08.09 на свежей сборке — по журналу окон видно
+        // пять попыток подряд, каждая жила 250 мс, и все в первые полминуты после запуска
+        // приложения, пока оно ни разу не было впереди. Ждём подтверждения, разбирая события
+        // главной очереди, не дольше `activateWait`; не дождались — меню всё равно поднимаем.
+        MinimizeMenu.awaitActive(isActive: { NSApp.isActive }, pump: MinimizeMenu.pumpEvent,
+                                 now: { Date.timeIntervalSinceReferenceDate })
         // Меню встаёт СЛЕВА от жёлтой кнопки (решение 2.1 плана WF20): точку считает чистая
         // `origin`, а `NSMenu.size` спрашиваем только здесь — AppKit считает её лениво.
         // Область — экран, где стоит САМА кнопка (#5716): `Screens.mainUsableFrame` это
@@ -340,6 +354,38 @@ final class MinimizeMenu: NSObject {
         if previewed && !committed && !MinimizeMenu.editorOpen { actions.endPreview(window: window) }
         // Меню закрылось — фокус обратно окну Claude (решение 7 плана).
         app.focus(window: window)
+    }
+
+    // MARK: - активность перед popUp (#5797)
+
+    /// Сколько ждём активность после `activate`. Живьём она приезжает за десятки миллисекунд;
+    /// не приехала за это время — не приедет вовсе, и лишняя пауза перед меню хуже попытки.
+    static let activateWait: TimeInterval = 0.3
+    /// Шаг ожидания: столько ждём одно событие за заход.
+    static let activateStep: TimeInterval = 0.02
+
+    /// Дождаться, пока приложение ПРАВДА станет активным. Чистая — её и гоняют тесты:
+    /// `isActive` спрашивает состояние, `pump` даёт AppKit ход (живьём — разбор одного
+    /// события главной очереди), `now` — часы. Отвечает, дождались ли.
+    @discardableResult
+    static func awaitActive(isActive: () -> Bool, pump: () -> Void, now: () -> TimeInterval,
+                            timeout: TimeInterval = activateWait) -> Bool {
+        let deadline = now() + timeout
+        while !isActive() {
+            guard now() < deadline else { return false }
+            pump()
+        }
+        return true
+    }
+
+    /// Один шаг ожидания живьём: берём событие из очереди и отдаём его AppKit — тем же путём,
+    /// каким его разобрал бы главный цикл. Без этого активация так и лежала бы в очереди,
+    /// пока мы стоим на `popUp`. Событий нет — ждём до `activateStep` и выходим.
+    private static func pumpEvent() {
+        let until = Date().addingTimeInterval(activateStep)
+        guard let event = NSApp.nextEvent(matching: .any, until: until, inMode: .default,
+                                          dequeue: true) else { return }
+        NSApp.sendEvent(event)
     }
 
     // MARK: - положение меню (чистая часть — её и проверяет тест)
@@ -466,6 +512,13 @@ final class MinimizeMenu: NSObject {
         var arrangeMode: ArrangeLayout.Mode = .ribbon
         var arrangeFits: (ArrangeLayout.Mode) -> Bool = { _ in true }
         var arrange: (ArrangeLayout.Mode) -> Void = { _ in }
+        /// Как окна Claude стоят прямо сейчас (рамки в перевёрнутых координатах AX) и рабочая
+        /// область экрана, на котором они стоят. По ним плитка «как сейчас» рисует настоящее
+        /// положение окон (#5798), а по их числу собирается сама полоса (#5800): раскладка,
+        /// у которой при этом числе окон половина ячеек осталась бы пустой, в полосу не
+        /// попадает. Рамок нет — в полосе одна плитка «как сейчас» со схемой столбиками.
+        var windowFrames: [CGRect] = []
+        var windowArea: CGRect?
         /// Сохранённые раскладки в «🗂 Раскладки ▸» (план WF41) и что делать по клику:
         /// запомнить нынешние окна, вернуть те же чаты (`false`) или открыть новые (`true`),
         /// удалить запись.

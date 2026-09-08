@@ -140,14 +140,24 @@ final class ClaudeAXTests: XCTestCase {
     }
 
     /// Полоса раскладок — самый первый пункт меню (план WF21): четыре плитки в порядке
-    /// макета, выбранная отмечена, не влезающая на экран не нажимается.
+    /// макета, выбранная отмечена, не влезающая на экран не нажимается, а последней клеткой
+    /// стоит «💾 сохранить» (#5799).
     func testLayoutPickerIsFirstMenuItem() throws {
         var picked: [ArrangeLayout.Mode] = []
+        var saved = 0
         let done = expectation(description: "плитка выбрана")
+        let stored = expectation(description: "раскладка сохранена")
         var config = menuConfig()
         config.arrangeMode = .five
         config.arrangeFits = { $0 != .tenGrid }
         config.arrange = { picked.append($0); done.fulfill() }
+        config.saveLayout = { saved += 1; stored.fulfill() }
+        // Десять окон: при меньшем числе сетки из полосы уходят (#5800), а здесь проверяется
+        // сама полоса целиком.
+        config.windowArea = CGRect(x: 0, y: 0, width: 1000, height: 500)
+        config.windowFrames = (0..<10).map {
+            CGRect(x: CGFloat($0) * 100, y: 0, width: 100, height: 500)
+        }
         let menu = MinimizeMenu.build(config: config)
 
         let item = try XCTUnwrap(menu.items.first)
@@ -160,18 +170,108 @@ final class ClaudeAXTests: XCTestCase {
                        ["4 в ряд", "5 в ряд", "5 × 2", "как сейчас"])
         XCTAssertEqual(picker.tiles.map { $0.isSelected }, [false, true, false, false])
         XCTAssertEqual(picker.tiles.map { $0.isEnabled }, [true, true, false, true])
+        XCTAssertEqual(picker.cellCount, 5, "четыре плитки и кнопка сохранения")
+        XCTAssertEqual(picker.saveIndex, 4)
 
-        // Плитки идут слева направо, не наезжают друг на друга и не вылезают за пункт.
+        // Клетки идут слева направо, не наезжают друг на друга и не вылезают за пункт.
         XCTAssertLessThan(picker.cell(of: 0).maxX, picker.cell(of: 1).minX)
-        XCTAssertLessThanOrEqual(picker.cell(of: 3).maxX, picker.bounds.maxX)
+        XCTAssertLessThanOrEqual(picker.cell(of: 4).maxX, picker.bounds.maxX)
         XCTAssertEqual(picker.index(at: NSPoint(x: picker.cell(of: 1).midX,
                                                 y: picker.bounds.midY)), 1)
+        XCTAssertEqual(picker.index(at: NSPoint(x: picker.cell(of: 4).midX,
+                                                y: picker.bounds.midY)), 4)
 
-        // Серая плитка молчит; обычная зовёт обработчик ходом вперёд (меню уже закрылось).
+        // Серая плитка молчит; обычная зовёт обработчик ходом вперёд (меню уже закрылось),
+        // а последняя клетка — то же сохранение раскладки, что пункт в «⋯ Ещё ▸».
         picker.pick(2)
         picker.pick(0)
+        picker.pick(4)
         waitForExpectations(timeout: 1)
         XCTAssertEqual(picked, [.four])
+        XCTAssertEqual(saved, 1)
+    }
+
+    /// Полоса зависит от числа окон (#5800, слово Элвиса 08.09 16:30: «здесь только сейчас два
+    /// окна отображается — зачем эти режимы вообще»). Сетка, у которой ячеек больше, чем окон,
+    /// из полосы уходит совсем, а не сереет: серых Элвис всё равно видел бы четыре штуки.
+    /// Гашение «экран уже» — про другое и работает по-прежнему.
+    func testLayoutTilesFollowWindowCount() {
+        XCTAssertTrue(ArrangeLayout.suits(.ribbon, windows: 0))
+        XCTAssertTrue(ArrangeLayout.suits(.ribbon, windows: 2))
+        XCTAssertFalse(ArrangeLayout.suits(.four, windows: 3))
+        XCTAssertTrue(ArrangeLayout.suits(.four, windows: 4))
+        XCTAssertTrue(ArrangeLayout.suits(.four, windows: 7), "лишние окна не двигаем — смысл есть")
+        XCTAssertFalse(ArrangeLayout.suits(.five, windows: 4))
+        XCTAssertTrue(ArrangeLayout.suits(.five, windows: 5))
+        XCTAssertFalse(ArrangeLayout.suits(.tenGrid, windows: 9))
+        XCTAssertTrue(ArrangeLayout.suits(.tenGrid, windows: 10))
+
+        let all: (ArrangeLayout.Mode) -> Bool = { _ in true }
+        XCTAssertEqual(LayoutPickerView.tiles(mode: .five, fits: all, windows: 2).map { $0.mode },
+                       [.ribbon], "два окна — только «как сейчас»")
+        XCTAssertEqual(LayoutPickerView.tiles(mode: .five, fits: all, windows: 4).map { $0.mode },
+                       [.four, .ribbon])
+        XCTAssertEqual(LayoutPickerView.tiles(mode: .five, fits: all, windows: 10).map { $0.mode },
+                       [.four, .five, .tenGrid, .ribbon])
+        XCTAssertEqual(LayoutPickerView.tiles(mode: .five, fits: { $0 != .five }, windows: 10)
+                        .map { $0.isEnabled }, [true, false, true, true])
+
+        // Клетки не наезжают и не вылезают за пункт ни при какой длине полосы: ужимается
+        // сама клетка (пять по 54 в 260 не влезли бы).
+        for windows in [0, 1, 2, 4, 5, 10] {
+            var config = MinimizeMenu.MenuConfig()
+            config.windowArea = CGRect(x: 0, y: 0, width: 1000, height: 500)
+            config.windowFrames = Array(repeating: CGRect(x: 0, y: 0, width: 100, height: 500),
+                                        count: windows)
+            let picker = LayoutPickerView(config: config)
+            XCTAssertEqual(picker.cellCount, picker.tiles.count + 1)
+            XCTAssertGreaterThanOrEqual(picker.cell(of: 0).minX, 0, "\(windows) окон")
+            for index in 1..<picker.cellCount {
+                XCTAssertLessThan(picker.cell(of: index - 1).maxX, picker.cell(of: index).minX,
+                                  "\(windows) окон")
+            }
+            XCTAssertLessThanOrEqual(picker.cell(of: picker.saveIndex).maxX, picker.bounds.maxX,
+                                     "\(windows) окон")
+        }
+    }
+
+    /// Плитка «как сейчас» рисует НАСТОЯЩЕЕ положение окон (#5798, слово Элвиса 08.09 16:30:
+    /// «"как сейчас" всегда же по-разному — там нужно отображать, как сейчас окна реально
+    /// отображаются»): рамки вписываются в рабочую область долями, а плитка переворачивает их
+    /// в свои координаты — верх экрана остаётся верхом.
+    func testCurrentLayoutTileDrawsRealWindows() {
+        let area = CGRect(x: 100, y: 50, width: 800, height: 400)
+        // Левая половина во всю высоту и правая нижняя четверть.
+        let shapes = ArrangeLayout.shapes(of: [CGRect(x: 100, y: 50, width: 400, height: 400),
+                                               CGRect(x: 500, y: 250, width: 400, height: 200)],
+                                          in: area)
+        XCTAssertEqual(shapes, [CGRect(x: 0, y: 0, width: 0.5, height: 1),
+                                CGRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5)])
+        // Окно с другого экрана в плитку не попадает вовсе; вылезшее за край — обрезается.
+        XCTAssertEqual(ArrangeLayout.shapes(of: [CGRect(x: 2000, y: 50, width: 400, height: 400)],
+                                            in: area), [])
+        XCTAssertEqual(ArrangeLayout.shapes(of: [CGRect(x: -300, y: 50, width: 800, height: 400)],
+                                            in: area), [CGRect(x: 0, y: 0, width: 0.5, height: 1)])
+        XCTAssertEqual(ArrangeLayout.shapes(of: [area], in: .zero), [], "экрана нет — рисовать нечего")
+
+        // Доли → координаты плитки: y растёт вверх, поэтому окно у ВЕРХА экрана рисуется
+        // у верха картинки, а не вверх ногами.
+        let box = NSRect(x: 10, y: 20, width: 40, height: 40)
+        XCTAssertEqual(LayoutPickerView.place(shapes[0], in: box),
+                       NSRect(x: 10, y: 20, width: 20, height: 40))
+        XCTAssertEqual(LayoutPickerView.place(shapes[1], in: box),
+                       NSRect(x: 30, y: 20, width: 20, height: 20))
+        XCTAssertEqual(LayoutPickerView.place(CGRect(x: 0, y: 0, width: 1, height: 0.5), in: box),
+                       NSRect(x: 10, y: 40, width: 40, height: 20))
+
+        // Полоса берёт эти доли у меню; экрана не знаем — плитка рисует прежнюю схему.
+        var config = MinimizeMenu.MenuConfig()
+        config.windowArea = area
+        config.windowFrames = [CGRect(x: 100, y: 50, width: 400, height: 400)]
+        XCTAssertEqual(LayoutPickerView(config: config).shapes,
+                       [CGRect(x: 0, y: 0, width: 0.5, height: 1)])
+        config.windowArea = nil
+        XCTAssertTrue(LayoutPickerView(config: config).shapes.isEmpty)
     }
 
     /// «🗂 Раскладки ▸» — последний пункт «⋯ Ещё ▸» (план WF41): сохранить нынешние окна,
@@ -977,6 +1077,75 @@ final class ClaudeAXTests: XCTestCase {
             XCTAssertEqual(MinimizeMenu.origin(button: rect, menuWidth: width, area: area).x,
                            rect.minX - MinimizeMenu.menuGap - width, "ширина \(width)")
         }
+    }
+
+    /// Меню поднимается только после того, как активность ПРАВДА приехала (#5797): `activate`
+    /// её лишь просит, а меню, поднятое до приезда, AppKit гасит через четверть секунды —
+    /// Элвис видел «мигнуло и пропало».
+    func testMenuWaitsUntilAppIsReallyActive() {
+        // Уже активны — ни одного шага ожидания, меню поднимается сразу.
+        var pumps = 0
+        var clock: TimeInterval = 100
+        XCTAssertTrue(MinimizeMenu.awaitActive(isActive: { true }, pump: { pumps += 1 },
+                                               now: { clock }))
+        XCTAssertEqual(pumps, 0)
+
+        // Активность приезжает с третьего события — дождались, лишнего не ждём.
+        pumps = 0
+        XCTAssertTrue(MinimizeMenu.awaitActive(isActive: { pumps >= 3 },
+                                               pump: { pumps += 1; clock += 0.02 },
+                                               now: { clock }))
+        XCTAssertEqual(pumps, 3)
+
+        // Не приехала вовсе — выходим по сроку и меню поднимаем всё равно (ответ false).
+        pumps = 0
+        clock = 100
+        XCTAssertFalse(MinimizeMenu.awaitActive(isActive: { false },
+                                                pump: { pumps += 1; clock += MinimizeMenu.activateStep },
+                                                now: { clock }))
+        XCTAssertEqual(clock - 100, MinimizeMenu.activateWait, accuracy: MinimizeMenu.activateStep,
+                       "ждали дольше срока")
+        XCTAssertGreaterThan(pumps, 0)
+        XCTAssertLessThanOrEqual(pumps,
+                                 Int((MinimizeMenu.activateWait / MinimizeMenu.activateStep).rounded()) + 1)
+    }
+
+    /// Область для меню считается по рамке САМОЙ кнопки (#5716), и рамка эта — из
+    /// доступности, то есть в перевёрнутых координатах Quartz, как их и ждёт
+    /// `Screens.usableFrame(holding:)`: экраны она переворачивает сама. Перевод рамки в
+    /// координаты AppKit перед вызовом ЛОМАЕТ выбор экрана — на это и проверка.
+    func testMenuAreaTakesButtonRectInAXCoordinates() {
+        // Экраны в перевёрнутых координатах: ноутбук с меню-баром и монитор НАД ним (у второго
+        // экрана сверху y отрицательный — на этом и видно, что рамку переворачивать нельзя).
+        let laptop = CGRect(x: 0, y: 0, width: 1470, height: 956)
+        let external = CGRect(x: 0, y: -1080, width: 1920, height: 1080)
+        let flipBase = laptop.maxY
+
+        // Один экран: кнопка окна ноутбука — на нём, куда её ни ставь.
+        let onLaptop = CGRect(x: 40, y: 50, width: 14, height: 14)
+        XCTAssertEqual(Screens.pick(screens: [laptop], for: [onLaptop]), 0)
+        // Экрана под рамкой нет вовсе — тоже нулевой, и область у меню всё равно есть.
+        XCTAssertEqual(Screens.pick(screens: [laptop], for: [CGRect(x: -900, y: 50, width: 14, height: 14)]), 0)
+
+        // Два экрана: кнопка на главном — главный, кнопка на втором — второй.
+        let onExternal = CGRect(x: 40, y: -1030, width: 14, height: 14)
+        XCTAssertEqual(Screens.pick(screens: [laptop, external], for: [onLaptop]), 0)
+        XCTAssertEqual(Screens.pick(screens: [laptop, external], for: [onExternal]), 1)
+
+        // Та же кнопка, но «переведённая» в координаты AppKit, уезжает с экрана вовсе —
+        // выбор скатывается на нулевой, и меню считалось бы по чужой области.
+        let flipped = CGRect(x: onExternal.minX, y: flipBase - onExternal.maxY,
+                             width: onExternal.width, height: onExternal.height)
+        XCTAssertEqual(Screens.pick(screens: [laptop, external], for: [flipped]), 0)
+
+        // Ради чего всё: у окна, придвинутого к левому краю ВТОРОГО экрана, меню падает под
+        // кнопку, а не уезжает за его край.
+        XCTAssertEqual(MinimizeMenu.origin(button: onExternal, menuWidth: 300, area: external).x,
+                       onExternal.minX)
+        // На главном экране места слева хватает — меню как обычно, левее кнопки.
+        XCTAssertEqual(MinimizeMenu.origin(button: CGRect(x: 528, y: 50, width: 14, height: 14),
+                                           menuWidth: 300, area: laptop).x,
+                       528 - MinimizeMenu.menuGap - 300)
     }
 
     /// Структура меню варианта А (план WF14 п. 5): верхний уровень короткий, всё оформление —

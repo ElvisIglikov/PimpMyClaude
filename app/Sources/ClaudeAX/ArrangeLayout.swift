@@ -45,6 +45,39 @@ enum ArrangeLayout {
             && area.height / CGFloat(grid.rows) >= minCellHeight
     }
 
+    /// Годится ли раскладка при таком числе окон (#5800, слово Элвиса 08.09: «нажимаешь — и
+    /// там должно быть: от количества окон меняются режимы доступные»). У сетки ячеек ровно
+    /// столько, сколько задано: окон меньше — часть ячеек осталась бы пустой, экран дырявым,
+    /// а окна узкими без нужды («здесь же вообще нету четырёх окон»). Лента считает ячейки
+    /// по числу окон и годится всегда.
+    static func suits(_ mode: Mode, windows: Int) -> Bool {
+        guard let capacity = capacity(of: mode) else { return true }
+        return windows >= capacity
+    }
+
+    /// Как окна стоят СЕЙЧАС — долями рабочей области (0…1; начало отсчёта — левый верхний
+    /// угол области, y вниз, как в перевёрнутых координатах AX). По ним плитка «как сейчас»
+    /// рисует настоящее положение окон (#5798, слово Элвиса 08.09: «"как сейчас" всегда же
+    /// по-разному — там нужно отображать, как сейчас окна реально отображаются»).
+    /// Что вылезло за край области — обрезается; окно на другом экране обрезается в ничто
+    /// и в ответ не попадает вовсе.
+    static func shapes(of frames: [CGRect], in area: CGRect) -> [CGRect] {
+        guard area.width > 0, area.height > 0 else { return [] }
+        return frames.compactMap { frame in
+            let x0 = share(frame.minX - area.minX, of: area.width)
+            let x1 = share(frame.maxX - area.minX, of: area.width)
+            let y0 = share(frame.minY - area.minY, of: area.height)
+            let y1 = share(frame.maxY - area.minY, of: area.height)
+            guard x1 > x0, y1 > y0 else { return nil }
+            return CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
+        }
+    }
+
+    /// Доля отрезка в области, обрезанная её краями.
+    private static func share(_ value: CGFloat, of size: CGFloat) -> CGFloat {
+        min(max(value / size, 0), 1)
+    }
+
     /// Столбцы для n окон: сначала все в один ряд во всю высоту, ряды появляются
     /// только когда ячейка стала бы уже minCellWidth (слово Элвиса 03.09: «правильная
     /// четвёрка — четыре столбца во всю высоту, не 2×2»).

@@ -1651,6 +1651,12 @@ final class LayoutPickerHintsTests: XCTestCase {
         var config = MinimizeMenu.MenuConfig()
         config.arrangeMode = .ribbon
         config.arrangeFits = fits
+        // Десять окон: полоса собирается по их числу (#5800), и без них в ней осталась бы
+        // одна плитка «как сейчас» — серой, про которую подсказка, не было бы вовсе.
+        config.windowArea = CGRect(x: 0, y: 0, width: 1000, height: 500)
+        config.windowFrames = (0..<10).map {
+            CGRect(x: CGFloat($0) * 100, y: 0, width: 100, height: 500)
+        }
         return LayoutPickerView(config: config)
     }
 
