@@ -36,7 +36,10 @@ json_field() {
 
 echo "▶ PimpMyClaude $VERSION ($BUILD) → релиз"
 mkdir -p "$DIST"
-rm -f "$UPLOAD_ZIP" "$FINAL_ZIP" "$SUBMIT_JSON" "$DIST"/PimpMyClaude-*.zip  # старые релизы не копим: отдать не тот zip — одна опечатка
+# Убираем только своё: рабочий zip, отчёт нотаризации и архив ЭТОЙ версии. Архивы прошлых
+# версий живут до конца прогона — иначе сбой на нотаризации оставляет команду без сборки,
+# а dist/ в .gitignore и вернуть её неоткуда (#5747).
+rm -f "$UPLOAD_ZIP" "$FINAL_ZIP" "$SUBMIT_JSON"
 
 # 1. Сборка и подпись Developer ID (bundle.sh сам сносит старый $APP).
 echo "▶ 1/6 сборка и подпись"
@@ -105,6 +108,10 @@ case "$ASSESS" in
   *"Notarized Developer ID"*) ;;
   *) die "spctl не видит нотаризацию (source не Notarized Developer ID)" ;;
 esac
+
+# 7. Новый архив собран, заверен и принят Gatekeeper — только теперь убираем прошлые версии:
+# старые релизы не копим (отдать не тот zip — одна опечатка), но и без запаса не остаёмся.
+find "$DIST" -maxdepth 1 -name 'PimpMyClaude-*.zip' ! -name "$(basename "$FINAL_ZIP")" -delete
 
 echo
 echo "✅ готово: $FINAL_ZIP"

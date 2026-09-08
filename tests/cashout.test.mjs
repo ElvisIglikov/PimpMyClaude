@@ -68,7 +68,8 @@ test("главное окно пишет запись без адресата и
   assert.deepEqual(Object.keys(record), Object.keys(fixture("record-main")), "полей переноса у главного окна нет");
   assert.equal(record.text, fixture("record-main").text);
   assert.equal(main.counters.intervals, before + 1, "сторож вставки на месте — ⌘N откроет чат в этом же окне");
-  assert.deepEqual(plain(main.api.status().cashout), { record: true, to: null, title: null, stampedAt: null });
+  assert.deepEqual(plain(main.api.status().cashout),
+    { record: true, to: null, title: null, stampedAt: null, refusal: null });
 });
 
 test("адресация: match и chat сильнее заголовка", () => {
@@ -214,4 +215,18 @@ test("родителя сторож спрашивает ровно один р�
   assert.equal(popup.inner.tryPasteCashout(), "вставлено", "id приехал — перенос лёг");
   assert.equal(stored(popup), null);
   assert.equal(heard.asks, 1, "второй раз спрашивать было незачем");
+});
+
+test("пустой чат: «Обкэшить» отказывает плашкой, а не молчанием", () => {
+  // ⌘N жмёт приложение независимо от ответа страницы, и до починки Элвис получал
+  // пустой новый чат без единого слова (находка ревизии 08.09).
+  const main = page({ draft: "", answer: "" });
+  main.dom.command(cashout({ title: "PimpMyClaude" }));
+  assert.equal(stored(main), null, "переносить нечего — записи нет");
+  const note = main.dom.query("#myclaude-new-window-note");
+  assert.ok(note, "плашка в окне есть");
+  assert.equal(note.textContent, "Нечего переносить");
+  assert.equal(note.style.getPropertyValue("display"), "block", "и она видна");
+  assert.equal(plain(main.api.status().cashout).refusal, "Нечего переносить",
+    "гейту причина названа тем же словом");
 });

@@ -50,6 +50,37 @@ test("«2 из 2» без значка строкой состояния не с
   assert.equal(parse("- шаги 2 из 2\n- время 1 ч"), null);
 });
 
+// Значок засчитывается только в НАЧАЛЕ строки. Раньше хватало значка где угодно
+// в ней, и обычная фраза с ✅ и «N из M» красила всю полосу зелёным «готово»
+// посреди работы — самый сильный сигнал в окне врал (находка ревизии 08.09).
+test("обычная фраза с ✅ и «N из M» строкой состояния не становится", () => {
+  assert.equal(parse("Здесь 5 из 7 тестов зелёные ✅"), null);
+  assert.equal(parse("- шаги 3 из 3 ✅"), null);
+  assert.equal(parse("Тесты: 222 из 222 ✅"), null);
+  assert.equal(parse("закрыл 5 из 7 пунктов ✅"), null);
+  assert.equal(parse("## Я сделал:\n1. тесты ✅ 2 из 2\n2. и всё"), null,
+    "список сделанного полосу не красит");
+});
+
+test("настоящие строки чатов Элвиса разбираются как прежде", () => {
+  const run = parse("💭⚪[Проект](docs/status.md) · WF 2 из 3 · идёт💭");
+  assert.equal(run.wf, 2);
+  assert.equal(run.of, 3);
+  assert.equal(run.state, "run");
+  assert.equal(run.project, "Проект");
+  const done = parse("✅⚪[Проект](docs/status.md) · WF 2 из 2 · готово✅");
+  assert.equal(done.state, "done");
+  assert.equal(done.pct, 100);
+  assert.equal(done.total, 100);
+  // В попапах строка приезжает из текста всего окна — с отступом.
+  assert.equal(parse("   ✅⚪[Проект](docs/status.md) · WF 2 из 2 · готово✅").state, "done");
+  // «Жду» пишется и с селектором VS16, и без него.
+  assert.equal(parse("⚠️⚪[Проект](docs/status.md) · WF 1 из 2 · жду⚠️").state, "wait");
+  assert.equal(parse("⚠⚪[Проект](docs/status.md) · WF 1 из 2 · жду⚠").state, "wait");
+  assert.equal(parse("✋⚪[Проект](docs/status.md) · WF 1 из 2 · жду✋").state, "wait");
+  assert.equal(parse("🛑⚪[Проект](docs/status.md) · WF 1 из 2 · упал🛑").state, "fail");
+});
+
 test("берётся ПОСЛЕДНЕЕ совпадение — строка состояния стоит последней", () => {
   const answer = [
     "## Я сделал:",

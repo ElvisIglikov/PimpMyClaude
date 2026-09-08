@@ -31,13 +31,16 @@ const grab = name => {
   while (lines[end] !== "  };" && lines[end] !== "  });") end += 1;
   return lines.slice(start, end + 1).join("\n");
 };
+// Пометки приезжают из vm-контекста, и deepStrictEqual с ними не дружит:
+// сверяем по значению.
+const plain = value => JSON.parse(JSON.stringify(value));
 const fakeStorage = map => ({
   getItem: key => (map.has(key) ? map.get(key) : null),
   setItem: (key, value) => { map.set(key, String(value)); },
   removeItem: key => { map.delete(key); },
 });
 
-// ---- шаг «цвет»: одна запись нового чата ----------------------------------
+// ---- шаг «цвет»: обе записи чата (id и тень имени) ------------------------
 const colorApi = (title = "Прошлый чат") => {
   const store = new Map();
   const session = new Map();
@@ -80,19 +83,64 @@ const before = {
   main: { font: { id: "inter", family: "Inter", mono: false } },
 };
 
-test("цвет нового окна пишется РОВНО в запись его чата", () => {
-  const { api, store, session } = colorApi();
-  store.set("myclaude-themes-v1", JSON.stringify(before));
-  const map = api.readThemeMap();
-  api.setMapLayers(map, `${api.THEME_CHAT_PREFIX}Dictatorik`, layers);
-  api.writeThemeMap(map);
+// Настоящий шаг «6в» из inject.js: тот же текст, что исполняет цепочка «Нового
+// окна», только вокруг него подставлены её локальные имена.
+const colorStep = ({ id = "local_new", title = "Dictatorik", rowTitle = title,
+                     chosen = layers, seed = before } = {}) => {
+  const store = new Map();
+  const session = new Map();
+  const marks = [];
+  const context = {
+    console,
+    localStorage: fakeStorage(store),
+    sessionStorage: fakeStorage(session),
+    location: { href: "https://claude.ai/epitaxy/local_1", pathname: "/epitaxy/local_1" },
+    document: { get title() { return "Прошлый чат"; }, querySelectorAll: () => [] },
+    now: () => Date.now(),
+    state: { alive: true },
+    track: () => {},
+  };
+  vm.createContext(context);
+  vm.runInContext([
+    slice("---- 1. Постоянные", "const themeSheet = new CSSStyleSheet"),
+    grab("setMapLayers"),
+    "globalThis.step = (id, title, rowTitle, layers, newWindowMark) => {",
+    "  let soft = null;",
+    slice("      // 6в. Цвет и размер нового окна", "      // 6г. Перенос «Обкэшить»"),
+    "  return soft;",
+    "};",
+  ].join("\n"), context);
+  // Разбор постоянных попутно пишет ступень поля ввода (раздел 2) — к шагу
+  // «цвет» это отношения не имеет, поэтому начинаем с чистой сессии.
+  session.clear();
+  store.set("myclaude-themes-v1", JSON.stringify(seed));
+  const soft = context.step(id, title, rowTitle, chosen, patch => marks.push(patch));
+  return { store, session, marks, soft };
+};
+
+test("цвет нового окна пишется в ОБА ключа его чата — id и тень имени", () => {
+  const { store, session, marks, soft } = colorStep();
   const after = JSON.parse(store.get("myclaude-themes-v1"));
-  assert.deepEqual(Object.keys(after).sort(), ["chat:Dictatorik", "chat:Прошлый чат", "main"]);
+  assert.equal(soft, null, "имя настоящее — мягкой пометки нет");
+  assert.deepEqual(Object.keys(after).sort(),
+                   ["chat:Dictatorik", "chat:Прошлый чат", "id:local_new", "main"]);
   assert.deepEqual(after["chat:Прошлый чат"], before["chat:Прошлый чат"], "чат главного окна тронут");
   assert.deepEqual(after.main, before.main, "запись main тронута");
-  assert.equal(after["chat:Dictatorik"].theme.id, "ocean");
-  assert.deepEqual(after["chat:Dictatorik"].size, { answer: 16 });
+  assert.equal(after["id:local_new"].theme.id, "ocean");
+  assert.deepEqual(after["id:local_new"].size, { answer: 16 });
+  assert.deepEqual(after["chat:Dictatorik"], after["id:local_new"], "слои у ключа и тени совпали");
   assert.equal(session.size, 0, "sessionStorage тронут");
+  assert.deepEqual(plain(marks), [{ layers: ["theme", "size"] }]);
+});
+
+test("заголовок-заглушка: ключ id всё равно записан, тени имени нет", () => {
+  const { store, marks, soft } = colorStep({ title: "Claude" });
+  const after = JSON.parse(store.get("myclaude-themes-v1"));
+  assert.deepEqual(Object.keys(after).sort(), ["chat:Прошлый чат", "id:local_new", "main"],
+                   "тень под заглушкой не заведена, ключ id записан");
+  assert.equal(after["id:local_new"].theme.id, "ocean");
+  assert.equal(soft, "no-title", "мягкая пометка осталась");
+  assert.deepEqual(plain(marks), [{ state: "no-title" }, { layers: ["theme", "size"] }]);
 });
 
 test("контроль: «очевидная» writeLayers на том же месте испортила бы main и сессию", () => {

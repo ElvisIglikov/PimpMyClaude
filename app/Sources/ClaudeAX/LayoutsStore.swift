@@ -114,11 +114,25 @@ final class LayoutsStore {
                          isMain: (String) -> Bool) -> (layout: WindowLayout, unknown: [String]) {
         var records: [LayoutCell] = []
         var unknown: [String] = []
+        var mainTaken = false
         for window in windows {
             let main = isMain(window.title)
             guard main || !window.chat.isEmpty else {
                 unknown.append(window.title)
                 continue
+            }
+            // Главным окном приложение зовёт ЛЮБОЕ окно с заголовком «Claude», а его носит и
+            // безымянный попап: второе такое окно записалось бы как `main`, чат его пропал бы,
+            // а при возврате одно окно вставало бы в две ячейки (#5729). Ведём себя как при
+            // неизвестном чате — запись отменяется целиком.
+            // ОБХОД: корень в `ProjectPaint.windowKey(forTitle:)` (#5534, волна 2) — как
+            // починят опознание, эти две строки снять.
+            if main {
+                guard !mainTaken else {
+                    unknown.append(window.title)
+                    continue
+                }
+                mainTaken = true
             }
             records.append(LayoutCell(folder: window.folder,
                                       chat: main ? mainChat : window.chat,
@@ -132,6 +146,12 @@ final class LayoutsStore {
     /// которым `setFrame` считает, что окно доехало).
     static func cell(of frame: CGRect, in cells: [CGRect]) -> Int? {
         cells.firstIndex { ClaudeActions.frameMatches($0, frame) }
+    }
+
+    /// Сколько мест раскладки получили номер ячейки. Ноль — окна стояли не по сетке, и
+    /// записывать нечего: вернулось бы ноль окон (#5728). Это же число ответ зовёт `cells`.
+    static func placedCells(_ layout: WindowLayout) -> Int {
+        layout.cells.filter { $0.cell != nil }.count
     }
 
     /// Запись без имени или без мест пропускается — из-за одной кривой строки не должен

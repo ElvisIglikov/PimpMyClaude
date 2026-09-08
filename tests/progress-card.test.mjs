@@ -228,3 +228,23 @@ test("карточка идущего и готового дышит, ждуща
   assert.equal(loaded.dom.running().length, 0, "после dispose ни одной живой анимации");
   assert.equal(loaded.dom.queryAll("#myclaude-progress-card").length, 0, "и узла карточки в окне нет");
 });
+
+test("строка состояния пропала — карточка закрыта совсем и сама не всплывает", () => {
+  // Переход по сайдбару в другой чат заменяет ленту целиком: строка состояния
+  // пропадает, а потом появляется снова — уже чужая. Раньше карточка на этом
+  // возвращалась САМА, без клика, поверх поля ввода (находка ревизии 08.09).
+  const loaded = open();
+  clickSegment(loaded, 2);
+  assert.equal(shown(loaded), true, "клик открыл карточку");
+  const message = loaded.dom.query('[data-testid="assistant-message"]');
+  message.textContent = "Привет, чем займёмся?";
+  loaded.dom.fireKind("interval");
+  assert.equal(shown(loaded), false, "строки нет — карточки нет");
+  assert.equal(plain(loaded.api.status().progress.tip).open, false,
+    "и гейту она больше не рассказывает про открытую");
+  message.textContent = `Готово.\n\n${LINE}`;
+  loaded.dom.fireKind("interval");
+  assert.equal(shown(loaded), false, "строка вернулась — карточка ждёт клика");
+  clickSegment(loaded, 2);
+  assert.equal(shown(loaded), true, "по клику открывается как прежде");
+});

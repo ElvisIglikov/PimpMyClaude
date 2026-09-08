@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf21-a-1";
+  const VERSION = "wf43-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -164,6 +164,10 @@
   // нового чата проходит несколько секунд работы цепочки.
   const CASHOUT_PENDING = "pending";
   const CASHOUT_STAMP_FRESH_MS = 60000;
+  // Отказ «Обкэшить» виден плашкой, как у соседних пунктов: раньше он молчал, а
+  // новый чат всё равно открывался — Элвис получал пустое окно без объяснений
+  // (находка ревизии 08.09). Плашку рисует newWindowNote раздела 12б.
+  const CASHOUT_NOTE_EMPTY = "Нечего переносить";
   // Ниже этой высоты сосед рамки — пустая обёртка, а не строка модели.
   const MODEL_ROW_MIN_HEIGHT = 8;
   // Признак рамки поля — скругление: у Claude Code это 10px, у контейнеров
@@ -1091,9 +1095,24 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const legacy = legacyKey(key);
     return legacy != null && map[legacy] !== undefined ? themeEntry(map[legacy]) : null;
   };
-  // Запись ЭТОГО чата: сперва по id, потом по имени (WF35). Порядок и есть
-  // приоритет `id:` → `chat:` — им пользуются все три места чтения карты.
-  const chatEntry = map => mapEntry(map, chatIdKey()) ?? mapEntry(map, chatTitleKey());
+  // Запись ЭТОГО чата: приоритет `id:` → `chat:` идёт ПО СЛОЮ, а не по записи
+  // целиком. Раньше здесь стоял `??`, и он срабатывал на самой записи: запись
+  // `id:` с одним слоем закрывала более полную тень `chat:` — остальные слои чата
+  // пропадали с экрана, а их место занимала СЕССИЯ, то есть цвет другого
+  // разговора (находка ревизии 08.09). Слои разведены — им и решать.
+  const chatEntry = map => {
+    const byId = mapEntry(map, chatIdKey());
+    const byTitle = mapEntry(map, chatTitleKey());
+    if (!byId) return byTitle;
+    if (!byTitle) return byId;
+    const entry = {};
+    for (const layer of THEME_LAYERS) {
+      // Мусор в слое равен его отсутствию — решает следующий уровень (entryLayer).
+      if (entryLayer(byId, layer) !== undefined) entry[layer] = byId[layer];
+      else if (entryLayer(byTitle, layer) !== undefined) entry[layer] = byTitle[layer];
+    }
+    return entry;
+  };
   // Первое совпадение переносит запись имени на id — КОПИЕЙ, старую оставляем:
   // по ней ещё живёт окно, которое своего id не знает (попап в первые секунды,
   // непропатченная страница). Зовётся трижды: на инжекте, в syncChatTheme (у
@@ -1825,12 +1844,18 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     let found = null;
     PROGRESS_RE.lastIndex = 0;
     for (let match = PROGRESS_RE.exec(source); match; match = PROGRESS_RE.exec(source)) {
-      // Значок ищем в той же строке, а не во всём ответе: ✅ стоит чуть ли не в
-      // каждом списке сделанного, и любое «2 из 2» стало бы строкой состояния.
+      // Значок засчитывается только в НАЧАЛЕ той же строки — по шаблону AGENTS.md
+      // он там и стоит. Раньше хватало значка где угодно в строке, и «Тесты: 222
+      // из 222 ✅» или «- шаги 3 из 3 ✅» из обычного ответа красили всю полосу
+      // зелёным «готово» посреди работы (находка ревизии 08.09). Ведущие пробелы
+      // допускаем: в попапах строка приезжает из текста всего окна, с отступом.
       const from = source.lastIndexOf("\n", match.index) + 1;
       const end = source.indexOf("\n", match.index);
       const line = source.slice(from, end === -1 ? source.length : end);
-      const hit = PROGRESS_STATES.find(([icon]) => line.includes(icon));
+      const head = line.trimStart();
+      // ⚠️ — это «⚠» + VS16, и селектор в строку попадает не всегда: сверяем по
+      // голому значку, как и весь PROGRESS_STATES.
+      const hit = PROGRESS_STATES.find(([icon]) => head.startsWith(icon));
       const mark = hit ? hit[1] : null;
       if (!match[1] && mark !== "done") continue;
       const wf = Number(match[2]);
@@ -2486,7 +2511,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     }
   };
 
+  // Гасим карточку И забываем выбранный сегмент. Раньше снимался только display,
+  // а `tipOpen` оставался true — и хвост progressApply (`if (progressState.tipOpen)
+  // progressTipShow()`) возвращал карточку на экран САМ, без клика, как только в
+  // ленте снова появлялась строка состояния: перешёл по сайдбару в другой чат — и
+  // она выскочила поверх поля ввода с чужим воркфлоу (находка ревизии 08.09).
+  // Открывается карточка только кликом Элвиса.
   const progressTipHide = () => {
+    progressState.tipOpen = false;
+    progressState.tipSegment = null;
     if (progressState.cardPulse) {
       progressState.cardPulse = false;
       progressPulse(progressState, progressCardPill, false, PROGRESS_PILL_FRAMES, "1");
@@ -2661,11 +2694,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     progressTip.style.setProperty("left", `${Math.round(left)}px`);
     progressTip.style.setProperty("top", `${Math.round(top)}px`);
   };
-  const progressTipClose = () => {
-    progressState.tipOpen = false;
-    progressState.tipSegment = null;
-    progressTipHide();
-  };
+  // Закрыть = погасить: выбор снимает сам progressTipHide.
+  const progressTipClose = () => { progressTipHide(); };
   // Клик по полосе: по тому же сегменту — закрыть, по другому — переключить.
   // Пустой контур (строки состояния нет) карточке рассказать нечего.
   const progressTipToggle = (segment) => {
@@ -4170,8 +4200,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       return record;
     } catch { return null; }
   };
+  // Последний отказ «Обкэшить» — то же слово, что показала плашка. Гейту по нему
+  // видно, почему записи нет; удачный перенос его снимает.
+  let cashoutRefusal = null;
   // Слепок записи для гейта (status().cashout): есть ли она, кому адресована,
-  // под каким заголовком её ждут и когда штамповали.
+  // под каким заголовком её ждут, когда штамповали и почему отказали.
   const cashoutState = () => {
     const record = readCashout();
     return {
@@ -4179,6 +4212,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       to: record?.to ?? null,
       title: record?.title || null,
       stampedAt: record?.stampedAt ?? null,
+      refusal: cashoutRefusal,
     };
   };
   // Курсор в самое начало поля: вставка ложится ПЕРЕД черновиком и не затирает
@@ -4323,7 +4357,14 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (answer) parts.push(answer);
     if (draft) parts.push(draft);
     const text = parts.join("\n\n");
-    if (!text) return false;
+    if (!text) {
+      // Молчать нельзя: ⌘N жмёт приложение независимо от нашего ответа, и без
+      // плашки Элвис видит только пустой новый чат.
+      cashoutRefusal = CASHOUT_NOTE_EMPTY;
+      try { newWindowNote(CASHOUT_NOTE_EMPTY); } catch {}
+      return false;
+    }
+    cashoutRefusal = null;
     // Из подчинённого окна перенос уезжает в НОВОЕ окно (WF37, #5575): ⌘N в
     // попапе исполняет главное окно Claude, и старый путь бил по чату, где
     // Элвис ведёт диктовку. Адресата назовёт цепочка «Нового окна»
@@ -5088,27 +5129,29 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       // 6в. Цвет и размер нового окна — ДО openPopout: попап читает ту же карту
       // (localStorage у окон Claude общий), и запись под ключом его чата успевает
       // лечь раньше, чем окно откроется, — оно рисуется уже покрашенным.
-      // Пишем РОВНО одну запись, чата. Ни writeLayers, ни storeSessionLayers, ни
+      // Пишем РОВНО записи ЧАТА. Ни writeLayers, ни storeSessionLayers, ни
       // applyLayer тут звать нельзя: команду исполняет ГЛАВНОЕ окно, и writeKeys()
       // добавил бы к ключу чата ещё и `main` с сессией — один клик по «Новое окно
       // ▸ Dictatorik» перекрасил бы окно Элвиса в чужой цвет (критик WF16, Б3).
       // Слои на экран здесь тоже не применяются: они не про это окно.
       if (Object.keys(layers).length) {
-        if (!rowTitle || !title || THEME_TITLE_STUBS.has(title.toLowerCase())) {
-          // Заголовок-заглушка ключом чата не бывает: запись под ней досталась бы
-          // каждому безымянному чату разом. Лучше без цвета, чем такой ценой.
-          soft = "no-title";
-          newWindowMark({ state: soft, layers: "no-title" });
-        } else {
-          try {
-            const map = readThemeMap();
-            setMapLayers(map, `${THEME_CHAT_PREFIX}${title}`, layers);
-            writeThemeMap(map);
-            newWindowMark({ layers: Object.keys(layers) });
-          } catch {
-            // Квота или битая карта — не повод ронять окно, как и no-rename.
-            newWindowMark({ layers: "failed" });
-          }
+        // Заголовок-заглушка тенью `chat:` быть не может: запись под ней досталась бы
+        // каждому безымянному чату разом. А ключ `id:` заголовка не требует вовсе —
+        // с ним цвет ложится и безымянному чату (находка ревизии 08.09).
+        const stub = !rowTitle || !title || THEME_TITLE_STUBS.has(title.toLowerCase());
+        if (stub) { soft = "no-title"; newWindowMark({ state: soft }); }
+        try {
+          const map = readThemeMap();
+          // Оба ключа чата, как в writeLayers: id главный, имя — тень для окна,
+          // которое своего id ещё не знает. Раньше писалась одна тень, и цвет окна
+          // держался на имени — ровно на том, что WF35 объявил ненадёжным.
+          setMapLayers(map, `${THEME_ID_PREFIX}${id}`, layers);
+          if (!stub) setMapLayers(map, `${THEME_CHAT_PREFIX}${title}`, layers);
+          writeThemeMap(map);
+          newWindowMark({ layers: Object.keys(layers) });
+        } catch {
+          // Квота или битая карта — не повод ронять окно, как и no-rename.
+          newWindowMark({ layers: "failed" });
         }
       }
 
@@ -6073,7 +6116,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     codeCss, codePalette, contrastRatio, readableOn,
     chatKey, chatIdKey, chatTitleKey, chatEntry, migrateChatKey, sameSessionKey, restoreKeyOk, chatsThemes,
-    sessionKey, themeKey, legacyKey, mapEntry, entryLayer, readThemeMap, writeThemeMap, liveRing, livePalette,
+    sessionKey, themeKey, legacyKey, mapEntry, entryLayer, storedLayer, readThemeMap, writeThemeMap,
+    liveRing, livePalette, setStage, collapseTargets, clampHeight,
     parseProgressText, progressShares, progressFill, progressBlockAt, progressStages,
     statusLines, statusBlocks, statusLineNumber, statusFeedLines, statusKey, runWorkflowCommand, newWindowSegment,
     newWindowSessionId, newWindowAtHome, newWindowStoreOk, setModuleImporter, newWindowScanStores,

@@ -69,6 +69,9 @@ struct WindowThemeEntry: Equatable {
 /// Класс не потокобезопасен: живёт на главной очереди вместе с меню и общим тиком 2 с.
 final class WindowThemeStore {
     static let fileName = "window-themes.json"
+    /// Копия карты рядом с файлом: пишется ровно перед тем, как пустой ответ страницы обнулит
+    /// `window-themes.json`. Последний путь назад, если команда возврата не застала инжект.
+    static let backupFileName = "window-themes.backup.json"
     /// Команда возврата (контракт решения 4 плана WF35).
     static let restoreAction = "themes-restore"
     static let version = 1
@@ -95,15 +98,19 @@ final class WindowThemeStore {
     /// возврата и не чаще одной в 5 с (решение 5).
     static let restoreLimit = 3
     static let restoreInterval: TimeInterval = 5
+    /// Сколько пустых ответов ПОДРЯД обнуляют файл. Один ничего не доказывает: команда возврата
+    /// могла не застать инжект, и тогда пустая карта — не «Элвис снял всё сам», а потерянная
+    /// страница (риск ревизии 08.09).
+    static let emptyAnswersToClear = 2
 
     private let url: URL
     private let now: () -> Date
 
     /// Карта в памяти: файл пишем только мы, поэтому читаем его один раз за запуск.
     private var cache: [String: WindowThemeEntry]?
-    /// В этом поколении уже был ответ probe? Первый пустой ответ значит «переустановка»
-    /// (терять нечего), любой следующий — «Элвис снял всё сам» (решение 3).
-    private var sawAnswer = false
+    /// Сколько пустых ответов probe пришло ПОДРЯД в этом поколении. Непустой ответ обнуляет
+    /// счётчик; файл стирается только на втором подряд (решение 3 + риск ревизии 08.09).
+    private var emptyRun = 0
     private var sent = 0
     private var lastSentAt: Date?
     private var sentTitles: [String]?
@@ -141,7 +148,7 @@ final class WindowThemeStore {
     /// Новое поколение: старт приложения или смена pid Claude (решение 5). Счётчик команд
     /// обнуляется, и следующий пустой ответ probe снова считается переустановкой.
     func beginGeneration() {
-        sawAnswer = false
+        emptyRun = 0
         sent = 0
         lastSentAt = nil
         sentTitles = nil
@@ -174,16 +181,17 @@ final class WindowThemeStore {
     /// окно не ответило): файл не трогаем и ответом это не считаем.
     func absorb(page: [String: WindowThemeEntry]?, at: Date) {
         guard let page = page else { return }
-        let first = !sawAnswer
-        sawAnswer = true
         guard !page.isEmpty else {
-            // Первый ответ поколения пустой — это переустановка Claude: терять нечего,
-            // возвращать есть что. Любой следующий — «Как у Claude (все окна)» дошло
-            // до нуля ключей, и файл обязан это повторить.
-            guard !first else { return }
+            emptyRun += 1
+            // Пустой ответ бывает и переустановкой Claude (терять нечего, возвращать есть что),
+            // и потерянной командой возврата — по одному ответу их не различить. Стираем только
+            // на втором ПОДРЯД: «Как у Claude (все окна)» держится кругами, а осечка возврата нет.
+            guard emptyRun >= WindowThemeStore.emptyAnswersToClear else { return }
+            backupBeforeClear()
             save([:])
             return
         }
+        emptyRun = 0
         let stamp = WindowThemeStore.milliseconds(at)
         let old = entries
         var next: [String: WindowThemeEntry] = [:]
@@ -230,6 +238,16 @@ final class WindowThemeStore {
     }
 
     // MARK: - запись
+
+    /// Прежнее тело — рядом с файлом, перед обнулением. Копировать нечего (карта уже пуста) —
+    /// backup не трогаем: он с прошлого раза полнее. Непустой ответ сюда не заходит вовсе.
+    private func backupBeforeClear() {
+        let map = entries
+        guard !map.isEmpty else { return }
+        let backup = url.deletingLastPathComponent()
+            .appendingPathComponent(WindowThemeStore.backupFileName)
+        _ = CommandChannel.writeAtomic(backup, WindowThemeStore.body(map, at: now()))
+    }
 
     /// Сохранить карту: вытеснение по потолку, атомарная запись. Ничего не изменилось —
     /// файла не касаемся вовсе (лишний mtime будит чтение у соседей).
