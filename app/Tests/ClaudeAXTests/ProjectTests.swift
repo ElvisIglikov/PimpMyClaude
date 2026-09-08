@@ -56,7 +56,8 @@ private final class PaintRig {
         sessions = box.appendingPathComponent("sessions", isDirectory: true)
         status = box.appendingPathComponent("status.json")
         let clock = self.clock
-        store = ProjectSettingsStore(registryURL: box.appendingPathComponent("projects.json"))
+        store = ProjectSettingsStore(
+            registryURL: box.appendingPathComponent(ProjectSettingsStore.registryFileName))
         index = ProjectIndex(sessionsDirectory: sessions, statusURL: status, projectsRoot: root,
                              home: box, now: { clock.now })
         paint = ProjectPaint(index: index, store: store, defaults: defaults, now: { clock.now })
@@ -491,7 +492,8 @@ final class ProjectTests: XCTestCase {
         let box = makeTemp()
         let folder = box.appendingPathComponent("PimpMyClaude", isDirectory: true)
         makeFolder(folder, marker: ".git")
-        let store = ProjectSettingsStore(registryURL: box.appendingPathComponent("projects.json"))
+        let store = ProjectSettingsStore(
+            registryURL: box.appendingPathComponent(ProjectSettingsStore.registryFileName))
         XCTAssertNil(store.settings(in: folder))
         XCTAssertEqual(store.write(settings, to: folder), .written)
         XCTAssertEqual(try String(contentsOf: store.url(in: folder), encoding: .utf8),
@@ -522,7 +524,8 @@ final class ProjectTests: XCTestCase {
         let box = makeTemp()
         let folder = box.appendingPathComponent("Чужой", isDirectory: true)
         makeFolder(folder, marker: "AGENTS.md")
-        let store = ProjectSettingsStore(registryURL: box.appendingPathComponent("projects.json"))
+        let store = ProjectSettingsStore(
+            registryURL: box.appendingPathComponent(ProjectSettingsStore.registryFileName))
         let url = store.url(in: folder)
         let old = """
         {
@@ -569,6 +572,61 @@ final class ProjectTests: XCTestCase {
         XCTAssertNil(store.settings(in: folder), "битый файл — «настроек нет», реестр не подменяет")
         XCTAssertEqual(store.write(settings, to: folder, force: true), .written)
         XCTAssertEqual(store.settings(in: folder), settings)
+    }
+
+    /// Задача #5738: реестр видов и список недавних проектов (WF36) делили один файл
+    /// `projects.json` и затирали друг друга — реестр не читался никогда (там лежал массив),
+    /// а его запись стирала список, ради которого файл и заводили. Теперь файла два.
+    func testProjectRegistryDoesNotClashWithRecentProjects() throws {
+        XCTAssertNotEqual(ProjectSettingsStore.registryFileName, ProjectsStore.fileName)
+        let box = makeTemp()
+
+        // Список недавних проектов на своём месте.
+        let recents = box.appendingPathComponent(ProjectsStore.fileName)
+        let list = ProjectsStore(url: recents)
+        let pimp = Project(folder: box.appendingPathComponent("PimpMyClaude", isDirectory: true),
+                           name: "PimpMyClaude", lastFocusedAt: 0)
+        makeFolder(pimp.folder, marker: ".git")
+        XCTAssertTrue(list.note(pimp, at: Date(timeIntervalSince1970: 1_756_900_000)))
+
+        // Вид уходит в реестр: в папку писать нельзя (том только для чтения, отказ TCC).
+        let locked = box.appendingPathComponent("Только чтение", isDirectory: true)
+        makeFolder(locked)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                   ofItemAtPath: locked.path)
+        }
+        let store = ProjectSettingsStore(
+            registryURL: box.appendingPathComponent(ProjectSettingsStore.registryFileName))
+        let settings = ProjectSettings(name: "Только чтение", theme: .set(ProjectTests.indigo))
+        XCTAssertEqual(store.write(settings, to: locked), .registry)
+        XCTAssertEqual(store.settings(in: locked), settings, "вид из реестра не читается")
+
+        // Список недавних проектов цел, файла на диске два.
+        XCTAssertEqual(list.recent(limit: 10).map { $0.name }, ["PimpMyClaude"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recents.path))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: box.appendingPathComponent(ProjectSettingsStore.registryFileName).path))
+        // И обратно: список недавних проектов за реестр видов не принимается — он массив.
+        XCTAssertTrue(ProjectSettingsStore.parseRegistry(try Data(contentsOf: recents)).isEmpty)
+
+        // Реестр от прошлой сборки лежит под старым именем — читаем его один раз (миграция).
+        let older = makeTemp()
+        let kept = older.appendingPathComponent("Проект", isDirectory: true)
+        makeFolder(kept)
+        let legacy = """
+        {"version":1,"projects":{"\(kept.standardizedFileURL.path)":\
+        {"pimpmyclaude":1,"name":"Проект","frame":true}}}
+        """
+        try Data(legacy.utf8).write(to: older.appendingPathComponent(ProjectsStore.fileName))
+        let migrated = ProjectSettingsStore(
+            registryURL: older.appendingPathComponent(ProjectSettingsStore.registryFileName))
+        XCTAssertEqual(migrated.settings(in: kept),
+                       ProjectSettings(name: "Проект", frame: .set(true)))
+        // Первая же запись переносит прочитанное в свой файл: старое имя больше не источник.
+        XCTAssertTrue(migrated.remove(from: kept))
+        XCTAssertNil(migrated.settings(in: kept), "запись из старого файла вернулась")
     }
 
     // MARK: - покраска по проекту (батч S2 плана WF15)
@@ -744,6 +802,40 @@ final class ProjectTests: XCTestCase {
         rig.paint.tick()
         XCTAssertEqual(rig.sent.count, 3)
         XCTAssertEqual(PaintRig.layers(rig.sent[2]), "tf")
+    }
+
+    /// Задача #5739: сняли вид «всем окнам» — цвет проекта возвращается ближайшим тиком,
+    /// а не после перезапуска приложения. Файл проекта тут НЕ трогаем нарочно: команда обязана
+    /// уйти именно потому, что вид сняли (сосед по файлу этот переход маскировал сменой хэша).
+    func testProjectPaintReturnsAfterAllWindowsCleared() throws {
+        let rig = makeRig()
+        rig.store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(ProjectTests.indigo),
+                                        font: .set(ProjectTests.menlo)),
+                        to: rig.folder("PimpMyClaude"))
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
+        XCTAssertEqual(PaintRig.layers(try XCTUnwrap(rig.sent.last)), "tf")
+
+        // «Как у Claude (всем окнам)»: проект молчит и слоёв не снимает — их сняла страница.
+        rig.allWindows = true
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
+
+        // Сняли: ни папка, ни файл проекта не менялись — и всё-таки вид уезжает на окно заново.
+        rig.allWindows = false
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2)
+        let back = try XCTUnwrap(rig.sent.last)
+        XCTAssertEqual(back.key, "main")
+        XCTAssertEqual(back.theme.value?.id, "indigo")
+        XCTAssertEqual(PaintRig.layers(back), "tf")
+
+        // Дальше тишина: отпечаток на месте, лишних команд нет.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2)
     }
 
     /// Переписан в WF20: окно «занимает» только «🌈 Раскрасить по кругу». Ручной выбор больше
@@ -1568,6 +1660,45 @@ final class ProjectTests: XCTestCase {
         rig.paint.tick()
         XCTAssertEqual(rig.sent.map { $0.key }, ["main"],
                        "тик погасил примерку через дубль окна по заголовку")
+    }
+
+    /// Задача #5534 (и корень #5729): заглушку «Claude» носит и главное окно, и попап
+    /// безымянного чата — ключ `main` не может доставаться обоим.
+    func testStubTitleIsNotAlwaysMainWindow() throws {
+        let rig = makeRig()
+        let stub = ProjectPaint.mainWindowTitle
+
+        // Карта probe пуста (тумблер выключен, канал занял агент) — правило прежнее.
+        XCTAssertEqual(rig.paint.windowKey(forTitle: stub), ProjectPaint.mainKey)
+        XCTAssertEqual(ProjectPaint.stubKey(forTitle: stub, in: []), ProjectPaint.mainKey)
+
+        // Заглушку носит РОВНО попап (главное окно на карте с именем чата) — ключ его чата.
+        rig.pages = [rig.page(.main, "local_a1", "PimpMyClaude"), rig.page(.popout, "local_b2", stub)]
+        XCTAssertEqual(rig.paint.windowKey(forTitle: stub), "c:local_b2")
+
+        // Заглушку носят двое — она не называет никого: ни `main`, ни чужой чат.
+        rig.pages = [rig.page(.main, "local_a1", stub), rig.page(.popout, "local_b2", stub)]
+        XCTAssertEqual(rig.paint.windowKey(forTitle: stub), ProjectPaint.windowPrefix + stub)
+        // Ровно это и было в #5534: тема безымянного попапа уезжала в запись главного окна.
+        XCTAssertEqual(WindowThemeStore.keys(title: stub, match: nil, chat: "local_b2",
+                                             isMainWindow: { [rig] in
+                                                 rig.paint.windowKey(forTitle: $0) == ProjectPaint.mainKey
+                                             }),
+                       [WindowThemeStore.idPrefix + "local_b2"])
+
+        // Два безымянных попапа — тоже ничей: чат назвали разный.
+        rig.pages = [rig.page(.popout, "local_b2", stub), rig.page(.popout, "local_c3", stub)]
+        XCTAssertEqual(rig.paint.windowKey(forTitle: stub), ProjectPaint.windowPrefix + stub)
+
+        // Попап есть, а чата не назвал — ключ по заголовку: главному окну он не достаётся.
+        rig.pages = [rig.page(.popout, nil, stub)]
+        XCTAssertEqual(rig.paint.windowKey(forTitle: stub), ProjectPaint.windowPrefix + stub)
+
+        // Окна с настоящими именами правило не трогает вовсе.
+        rig.pages = [rig.page(.main, "local_a1", stub), rig.page(.popout, "local_b2", "Dictatoric")]
+        XCTAssertEqual(rig.paint.windowKey(forTitle: "Dictatoric"), "c:local_b2")
+        XCTAssertEqual(rig.paint.windowKey(forTitle: "PimpMyClaude"), ProjectPaint.mainKey)
+        XCTAssertEqual(rig.paint.windowKey(forTitle: " "), ProjectPaint.mainKey)
     }
 
     /// Тест 30 плана: ключ на окно ровно ОДИН. Появился id — отпечаток переезжает вместе

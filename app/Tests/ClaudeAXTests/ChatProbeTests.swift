@@ -188,11 +188,24 @@ final class ChatProbeTests: XCTestCase {
         probe.tick(windowTitles: ["Bro Flow продолжение", "Новое окно"], indexRevision: 3)
         XCTAssertEqual(box.writes.count, 3)
 
-        // Скрипт от прошлого запуска приложения: узнаём по метке.
+        // Метка та же, а тело чужое (задача #5741): агент на гейте взял наш файл за основу
+        // и дописал своё. Одной метки для «своего» мало — канал не наш, молчим минуту.
         box.put("\(ChatProbe.mark) chats-1-0001\n(function () { return 1 })()")
         clock.advance(ChatProbe.askInterval + ChatProbe.answerTimeout + 1)
         probe.tick(windowTitles: ["Bro Flow продолжение", "Новое окно"], indexRevision: 4)
-        XCTAssertEqual(box.writes.count, 4)
+        XCTAssertEqual(box.writes.count, 3, "чужое тело под нашей меткой переписано")
+        XCTAssertFalse(probe.isFresh)
+        XCTAssertFalse(ChatProbe.isOwnScript("\(ChatProbe.mark) chats-1-0001\nвсё остальное"))
+        XCTAssertFalse(ChatProbe.isOwnScript("document.title"))
+
+        // Скрипт от прошлого запуска приложения: узнаём по метке — она даёт круг, а по кругу
+        // скрипт собирается заново и сходится побайтно.
+        box.put(ChatProbe.script(nonce: "chats-1-0001", scan: false))
+        XCTAssertTrue(ChatProbe.isOwnScript(ChatProbe.script(nonce: "chats-1-0001", scan: false)))
+        XCTAssertTrue(ChatProbe.isOwnScript(ChatProbe.script(nonce: "chats-1-0001", scan: true)))
+        clock.advance(1)
+        probe.tick(windowTitles: ["Bro Flow продолжение", "Новое окно"], indexRevision: 4)
+        XCTAssertEqual(box.writes.count, 4, "свой скрипт от прошлого запуска не узнали")
 
         // Файла нет вовсе — канал свободен сразу, без минуты молчания (гейт, п. 4: `rm probe.js`).
         box.put(nil)
@@ -481,5 +494,74 @@ final class ChatProbeTests: XCTestCase {
                                                         store: "ok", at: clock.now)], at: clock.now),
                        "попап на частоту не влияет")
         XCTAssertFalse(ChatProbe.isMainAtHome([], at: clock.now))
+    }
+
+    /// Задача #5770: «Сохранить раскладку» отказывало плашкой «включи 🗂 Цвет по проекту» —
+    /// при выключенном тумблере канал молчит совсем, и чаты окон никому не известны.
+    /// Требование открывает канал на полминуты: один круг мимо пола частоты, и дальше тишина.
+    func testChatProbeAnswersOnDemandWithToggleOff() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        probe.isEnabled = { false }
+
+        // Тумблер выключен — канала не касаемся вовсе (риск 11 плана WF29).
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 1)
+        XCTAssertTrue(box.writes.isEmpty)
+        XCTAssertEqual(probe.status, "off/0/0")
+
+        // Попросили снимок раскладки: ближайший тик спрашивает страницы.
+        let asked = clock.now
+        probe.demand(at: asked)
+        XCTAssertFalse(probe.answered(after: asked), "круга ещё не было — ждать")
+        clock.advance(2)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+        XCTAssertTrue(try XCTUnwrap(box.writes.last).contains("api.chats({ scan: true"),
+                      "чата окна мы не знаем — просим страницу поискать стор")
+        XCTAssertFalse(probe.answered(after: asked), "ответа ещё нет")
+
+        // Страницы ответили — карта на руках, тумблер тут ни при чём.
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "VkusnoffKz 3", store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 1)
+        XCTAssertTrue(probe.answered(after: asked))
+        XCTAssertEqual(probe.chat(forTitle: "VkusnoffKz 3"), "local_b2")
+
+        // Требование обслужено: второго круга оно не заказывает, сколько ни тикай.
+        for _ in 0..<5 {
+            clock.advance(ChatProbe.askInterval + 1)
+            probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 1)
+        }
+        XCTAssertEqual(box.writes.count, 1)
+
+        // Полминуты вышли — канал снова молчит совсем, как и положено при выключенном тумблере.
+        clock.advance(ChatProbe.demandSeconds)
+        probe.tick(windowTitles: ["VkusnoffKz 3", "Новое окно"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 1)
+        XCTAssertEqual(probe.status, "off/1/1")
+        XCTAssertFalse(probe.answered(after: asked), "канал выключен — ждать нечего")
+        XCTAssertTrue(probe.pages.isEmpty)
+
+        // А со включённым тумблером требование ничего не ломает: круг один, мимо пола частоты.
+        var on = false
+        probe.isEnabled = { on }
+        on = true
+        clock.advance(2)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 2)
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "VkusnoffKz 3", store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 2)
+        let now = clock.now
+        probe.demand(at: now)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 3, "требование обязано спросить мимо пола частоты")
+        // Незакрытый круг сильнее требования: старый ответ затёр бы свежий (критик В2 WF29).
+        probe.demand(at: clock.now)
+        clock.advance(1)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 3)
     }
 }

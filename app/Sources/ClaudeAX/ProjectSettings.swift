@@ -213,13 +213,22 @@ struct ProjectSettings: Equatable {
 
 /// Диск: файл вида в папке проекта и запасной реестр.
 ///
-/// Реестр `projects.json` рядом с command.json — не второе хранилище (критик М4), а ответ на
-/// «в эту папку писать нельзя» (нет прав, том только для чтения, отказ TCC в `~/Documents`).
+/// Реестр `project-views.json` рядом с command.json — не второе хранилище (критик М4), а ответ
+/// на «в эту папку писать нельзя» (нет прав, том только для чтения, отказ TCC в `~/Documents`).
 /// Файл в папке всегда сильнее: есть он — реестр для этой папки не читается вовсе, а удачная
 /// запись файла запись реестра стирает. Настройки из реестра с папкой не едут — это и есть
 /// его минус, о нём README говорит честно.
+///
+/// **Имя файла своё с WF46** (задача #5738): до неё реестр делил `projects.json` со списком
+/// недавних проектов (`ProjectsStore`, WF36) — а формы у них разные (реестр пишет `projects`
+/// объектом, список массивом), и файл затирался в обе стороны: реестр не читался никогда,
+/// а его запись стирала список недавних проектов. Старое имя теперь только читается, и только
+/// когда там лежит объект реестра.
 final class ProjectSettingsStore {
-    static let registryFileName = "projects.json"
+    static let registryFileName = "project-views.json"
+    /// Прежнее имя реестра — оно же имя списка недавних проектов. Читаем его один раз за
+    /// запуск и только через тот же разбор: массив `ProjectsStore` даст пустую карту сам.
+    static let legacyRegistryFileName = ProjectsStore.fileName
     static let registryVersionKey = "version"
     static let registryProjectsKey = "projects"
     static let registryVersion = 1
@@ -238,6 +247,10 @@ final class ProjectSettingsStore {
 
     private let registryURL: URL
     private let fileManager: FileManager
+    /// Старое имя реестра прочитано (задача #5738): второй раз за запуск туда не ходим —
+    /// живьём там лежит массив недавних проектов, и разбор всё равно даст пусто.
+    private var legacyRead = false
+    private var legacyRegistry: [String: ProjectSettings] = [:]
 
     init(registryURL: URL = CommandChannel.directory
             .appendingPathComponent(ProjectSettingsStore.registryFileName),
@@ -308,11 +321,32 @@ final class ProjectSettingsStore {
 
     // MARK: - реестр
 
-    /// Что лежит в реестре: путь папки → вид.
+    /// Что лежит в реестре: путь папки → вид. Своего файла нет (первый запуск после WF46) —
+    /// один раз заглядываем в старое имя: там мог остаться реестр от прошлой сборки. Если там
+    /// лежит список недавних проектов (`projects` массивом), разбор отдаёт пусто сам — за виды
+    /// проектов его не примут (задача #5738).
     func registry() -> [String: ProjectSettings] {
-        guard let data = try? Data(contentsOf: registryURL),
+        let fresh = ProjectSettingsStore.parseRegistry(try? Data(contentsOf: registryURL))
+        guard fresh.isEmpty else { return fresh }
+        if !legacyRead {
+            legacyRead = true
+            legacyRegistry = ProjectSettingsStore.parseRegistry(try? Data(contentsOf: legacyURL))
+        }
+        return legacyRegistry
+    }
+
+    /// Путь старого имени — рядом со своим файлом.
+    private var legacyURL: URL {
+        registryURL.deletingLastPathComponent()
+            .appendingPathComponent(ProjectSettingsStore.legacyRegistryFileName)
+    }
+
+    /// Разбор тела реестра: `projects` обязан быть ОБЪЕКТОМ «путь папки → вид». Массив
+    /// (список недавних проектов `ProjectsStore`) и любой другой мусор — пустая карта.
+    static func parseRegistry(_ data: Data?) -> [String: ProjectSettings] {
+        guard let data = data,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let list = root[ProjectSettingsStore.registryProjectsKey] as? [String: Any]
+              let list = root[registryProjectsKey] as? [String: Any]
         else { return [:] }
         var out: [String: ProjectSettings] = [:]
         for (path, value) in list {
@@ -344,6 +378,14 @@ final class ProjectSettingsStore {
              value: .number(ProjectSettingsStore.registryVersion)),
             (key: ProjectSettingsStore.registryProjectsKey, value: .object(projects)),
         ])
-        return CommandChannel.writeAtomic(registryURL, ProjectSettings.pretty(body, level: 0) + "\n")
+        guard CommandChannel.writeAtomic(registryURL,
+                                         ProjectSettings.pretty(body, level: 0) + "\n") else {
+            return false
+        }
+        // Записанное со старым именем уже слито сюда: держать его дальше нельзя — удалённая
+        // папка вернулась бы из кэша, как только своя карта опустеет (задача #5738).
+        legacyRead = true
+        legacyRegistry = [:]
+        return true
     }
 }
