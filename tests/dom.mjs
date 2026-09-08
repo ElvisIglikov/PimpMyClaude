@@ -14,9 +14,14 @@
 // ---- разбор селекторов ----------------------------------------------------
 // Поддержано ровно то, чем пользуется inject.js: тег, .класс, #id, [атрибут],
 // [атрибут="значение"] с ^= $= *=, потомки через пробел, перечисление запятой,
-// :root. Всё остальное (:has, :is, :not) селектором ничего не находит — это
-// честнее выдуманного совпадения: такие селекторы живут в тексте CSS, а не в
-// querySelector.
+// :root и :not(...) с простым содержимым. Остальное (:has, :is) селектором
+// ничего не находит — это честнее выдуманного совпадения: такие селекторы живут
+// в тексте CSS, а не в querySelector.
+//
+// :not(...) стаб понимает с WF43 (#5758). До этого он не находил НИЧЕГО, и шаг
+// «отправить первое сообщение» у нового окна не проверялся ничем: кнопка
+// ищется как [data-testid="code-prompt-send"]:not([disabled]), стаб отдавал
+// null, и подмена селектора на несуществующий не роняла ни одной проверки.
 const splitTop = (text, separator) => {
   const parts = [];
   let depth = 0;
@@ -71,7 +76,18 @@ const compoundHit = (node, compound) => {
     if (token.startsWith("#")) { if (node.id !== token.slice(1)) return false; continue; }
     if (token.startsWith(".")) { if (!node.classList.contains(token.slice(1))) return false; continue; }
     if (token.startsWith("[")) { if (!attrHit(node, token)) return false; continue; }
-    if (token.startsWith(":")) { if (token !== ":root" || node !== node.ownerDocument?.documentElement) return false; continue; }
+    if (token.startsWith(":")) {
+      // :not(...) — единственный псевдокласс с содержимым, который боевой файл
+      // отдаёт в querySelector. Внутри разбираем тем же compoundHit: там живут
+      // [disabled] и [type], а не вложенные :has.
+      const negated = token.match(/^:not\((.+)\)$/);
+      if (negated) {
+        if (splitTop(negated[1], ",").some(part => compoundHit(node, part))) return false;
+        continue;
+      }
+      if (token !== ":root" || node !== node.ownerDocument?.documentElement) return false;
+      continue;
+    }
     if (node.tagName !== token.toUpperCase()) return false;
   }
   return true;
@@ -116,6 +132,11 @@ export const createDom = ({
   // sheets считается на лету: тема, шрифт и размер живут конструируемыми
   // таблицами (adoptedStyleSheets), и их число — тот же счётчик утечки.
   const counters = { listeners: 0, observers: 0, timers: 0, intervals: 0, rafs: 0 };
+  // Поиски по дереву (querySelector/querySelectorAll, свои и у узлов) — мера
+  // РАБОТЫ, а не времени: ею живые цвета доказывают, что тик не обходит
+  // страницу (#5683). Отдельной переменной, а не полем counters: на counters
+  // стоит deepEqual в tests/idempotent.test.mjs, и лишний ключ его свалил бы.
+  let queries = 0;
   const timers = new Map();
   let timerSeq = 1;
   // Живые анимации Web Animations (element.animate): пульс полосы прогресса —
@@ -375,7 +396,10 @@ export const createDom = ({
     walk(root);
     return out;
   };
-  const queryAll = (root, selector) => descendants(root).filter(node => selectorHit(node, selector));
+  const queryAll = (root, selector) => {
+    queries += 1;
+    return descendants(root).filter(node => selectorHit(node, selector));
+  };
 
   const makeEvent = source => {
     if (source && typeof source === "object" && source.__event) return source;
@@ -444,11 +468,23 @@ export const createDom = ({
     // Вставка текста, как её делает Chromium: в узел под фокусом, в его конец
     // (курсор в начало команда caretToStart в стабе не двигает — тесту важен
     // сам факт вставки и её однократность).
+    // selectAll помечает поле «выделено целиком»: следующая вставка заменяет
+    // его текст, а не дописывает. Так «Обкэшить» кладёт перенос поверх чужого
+    // черновика (WF50, #5781).
     execCommand: (name, showUi, value) => {
+      if (name === "selectAll") {
+        document.__selectedAll = document.activeElement;
+        return Boolean(document.activeElement);
+      }
       if (name !== "insertText") return false;
       const target = document.activeElement;
       if (!target) return false;
-      target.__text = `${value}${target.__text}`;
+      if (document.__selectedAll === target) {
+        target.__text = String(value);
+        document.__selectedAll = null;
+      } else {
+        target.__text = `${value}${target.__text}`;
+      }
       void showUi;
       return true;
     },
@@ -481,9 +517,44 @@ export const createDom = ({
     takeRecords() { return []; }
   }
   class DataTransfer {
-    constructor() { this.__data = new Map(); }
+    constructor() {
+      this.__data = new Map();
+      // files и items.add — ими едут вложения переноса (WF50, #5773).
+      this.files = [];
+      this.items = { add: file => { this.files.push(file); return file; } };
+    }
     setData(type, value) { this.__data.set(type, String(value)); }
     getData(type) { return this.__data.get(type) ?? ""; }
+  }
+  // Blob и File — ровно столько, сколько спрашивает inject.js: размер, тип, имя,
+  // slice() и arrayBuffer() (по ним считается ключ содержимого — djb2 по первым
+  // 8 КБ). Байты держим массивом чисел: тесту важны их равенство и длина.
+  class Blob {
+    constructor(parts = [], options = {}) {
+      const bytes = [];
+      for (const part of parts ?? []) {
+        if (part && Array.isArray(part.__bytes)) bytes.push(...part.__bytes);
+        else if (typeof part === "string") for (const char of part) bytes.push(char.charCodeAt(0) & 255);
+        else if (part && typeof part.length === "number") bytes.push(...part);
+      }
+      this.__bytes = bytes;
+      this.size = bytes.length;
+      this.type = String(options?.type ?? "");
+    }
+    slice(from = 0, to = this.size) {
+      const cut = new Blob([], { type: this.type });
+      cut.__bytes = this.__bytes.slice(from, to);
+      cut.size = cut.__bytes.length;
+      return cut;
+    }
+    arrayBuffer() { return Promise.resolve(Uint8Array.from(this.__bytes).buffer); }
+  }
+  class File extends Blob {
+    constructor(parts, name, options = {}) {
+      super(parts, options);
+      this.name = String(name);
+      this.lastModified = Number(options?.lastModified ?? Date.now());
+    }
   }
   const eventClass = extra => class {
     constructor(type, init = {}) {
@@ -545,6 +616,8 @@ export const createDom = ({
     CSSStyleSheet,
     MutationObserver,
     DataTransfer,
+    Blob,
+    File,
     KeyboardEvent: eventClass({ key: "" }),
     ClipboardEvent: eventClass({ clipboardData: null }),
     PopStateEvent: eventClass({ state: null }),
@@ -615,6 +688,8 @@ export const createDom = ({
     animations,
     running: () => animations.filter(item => item.playState === "running"),
     node: makeNode,
+    // Сколько раз страницу искали по дереву за всё время жизни окна.
+    queries: () => queries,
     query: selector => document.querySelector(selector),
     queryAll: selector => document.querySelectorAll(selector),
     // Число живых таймеров нужного вида.
@@ -631,6 +706,18 @@ export const createDom = ({
       }
     },
     command: detail => win.dispatchEvent({ type: "myclaude-command", detail }),
+    // Файл, как его кладёт Элвис в поле ввода. body — содержимое: по нему
+    // считается ключ содержимого, и два разных файла с одним именем в тесте
+    // отличаются именно им.
+    file: (name, { type = "image/png", body = name } = {}) => new File([body], name, { type }),
+    // Плашка вложения в поле ввода: превью и кнопка снятия — те самые приметы,
+    // по которым inject.js считает вложения ШТУКАМИ (WF50).
+    pill: (block, { name = "image.png" } = {}) => {
+      const pill = block.add("div", { class: "epitaxy-attachment-pill" });
+      pill.add("img", { attrs: { src: `blob:claude/${name}` } });
+      pill.add("button", { attrs: { "aria-label": `Remove ${name}` } });
+      return pill;
+    },
     // Адреса модулей для поиска стора (раздел 12б inject.js): их берут из
     // link[rel=modulepreload]. Читается СВОЙСТВО link.href, а не атрибут, —
     // поэтому ставим именно свойство, как это делает браузер.

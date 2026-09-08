@@ -114,11 +114,28 @@ final class LayoutsStore {
                          isMain: (String) -> Bool) -> (layout: WindowLayout, unknown: [String]) {
         var records: [LayoutCell] = []
         var unknown: [String] = []
+        var mainTaken = false
         for window in windows {
             let main = isMain(window.title)
             guard main || !window.chat.isEmpty else {
                 unknown.append(window.title)
                 continue
+            }
+            // Главным окном приложение может назвать ДВА окна разом: второе записалось бы
+            // как `main`, чат его пропал бы, а при возврате одно окно вставало бы в две
+            // ячейки (#5729). Ведём себя как при неизвестном чате — запись отменяется целиком.
+            //
+            // Корень (#5534) починен: `ProjectPaint.stubKey` разбирает заглушку «Claude» по
+            // карте probe. Но проверка остаётся, и снимать её нельзя: без карты (тумблер
+            // выключен и круг не приехал, канал занял агент) заглушка снова значит `main`
+            // у обоих окон, а окно без AX-заголовка зовётся главным всегда
+            // (`windowKey(forTitle: "")` — ключ `main`).
+            if main {
+                guard !mainTaken else {
+                    unknown.append(window.title)
+                    continue
+                }
+                mainTaken = true
             }
             records.append(LayoutCell(folder: window.folder,
                                       chat: main ? mainChat : window.chat,
@@ -128,10 +145,44 @@ final class LayoutsStore {
         return (WindowLayout(name: clean(name: name), at: at, mode: mode, cells: records), unknown)
     }
 
+    /// Имя раскладки, которое приложение предлагает само (#5769, слово Элвиса 08.09: «Не надо
+    /// имя раскладки. Ты же знаешь, что за проекты? Там и пиши в имени, типа имена проектов»):
+    /// папки окон СЛЕВА НАПРАВО, без повторов и без пустых. Одна — «PimpMyClaude», две —
+    /// «PimpMyClaude и VkusnoffKz», три — «A, B и C», больше трёх или длиннее `nameLimit` —
+    /// «A, B и ещё 2». Прозвищ у папок нет: имя папки как есть.
+    ///
+    /// Порядок задаёт `ArrangeLayout.order` — тот же, что у «Расставить»: список окон приходит
+    /// из `CGWindowList`, а он идёт по слоям, не по экрану.
+    static func suggestedName(for windows: [PimpWindow]) -> String {
+        var names: [String] = []
+        for index in ArrangeLayout.order(of: windows.map { $0.frame }) {
+            let folder = windows[index].folder.trimmingCharacters(in: .whitespaces)
+            let name = folder.isEmpty
+                ? ""
+                : URL(fileURLWithPath: folder).lastPathComponent
+                    .trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty, !names.contains(name) else { continue }
+            names.append(name)
+        }
+        guard let first = names.first else { return "" }
+        guard names.count > 1 else { return clean(name: first) }
+        let full = names.dropLast().joined(separator: ", ") + " и " + names[names.count - 1]
+        guard names.count > 3 || full.count > nameLimit else { return full }
+        // Больше трёх папок в имя не влезает: называем две и считаем остальные.
+        guard names.count > 2 else { return clean(name: full) }
+        return clean(name: "\(first), \(names[1]) и ещё \(names.count - 2)")
+    }
+
     /// Ячейка окна: первая рамка сетки, совпавшая с рамкой окна (допуск 2 pt — тот же, с
     /// которым `setFrame` считает, что окно доехало).
     static func cell(of frame: CGRect, in cells: [CGRect]) -> Int? {
         cells.firstIndex { ClaudeActions.frameMatches($0, frame) }
+    }
+
+    /// Сколько мест раскладки получили номер ячейки. Ноль — окна стояли не по сетке, и
+    /// записывать нечего: вернулось бы ноль окон (#5728). Это же число ответ зовёт `cells`.
+    static func placedCells(_ layout: WindowLayout) -> Int {
+        layout.cells.filter { $0.cell != nil }.count
     }
 
     /// Запись без имени или без мест пропускается — из-за одной кривой строки не должен

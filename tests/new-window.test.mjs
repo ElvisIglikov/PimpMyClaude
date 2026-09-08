@@ -293,3 +293,87 @@ test("поле transfer разбирается строго", async () => {
   assert.equal(JSON.parse(loaded.win.localStorage.getItem(CASHOUT_KEY)).to, "pending");
   assert.equal(loaded.api.status().newWindow.stamped, null, "до штампа цепочка не дошла — стора нет");
 });
+
+// ---- Шаг «отправить первое сообщение» (WF43, #5758) -------------------------
+// Шаги 3 и 4 цепочки — текст в поле и клик по кнопке отправки — не проверялись
+// ничем: кнопка ищется как `[data-testid="code-prompt-send"]:not([disabled])`,
+// а стаб DOM :not(...) не понимал и отдавал null. Подмена селектора не роняла
+// ни одной проверки при 233 зелёных (находка ревизии 08.09). Стаб научен, шаг
+// закрыт здесь.
+//
+// Домашний экран: поле ввода и кнопка отправки — ровно те два узла, которыми
+// цепочка живёт на этих шагах.
+const homeScreen = ({ disabled = false } = {}) => dom => {
+  const input = dom.document.body.add("div", {
+    attrs: { "data-testid": "code-prompt-input", contenteditable: "true" },
+  });
+  const send = dom.document.body.add("button", { attrs: { "data-testid": "code-prompt-send" } });
+  if (disabled) send.setAttribute("disabled", "");
+  return { input, send };
+};
+// Клик по кнопке рождает сессию — ровно это делает Claude на первом сообщении.
+const countClicks = loaded => {
+  const clicks = { count: 0 };
+  loaded.parts.send.addEventListener("click", () => {
+    clicks.count += 1;
+    loaded.win.location.pathname = "/epitaxy/local_new";
+  });
+  return clicks;
+};
+// Цепочка асинхронная: между шагами она отдаёт ход микрозадачам.
+const settle = async (times = 4) => { for (let index = 0; index < times; index += 1) await drain(); };
+// Один круг ожидания: newWindowWait перепроверяет условие таймером. Толкаем
+// САМЫЙ свежий — сторож всей цепочки поставлен раньше, и будить его нельзя.
+const poll = async loaded => {
+  const ids = loaded.dom.ids("timeout");
+  loaded.dom.fire(ids[ids.length - 1]);
+  await drain();
+};
+
+test("стаб понимает :not(...) — без этого шаг отправки не проверяется вовсе", () => {
+  const loaded = loadInject({
+    href: "https://claude.ai/epitaxy", title: "Claude",
+    html: dom => ({
+      bare: dom.document.body.add("input"),
+      typed: dom.document.body.add("input", { attrs: { type: "text" } }),
+      off: dom.document.body.add("button", { attrs: { "data-testid": "b", disabled: "" } }),
+      on: dom.document.body.add("button", { attrs: { "data-testid": "b" } }),
+    }),
+  });
+  assert.equal(loaded.document.querySelector("input:not([type])"), loaded.parts.bare,
+    "поле без type находится — на этом стоит поиск имени чата");
+  assert.equal(loaded.document.querySelectorAll('[data-testid="b"]:not([disabled])').length, 1,
+    "погашенная кнопка отсеивается, живая находится");
+  assert.equal(loaded.document.querySelector('[data-testid="b"]:not([disabled])'), loaded.parts.on);
+});
+
+test("первое сообщение уходит: текст лёг в поле, кнопка нажата ровно раз", async () => {
+  const loaded = loadInject({ href: "https://claude.ai/epitaxy", title: "Claude", html: homeScreen() });
+  withStore(loaded);
+  const clicks = countClicks(loaded);
+  loaded.dom.command(command());
+  await settle();
+  const mark = loaded.api.status().newWindow;
+  assert.equal(loaded.parts.input.textContent, "Привет", "текст запуска лёг в поле");
+  assert.equal(clicks.count, 1, "кнопку отправки жмут ровно один раз");
+  assert.equal(mark.id, "local_new", "сессия родилась на первом сообщении");
+  assert.notEqual(mark.step, "send", "цепочка ушла дальше отправки");
+});
+
+test("кнопка ещё погашена — цепочка ждёт её, а не жмёт вслепую", async () => {
+  const loaded = loadInject({
+    href: "https://claude.ai/epitaxy", title: "Claude", html: homeScreen({ disabled: true }),
+  });
+  withStore(loaded);
+  const clicks = countClicks(loaded);
+  loaded.dom.command(command());
+  await settle();
+  assert.equal(loaded.api.status().newWindow.step, "send", "стоим на отправке");
+  assert.equal(clicks.count, 0, "по погашенной кнопке не бьём: папка и модель ещё не выбраны");
+  assert.equal(loaded.api.status().newWindow.id, null, "и сессии, значит, нет");
+  loaded.parts.send.removeAttribute("disabled");
+  await poll(loaded);
+  await settle();
+  assert.equal(clicks.count, 1, "кнопка ожила — нажали, и только теперь");
+  assert.equal(loaded.api.status().newWindow.id, "local_new");
+});

@@ -35,15 +35,34 @@ final class LayoutPickerView: NSView {
     private let onPick: (ArrangeLayout.Mode) -> Void
     private var hovered: Int?
     private var tracking: NSTrackingArea?
+    /// Прямоугольники, под которыми сейчас висят подсказки серых плиток: по ним видно, что
+    /// они пересчитаны после растяжки вьюхи (#5681).
+    private(set) var hintRects: [NSRect] = []
 
     init(config: MinimizeMenu.MenuConfig) {
         tiles = LayoutPickerView.tiles(mode: config.arrangeMode, fits: config.arrangeFits)
         onPick = config.arrange
         super.init(frame: NSRect(x: 0, y: 0, width: LayoutPickerView.width,
                                  height: LayoutPickerView.height))
-        // Подсказка только у серых плиток: остальным объяснять нечего.
+        refreshToolTips()
+    }
+
+    /// AppKit тянет вьюху пункта по ширине меню, а прямоугольники подсказок остались бы от
+    /// начальных `bounds` — и подсказка серой плитки вылезала бы над соседней (#5681).
+    /// Клетки считаются от `bounds`, поэтому подсказки перевешиваем на каждое изменение размера.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        refreshToolTips()
+    }
+
+    /// Подсказка только у серых плиток: остальным объяснять нечего.
+    private func refreshToolTips() {
+        removeAllToolTips()
+        hintRects = []
         for index in tiles.indices where !tiles[index].isEnabled {
-            addToolTip(cell(of: index), owner: self, userData: nil)
+            let rect = cell(of: index)
+            addToolTip(rect, owner: self, userData: nil)
+            hintRects.append(rect)
         }
     }
 

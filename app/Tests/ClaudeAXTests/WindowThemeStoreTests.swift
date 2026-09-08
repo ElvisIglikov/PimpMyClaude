@@ -286,7 +286,9 @@ final class WindowThemeStoreTests: XCTestCase {
 
     func testWindowThemeStoreAbsorbClearsFileWhenLaterAnswerEmpty() {
         let clock = ThemeClock()
-        let rig = makeStore(clock)
+        let box = makeTemp()
+        let rig = makeStore(clock, in: box)
+        let backup = box.appendingPathComponent(WindowThemeStore.backupFileName)
         rig.store.beginGeneration()
         rig.store.record(fields: ClaudeActions.themeFields(
             scope: MenuModel.themeScopeWindow, title: "Trelvis",
@@ -294,19 +296,32 @@ final class WindowThemeStoreTests: XCTestCase {
         rig.store.absorb(page: WindowThemeStore.map(from: ["chat:Trelvis": ["frame": true]]),
                          at: clock.now)
 
+        // Один пустой ответ ничего не доказывает: команда возврата могла не застать инжект,
+        // и тогда пустая карта — потерянная страница, а не выбор Элвиса.
+        clock.advance(5)
+        rig.store.absorb(page: [:], at: clock.now)
+        XCTAssertEqual(rig.store.entries.keys.sorted(), ["chat:Trelvis"],
+                       "первый пустой ответ файл не трогает")
+        XCTAssertEqual(text(of: backup), "", "копии рядом ещё нет")
+
         // Пусто на живом Claude значит «Элвис снял всё сам»: два клика «Как у Claude (все окна)»
-        // доводят карту страницы до нуля ключей, и файл обязан это повторить.
+        // доводят карту страницы до нуля ключей, и файл обязан это повторить — но прежнее тело
+        // остаётся рядом.
         clock.advance(5)
         rig.store.absorb(page: [:], at: clock.now)
         XCTAssertTrue(rig.store.entries.isEmpty)
         XCTAssertEqual(text(of: rig.url),
-                       "{\"version\":1,\"at\":\"2025-09-05T19:20:05Z\",\"entries\":{}}")
+                       "{\"version\":1,\"at\":\"2025-09-05T19:20:10Z\",\"entries\":{}}")
+        XCTAssertTrue(text(of: backup).contains("chat:Trelvis"), "прежняя карта лежит рядом")
 
-        // Смена pid Claude открывает новое поколение — и следующий пустой ответ снова
-        // считается переустановкой.
-        rig.store.record(fields: ClaudeActions.themeFields(
-            scope: MenuModel.themeScopeWindow, title: "Trelvis",
-            theme: .set(WindowThemeStoreTests.ocean), font: .keep))
+        // Непустой ответ копию не трогает: она с того круга, где карту обнулили.
+        let saved = text(of: backup)
+        clock.advance(5)
+        rig.store.absorb(page: WindowThemeStore.map(from: ["chat:Trelvis": ["frame": true]]),
+                         at: clock.now)
+        XCTAssertEqual(text(of: backup), saved)
+
+        // Смена pid Claude открывает новое поколение — и счёт пустых ответов начинается заново.
         rig.store.beginGeneration()
         rig.store.absorb(page: [:], at: clock.now)
         XCTAssertEqual(rig.store.entries.keys.sorted(), ["chat:Trelvis"])

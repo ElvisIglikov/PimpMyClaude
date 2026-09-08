@@ -12,6 +12,7 @@ tests/fixtures/pimp/*.json, они же правда для Swift-половин
 Команды:
   pimp.py open <проект> [--at left|middle|right|below|above|x,y]
   pimp.py arrange [--layout row|4|5|5x2|last] [--order Проект,Проект,…]
+    (раскладку не назвали — «last»: повторяем ту, что Элвис выбрал плиткой)
   pimp.py layouts
   pimp.py layout save <имя>
   pimp.py layout restore <имя> [--new]
@@ -76,10 +77,14 @@ LAYOUT_WORDS = {
 ERRORS = {
     "stale": "Пимп не успел взять запрос вовремя — повтори",
     "busy": "Пимп занят — открывает или возвращает окна",
-    "no-windows": "Claude не запущен или окон нет",
+    # Свёрнутых окон приложение не видит вовсе: говорить «Claude не запущен» при живом
+    # Claude со свёрнутыми окнами — врать (#5746).
+    "no-windows": "Claude не запущен, окон нет или все свёрнуты — разверни окно",
     "window-missing": "Чат создал, а окно не появилось — вынеси его в окно руками",
     "too-small": "Мало места: окно не делится пополам",
     "bad-request": "Пимп не понял запрос",
+    # Ни одно окно не совпало с ячейкой сетки — запоминать нечего (#5728).
+    "not-arranged": "Окна стоят не по сетке — сперва расставь их, потом запоминай раскладку",
 }
 
 
@@ -258,8 +263,8 @@ def say_open(request: dict, data: dict) -> str:
         line = f"Открыл {title} справа: своего чата не нашёл, «{where}» не вышло"
     else:
         line = f"Открыл {title} {where}"
-    layers = data.get("layers")
-    if not layers or layers in ("failed", "no-title"):
+    # Приложение кладёт в `layers` ровно две строки: "ok" или пустую (PimpChannel.swift).
+    if not data.get("layers"):
         line += ", но цвет не встал — поставь тему из меню окна"
     return line
 
@@ -305,9 +310,10 @@ def say_error(request: dict, data: dict) -> str:
 def say_arrange(request: dict, data: dict) -> str:
     windows = data.get("windows") or []
     line = f"Расставил {plural(len(windows), 'окно', 'окна', 'окон')}"
-    # Второй экран Пимп не раскладывает — и говорит об этом словами (риск 3 WF36).
-    if data.get("screen") == "main":
-        line += " на главном экране"
+    # Раскладываем на том экране, где стоят окна Claude, — так и говорим (#5732; до 08.09
+    # тут стояло «на главном экране», и это была неправда).
+    if data.get("screen") == "windows":
+        line += " на экране, где стоят окна"
     # Раскладку называем ту, что применилась: «last» приложение разрешает
     # в конкретную, и Элвис должен видеть, что именно вышло (WF21).
     layout = LAYOUT_WORDS.get(str(data.get("layout") or ""))
@@ -497,8 +503,10 @@ def main(argv=None) -> int:
     opener.add_argument("--at", dest="place", type=parse_place, default="right",
                         help="left | middle | right | below | above | x,y (по умолчанию right)")
     arranger = subs.add_parser("arrange", parents=[common], help="расставить окна по раскладке")
-    arranger.add_argument("--layout", choices=LAYOUTS, default="row",
-                          help="row | 4 | 5 | 5x2 | last (по умолчанию row — лента, как сейчас)")
+    # Умолчание — «last»: голая «расставь» повторяет раскладку, которую Элвис выбрал
+    # плиткой, а не подменяет её лентой молча (#5745).
+    arranger.add_argument("--layout", choices=LAYOUTS, default="last",
+                          help="row | 4 | 5 | 5x2 | last (по умолчанию last — как в прошлый раз)")
     arranger.add_argument("--order", type=parse_order, default=None,
                           help="какие проекты первыми, через запятую: VkusnoffKz,SkilZZZ")
     subs.add_parser("layouts", parents=[common], help="список сохранённых раскладок")

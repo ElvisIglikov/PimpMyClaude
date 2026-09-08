@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf21-a-1";
+  const VERSION = "wf51-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -164,6 +164,58 @@
   // нового чата проходит несколько секунд работы цепочки.
   const CASHOUT_PENDING = "pending";
   const CASHOUT_STAMP_FRESH_MS = 60000;
+  // Отказ «Обкэшить» виден плашкой, как у соседних пунктов: раньше он молчал, а
+  // новый чат всё равно открывался — Элвис получал пустое окно без объяснений
+  // (находка ревизии 08.09). Плашку рисует newWindowNote раздела 12б.
+  const CASHOUT_NOTE_EMPTY = "Нечего переносить";
+  // Доезд ПОДТВЕРЖДАЕТСЯ, а не предполагается (WF50, #5780). Урок донора
+  // ElvisOS (claude-handoff-main.js:1185-1213): мгновенная проверка врала «не
+  // попал» уже после удачной вставки — редактор применяет большой текст не
+  // сразу. Ждём паузами, потом пробуем ВТОРЫМ способом и ждём ещё. Теперь цена
+  // ошибки выросла: по подтверждению приложение закрывает окно-донор (#5768),
+  // и молчаливый промах стоил бы Элвису текста, а не пустого чата.
+  const CASHOUT_CONFIRM_MS = 150;
+  const CASHOUT_CONFIRM_FIRST = 12;
+  const CASHOUT_CONFIRM_SECOND = 20;
+  // Сравниваем нормализованно и не побайтно: редактор переписывает вставленное
+  // по-своему (списки, кавычки, разметка). Совпала голова — доехало; не совпала,
+  // но длина близка к нужной — тоже доехало.
+  const CASHOUT_HEAD = 40;
+  const CASHOUT_RATIO = 0.9;
+  // Чужой черновик в поле — не приговор (#5781). Свежий чат иногда доезжает с
+  // прошлым черновиком, и Claude убирает его сам (ElvisOS :1424): столько ждём,
+  // а дальше вставляем ПОВЕРХ выделения всего поля (:1199) — черновик донора и
+  // так уже внутри переноса.
+  const CASHOUT_DRAFT_WAIT_MS = CASHOUT_CONFIRM_MS * CASHOUT_CONFIRM_FIRST;
+  // Вложения переноса (#5773). Потолки полки и груза — донорские; байты никуда
+  // не сериализуются, File едет ссылкой через память ГЛАВНОГО окна.
+  const CASHOUT_FILES_MAX = 24;
+  const CASHOUT_BYTES_MAX = 48 * 1024 * 1024;
+  // Дешёвый ключ содержимого: djb2 по первым 8 КБ (ElvisOS contentKey). Восемь
+  // скриншотов macOS все зовутся image.png — отличить их можно только байтами.
+  const CASHOUT_HASH_BYTES = 8192;
+  // Уборка полки (#5789, ElvisOS SWEEP_MS/GRACE_MS): как часто сверяем полку с
+  // полем и сколько неприкосновенна свежая запись — между вставкой файла и
+  // появлением его плашки у Claude проходит заметное время.
+  const CASHOUT_SWEEP_MS = 2000;
+  const CASHOUT_SWEEP_GRACE_MS = 10000;
+  // Карточки вложений рисуются не мгновенно: столько ждём их появления.
+  const CASHOUT_ATTACH_MS = 200;
+  const CASHOUT_ATTACH_TRIES = 40;
+  // Груз переживает и запись (90 с от нажатия), и её штамп (60 с от штампа).
+  const CASHOUT_CARRY_FRESH_MS = CASHOUT_FRESH_MS + CASHOUT_STAMP_FRESH_MS;
+  // Слова приговора доставки — их читает приложение (status().cashout.delivery).
+  const CASHOUT_WAIT = "ждём";
+  const CASHOUT_DONE = "вставлено";
+  const CASHOUT_REFUSED = "отказ";
+  // Полка вложений — ОТДЕЛЬНЫЙ глобал окна, а не замыкание экземпляра: лоадер
+  // перечитывает inject.js по mtime, и полка в замыкании умирала бы вместе с
+  // экземпляром, унося всё, что Элвис уже положил в поле (урок ElvisOS
+  // claude-chat-cleaner-inject.js:121-126). dispose её не трогает намеренно.
+  const CASHOUT_FILES_GLOBAL = "__myclaudeFiles";
+  // Плашки про вложения: молчать нельзя — потеря вложения молчаливой уже была.
+  const CASHOUT_NOTE_LEFT = count => `Вложения останутся здесь: ${count}`;
+  const CASHOUT_NOTE_PART = (done, want) => `Вложения доехали не все: ${done} из ${want}`;
   // Ниже этой высоты сосед рамки — пустая обёртка, а не строка модели.
   const MODEL_ROW_MIN_HEIGHT = 8;
   // Признак рамки поля — скругление: у Claude Code это 10px, у контейнеров
@@ -1091,9 +1143,24 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const legacy = legacyKey(key);
     return legacy != null && map[legacy] !== undefined ? themeEntry(map[legacy]) : null;
   };
-  // Запись ЭТОГО чата: сперва по id, потом по имени (WF35). Порядок и есть
-  // приоритет `id:` → `chat:` — им пользуются все три места чтения карты.
-  const chatEntry = map => mapEntry(map, chatIdKey()) ?? mapEntry(map, chatTitleKey());
+  // Запись ЭТОГО чата: приоритет `id:` → `chat:` идёт ПО СЛОЮ, а не по записи
+  // целиком. Раньше здесь стоял `??`, и он срабатывал на самой записи: запись
+  // `id:` с одним слоем закрывала более полную тень `chat:` — остальные слои чата
+  // пропадали с экрана, а их место занимала СЕССИЯ, то есть цвет другого
+  // разговора (находка ревизии 08.09). Слои разведены — им и решать.
+  const chatEntry = map => {
+    const byId = mapEntry(map, chatIdKey());
+    const byTitle = mapEntry(map, chatTitleKey());
+    if (!byId) return byTitle;
+    if (!byTitle) return byId;
+    const entry = {};
+    for (const layer of THEME_LAYERS) {
+      // Мусор в слое равен его отсутствию — решает следующий уровень (entryLayer).
+      if (entryLayer(byId, layer) !== undefined) entry[layer] = byId[layer];
+      else if (entryLayer(byTitle, layer) !== undefined) entry[layer] = byTitle[layer];
+    }
+    return entry;
+  };
   // Первое совпадение переносит запись имени на id — КОПИЕЙ, старую оставляем:
   // по ней ещё живёт окно, которое своего id не знает (попап в первые секунды,
   // непропатченная страница). Зовётся трижды: на инжекте, в syncChatTheme (у
@@ -1825,13 +1892,24 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     let found = null;
     PROGRESS_RE.lastIndex = 0;
     for (let match = PROGRESS_RE.exec(source); match; match = PROGRESS_RE.exec(source)) {
-      // Значок ищем в той же строке, а не во всём ответе: ✅ стоит чуть ли не в
-      // каждом списке сделанного, и любое «2 из 2» стало бы строкой состояния.
+      // Значок засчитывается только в НАЧАЛЕ той же строки — по шаблону AGENTS.md
+      // он там и стоит. Раньше хватало значка где угодно в строке, и «Тесты: 222
+      // из 222 ✅» или «- шаги 3 из 3 ✅» из обычного ответа красили всю полосу
+      // зелёным «готово» посреди работы (находка ревизии 08.09). Ведущие пробелы
+      // допускаем: в попапах строка приезжает из текста всего окна, с отступом.
       const from = source.lastIndexOf("\n", match.index) + 1;
       const end = source.indexOf("\n", match.index);
       const line = source.slice(from, end === -1 ? source.length : end);
-      const hit = PROGRESS_STATES.find(([icon]) => line.includes(icon));
+      const head = line.trimStart();
+      // ⚠️ — это «⚠» + VS16, и селектор в строку попадает не всегда: сверяем по
+      // голому значку, как и весь PROGRESS_STATES.
+      const hit = PROGRESS_STATES.find(([icon]) => head.startsWith(icon));
       const mark = hit ? hit[1] : null;
+      // Хвост #5714, решено 08.09: «WF N из M» ВОВСЕ без значка так и остаётся «идёт».
+      // Слово «WF» пишем только мы, а берётся ПОСЛЕДНЕЕ совпадение — настоящая строка
+      // состояния в конце ответа перебивает случайное упоминание выше по тексту, и
+      // требовать значок незачем. Строгость нужна там, где «WF» нет: «5 из 5» без
+      // значка — обычная фраза, и её пускает только ✅.
       if (!match[1] && mark !== "done") continue;
       const wf = Number(match[2]);
       const count = Number(match[3]);
@@ -2486,7 +2564,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     }
   };
 
+  // Гасим карточку И забываем выбранный сегмент. Раньше снимался только display,
+  // а `tipOpen` оставался true — и хвост progressApply (`if (progressState.tipOpen)
+  // progressTipShow()`) возвращал карточку на экран САМ, без клика, как только в
+  // ленте снова появлялась строка состояния: перешёл по сайдбару в другой чат — и
+  // она выскочила поверх поля ввода с чужим воркфлоу (находка ревизии 08.09).
+  // Открывается карточка только кликом Элвиса.
   const progressTipHide = () => {
+    progressState.tipOpen = false;
+    progressState.tipSegment = null;
     if (progressState.cardPulse) {
       progressState.cardPulse = false;
       progressPulse(progressState, progressCardPill, false, PROGRESS_PILL_FRAMES, "1");
@@ -2661,11 +2747,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     progressTip.style.setProperty("left", `${Math.round(left)}px`);
     progressTip.style.setProperty("top", `${Math.round(top)}px`);
   };
-  const progressTipClose = () => {
-    progressState.tipOpen = false;
-    progressState.tipSegment = null;
-    progressTipHide();
-  };
+  // Закрыть = погасить: выбор снимает сам progressTipHide.
+  const progressTipClose = () => { progressTipHide(); };
   // Клик по полосе: по тому же сегменту — закрыть, по другому — переключить.
   // Пустой контур (строки состояния нет) карточке рассказать нечего.
   const progressTipToggle = (segment) => {
@@ -4170,16 +4253,341 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       return record;
     } catch { return null; }
   };
+  // Последний отказ «Обкэшить» — то же слово, что показала плашка. Гейту по нему
+  // видно, почему записи нет; удачный перенос его снимает.
+  let cashoutRefusal = null;
+  // Приговор доставки ЭТОГО окна и запись, которой он принадлежит (WF50, #5779).
+  // Живёт в памяти окна и переживает снос записи: приложение спрашивает страницу
+  // уже после того, как перенос лёг и запись стёрта.
+  //
+  // `cashoutVerdictUntil` — докуда могла бы дожить САМА запись (#5788): дольше
+  // неё приговор не живёт ни при каких условиях.
+  let cashoutVerdict = "";
+  let cashoutVerdictAt = 0;
+  let cashoutVerdictUntil = 0;
+  const cashoutSay = (at, until, word) => {
+    cashoutVerdict = word;
+    cashoutVerdictAt = Number(at) || 0;
+    cashoutVerdictUntil = Number(until) || 0;
+  };
+  // Срок жизни записи: у переноса он считается от ШТАМПА (адресата называют
+  // через несколько секунд после нажатия), у обычной записи главного окна — от
+  // нажатия. Те же два срока проверяет tryPasteCashout, когда решает, не
+  // протухла ли запись.
+  const cashoutLife = record => (record.stampedAt != null
+    ? record.stampedAt + CASHOUT_STAMP_FRESH_MS
+    : record.at + CASHOUT_FRESH_MS);
+  // Один понятный ответ приложению: доехал текст или нет (#5779). До WF50
+  // приложение знало только, что новое окно появилось, — и закрывало донора по
+  // факту появления окна, хотя между «окно есть» и «текст в поле» пять путей
+  // отказа.
+  //   «ждём»          — запись переноса есть, доезд не подтверждён;
+  //   «вставлено»     — это окно подтвердило доезд;
+  //   «отказ: <что>»  — приговор: вставить не вышло, ждать нечего, донора
+  //                     трогать НЕЛЬЗЯ;
+  //   «»              — этой странице сказать нечего (записи нет и не было).
+  // Приговор принадлежит СВОЕЙ записи (находка гейта WF50) и умирает вместе с
+  // ней: другая запись на месте — забываем сразу, записи нет вовсе — держим
+  // слово ровно до того мгновения, когда УМЕРЛА БЫ САМА ЗАПИСЬ (#5788). Раньше
+  // тут стоял общий срок в 150 с, ни к какой записи не привязанный: окно, куда
+  // перенос лёг две минуты назад, отвечало «вставлено» и на следующее нажатие —
+  // а если то нажатие вовсе не дошло до страницы (записи никто не создал),
+  // приложение закрывало донора по ответу про ПРОШЛЫЙ перенос и теряло текст.
+  const cashoutForget = record => {
+    if (!cashoutVerdict) return;
+    const stale = record != null
+      ? record.at !== cashoutVerdictAt
+      : Date.now() > cashoutVerdictUntil;
+    if (stale) { cashoutVerdict = ""; cashoutVerdictAt = 0; cashoutVerdictUntil = 0; }
+  };
+  const cashoutDelivery = record => {
+    cashoutForget(record);
+    if (cashoutVerdict && (record == null || record.at === cashoutVerdictAt)) return cashoutVerdict;
+    return record == null ? "" : CASHOUT_WAIT;
+  };
+  // Счёт вложений для гейта: сколько плашек видел донор (want), сколько уехало
+  // грузом (sent) и сколько доехало карточками в новом окне (done).
+  let cashoutFilesCount = { want: 0, sent: 0, done: 0 };
   // Слепок записи для гейта (status().cashout): есть ли она, кому адресована,
-  // под каким заголовком её ждут и когда штамповали.
+  // под каким заголовком её ждут, когда штамповали, почему отказали, доехала ли
+  // и что с вложениями. `deliveryAt` — время нажатия ТОЙ записи, о которой
+  // сказано слово (#5788): по нему видно, о каком именно переносе речь.
   const cashoutState = () => {
     const record = readCashout();
+    const delivery = cashoutDelivery(record);
     return {
       record: record != null,
       to: record?.to ?? null,
       title: record?.title || null,
       stampedAt: record?.stampedAt ?? null,
+      refusal: cashoutRefusal,
+      delivery,
+      deliveryAt: cashoutVerdict ? cashoutVerdictAt : null,
+      files: { ...cashoutFilesCount },
     };
+  };
+
+  // Вложения переноса (WF50, #5773) -----------------------------------------
+  // File из разметки не достать: у картинки в плашке живёт одно blob-превью, а у
+  // pdf и txt нет и его — сам File лежит во внутреннем состоянии Claude (замер
+  // донора ElvisOS). Поэтому ловим файлы НА ВХОДЕ в поле — вставку, перетаскивание
+  // и выбор через «Add», — и держим их на полке окна.
+  //
+  // Везём их НЕ через localStorage (квота origin ~5 МБ на все наши ключи разом,
+  // base64 раздувает на треть, а setItem у нас под глухим try/catch — один
+  // retina-скриншот съел бы молча даже текст) и НЕ через probe.js (канал общий и
+  // ответ уже весит мегабайты). Все окна Claude — окна ОДНОГО экземпляра и
+  // одного origin, поэтому File едет ссылкой через память ГЛАВНОГО окна: тем же
+  // путём, каким попап спрашивает у родителя свой чат (раздел 12в).
+  const cashoutHome = () => {
+    let home = window[CASHOUT_FILES_GLOBAL];
+    if (!home || typeof home !== "object") { home = {}; window[CASHOUT_FILES_GLOBAL] = home; }
+    if (!Array.isArray(home.shelf)) home.shelf = [];
+    // Протухший груз освобождает байты сам: цепочка «Обкэшить» рвётся регулярно,
+    // и без этой строки десятки мегабайт висели бы в главном окне до следующего
+    // переноса.
+    if (home.carry && Date.now() - home.carry.at > CASHOUT_CARRY_FRESH_MS) home.carry = null;
+    return home;
+  };
+  const cashoutFileHash = async file => {
+    const head = new Uint8Array(await file.slice(0, CASHOUT_HASH_BYTES).arrayBuffer());
+    let hash = 5381;
+    for (let at = 0; at < head.length; at += 1) hash = (((hash << 5) + hash) ^ head[at]) >>> 0;
+    return `${file.size}:${file.type}:${hash}`;
+  };
+  // Положить файлы на полку. Дедуп двойной: сразу по ссылке (одно действие
+  // Элвиса приходит двумя событиями — paste и change — тем же объектом File) и
+  // позже по содержимому, уже на сборе груза. Именем с размером на полке не
+  // сравниваем: два РАЗНЫХ скриншота одного веса схлопнулись бы молча.
+  const cashoutRemember = list => {
+    if (!themable || !list || !list.length) return;
+    const home = cashoutHome();
+    const at = Date.now();
+    for (const file of Array.from(list)) {
+      const size = Number(file?.size) || 0;
+      if (!size) continue;
+      const already = home.shelf.findIndex(item => item.file === file);
+      if (already >= 0) home.shelf.splice(already, 1);
+      const item = { name: String(file.name ?? ""), size, type: String(file.type ?? ""), file, at, hash: null };
+      home.shelf.push(item);
+      try { Promise.resolve(cashoutFileHash(file)).then(value => { item.hash = value; }, () => {}); } catch {}
+    }
+    while (home.shelf.length > CASHOUT_FILES_MAX) home.shelf.shift();
+    let total = home.shelf.reduce((sum, item) => sum + item.size, 0);
+    while (total > CASHOUT_BYTES_MAX && home.shelf.length > 1) total -= home.shelf.shift().size;
+    startCashoutSweep();
+  };
+  // Слушатели ставятся на ЗАХВАТЕ (раздел 16): Claude зовёт preventDefault, и на
+  // всплытии события до нас доходят не всегда.
+  const onCashoutPaste = event => { try { cashoutRemember(event?.clipboardData?.files); } catch {} };
+  const onCashoutDrop = event => { try { cashoutRemember(event?.dataTransfer?.files); } catch {} };
+  const onCashoutPick = event => {
+    try {
+      const target = event?.target;
+      if (target?.tagName === "INPUT" && target.type === "file") cashoutRemember(target.files);
+    } catch {}
+  };
+
+  // Сколько вложений видно в поле ввода. Одной приметы мало: разметка Claude
+  // меняется без предупреждения, поэтому считаем тремя независимыми и берём
+  // наибольшее — превью есть не у всякого файла (pdf), а кнопка снятия есть у
+  // каждого. «Remove from queue» — не вложение, это очередь сообщений.
+  const CASHOUT_PILL_CARD = '.epitaxy-attachment-pill,[data-testid$="attachment"],[data-testid$="attachment-pill"],[data-testid$="file-pill"]';
+  // Превью считаем разбором src, а не селектором: значок самого композера тоже
+  // бывает картинкой data: (svg), и селектор насчитал бы вложений больше, чем
+  // их есть, — а лишнее «не доехало» такая же неправда, как молчание.
+  const cashoutPreviews = box => {
+    let seen = 0;
+    for (const node of box.querySelectorAll("img[src]")) {
+      const src = String(node.getAttribute("src") ?? "");
+      if (src.startsWith("blob:") || /^data:image\/(?!svg)/i.test(src)) seen += 1;
+    }
+    return seen;
+  };
+  // Коробка поля ввода: рамка композера, а пока её не нашли — оболочка.
+  const cashoutBox = () => (state.composerBlock?.isConnected ? state.composerBlock
+    : (state.shell?.isConnected ? state.shell : null));
+  const cashoutPills = () => {
+    const box = cashoutBox();
+    if (!box) return 0;
+    try {
+      const previews = cashoutPreviews(box);
+      const cards = box.querySelectorAll(CASHOUT_PILL_CARD).length;
+      let buttons = 0;
+      for (const node of box.querySelectorAll("button[aria-label]")) {
+        const label = String(node.getAttribute("aria-label") ?? "").trim().toLowerCase();
+        if (!label.startsWith("remove") || label.includes("queue")) continue;
+        buttons += 1;
+      }
+      return Math.max(previews, cards, buttons);
+    } catch { return 0; }
+  };
+  // Как ПОДПИСАНЫ вложения, видимые в поле. Счёт плашек говорит «сколько», а
+  // уборке нужно «какие»: снятое крестиком лежит на полке вперемешку с живым, и
+  // по одному числу не понять, какая запись осталась без плашки. Берём подпись
+  // кнопки снятия («Remove снимок.png»), а если её сегодня нет — текст самой
+  // карточки. Сверяем ВХОЖДЕНИЕМ имени: вокруг него бывает и слово «Remove», и
+  // размер файла. Имя — только подсказка: у pdf подписи может не быть вовсе, и
+  // тогда за него отвечает общий счёт плашек.
+  const cashoutPillNames = () => {
+    const box = cashoutBox();
+    if (!box) return [];
+    try {
+      const names = [];
+      for (const node of box.querySelectorAll("button[aria-label]")) {
+        const label = String(node.getAttribute("aria-label") ?? "").trim();
+        const low = label.toLowerCase();
+        if (!low.startsWith("remove") || low.includes("queue")) continue;
+        names.push(label);
+      }
+      if (names.length) return names;
+      for (const node of box.querySelectorAll(CASHOUT_PILL_CARD)) {
+        const text = String(node.textContent ?? "").trim();
+        if (text) names.push(text);
+      }
+      return names;
+    } catch { return []; }
+  };
+  // Уборка полки (#5789, у донора ElvisOS она зовётся sweep). Полка обязана
+  // отражать то, что ВИДНО в поле: Элвис снимает плашку крестиком или отправляет
+  // сообщение — вложение ушло из поля, а из памяти окна нет. Тогда «Обкэшить»
+  // увозит не то, что видно, и снятый файл выигрывает у нового с тем же именем
+  // (🟣 Kaban 2869 — месяц отладки у донора). Плюс вес: без уборки в каждом окне
+  // висят ссылки на 24 файла и 48 МБ до самого закрытия Claude.
+  //
+  // Сверяемся не наблюдателем документа (он работал бы на каждом кадре ответа),
+  // а редким опросом ПОЛЯ и только пока на полке что-то лежит. Свежая запись
+  // неприкосновенна: между вставкой файла и появлением плашки проходит заметное
+  // время, и без отсрочки уборка съедала бы только что положенное.
+  let cashoutSweepTimer = 0;
+  const stopCashoutSweep = () => {
+    if (!cashoutSweepTimer) return;
+    clearInterval(cashoutSweepTimer);
+    cashoutSweepTimer = 0;
+  };
+  track(stopCashoutSweep);
+  const cashoutSweep = () => {
+    const home = cashoutHome();
+    if (!home.shelf.length) { stopCashoutSweep(); return; }
+    // Поля на месте нет (React пересобрал композер, чат переключается) — сверять
+    // не с чем, и молчание поля это не «вложений не осталось». Пропускаем тик:
+    // полка дождётся следующего, а вычеркнуть живое вложение мы права не имеем.
+    if (!cashoutBox()) return;
+    const now = Date.now();
+    const free = cashoutPillNames();
+    // Плашек в поле бывает больше, чем читаемых подписей: незанятые ими места
+    // достаются самым свежим записям — ровно тот порядок, каким полку читает
+    // cashoutHaul.
+    let room = Math.max(0, cashoutPills() - free.length);
+    const keep = [];
+    for (let at = home.shelf.length - 1; at >= 0; at -= 1) {
+      const item = home.shelf[at];
+      const hit = item.name
+        ? free.findIndex(label => label === item.name || label.includes(item.name))
+        : -1;
+      if (hit >= 0) { free.splice(hit, 1); keep.unshift(item); continue; }
+      if (now - item.at < CASHOUT_SWEEP_GRACE_MS) { keep.unshift(item); continue; }
+      if (room > 0) { room -= 1; keep.unshift(item); }
+    }
+    if (keep.length !== home.shelf.length) home.shelf = keep;
+    if (!keep.length) stopCashoutSweep();
+  };
+  const startCashoutSweep = () => {
+    if (!themable || cashoutSweepTimer || !cashoutHome().shelf.length) return;
+    cashoutSweepTimer = setInterval(cashoutSweep, CASHOUT_SWEEP_MS);
+  };
+  // Что уезжает: столько файлов с КОНЦА полки, сколько плашек видно в поле.
+  // Счёт штуками, а не именами: восемь скриншотов зовутся одинаково, и проверка
+  // по имени засчитывала бы восемь по одной доехавшей. С конца — потому что
+  // снятое крестиком и уже отправленное ушло из поля раньше.
+  const cashoutHaul = () => {
+    const want = cashoutPills();
+    if (want <= 0) return { want: 0, files: [] };
+    const shelf = cashoutHome().shelf;
+    const seen = new Set();
+    const files = [];
+    for (let at = shelf.length - 1; at >= 0 && files.length < want; at -= 1) {
+      const item = shelf[at];
+      if (item.hash) {
+        if (seen.has(item.hash)) continue;
+        seen.add(item.hash);
+      }
+      files.unshift(item);
+    }
+    return { want, files };
+  };
+  // Одинаковые имена Claude склеивает в ОДНО вложение — разводим суффиксом
+  // (донор делает это же по той же причине), иначе восемь image.png доедут одной
+  // картинкой.
+  const cashoutUniqueName = (name, taken) => {
+    const base = name || "файл";
+    if (!taken.has(base)) return base;
+    const dot = base.lastIndexOf(".");
+    const stem = dot > 0 ? base.slice(0, dot) : base;
+    const tail = dot > 0 ? base.slice(dot) : "";
+    for (let copy = 2; copy <= CASHOUT_FILES_MAX + 1; copy += 1) {
+      const next = `${stem}-${copy}${tail}`;
+      if (!taken.has(next)) return next;
+    }
+    return `${stem}-${Date.now()}${tail}`;
+  };
+  // Копию делает то окно, где груз ЛЕЖИТ (главное), своим конструктором File:
+  // донора закрывают сразу после доезда текста, и объекты его умершего окна
+  // стали бы негодны. Конструктора нет — везём как есть и честно теряем
+  // разведение имён, но не файл.
+  const cashoutCopyFile = (file, name, type) => {
+    if (!file) return null;
+    try { return new File([file], name, type ? { type } : undefined); } catch { return file; }
+  };
+  // Принять груз: зовёт ДОНОР у окна-родителя (или сам у себя, если он главное
+  // окно). Возвращает, сколько файлов принято.
+  const cashoutCarry = (list, at, want) => {
+    const home = cashoutHome();
+    const stamp = Number(at);
+    const items = Array.isArray(list) ? list : [];
+    if (!items.length || !Number.isFinite(stamp)) { home.carry = null; return 0; }
+    const files = [];
+    const names = new Set();
+    let total = 0;
+    for (const item of items) {
+      if (files.length >= CASHOUT_FILES_MAX) break;
+      const size = Number(item?.size) || 0;
+      if (!size || total + size > CASHOUT_BYTES_MAX) continue;
+      const name = cashoutUniqueName(String(item?.name ?? ""), names);
+      const copy = cashoutCopyFile(item?.file, name, String(item?.type ?? ""));
+      if (!copy) continue;
+      names.add(name);
+      total += size;
+      files.push(copy);
+    }
+    home.carry = files.length
+      ? { at: stamp, want: Math.max(Number(want) || 0, files.length), files }
+      : null;
+    return files.length;
+  };
+  // Забрать груз: зовёт НОВОЕ окно у того же родителя. done:true — груз больше не
+  // нужен, байты можно отпустить.
+  const cashoutTake = (at, done) => {
+    const home = cashoutHome();
+    const carry = home.carry;
+    if (!carry || !Array.isArray(carry.files) || Number(at) !== carry.at) return null;
+    const taken = { at: carry.at, want: carry.want, files: carry.files.slice() };
+    if (done === true) home.carry = null;
+    return taken;
+  };
+  // Где лежит груз: у главного окна — у себя, у попапа — у родителя. Родителя
+  // нет или он старой версии — груз не поедет, и об этом говорит плашка.
+  const cashoutHost = () => {
+    try {
+      if (isMainWindow()) return { carry: cashoutCarry, take: cashoutTake };
+      const parent = window.opener;
+      const outside = parent?.__myclaude;
+      if (typeof outside?.cashoutCarry !== "function" || typeof outside?.cashoutTake !== "function") return null;
+      return {
+        carry: (list, at, want) => outside.cashoutCarry(list, at, want),
+        take: (at, done) => outside.cashoutTake(at, done),
+      };
+    } catch { return null; }
   };
   // Курсор в самое начало поля: вставка ложится ПЕРЕД черновиком и не затирает
   // его. Пустому полю это ничего не стоит.
@@ -4230,18 +4638,61 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     } catch {}
     return insertLanded(editor, probe, before);
   };
+  // Подтверждение доезда переноса (WF50, #5780) ------------------------------
+  // Сравнение нормализованное: NBSP становится пробелом, пробелы схлопываются.
+  const cashoutNorm = value => String(value ?? "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  // Доехало ли: голова в 40 знаков нашлась ИЛИ длина добрала до 90 % нужной.
+  // Второе — про редактор, который переписал вставленное по-своему.
+  const cashoutArrived = (editor, text) => {
+    const want = cashoutNorm(text);
+    if (!want) return true;
+    const got = cashoutNorm(rawText(editor));
+    const head = want.slice(0, CASHOUT_HEAD);
+    return got.length >= Math.min(want.length, CASHOUT_HEAD) &&
+      (got.includes(head) || got.length >= want.length * CASHOUT_RATIO);
+  };
+  // То же, но строго по голове. Спрашивается ДО вставки: длина сама по себе
+  // ничего не доказывает (в поле мог лежать чужой черновик той же длины), а
+  // голова доказывает, что текст уже лёг, — значит вставлять второй раз нельзя.
+  const cashoutHeadHit = (editor, text) => {
+    const head = cashoutNorm(text).slice(0, CASHOUT_HEAD);
+    return head !== "" && cashoutNorm(rawText(editor)).includes(head);
+  };
+  // Два способа вставки, между которыми переключается подтверждение. Первый —
+  // execCommand (Chromium проводит его через штатный ввод), второй — событие
+  // paste с DataTransfer: бывают сборки, где ProseMirror глотает первый.
+  // Непустое поле выделяется целиком: черновик Элвиса уже внутри переноса,
+  // поэтому вставка ПОВЕРХ ничего не теряет и не задваивает (#5781).
+  const cashoutPut = (editor, text, way) => {
+    try { editor.focus(); } catch {}
+    if (editorText(editor)) { try { document.execCommand("selectAll"); } catch {} }
+    if (way !== 2) { try { document.execCommand("insertText", false, text); } catch {} return; }
+    try {
+      const data = new DataTransfer();
+      data.setData("text/plain", text);
+      editor.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    } catch {}
+  };
   // «Эта запись — мне?» (WF37). true — да, false — точно нет, null — сказать
   // нечего: своего id окно ещё не знает, а заголовок не совпал.
-  // Заголовок — второй, запасной признак: попап получает его от сессии в момент
-  // выноса, и до первого ответа probe это единственное, чем он себя знает.
-  // Заглушки («Claude», «New chat») в сопоставлении не участвуют вовсе — их
-  // носят разные чаты во всех окнах разом.
+  //
+  // Свой id знаем — он и решает ОДИН (#5787): не сошёлся с адресатом, значит
+  // запись чужая, и совпадение заголовка её не спасает. Правило WF37 («мой id
+  // ИЛИ мой заголовок») писалось, когда id почти никогда не был известен, — а
+  // заголовок попапа это снимок имени чата на момент выноса: после
+  // переименования его носит уже другое окно, и чужой перенос уезжал бы в чат,
+  // где Элвис работает.
+  //
+  // Заголовок остаётся вторым, запасным признаком ровно там, где первого нет:
+  // попап получает имя от сессии в момент выноса, и до первого ответа probe это
+  // единственное, чем он себя знает. Заглушки («Claude», «New chat») в
+  // сопоставлении не участвуют вовсе — их носят разные чаты во всех окнах разом.
   const cashoutMine = record => {
     const id = myChatId();
-    if (id && id === record.to) return true;
+    if (id) return id === record.to;
     const title = windowTitle();
     if (title && record.title === title && !THEME_TITLE_STUBS.has(title.toLowerCase())) return true;
-    return id ? false : null;
+    return null;
   };
   // Попап узнаёт свой id только у окна-родителя (раздел 12в), и сторож спрашивает
   // его РОВНО один раз на запись: ответ ложится в кэш myclaude-chat-v1, и
@@ -4252,9 +4703,114 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     state.cashoutAsked = true;
     try { Promise.resolve(chatsAsk(true)).catch(() => {}); } catch {}
   };
+  // С какого мгновения в поле стоит чужой черновик и у какой записи (#5781).
+  let cashoutDraftFor = 0;
+  let cashoutDraftSince = 0;
+  // Работа доставки (WF50): одна на окно, свой таймер, две фазы. «text» —
+  // вставили и ждём доезда, «files» — текст доехал, ждём карточек вложений.
+  // Своего интервала работа не заводит: тикает собственным setTimeout, потому
+  // что паузы у фаз разные (150 мс против 200 мс).
+  let cashoutJob = null;
+  const clearCashoutJob = () => {
+    if (!cashoutJob) return;
+    if (cashoutJob.timer) clearTimeout(cashoutJob.timer);
+    cashoutJob = null;
+  };
+  track(clearCashoutJob);
+  const cashoutLater = () => {
+    if (!cashoutJob) return;
+    cashoutJob.timer = setTimeout(cashoutTick,
+      cashoutJob.phase === "files" ? CASHOUT_ATTACH_MS : CASHOUT_CONFIRM_MS);
+  };
+  // Приговор: вставить не вышло. Запись НЕ чистим — она умрёт по сроку сама, а
+  // приложение по этому слову поймёт, что донора трогать нельзя.
+  const cashoutGiveUp = (job, why) => {
+    const at = job.at;
+    const until = job.until;
+    clearCashoutJob();
+    clearCashoutWatch();
+    cashoutSay(at, until, `${CASHOUT_REFUSED}: ${why}`);
+  };
+  // Текст доехал: только теперь чистим запись (#5780) и берёмся за вложения.
+  const cashoutLanded = (job, editor) => {
+    const at = job.at;
+    const until = job.until;
+    clearCashoutJob();
+    clearCashoutWatch();
+    clearCashout();
+    cashoutSay(at, until, CASHOUT_DONE);
+    setStage(STAGE_NORMAL);
+    try { cashoutAttach(at, editor); } catch {}
+  };
+  // Вложения кладём ПОСЛЕ текста: вставка текста идёт с выделением всего поля и
+  // смахнула бы прикреплённое. Прикладываем только НЕДОСТАЮЩИЕ — иначе повтор
+  // работы приложил бы те же файлы второй раз.
+  const cashoutAttach = (at, editor) => {
+    const host = cashoutHost();
+    const carry = host ? host.take(at, false) : null;
+    const files = carry?.files ?? [];
+    if (!files.length) return;
+    const have = cashoutPills();
+    cashoutFilesCount = { want: carry.want, sent: files.length, done: Math.min(have, carry.want) };
+    if (have < files.length) {
+      try {
+        const data = new DataTransfer();
+        for (const file of files.slice(have)) data.items.add(file);
+        try { editor.focus(); } catch {}
+        editor.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+      } catch {}
+    }
+    cashoutJob = { at, text: "", editor, phase: "files", way: 0, tries: 0, timer: 0, want: files.length, carry: carry.want };
+    cashoutLater();
+  };
+  const cashoutTick = () => {
+    const job = cashoutJob;
+    if (!job || !state.alive) { clearCashoutJob(); return; }
+    const editor = job.editor?.isConnected ? job.editor : findEditor();
+    if (!editor?.isConnected) {
+      if (job.phase === "files") { cashoutFinishFiles(job); return; }
+      cashoutGiveUp(job, "поле ввода пропало");
+      return;
+    }
+    if (job.phase === "files") {
+      const done = cashoutPills();
+      cashoutFilesCount = { ...cashoutFilesCount, done: Math.min(done, job.carry) };
+      job.tries += 1;
+      if (done >= job.want || job.tries >= CASHOUT_ATTACH_TRIES) { cashoutFinishFiles(job); return; }
+      cashoutLater();
+      return;
+    }
+    if (cashoutArrived(editor, job.text)) { cashoutLanded(job, editor); return; }
+    job.tries += 1;
+    if (job.way === 1 && job.tries >= CASHOUT_CONFIRM_FIRST) {
+      // Первый способ не взял — досылаем то же самое вторым и ждём ещё.
+      job.way = 2;
+      job.tries = 0;
+      cashoutPut(editor, job.text, 2);
+    } else if (job.way === 2 && job.tries >= CASHOUT_CONFIRM_SECOND) {
+      cashoutGiveUp(job, "текст не попал в поле");
+      return;
+    }
+    cashoutLater();
+  };
+  // Конец работы с вложениями: груз отпускаем, недоехавшее называем плашкой —
+  // молчаливая потеря вложений и была жалобой Элвиса.
+  const cashoutFinishFiles = job => {
+    clearCashoutJob();
+    const host = cashoutHost();
+    try { host?.take(job.at, true); } catch {}
+    const done = cashoutFilesCount.done;
+    if (done < cashoutFilesCount.want) {
+      try { newWindowNote(CASHOUT_NOTE_PART(done, cashoutFilesCount.want)); } catch {}
+    }
+  };
   const tryPasteCashout = () => {
     const record = readCashout();
     if (record == null) return "нет записи";
+    // Работа уже идёт или приговор по ЭТОЙ записи уже вынесен — второй раз не
+    // вставляем: дубль текста хуже задержки.
+    if (cashoutJob) return "ждём доезда";
+    if (cashoutVerdict && record.at === cashoutVerdictAt) return cashoutVerdict;
     if (record.to != null) {
       // Перенос из подчинённого окна (WF37, #5575) адресован НОВОМУ окну,
       // которое родит цепочка «Нового окна». Главное окно такие записи не
@@ -4277,17 +4833,25 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     } else if (Date.now() - record.at > CASHOUT_FRESH_MS) { clearCashout(); return "запись протухла"; }
     const editor = state.editor?.isConnected ? state.editor : findEditor();
     if (!editor?.isConnected) return "нет редактора";
-    // Вставляем только в свежий чат и только в пустое поле: иначе перенос
-    // затёр бы чужой черновик или лёг посреди разговора. Свежесть чата
-    // спрашиваем только у записи БЕЗ адресата: у переноса окно названо
+    // Вставляем только в свежий чат: иначе перенос лёг бы посреди разговора.
+    // Свежесть спрашиваем только у записи БЕЗ адресата: у переноса окно названо
     // поимённо, а первым сообщением в нём может оказаться что угодно.
     if (record.to == null && !isFreshChat()) return "чат не свежий";
-    if (editorText(editor)) return "в поле черновик";
-    // Поле заведомо пустое — вставлять с начала незачем.
-    if (!insertIntoEditor(editor, record.text, false)) return "вставка не удалась";
-    clearCashout();
-    setStage(STAGE_NORMAL);
-    return "вставлено";
+    // Черновик в поле — больше НЕ отказ (#5781). Раньше перенос из-за него молча
+    // протухал, а окно-донор к тому времени уже закрыто (#5768) — терялся текст
+    // Элвиса. Свежий чат иногда доезжает с прошлым черновиком, и Claude убирает
+    // его сам: столько ждём, а дальше вставляем поверх выделения всего поля.
+    if (editorText(editor)) {
+      if (cashoutDraftFor !== record.at) { cashoutDraftFor = record.at; cashoutDraftSince = Date.now(); }
+      if (Date.now() - cashoutDraftSince < CASHOUT_DRAFT_WAIT_MS) return "ждём черновик";
+    }
+    // Текст уже в поле (инжект перечитали посреди доставки) — вторую вставку не
+    // делаем, только подтверждаем.
+    if (!cashoutHeadHit(editor, record.text)) cashoutPut(editor, record.text, 1);
+    cashoutJob = { at: record.at, until: cashoutLife(record), text: record.text, editor,
+      phase: "text", way: 1, tries: 0, timer: 0 };
+    cashoutLater();
+    return "ждём доезда";
   };
   const clearCashoutWatch = () => {
     if (!state.cashoutTimer) return;
@@ -4299,11 +4863,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // перезагружается, инжект заново не приходит), поэтому ждём появления свежего
   // чата, а не одного лишь момента установки. Живёт ровно пока запись свежая.
   const CASHOUT_WATCH_DONE = new Set([
-    "вставлено", "запись протухла", "нет записи",
+    "запись протухла", "нет записи",
     // Перенос протух или достался главному окну — ждать в этом окне больше
     // нечего: свою запись главное окно заведёт заново, вместе со сторожем.
     "перенос протух", "перенос не главному окну",
   ]);
+  // Дальше сторожу делать нечего: работа доставки вынесла приговор (доехало или
+  // не доехало) — она же и гасит сторожа, но повтор тика не должен его заводить.
+  const cashoutWatchDone = result => CASHOUT_WATCH_DONE.has(result) ||
+    result === CASHOUT_DONE || result.startsWith(`${CASHOUT_REFUSED}:`);
   const armCashoutWatch = () => {
     clearCashoutWatch();
     if (readCashout() == null) return;
@@ -4313,7 +4881,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     state.cashoutTimer = setInterval(() => {
       if (!state.alive) { clearCashoutWatch(); return; }
       const result = tryPasteCashout();
-      if (CASHOUT_WATCH_DONE.has(result)) clearCashoutWatch();
+      if (cashoutWatchDone(result)) clearCashoutWatch();
     }, CASHOUT_TICK_MS);
   };
   const runCashout = () => {
@@ -4323,7 +4891,14 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (answer) parts.push(answer);
     if (draft) parts.push(draft);
     const text = parts.join("\n\n");
-    if (!text) return false;
+    if (!text) {
+      // Молчать нельзя: ⌘N жмёт приложение независимо от нашего ответа, и без
+      // плашки Элвис видит только пустой новый чат.
+      cashoutRefusal = CASHOUT_NOTE_EMPTY;
+      try { newWindowNote(CASHOUT_NOTE_EMPTY); } catch {}
+      return false;
+    }
+    cashoutRefusal = null;
     // Из подчинённого окна перенос уезжает в НОВОЕ окно (WF37, #5575): ⌘N в
     // попапе исполняет главное окно Claude, и старый путь бил по чату, где
     // Элвис ведёт диктовку. Адресата назовёт цепочка «Нового окна»
@@ -4331,10 +4906,30 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // сторожа донор не заводит и чужого не оставляет: вставлять перенос ему
     // некуда, а тикать 300 мс впустую незачем.
     const transfer = !isMainWindow();
+    const at = Date.now();
     const record = transfer
-      ? { at: Date.now(), text, to: CASHOUT_PENDING }
-      : { at: Date.now(), text };
+      ? { at, text, to: CASHOUT_PENDING }
+      : { at, text };
     try { localStorage.setItem(CASHOUT_KEY, JSON.stringify(record)); } catch { return false; }
+    // Прошлый приговор снимаем: он принадлежал прошлой записи, а новая только
+    // поехала (status().cashout.delivery обязан сказать «ждём»).
+    cashoutVerdict = "";
+    cashoutVerdictAt = 0;
+    cashoutVerdictUntil = 0;
+    // Вложения (WF50, #5773) уезжают тем же нажатием: File из донора кладём в
+    // память главного окна, а забирает их новое окно после доезда текста. Из
+    // донора не снимаем НИЧЕГО — только копируем: испорченное окно при отказе и
+    // было главной бедой донора ElvisOS.
+    const haul = cashoutHaul();
+    const host = haul.files.length ? cashoutHost() : null;
+    let carried = 0;
+    try { carried = host ? host.carry(haul.files, at, haul.want) : 0; } catch { carried = 0; }
+    cashoutFilesCount = { want: haul.want, sent: carried, done: 0 };
+    // Груз не взяли вовсе (родителя нет или файлов на полке не осталось) —
+    // говорим об этом здесь: молча Элвис узнал бы о потере только глазами.
+    if (haul.want > 0 && carried === 0) {
+      try { newWindowNote(CASHOUT_NOTE_LEFT(haul.want)); } catch {}
+    }
     if (transfer) clearCashoutWatch(); else armCashoutWatch();
     return true;
   };
@@ -5088,27 +5683,29 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       // 6в. Цвет и размер нового окна — ДО openPopout: попап читает ту же карту
       // (localStorage у окон Claude общий), и запись под ключом его чата успевает
       // лечь раньше, чем окно откроется, — оно рисуется уже покрашенным.
-      // Пишем РОВНО одну запись, чата. Ни writeLayers, ни storeSessionLayers, ни
+      // Пишем РОВНО записи ЧАТА. Ни writeLayers, ни storeSessionLayers, ни
       // applyLayer тут звать нельзя: команду исполняет ГЛАВНОЕ окно, и writeKeys()
       // добавил бы к ключу чата ещё и `main` с сессией — один клик по «Новое окно
       // ▸ Dictatorik» перекрасил бы окно Элвиса в чужой цвет (критик WF16, Б3).
       // Слои на экран здесь тоже не применяются: они не про это окно.
       if (Object.keys(layers).length) {
-        if (!rowTitle || !title || THEME_TITLE_STUBS.has(title.toLowerCase())) {
-          // Заголовок-заглушка ключом чата не бывает: запись под ней досталась бы
-          // каждому безымянному чату разом. Лучше без цвета, чем такой ценой.
-          soft = "no-title";
-          newWindowMark({ state: soft, layers: "no-title" });
-        } else {
-          try {
-            const map = readThemeMap();
-            setMapLayers(map, `${THEME_CHAT_PREFIX}${title}`, layers);
-            writeThemeMap(map);
-            newWindowMark({ layers: Object.keys(layers) });
-          } catch {
-            // Квота или битая карта — не повод ронять окно, как и no-rename.
-            newWindowMark({ layers: "failed" });
-          }
+        // Заголовок-заглушка тенью `chat:` быть не может: запись под ней досталась бы
+        // каждому безымянному чату разом. А ключ `id:` заголовка не требует вовсе —
+        // с ним цвет ложится и безымянному чату (находка ревизии 08.09).
+        const stub = !rowTitle || !title || THEME_TITLE_STUBS.has(title.toLowerCase());
+        if (stub) { soft = "no-title"; newWindowMark({ state: soft }); }
+        try {
+          const map = readThemeMap();
+          // Оба ключа чата, как в writeLayers: id главный, имя — тень для окна,
+          // которое своего id ещё не знает. Раньше писалась одна тень, и цвет окна
+          // держался на имени — ровно на том, что WF35 объявил ненадёжным.
+          setMapLayers(map, `${THEME_ID_PREFIX}${id}`, layers);
+          if (!stub) setMapLayers(map, `${THEME_CHAT_PREFIX}${title}`, layers);
+          writeThemeMap(map);
+          newWindowMark({ layers: Object.keys(layers) });
+        } catch {
+          // Квота или битая карта — не повод ронять окно, как и no-rename.
+          newWindowMark({ layers: "failed" });
         }
       }
 
@@ -5784,6 +6381,12 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   on(window, "resize", scheduleLayout);
   on(window, "scroll", onScrolled, true);
   on(window, "myclaude-command", onCommand);
+  // Вложения поля ввода (раздел 12) ловятся НА ЗАХВАТЕ: Claude зовёт
+  // preventDefault, и на всплытии события до нас доходят не всегда. Сама полка
+  // лежит глобалом окна и dispose переживает — снимаются только подписки.
+  on(document, "paste", onCashoutPaste, true);
+  on(document, "drop", onCashoutDrop, true);
+  on(document, "change", onCashoutPick, true);
   // Escape не должен останавливать выполнение (слово Элвиса 03.09 14:00: F1/F2 рядом,
   // «постоянно боюсь нажать Escape»). Глотаем Escape на захвате, но только когда на
   // странице нет открытого диалога/меню/списка — там Escape нужен, чтобы их закрыть.
@@ -5916,6 +6519,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // popoutChat() зовёт ПОПАП у своего родителя через window.opener.
     chats,
     popoutChat,
+    // Груз вложений «Обкэшить» (WF50, раздел 12): обе ручки зовёт ДРУГОЕ окно
+    // через window.opener.__myclaude — донор кладёт File, новое окно забирает.
+    cashoutCarry,
+    cashoutTake,
     // Для probe.js на гейте: видно, приехал ли инжект, применились ли стили
     // (CSP) и нашлось ли поле.
     status: () => ({
@@ -6073,11 +6680,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     codeCss, codePalette, contrastRatio, readableOn,
     chatKey, chatIdKey, chatTitleKey, chatEntry, migrateChatKey, sameSessionKey, restoreKeyOk, chatsThemes,
-    sessionKey, themeKey, legacyKey, mapEntry, entryLayer, readThemeMap, writeThemeMap, liveRing, livePalette,
+    sessionKey, themeKey, legacyKey, mapEntry, entryLayer, storedLayer, readThemeMap, writeThemeMap,
+    liveRing, livePalette, setStage, collapseTargets, clampHeight,
     parseProgressText, progressShares, progressFill, progressBlockAt, progressStages,
     statusLines, statusBlocks, statusLineNumber, statusFeedLines, statusKey, runWorkflowCommand, newWindowSegment,
     newWindowSessionId, newWindowAtHome, newWindowStoreOk, setModuleImporter, newWindowScanStores,
     readCashout, runCashout, tryPasteCashout, cashoutStamp, cashoutMine,
+    cashoutState, cashoutArrived, cashoutHeadHit, cashoutNorm, cashoutRemember, cashoutPills,
+    cashoutHaul, cashoutUniqueName, cashoutCarry, cashoutTake, cashoutHome,
+    cashoutPillNames, cashoutSweep,
     chatKind, chatPath, chatRowId, myChatId, readChatId, writeChatId, chatsMap, chatsScan, chatsFolder,
     popoutChat, chats });
 
@@ -6086,6 +6697,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // откатывается целиком, а причина остаётся в окне для разбора.
   try {
     armCashoutWatch();
+    // Полка вложений переживает перезапись inject.js — значит и уборщик обязан
+    // вернуться вместе с новым экземпляром (#5789).
+    startCashoutSweep();
     // Первый проход по времени — сразу: те сообщения, что уже на экране, ждать
     // ближайшей мутации не должны.
     runShortTime();

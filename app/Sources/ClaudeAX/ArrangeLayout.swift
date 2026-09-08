@@ -99,11 +99,20 @@ enum ArrangeLayout {
     /// Место нового окна в порядке: слева — первым, справа — последним, посередине —
     /// ровно в середину, а при чётном числе окон ПРАВЕЕ середины (контракт плана WF36).
     /// Прочие места (деление столбца, точка) порядка не задают — для них середина.
-    static func insertIndex(of place: PimpPlace, count: Int) -> Int {
+    ///
+    /// `columns` — сколько ячеек в ПЕРВОМ ряду раскладки: у сетки с рядами «посередине»
+    /// значит середину первого ряда, а не всего порядка (#5560) — иначе окно, которое
+    /// просили поставить посередине, уезжало во второй ряд («5×2» с девятью окнами давало
+    /// место 5, то есть начало нижнего ряда). Раскладка без заданных рядов (лента) `columns`
+    /// не задаёт, и середина считается по всему порядку, как раньше.
+    static func insertIndex(of place: PimpPlace, count: Int, columns: Int? = nil) -> Int {
         switch place {
         case .left: return 0
         case .right: return count
-        default: return (count + 1) / 2
+        default:
+            var slots = count + 1
+            if let columns = columns, columns > 0 { slots = min(slots, columns) }
+            return slots / 2
         }
     }
 

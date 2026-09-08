@@ -78,6 +78,24 @@ enum AX {
         AXUIElementPerformAction(element, action as CFString) == .success
     }
 
+    /// Свой срок ответа отдельному элементу (обычно окну). От элемента приложения таймаут
+    /// НЕ наследуется — замер ElvisOS, #5784: там его ставили отдельно приложению и отдельно
+    /// найденному окну, потому что постановка рамки идёт уже через окно. Системный таймаут
+    /// (6 с) менять нельзя: он общий на процесс и возвращает подтормаживание мыши.
+    static func timeout(_ element: AXUIElement, _ seconds: Float) {
+        AXUIElementSetMessagingTimeout(element, seconds)
+    }
+
+    /// Закрыть окно — нажать его красную кнопку (#5768, замена окна на «Обкэшить»).
+    /// Кнопка берётся тем же путём, что жёлтая у меню (`kAXMinimizeButtonAttribute`):
+    /// у окна её может не быть вовсе (Electron ещё не отдал AX-дерево) — тогда `false`,
+    /// и окно остаётся на экране.
+    @discardableResult
+    static func close(_ window: AXUIElement) -> Bool {
+        guard let button = element(window, kAXCloseButtonAttribute) else { return false }
+        return perform(button, kAXPressAction)
+    }
+
     /// Есть ли у процесса доверие Accessibility. Без промпта: окно с просьбой показывает
     /// приложение (батч C), модуль без доверия работает вхолостую.
     static var isTrusted: Bool {

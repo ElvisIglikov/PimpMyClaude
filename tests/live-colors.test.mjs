@@ -195,17 +195,37 @@ test("чужая страница не красится и команду не �
   assert.equal(loaded.api.status().live.on, false);
 });
 
-test("один тик дешевле своего окна", () => {
+// Тик считается РАБОТОЙ, а не миллисекундами (#5683). Секундомер краснел на
+// здоровой сборке, когда рядом шли другие агенты и swift build: замер плавал в
+// шесть раз, а запас до потолка был всего вдвое. Числа ниже детерминированы —
+// один мазок темы на тик и ни одного обхода страницы.
+test("один тик — один мазок темы, страницу он не обходит", () => {
   const loaded = open();
   loaded.dom.command(baseCommand({ period: 60 }));
   const tickId = lastTick(loaded);
-  const started = process.hrtime.bigint();
+  // Записи в таблицы стилей: тема, шрифт и размер живут отдельными таблицами, и
+  // тик обязан трогать только тему.
+  let writes = 0;
+  const sheets = loaded.win.CSSStyleSheet.prototype;
+  const replaceSync = sheets.replaceSync;
+  sheets.replaceSync = function counted(text) { writes += 1; return replaceSync.call(this, text); };
+  // Прогревочный тик: на первом мазке садится грубый сектор круга, и полоса
+  // прогресса переставляется один раз — это работа установки, а не тика.
+  loaded.dom.fire(tickId);
+  const paintsBefore = loaded.api.status().live.paints;
+  const queriesBefore = loaded.dom.queries();
+  const adopted = loaded.win.document.adoptedStyleSheets.length;
+  writes = 0;
   for (let index = 0; index < 300; index += 1) loaded.dom.fire(tickId);
-  const spent = Number(process.hrtime.bigint() - started) / 1e6 / 300;
-  // Заплатка WF43 (#5683): порог 5 мс краснел на здоровой сборке, когда рядом идут другие агенты
-  // и swift build. Потолок поднят до 25 мс, чтобы гейт не врал; настоящая починка — считать работу,
-  // а не время (батч Т волны 2).
-  assert.ok(spent < 25, `тик занял ${spent.toFixed(3)} мс — дороже, чем можно`);
+  sheets.replaceSync = replaceSync;
+  assert.equal(loaded.api.status().live.paints - paintsBefore, 300, "каждый тик красит ровно раз");
+  assert.equal(writes, 300, "на тик приходится одна запись в таблицу стилей, а не три");
+  assert.equal(loaded.win.document.adoptedStyleSheets.length, adopted, "таблиц стилей за 300 тиков не прибавилось");
+  // Обход страницы стоит дороже всего остального вместе взятого, поэтому его
+  // здесь нет вовсе: пара поисков за 300 тиков — это редкая перестановка полосы
+  // на смене сектора, а не работа каждого тика.
+  const walks = loaded.dom.queries() - queriesBefore;
+  assert.ok(walks <= 10, `тик обходит страницу: ${walks} поисков по дереву на 300 тиков`);
 });
 
 test("окно без заголовка: фаза временная, замок ставится по первому имени", () => {

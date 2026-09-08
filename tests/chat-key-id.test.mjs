@@ -57,6 +57,56 @@ test("нет записи по id — берётся заголовок", () => 
   assert.equal(api.status().theme.source, "chat");
 });
 
+// Приоритет `id:` → `chat:` — ПО СЛОЮ, а не по записи целиком. Раньше он стоял
+// на `??` и срабатывал на самой записи: запись по id с одним слоем закрывала
+// более полную тень, и на место потерянных слоёв вставала СЕССИЯ, то есть выбор
+// другого разговора в этом окне (находка ревизии 08.09).
+test("слой, которого нет в записи по id, берётся из тени, а не из сессии", () => {
+  const { api } = loadInject({
+    title: "Trelvis",
+    storage: {
+      local: map({
+        [ID_KEY]: { theme: theme("по id") },
+        "chat:Trelvis": { theme: theme("по имени"), font: font("Menlo") },
+      }),
+      session: sessionOf("main", { theme: theme("сессия"), font: font("Сессия") }),
+    },
+  });
+  assert.equal(api.status().theme.id, "по id", "тема из записи по id");
+  assert.equal(api.status().theme.source, "chat");
+  assert.equal(api.status().font.family, "Menlo", "шрифт добран из тени");
+  assert.equal(api.status().font.source, "chat", "сессия в дело не пошла");
+});
+
+test("тень даёт цвет, когда в записи по id лежит только размер", () => {
+  const { api } = loadInject({
+    title: "Trelvis",
+    storage: {
+      local: map({
+        [ID_KEY]: { size: { answer: 20 } },
+        "chat:Trelvis": { theme: theme("по имени") },
+      }),
+    },
+  });
+  assert.equal(api.status().size.answer, 20, "размер из записи по id");
+  assert.equal(api.status().theme.id, "по имени", "цвет добран из тени");
+  assert.equal(api.status().theme.source, "chat");
+});
+
+test("сброс в записи по id сильнее тени — «Как у Claude» это тоже выбор", () => {
+  const { api } = loadInject({
+    title: "Trelvis",
+    storage: {
+      local: map({
+        [ID_KEY]: { theme: "none" },
+        "chat:Trelvis": { theme: theme("по имени"), font: font("Menlo") },
+      }),
+    },
+  });
+  assert.equal(api.status().theme.id, null, "цвет снят, а не подобран из тени");
+  assert.equal(api.status().font.family, "Menlo", "остальные слои тени на месте");
+});
+
 test("первое совпадение переносит запись на id, старую оставляет", () => {
   const loaded = loadInject({
     title: "Trelvis",

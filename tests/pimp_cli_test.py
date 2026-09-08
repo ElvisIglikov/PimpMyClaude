@@ -137,9 +137,16 @@ class PimpCliTest(unittest.TestCase):
         self.assertEqual(self.app.requests[0]["from"], "")
 
     def test_arrange_request(self):
+        # Голая «расставить» повторяет последнюю выбранную раскладку, а не подменяет её
+        # лентой: иначе выбор Элвиса плиткой стирается молча (#5745).
         self.call("arrange", result=fixture("arrange.result.json"))
         self.assertEqual(list(self.app.requests[0].keys()),
                          list(fixture("arrange.request.json").keys()))
+        self.assertEqual(self.app.requests[0]["layout"], "last")
+
+    def test_arrange_request_row_asked(self):
+        # «Как сейчас» по-прежнему лента — но только когда её попросили словом.
+        self.call("arrange", "--layout", "row", result=fixture("arrange.result.json"))
         self.assertEqual(self.app.requests[0]["layout"], "row")
 
     def test_arrange_request_layout(self):
@@ -244,7 +251,7 @@ class PimpCliTest(unittest.TestCase):
     def test_arrange_ok(self):
         done = self.call("arrange", result=fixture("arrange.result.json"))
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(done.stdout.strip(), "Расставил 3 окна на главном экране: как сейчас (лента)")
+        self.assertEqual(done.stdout.strip(), "Расставил 3 окна на экране, где стоят окна: как сейчас (лента)")
 
     def test_arrange_layout_and_skipped(self):
         # Просили «как в прошлый раз» — называем ту раскладку, что применилась.
@@ -255,7 +262,7 @@ class PimpCliTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.app.requests[0]["layout"], "last")
         self.assertEqual(done.stdout.strip(),
-                         "Расставил 3 окна на главном экране: пять в ряд, 2 не тронул — ячеек нет")
+                         "Расставил 3 окна на экране, где стоят окна: пять в ряд, 2 не тронул — ячеек нет")
 
     def test_arrange_too_small(self):
         # Тесно не окну, а раскладке: текст «Мало места…» тут не годится.
@@ -275,7 +282,7 @@ class PimpCliTest(unittest.TestCase):
                          result=fixture("arrange-order.result.json"))
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(done.stdout.strip(),
-                         "Расставил 3 окна на главном экране: пять в ряд — сперва "
+                         "Расставил 3 окна на экране, где стоят окна: пять в ряд — сперва "
                          "VkusnoffKz; не нашёл окна: SkilZZZ, Dictator; "
                          "1 без папки — в хвосте")
 
@@ -298,6 +305,26 @@ class PimpCliTest(unittest.TestCase):
         done = self.call("layout", "save", "Утро", result=fixture("layout-save.result.json"))
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(done.stdout.strip(), "Запомнил раскладку «Утро»: пять в ряд, 2 окна")
+
+    def test_layout_save_not_arranged(self):
+        # Окна стоят не по сетке — запоминать нечего, и Пимп говорит, что делать (#5728).
+        answer = dict(fixture("bad.result.json"))
+        answer["error"] = "not-arranged"
+        done = self.call("layout", "save", "Проба", result=answer)
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout.strip(),
+                         "Окна стоят не по сетке — сперва расставь их, "
+                         "потом запоминай раскладку")
+
+    def test_no_windows_names_minimized(self):
+        # Свёрнутые окна приложение не видит: «Claude не запущен» при живом Claude — ложь
+        # (#5746). Строка называет все три причины и говорит, что сделать.
+        answer = dict(fixture("bad.result.json"))
+        answer["error"] = "no-windows"
+        done = self.call("arrange", result=answer)
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout.strip(),
+                         "Claude не запущен, окон нет или все свёрнуты — разверни окно")
 
     def test_layout_save_chat_unknown(self):
         # Чат окна неизвестен — запоминать нечего, и Элвису сказано, что включить.

@@ -94,8 +94,10 @@ final class ThemeEditor: NSObject, NSWindowDelegate {
         let panel = makePanel()
         self.panel = panel
         let frame = AX.frame(window) ?? Screens.mainUsableFrame ?? .zero
+        // Область — экран, где стоит САМО окно (#5716): по `NSScreen.main` панель отрывалась
+        // от окна на втором мониторе (`origin` зажимает по ней y).
         let point = ThemeEditor.origin(window: frame, size: ThemeEditor.panelSize,
-                                       area: Screens.mainUsableFrame)
+                                       area: Screens.usableFrame(holding: [frame]))
         // `flip` даёт левый ВЕРХНИЙ угол в координатах AppKit, а окну нужен левый НИЖНИЙ —
         // и считать надо по ВСЕЙ рамке окна, вместе с полосой заголовка.
         let top = Screens.flip(point: point)
