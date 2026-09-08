@@ -161,6 +161,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         // файл правит и сам Элвис. Возврат идёт очередью канала «Пимп»: работа там одна,
         // и пункт меню не должен спорить с запросом из чата.
         menu.savedLayouts = { [weak self] in self?.layouts.load() ?? [] }
+        menu.startSaveLayout = { [weak self] in self?.prepareLayoutSave() ?? "" }
         menu.saveLayout = { [weak self] name in self?.saveLayout(named: name) }
         menu.restoreLayout = { [weak self] layout, fresh in
             guard let self = self else { return }
@@ -250,13 +251,45 @@ public final class ClaudeAXController: ClaudeAXControlling {
             })
     }
 
+    /// Сколько ждём круг опознания чатов (#5770): лоадер читает `probe.js` раз в 500 мс,
+    /// а ответ забирает СЛЕДУЮЩИЙ тик — это два тика по 2 с плюс запас. Не дождались (канал
+    /// занял агент на гейте) — работаем как раньше: чат окна неизвестен, и снимок скажет
+    /// об этом плашкой.
+    static let chatsWaitSeconds: TimeInterval = 8
+
+    /// Начинается «💾 Сохранить эту раскладку…» (зовётся ДО вопроса об имени): просим страницы
+    /// назвать свои чаты и ждём ответа (#5770) — иначе при выключенном тумблере «🗂 Цвет по
+    /// проекту» карта чатов пуста, и снимок отказывал плашкой «не знаю, какие чаты в окнах»,
+    /// хотя к раскладкам тумблер отношения не имеет. По той же карте считается имя по
+    /// проектам окон (#5769) — его приложение подставляет в поле диалога.
+    private func prepareLayoutSave() -> String {
+        waitForChats()
+        return LayoutsStore.suggestedName(for: pimpWindowList())
+    }
+
+    /// Спросить страницы и дождаться круга. Главный цикл крутим сами: круг уезжает и приезжает
+    /// на общем тике 2 с, а он живёт на этой же нити — обычный сон заморозил бы и его.
+    private func waitForChats() {
+        let since = Date()
+        chatProbe.demand(at: since)
+        let deadline = since.addingTimeInterval(ClaudeAXController.chatsWaitSeconds)
+        while !chatProbe.answered(after: since), Date() < deadline {
+            // Цикл вернул «крутить нечего» (таймера тика нет — приложение не запущено):
+            // ждать бессмысленно, круга всё равно не будет.
+            guard RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.1)) else { break }
+        }
+    }
+
+    /// Окна Claude для раскладок: то же, что отдаёт канал «Пимп».
+    private func pimpWindowList() -> [PimpWindow] {
+        actions.pimpWindows().map { pimpWindow(id: $0.id, title: $0.title, frame: $0.frame) }
+    }
+
     /// «💾 Сохранить эту раскладку…» (план WF41): тот же снимок, что у канала. Окно, чей чат
     /// приложение не знает, отменяет запись целиком — вернулись бы не те чаты (#5455);
     /// возвращаем строку для плашки, nil — записано.
     private func saveLayout(named name: String) -> String? {
-        let windows = actions.pimpWindows().map {
-            pimpWindow(id: $0.id, title: $0.title, frame: $0.frame)
-        }
+        let windows = pimpWindowList()
         guard !windows.isEmpty else { return MenuModel.layoutNoWindowsAlert }
         let mode = actions.themeStore.arrangeMode
         let snapshot = LayoutsStore.snapshot(
@@ -374,6 +407,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
             self.projects.absorb(self.index.projects(), at: Date())
             // Канал «Пимп» — на этом же тике: запросы из любого чата лежат файлами.
             self.pimp.tick()
+            // «Обкэшить» из попапа ждёт новое окно, чтобы поставить его на место старого
+            // и закрыть старое (#5768). Работы нет — тик ничего не делает.
+            self.actions.cashoutTick()
             self.tickTitles = nil
         }
         RunLoop.main.add(watchdog, forMode: .common)
@@ -433,11 +469,16 @@ public final class ClaudeAXController: ClaudeAXControlling {
 
     // MARK: - статус (для меню-бара и живой проверки на гейте)
 
+    /// `presses=<нажал>/<оборвал обход по времени>/<не жал по списку исключений>` — по
+    /// второму и третьему числу видно, ПОЧЕМУ авто-Allow молчит: до кнопки не дошли за
+    /// 0,4 с или диалог в списке исключений (#5736). Раньше в строке было одно число, и
+    /// «не растёт» значило что угодно.
     public var statusText: String {
         let claude = app.running() != nil ? "есть" : "нет"
         return """
         accessibility=\(isAccessibilityTrusted) claude=\(claude) front=\(claudeFrontmost) \
-        autoAllow=\(autoAllowEnabled)/\(autoAllow.isRunning) presses=\(autoAllow.pressCount) \
+        autoAllow=\(autoAllowEnabled)/\(autoAllow.isRunning) \
+        presses=\(autoAllow.pressCount)/\(autoAllow.timeoutCount)/\(autoAllow.blockedCount) \
         menu=\(minimizeMenuEnabled)/\(menu.isRunning) menus=\(menu.shows) \
         blockQuit=\(blockQuitEnabled) blocks=\(blockedQuits) hotkeys=\(hotkeys.count) \
         status=\(statusFeed.isRunning)/\(statusFeed.projectCount)/\(statusFeed.sentCount) \

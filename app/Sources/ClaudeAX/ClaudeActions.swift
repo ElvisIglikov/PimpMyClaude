@@ -120,7 +120,9 @@ final class ClaudeActions {
         switch command {
         case .workflow: workflow(target)
         case .cashout: cashout(target)
-        case .newChat: newChat(target)
+        // Заголовок читаем здесь: по нему «Новый чат» решает, ⌘N это или окно рядом (#5734).
+        case .newChat:
+            newChatCommand(target, title: target.flatMap { AX.string($0, kAXTitleAttribute) } ?? "")
         case .newWindow: newWindow(target)
         case .popoutWindow: popoutWindow(target)
         case .collapse: stage("collapse", target)
@@ -182,11 +184,109 @@ final class ClaudeActions {
     /// «Обкэшить» из попапа: новое окно рядом тем же путём, что «🪟 Новое окно ▸ проект» —
     /// имя чата по проекту, слои и авто-цвет, запись в `projects.json`. Проекта не знаем
     /// (чат неизвестен или его нет в индексе) — «Здесь же», но всё равно с переносом.
-    /// Точка ставится сама (`popoutOrigin` от рамки попапа — уступ от окна, где нажали).
+    ///
+    /// Новое окно ЗАМЕНЯЕТ старое (#5768, слово Элвиса 08.09 11:40: «Обкэшить — это же
+    /// значит, что откроется новое окно и оно заменит полностью старое»): рамку донора
+    /// снимаем сейчас, пока окно живо, и его угол уходит в команду точкой — окно рождается
+    /// сразу на месте старого (заодно уходит обрезка `popoutOrigin` по главному экрану).
+    /// Донор закрывается не здесь, а когда новое окно появилось на экране (`cashoutTick`).
     private func cashoutNewWindow(from window: AXUIElement, chat: String?) {
         let project = chat.flatMap { projectForChat($0) }
         if let project = project { onProjectUsed?(project) }
-        newWindow(window, project: project, transfer: true)
+        let donor = AX.frame(window)
+        beginCashoutReplace(donor: donor, window: window)
+        newWindow(window, project: project, origin: ClaudeActions.cashoutOrigin(donor: donor),
+                  transfer: true)
+    }
+
+    // MARK: - замена окна на «Обкэшить» (#5768)
+
+    /// Работа «Обкэшить»: чьё место занимает новое окно и какие окна были ДО ⌘N — по ним
+    /// новое окно и опознаётся (по имени нельзя: чат ещё не переименован).
+    private struct CashoutJob {
+        let donor: CGWindowID
+        let frame: CGRect
+        let before: Set<CGWindowID>
+        let startedAt: Date
+    }
+
+    private var cashoutJob: CashoutJob?
+
+    /// Сколько ждём новое окно: столько же, сколько «🪟 Новое окно» — цепочка одна и та же
+    /// (страница создаёт чат, отправляет первое сообщение и выносит его окном).
+    static let cashoutWaitSeconds: TimeInterval = 40
+
+    /// Что делать на тике замены.
+    enum CashoutStep: Equatable {
+        /// Новое окно ещё не появилось — ждём.
+        case wait
+        /// Появилось: этому окну ставим рамку донора, и только потом закрываем донора.
+        case replace(CGWindowID)
+        /// Вышло время — бросаем работу и НИЧЕГО не закрываем.
+        case giveUp
+    }
+
+    /// Куда рождать новое окно: РОВНО в угол донора, без уступа и без обрезки по экрану —
+    /// оно встаёт на место старого. Рамки донора нет (AX молчит) — прежняя точка от угла
+    /// экрана, и замены не будет вовсе.
+    static func cashoutOrigin(donor frame: CGRect?) -> (x: Int, y: Int) {
+        guard let frame = frame else { return popoutWindowFallback }
+        return (Int(frame.origin.x.rounded()), Int(frame.origin.y.rounded()))
+    }
+
+    /// Шаг замены — чистый, его и гоняют тесты: появилось окно, которого до ⌘N не было, —
+    /// заменяем; не появилось за `limit` — бросаем.
+    static func cashoutStep(before: Set<CGWindowID>, now: [CGWindowID], since: TimeInterval,
+                            limit: TimeInterval = cashoutWaitSeconds) -> CashoutStep {
+        if let fresh = now.first(where: { !before.contains($0) }) { return .replace(fresh) }
+        return since >= limit ? .giveUp : .wait
+    }
+
+    /// Закрывать ли донора: только когда новое окно правда другое и донор ещё на экране
+    /// (Элвис мог закрыть его сам, пока шла работа).
+    static func cashoutCloses(donor: CGWindowID, fresh: CGWindowID, onScreen: [CGWindowID]) -> Bool {
+        donor != fresh && onScreen.contains(donor)
+    }
+
+    /// Запомнить работу до ⌘N: номера окон Quartz, номер донора и его рамка. Донора не нашли
+    /// в списке окон (AX не отдал пары) — работы нет, и «Обкэшить» ведёт себя как до #5768.
+    private func beginCashoutReplace(donor frame: CGRect?, window: AXUIElement) {
+        cashoutJob = nil
+        guard let frame = frame else { return }
+        let windows = pimpWindows()
+        guard let donor = windows.first(where: { CFEqual($0.window, window) })?.id else { return }
+        cashoutJob = CashoutJob(donor: donor, frame: frame,
+                                before: Set(windows.map { $0.id }), startedAt: clock())
+    }
+
+    /// Общий тик 2 с, пока идёт замена (своего таймера у неё нет — зовёт `ClaudeAXController`).
+    /// Появилось новое окно — ставим ему рамку донора и ТОЛЬКО ПОТОМ закрываем донора;
+    /// не появилось за 40 с — бросаем работу и ничего не закрываем.
+    func cashoutTick(at: Date? = nil) {
+        guard let job = cashoutJob else { return }
+        let now = at ?? clock()
+        let windows = pimpWindows()
+        switch ClaudeActions.cashoutStep(before: job.before, now: windows.map { $0.id },
+                                         since: now.timeIntervalSince(job.startedAt)) {
+        case .wait:
+            return
+        case .giveUp:
+            cashoutJob = nil
+            onWarning?(MenuModel.cashoutNoWindowNotice)
+        case .replace(let fresh):
+            cashoutJob = nil
+            guard let born = windows.first(where: { $0.id == fresh }) else { return }
+            ClaudeActions.setFrame(born.window, job.frame)
+            onWindowsMoved?()
+            guard ClaudeActions.cashoutCloses(donor: job.donor, fresh: fresh,
+                                              onScreen: windows.map { $0.id }),
+                  let donor = windows.first(where: { $0.id == job.donor }) else { return }
+            AX.close(donor.window)
+            // Отказ страницы («переносить было нечего») приложению не виден: донора мы всё
+            // равно закрываем — чат из списка слева никуда не делся, теряется только пустой
+            // черновик, — и говорим об этом прямо.
+            onWarning?(MenuModel.cashoutReplacedNotice)
+        }
     }
 
     /// Поля команды после id, action, at: scope, title, match?, chat? (контракт части B плана
@@ -285,9 +385,12 @@ final class ClaudeActions {
         // и страница ведёт себя ровно как в WF13.
         let folder = project?.folder.standardizedFileURL.path ?? ""
         let name = project.map { chatName($0) } ?? ""
-        // Первое сообщение — оно же авто-заголовок чата: с папкой это имя проекта, без папки
-        // прежнее «Привет» (решение 4 плана WF16). Ни команд, ни путей: работает авто-Allow.
-        let text = name.isEmpty ? MenuModel.newWindowText : name
+        // Первое сообщение одно на все окна (#5767/#5447): агент в новом окне читает его как
+        // задачу и разворачивает полную ориентировку по правилам проекта — самый дорогой ход
+        // во всём открытии окна. Текст прямо просит ничего не делать, а имя чату ставит
+        // отдельный шаг переименования на странице (поле `name`), а не авто-заголовок по
+        // первому сообщению.
+        let text = MenuModel.newWindowText
         let send: (String) -> Void = { [weak self] title in
             guard let self = self else { return }
             let layers = project.map {
@@ -296,14 +399,22 @@ final class ClaudeActions {
                                               autoColor: self.autoProjectColor(for: $0))
             } ?? ProjectSettings()
             self.lastNewWindowLayers = !layers.isEmpty
+            // ⌘N отсчитывается от МОМЕНТА ЗАПИСИ файла, а не от клика (#5735): команда могла
+            // простоять в очереди канала до `minInterval`, и тогда прежние 0,8 с истекали
+            // раньше, чем лоадер (опрос раз в 500 мс) успевал её прочитать, — главное окно
+            // уходило на пустой `/epitaxy`, и вернуть его на чат Элвиса было уже некому.
+            // Запись не удалась (папки MyClaude нет вовсе) — ⌘N жмём всё равно, как раньше.
             self.commands.write(action: ClaudeCommand.newWindow.rawValue,
                                 fields: ClaudeActions.newWindowFields(title: title, match: match,
                                                                       x: origin.x, y: origin.y,
                                                                       text: text, folder: folder, name: name,
                                                                       transfer: transfer ? true : nil,
                                                                       theme: layers.theme, font: layers.font,
-                                                                      size: layers.size, frame: layers.frame))
-            self.after(self.newWindowKeyDelay) { self.newChat(window) }
+                                                                      size: layers.size, frame: layers.frame),
+                                completion: { [weak self] _ in
+                                    guard let self = self else { return }
+                                    self.after(self.newWindowKeyDelay) { self.newChat(window) }
+                                })
         }
         guard let window = window else {
             send("")
@@ -517,7 +628,10 @@ final class ClaudeActions {
         let title = target.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
         let send: () -> Bool = { [weak self] in
             guard let self = self else { return false }
-            let fields = ClaudeActions.themeFields(scope: scope, title: title, theme: theme,
+            let address = self.themeAddress(scope: scope, title: title)
+            let fields = ClaudeActions.themeFields(scope: scope, title: title,
+                                                   match: address.match, chat: address.chat,
+                                                   theme: theme,
                                                    font: font, size: size, frame: frame)
             guard self.commands.write(action: "theme", fields: fields) else { return false }
             self.recordTheme(fields: fields)
@@ -530,6 +644,26 @@ final class ClaudeActions {
             return true
         }
         return send()
+    }
+
+    /// Адрес окна для команды `theme` (#5715): та же развилка, что у «Обкэшить», — главному
+    /// окну путь страницы (`match`), вынесенному чату его id (`chat`), а неопознанному окну
+    /// ни того ни другого, и команда остаётся адресована заголовком, как раньше.
+    /// Без адреса выбор цвета, шрифта или размера красил ВСЕ окна с таким же именем чата:
+    /// страница сверяет `document.title` и исполняет команду на КАЖДОЙ подходящей странице —
+    /// чаще всего это главное окно на домашнем экране («Claude») и безымянный попап.
+    ///
+    /// `scope: "all"` адреса не имеет вовсе — эта команда и должна уйти всем окнам. Пустой
+    /// заголовок тоже: он значит «окно в фокусе», и какое это окно, приложение не знает.
+    /// Не `private` только ради тестов: живой AX они не поднимают, а заголовок окна берётся
+    /// из него — иначе развилку не проверить.
+    func themeAddress(scope: String, title: String) -> (match: String?, chat: String?) {
+        guard scope == MenuModel.themeScopeWindow, !title.isEmpty else { return (nil, nil) }
+        switch ClaudeActions.cashoutRoute(title: title, isMainTitle: isMainWindowTitle(title),
+                                          knownChat: chatForTitle(title)) {
+        case .main: return (mainWindowMatch(), nil)
+        case .popout(let chat): return (nil, chat)
+        }
     }
 
     /// Поля команды после id, action, at: scope, title, match, preview, затем слои — тема,
@@ -780,7 +914,11 @@ final class ClaudeActions {
         // Без заголовка примерка не адресуется (фокуса у окна Claude нет, пока открыто меню),
         // а «конец примерки» мог бы снять живую тему у окна без ключа — не шлём ничего.
         guard !title.isEmpty else { return false }
+        // Примерка адресуется так же, как закрепляющая команда (#5715): иначе цвет под
+        // курсором ехал бы на все окна с этим именем чата, а «конец примерки» — тоже.
+        let address = themeAddress(scope: MenuModel.themeScopeWindow, title: title)
         let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: title,
+                                               match: address.match, chat: address.chat,
                                                preview: preview, theme: theme, font: font,
                                                size: size, frame: frame)
         // Примерка идёт мимо очереди канала: мышь скользит по списку, ждать 600 мс нечего.
@@ -1046,6 +1184,24 @@ final class ClaudeActions {
 
     // MARK: - оконные команды
 
+    /// «💬 Новый чат» из меню жёлтой кнопки. ⌘N уходит в ПРОЦЕСС Claude, а исполняет его
+    /// всегда главное окно, — из вынесенного окна пункт уводил главное окно Элвиса с его
+    /// разговора (#5734). Развилка та же, что у «Обкэшить» (`cashoutRoute`): главное окно —
+    /// ⌘N, как было; попап — новое окно рядом, в папке своего чата. Переносить здесь нечего,
+    /// поэтому `transfer` не ставится и старое окно остаётся как было.
+    /// Заголовок приходит снаружи (его читает `perform`) — так развилку видно тестам.
+    func newChatCommand(_ window: AXUIElement?, title: String) {
+        switch ClaudeActions.cashoutRoute(title: title, isMainTitle: isMainWindowTitle(title),
+                                          knownChat: chatForTitle(title)) {
+        case .main:
+            newChat(window)
+        case .popout(let chat):
+            let project = chat.flatMap { projectForChat($0) }
+            if let project = project { onProjectUsed?(project) }
+            newWindow(window, project: project)
+        }
+    }
+
     /// ⌘N — штатная клавиша самого Claude, посылаем её в окно (focus асинхронный, отсюда задержка).
     private func newChat(_ window: AXUIElement?) {
         if let window = window { app.focus(window: window) }
@@ -1281,7 +1437,14 @@ final class ClaudeActions {
     /// гасли бы задолго до результата (критик п. 20 плана WF13).
     var onNotice: ((String, TimeInterval) -> Void)?
 
-    private func after(_ delay: TimeInterval, _ block: @escaping () -> Void) {
+    /// Чем откладываются шаги цепочек окон (фокус → команда, команда → ⌘N). Живьём — главная
+    /// очередь ходом вперёд, как было; в тестах подставляется, чтобы шаг был виден без
+    /// ожидания (тот же приём, что у `frameSchedule` и у канала команд).
+    var schedule: (TimeInterval, @escaping () -> Void) -> Void = { delay, block in
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
+    }
+
+    private func after(_ delay: TimeInterval, _ block: @escaping () -> Void) {
+        schedule(delay, block)
     }
 }

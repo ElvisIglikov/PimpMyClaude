@@ -50,6 +50,10 @@ final class MinimizeMenu: NSObject {
     /// Запомнить нынешнюю раскладку под именем; строка в ответе — плашка о том, почему не
     /// записалось (nil — записано).
     var saveLayout: (String) -> String? = { _ in nil }
+    /// Сохранение раскладки началось — ДО вопроса об имени: приложение просит страницы
+    /// назвать свои чаты (#5770) и предлагает имя по проектам этих окон (#5769).
+    /// Пустая строка — предложить нечего, поле диалога останется пустым.
+    var startSaveLayout: () -> String = { "" }
     /// «↩︎ Вернуть эти чаты» (false) и «✨ Новые чаты по этим проектам» (true).
     var restoreLayout: (WindowLayout, Bool) -> Void = { _, _ in }
     var deleteLayout: (WindowLayout) -> Void = { _ in }
@@ -316,8 +320,11 @@ final class MinimizeMenu: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         // Меню встаёт СЛЕВА от жёлтой кнопки (решение 2.1 плана WF20): точку считает чистая
         // `origin`, а `NSMenu.size` спрашиваем только здесь — AppKit считает её лениво.
+        // Область — экран, где стоит САМА кнопка (#5716): `Screens.mainUsableFrame` это
+        // `NSScreen.main`, то есть экран активного окна любого приложения, и на втором
+        // мониторе меню вставало не с той стороны — та же болезнь, что чинили у «Расставить».
         let point = MinimizeMenu.origin(button: rect, menuWidth: menu.size.width,
-                                        area: Screens.mainUsableFrame)
+                                        area: Screens.usableFrame(holding: [rect]))
         let origin = Screens.flip(point: point)
         menu.popUp(positioning: nil, at: origin, in: nil)
         // Меню закрылось — отложенная примерка (пауза наведения, план WF31) отменяется
@@ -389,11 +396,22 @@ final class MinimizeMenu: NSObject {
     /// «💾 Сохранить эту раскладку…» (план WF41): имя спрашиваем тем же модальным диалогом,
     /// что у своих тем; имя занято — раскладка перезаписывается (о том и подпись в диалоге).
     /// Окно с неопознанным чатом отменяет запись целиком — об этом плашка.
+    ///
+    /// Круг опознания чатов и имя по проектам считаются ДО диалога (#5769, #5770): после
+    /// того, как Элвис нажал «Сохранить», спрашивать страницы уже поздно, а имя ему нужно
+    /// в поле — чтобы можно было просто нажать «Сохранить», ничего не печатая.
     private func askAndSaveLayout(window: AXUIElement) {
         // Пока висит диалог, тик наведения не должен всплывать меню поверх него.
         menuOpen = true
         defer { menuOpen = false; app.focus(window: window) }
-        guard let name = MinimizeMenu.askLayoutName() else { return }
+        let suggestion = startSaveLayout()
+        // Отмена — молча; пустое поле — словами (#5769): раньше и то и другое было
+        // молчаливым отказом, и «Сохранить» с пустым именем выглядело сломанной кнопкой.
+        guard let name = MinimizeMenu.askLayoutName(default: suggestion) else { return }
+        guard !name.isEmpty else {
+            MinimizeMenu.warn(MenuModel.layoutNameEmptyAlert)
+            return
+        }
         if let problem = saveLayout(name) { MinimizeMenu.warn(problem) }
     }
 
@@ -1100,6 +1118,9 @@ final class MinimizeMenu: NSObject {
     /// LSUIElement, без `activate(ignoringOtherApps:)` окно уходит за Claude.
     /// Второго вопроса про перезапись здесь нет: раскладка — снимок окон, а не собранная
     /// руками тема, и о перезаписи сказано прямо в подписи диалога.
+    /// В поле подставляется имя по проектам окон (#5769) — «Сохранить» можно нажать сразу.
+    /// nil — «Отмена»; пустая строка — поле очистили, и об этом каллер говорит словами
+    /// (у своей темы `askThemeName` пустое имя по-прежнему значит «ничего не делать»).
     static func askLayoutName(default value: String = "") -> String? {
         let alert = NSAlert()
         alert.messageText = MenuModel.layoutNamePrompt
@@ -1112,8 +1133,7 @@ final class MinimizeMenu: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let name = LayoutsStore.clean(name: field.stringValue)
-        return name.isEmpty ? nil : name
+        return LayoutsStore.clean(name: field.stringValue)
     }
 
     /// «Перезаписать «X»?» — второй вопрос перед перезаписью своей темы (критик В2).

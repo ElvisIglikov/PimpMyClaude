@@ -123,7 +123,17 @@ run_js() {
   rm -f "$out"
 
   # 8. CLI «Пимп» (WF36): те же фикстуры канала, что читает Swift-половина.
-  ( cd "$ROOT" && python3 -B -m unittest tests/pimp_cli_test.py ) || fail "python3 -m unittest tests/pimp_cli_test.py: красное (см. вывод выше)"  # -B: без __pycache__ в репозитории
+  #    Число тестов вынимаем из вывода и печатаем в сводке наравне с JS и Swift
+  #    (#5749): без него пропажу всего набора никто не увидит — сводка выглядела
+  #    бы точно так же. unittest пишет отчёт в stderr, поэтому 2>&1.
+  local cli
+  cli="$(mktemp)"
+  if ! ( cd "$ROOT" && python3 -B -m unittest tests/pimp_cli_test.py ) 2>&1 | tee "$cli"; then  # -B: без __pycache__ в репозитории
+    rm -f "$cli"
+    fail "python3 -m unittest tests/pimp_cli_test.py: красное (см. вывод выше)"
+  fi
+  CLI_TESTS="$(awk '/^Ran [0-9]+ test/ { n = $2 } END { print n + 0 }' "$cli")"
+  rm -f "$cli"
 
   # 9. Лоадер (WF45, задача #5761). Боевой JS лоадера живёт строкой ДВАЖДЫ: в Loader.swift
   #    (боевой порт) и в patch-claude.mjs (дев-инструмент). Синтаксис его никто не проверял, а
@@ -204,6 +214,7 @@ run_swift() {
 
 JS_FILES=""
 JS_CHECKS=""
+CLI_TESTS=""
 SWIFT_TESTS=""
 SWIFT_SKIPPED=""
 case "${1-}" in
@@ -218,6 +229,10 @@ esac
 SUMMARY=""
 if [ -n "$JS_CHECKS" ]; then
   SUMMARY="JS: $(plural "$JS_FILES" файл файла файлов), $(plural "$JS_CHECKS" проверка проверки проверок)"
+fi
+if [ -n "$CLI_TESTS" ]; then
+  if [ -n "$SUMMARY" ]; then SUMMARY="$SUMMARY · "; fi
+  SUMMARY="${SUMMARY}CLI «Пимп»: $(plural "$CLI_TESTS" тест теста тестов)"
 fi
 if [ -n "$SWIFT_TESTS" ]; then
   if [ -n "$SUMMARY" ]; then SUMMARY="$SUMMARY · "; fi

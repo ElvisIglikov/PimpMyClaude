@@ -14,9 +14,14 @@
 // ---- разбор селекторов ----------------------------------------------------
 // Поддержано ровно то, чем пользуется inject.js: тег, .класс, #id, [атрибут],
 // [атрибут="значение"] с ^= $= *=, потомки через пробел, перечисление запятой,
-// :root. Всё остальное (:has, :is, :not) селектором ничего не находит — это
-// честнее выдуманного совпадения: такие селекторы живут в тексте CSS, а не в
-// querySelector.
+// :root и :not(...) с простым содержимым. Остальное (:has, :is) селектором
+// ничего не находит — это честнее выдуманного совпадения: такие селекторы живут
+// в тексте CSS, а не в querySelector.
+//
+// :not(...) стаб понимает с WF43 (#5758). До этого он не находил НИЧЕГО, и шаг
+// «отправить первое сообщение» у нового окна не проверялся ничем: кнопка
+// ищется как [data-testid="code-prompt-send"]:not([disabled]), стаб отдавал
+// null, и подмена селектора на несуществующий не роняла ни одной проверки.
 const splitTop = (text, separator) => {
   const parts = [];
   let depth = 0;
@@ -71,7 +76,18 @@ const compoundHit = (node, compound) => {
     if (token.startsWith("#")) { if (node.id !== token.slice(1)) return false; continue; }
     if (token.startsWith(".")) { if (!node.classList.contains(token.slice(1))) return false; continue; }
     if (token.startsWith("[")) { if (!attrHit(node, token)) return false; continue; }
-    if (token.startsWith(":")) { if (token !== ":root" || node !== node.ownerDocument?.documentElement) return false; continue; }
+    if (token.startsWith(":")) {
+      // :not(...) — единственный псевдокласс с содержимым, который боевой файл
+      // отдаёт в querySelector. Внутри разбираем тем же compoundHit: там живут
+      // [disabled] и [type], а не вложенные :has.
+      const negated = token.match(/^:not\((.+)\)$/);
+      if (negated) {
+        if (splitTop(negated[1], ",").some(part => compoundHit(node, part))) return false;
+        continue;
+      }
+      if (token !== ":root" || node !== node.ownerDocument?.documentElement) return false;
+      continue;
+    }
     if (node.tagName !== token.toUpperCase()) return false;
   }
   return true;
@@ -116,6 +132,11 @@ export const createDom = ({
   // sheets считается на лету: тема, шрифт и размер живут конструируемыми
   // таблицами (adoptedStyleSheets), и их число — тот же счётчик утечки.
   const counters = { listeners: 0, observers: 0, timers: 0, intervals: 0, rafs: 0 };
+  // Поиски по дереву (querySelector/querySelectorAll, свои и у узлов) — мера
+  // РАБОТЫ, а не времени: ею живые цвета доказывают, что тик не обходит
+  // страницу (#5683). Отдельной переменной, а не полем counters: на counters
+  // стоит deepEqual в tests/idempotent.test.mjs, и лишний ключ его свалил бы.
+  let queries = 0;
   const timers = new Map();
   let timerSeq = 1;
   // Живые анимации Web Animations (element.animate): пульс полосы прогресса —
@@ -375,7 +396,10 @@ export const createDom = ({
     walk(root);
     return out;
   };
-  const queryAll = (root, selector) => descendants(root).filter(node => selectorHit(node, selector));
+  const queryAll = (root, selector) => {
+    queries += 1;
+    return descendants(root).filter(node => selectorHit(node, selector));
+  };
 
   const makeEvent = source => {
     if (source && typeof source === "object" && source.__event) return source;
@@ -615,6 +639,8 @@ export const createDom = ({
     animations,
     running: () => animations.filter(item => item.playState === "running"),
     node: makeNode,
+    // Сколько раз страницу искали по дереву за всё время жизни окна.
+    queries: () => queries,
     query: selector => document.querySelector(selector),
     queryAll: selector => document.querySelectorAll(selector),
     // Число живых таймеров нужного вида.

@@ -78,6 +78,16 @@ enum AX {
         AXUIElementPerformAction(element, action as CFString) == .success
     }
 
+    /// Закрыть окно — нажать его красную кнопку (#5768, замена окна на «Обкэшить»).
+    /// Кнопка берётся тем же путём, что жёлтая у меню (`kAXMinimizeButtonAttribute`):
+    /// у окна её может не быть вовсе (Electron ещё не отдал AX-дерево) — тогда `false`,
+    /// и окно остаётся на экране.
+    @discardableResult
+    static func close(_ window: AXUIElement) -> Bool {
+        guard let button = element(window, kAXCloseButtonAttribute) else { return false }
+        return perform(button, kAXPressAction)
+    }
+
     /// Есть ли у процесса доверие Accessibility. Без промпта: окно с просьбой показывает
     /// приложение (батч C), модуль без доверия работает вхолостую.
     static var isTrusted: Bool {

@@ -216,6 +216,48 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(alone.items.map { $0.title }, ["Сохранить эту раскладку…"])
     }
 
+    /// Имя раскладки приложение предлагает само (#5769): проекты окон слева направо.
+    func testSuggestedLayoutNameListsProjects() {
+        func window(_ id: CGWindowID, _ folder: String, x: CGFloat) -> PimpWindow {
+            PimpWindow(id: id, title: "Окно \(id)", chat: "local_\(id)", folder: folder,
+                       frame: CGRect(x: x, y: 34, width: 290, height: 859))
+        }
+        let pimp = "/Users/elvis/_ElvisProjects/PimpMyClaude"
+        let vkus = "/Users/elvis/_ElvisProjects/VkusnoffKz"
+        let dict = "/Users/elvis/_ElvisProjects/Dictatorik"
+        let skil = "/Users/elvis/_ElvisProjects/SkilZZZ"
+
+        XCTAssertEqual(LayoutsStore.suggestedName(for: []), "")
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, pimp, x: 0)]), "PimpMyClaude")
+        // Порядок — по левому краю рамки, а не по порядку в списке (он идёт по слоям окон).
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, vkus, x: 300),
+                                                        window(2, pimp, x: 0)]),
+                       "PimpMyClaude и VkusnoffKz")
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, pimp, x: 0),
+                                                        window(2, vkus, x: 300),
+                                                        window(3, dict, x: 600)]),
+                       "PimpMyClaude, VkusnoffKz и Dictatorik")
+        // Больше трёх — две папки и счёт остальных.
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, pimp, x: 0),
+                                                        window(2, vkus, x: 300),
+                                                        window(3, dict, x: 600),
+                                                        window(4, skil, x: 900)]),
+                       "PimpMyClaude, VkusnoffKz и ещё 2")
+        // Повторы и окна без папки в имя не идут; папок не осталось вовсе — имени нет.
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, pimp, x: 0),
+                                                        window(2, pimp, x: 300),
+                                                        window(3, "", x: 600)]),
+                       "PimpMyClaude")
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, "", x: 0)]), "")
+        // Три длинных имени в потолок не влезают — то же «и ещё N», и оно короче потолка.
+        let long = String(repeating: "Проект", count: 5)
+        let name = LayoutsStore.suggestedName(for: [window(1, "/tmp/\(long)1", x: 0),
+                                                    window(2, "/tmp/\(long)2", x: 300),
+                                                    window(3, "/tmp/\(long)3", x: 600)])
+        XCTAssertEqual(name, "\(long)1, \(long)2 и ещё 1")
+        XCTAssertLessThanOrEqual(name.count, LayoutsStore.nameLimit)
+    }
+
     /// Раскладка для меню: два места по сетке «5 в ряд».
     private static func layout(_ name: String) -> WindowLayout {
         WindowLayout(name: name, at: PimpChannel.date("2026-09-08T03:00:00Z")!, mode: .five,
@@ -1768,12 +1810,13 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertNil(json["x"] as? String)
 
         // «Здесь же» (и хоткей ⌥⌘N) — поведение WF13 до буквы: папки и имени нет, слоёв нет,
-        // первое сообщение прежнее «Привет» — только приветствие, в сессии работает авто-Allow.
+        // первое сообщение одной строкой. Сам текст здесь не проверяется (он живёт в
+        // `MenuModel.newWindowText`, #5767) — проверяется ПОРЯДОК полей.
         XCTAssertFalse(MenuModel.newWindowText.isEmpty)
         XCTAssertEqual(CommandChannel.payload(
             action: ClaudeCommand.newWindow.rawValue,
             fields: ClaudeActions.newWindowFields(title: "", x: 120, y: 120,
-                                                  text: MenuModel.newWindowText),
+                                                  text: ClaudeAXTests.fixtureFirstMessage),
             id: "1-0001", at: Date(timeIntervalSince1970: 0)),
                        "{\"id\":\"1-0001\",\"action\":\"new-window\",\"at\":\"1970-01-01T00:00:00Z\","
                        + "\"scope\":\"window\",\"title\":\"\",\"x\":120,\"y\":120,\"text\":\"Привет\","
@@ -1847,6 +1890,11 @@ final class ClaudeAXTests: XCTestCase {
     private static let cashoutAt = Date(timeIntervalSince1970: 1_756_900_000)
     private static let cashoutMainMatch = "/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74"
     private static let cashoutPopoutChat = "local_4dae798d-aed9-42d7-bd1b-3631eb360c07"
+    /// Первое сообщение, записанное В ЭТАЛОНАХ (`tests/fixtures/cashout/new-window-transfer*`):
+    /// эталон держит ПОРЯДОК полей команды, и трогать его файлы ради смены текста не надо.
+    /// Сам текст живёт в `MenuModel.newWindowText` и проверяется отдельно (#5767,
+    /// `testNewWindowFirstMessageAsksToWait`).
+    private static let fixtureFirstMessage = "Привет"
 
     /// Главное окно с ОТКРЫТЫМ названным чатом носит имя чата, а не заглушку «Claude»
     /// (критик, блокер 3): различает их только резолвер, и развилка верит ему одному.
@@ -1879,6 +1927,45 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(ClaudeActions.cashoutRoute(title: "VkusnoffKz 2", isMainTitle: false,
                                                   knownChat: ClaudeAXTests.cashoutPopoutChat),
                        .popout(chat: ClaudeAXTests.cashoutPopoutChat))
+    }
+
+    /// Задача #5715: выбор цвета/шрифта/размера в меню адресуется той же развилкой, что
+    /// «Обкэшить», — главному окну путь, вынесенному чату его id. Без адреса команда уходила
+    /// ВСЕМ окнам с таким же именем чата (главное окно «Claude» и безымянный попап).
+    func testThemeCommandAddressesOneWindow() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
+        actions.isMainWindowTitle = { $0 == "PimpMyClaude" }
+        actions.chatForTitle = { $0 == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil }
+        actions.mainWindowMatch = { ClaudeAXTests.cashoutMainMatch }
+        let window = MenuModel.themeScopeWindow
+
+        // Главное окно — путь страницы, и поля `chat` у него нет никогда.
+        let main = actions.themeAddress(scope: window, title: "PimpMyClaude")
+        XCTAssertEqual(main.match, ClaudeAXTests.cashoutMainMatch)
+        XCTAssertNil(main.chat)
+        // Попап назвал свой чат в круге probe — адрес по чату, и пути ему не шлём.
+        let popout = actions.themeAddress(scope: window, title: "VkusnoffKz 2")
+        XCTAssertNil(popout.match)
+        XCTAssertEqual(popout.chat, ClaudeAXTests.cashoutPopoutChat)
+        // Окно не опознано — как сегодня, по заголовку.
+        XCTAssertNil(actions.themeAddress(scope: window, title: "Гость").match)
+        XCTAssertNil(actions.themeAddress(scope: window, title: "Гость").chat)
+        // «Всем окнам» адреса не имеет вовсе, пустой заголовок значит «окно в фокусе».
+        XCTAssertNil(actions.themeAddress(scope: MenuModel.themeScopeAll,
+                                          title: "PimpMyClaude").match)
+        XCTAssertNil(actions.themeAddress(scope: window, title: "").match)
+
+        // Байты команды: порядок полей scope, title, match?, chat? — тот же, что у «Обкэшить».
+        let fields = ClaudeActions.themeFields(scope: window, title: "VkusnoffKz 2",
+                                               match: popout.match, chat: popout.chat,
+                                               theme: .keep, font: .keep)
+        let body = CommandChannel.payload(action: "theme", fields: fields,
+                                          id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt)
+        XCTAssertFalse(body.contains("\"match\""))
+        XCTAssertTrue(body.contains("\"chat\":\"\(ClaudeAXTests.cashoutPopoutChat)\""), body)
     }
 
     /// Побайтно с эталоном: главное окно — scope, title, match.
@@ -1928,7 +2015,7 @@ final class ClaudeAXTests: XCTestCase {
             action: ClaudeCommand.newWindow.rawValue,
             fields: ClaudeActions.newWindowFields(title: "VkusnoffKz 2",
                                                   match: ClaudeAXTests.cashoutMainMatch,
-                                                  x: 586, y: 303, text: MenuModel.newWindowText,
+                                                  x: 586, y: 303, text: ClaudeAXTests.fixtureFirstMessage,
                                                   folder: "/Users/elvis/_ElvisProjects/VkusnoffKz",
                                                   name: "VkusnoffKz 3", transfer: true,
                                                   theme: .set(violet),
@@ -1940,7 +2027,7 @@ final class ClaudeAXTests: XCTestCase {
             action: ClaudeCommand.newWindow.rawValue,
             fields: ClaudeActions.newWindowFields(title: "VkusnoffKz 2",
                                                   match: ClaudeAXTests.cashoutMainMatch,
-                                                  x: 586, y: 303, text: MenuModel.newWindowText,
+                                                  x: 586, y: 303, text: ClaudeAXTests.fixtureFirstMessage,
                                                   transfer: true),
             id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt),
                        try ClaudeAXTests.cashoutFixture("new-window-transfer-plain.json"))
@@ -1953,7 +2040,8 @@ final class ClaudeAXTests: XCTestCase {
             action: ClaudeCommand.newWindow.rawValue,
             fields: ClaudeActions.newWindowFields(title: "VkusnoffKz 2",
                                                   match: ClaudeAXTests.cashoutMainMatch,
-                                                  x: 586, y: 303, text: MenuModel.newWindowText),
+                                                  x: 586, y: 303,
+                                                  text: ClaudeAXTests.fixtureFirstMessage),
             id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt)
         XCTAssertFalse(plain.contains("\"transfer\""))
         XCTAssertEqual(plain, try ClaudeAXTests.cashoutFixture("new-window-transfer-plain.json")
@@ -1966,6 +2054,200 @@ final class ClaudeAXTests: XCTestCase {
                                                   folder: "/tmp/Проект", name: "Проект",
                                                   theme: .set(violet)),
             id: "1-0001", at: Date(timeIntervalSince1970: 0)).contains("transfer"))
+    }
+
+    // MARK: - «Обкэшить» заменяет окно (#5768, слово Элвиса 08.09 11:40)
+
+    /// Новое окно рождается РОВНО в углу донора: ни уступа в 40 pt, ни обрезки по главному
+    /// экрану — иначе окно уезжало и на соседнее место, и на другой монитор.
+    func testCashoutOriginTakesDonorCorner() {
+        let donor = CGRect(x: 1200.4, y: 340.6, width: 700, height: 900)
+        XCTAssertEqual(ClaudeActions.cashoutOrigin(donor: donor).x, 1200)
+        XCTAssertEqual(ClaudeActions.cashoutOrigin(donor: donor).y, 341)
+        // Точка «Нового окна» на том же окне — с уступом: у замены его быть не должно.
+        XCTAssertNotEqual(ClaudeActions.cashoutOrigin(donor: donor).x,
+                          ClaudeActions.popoutOrigin(near: donor, area: nil).x)
+        // Окно на втором мониторе (отрицательный x) остаётся на нём.
+        XCTAssertEqual(ClaudeActions.cashoutOrigin(donor: CGRect(x: -900, y: 100,
+                                                                 width: 500, height: 800)).x, -900)
+        // Рамки донора нет (AX молчит) — прежняя точка от угла экрана, замены не будет.
+        XCTAssertEqual(ClaudeActions.cashoutOrigin(donor: nil).x, ClaudeActions.popoutWindowFallback.x)
+        XCTAssertEqual(ClaudeActions.cashoutOrigin(donor: nil).y, ClaudeActions.popoutWindowFallback.y)
+    }
+
+    /// Шаг замены: пока нового окна нет — ждём, появилось — заменяем, вышли 40 с — бросаем.
+    func testCashoutStepWaitsForNewWindowThenGivesUp() {
+        let before: Set<CGWindowID> = [7, 9]
+        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [7, 9], since: 0), .wait)
+        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [7, 9], since: 39.9), .wait)
+        // Донора закрыли руками, нового окна нет — всё равно ждём, а потом бросаем.
+        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [9], since: 1), .wait)
+        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [7, 9], since: 40), .giveUp)
+        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [7, 9, 12], since: 1),
+                       .replace(12))
+        // Время вышло, но окно всё-таки родилось — замена сильнее срока.
+        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [7, 9, 12], since: 60),
+                       .replace(12))
+        XCTAssertEqual(ClaudeActions.cashoutWaitSeconds, 40)
+    }
+
+    /// Донора закрываем только после того, как новое окно появилось, и только если он ещё
+    /// на экране: не появилось — не закрываем ничего (шаг `.giveUp` до закрытия не доходит).
+    func testCashoutClosesDonorOnlyAfterReplacement() {
+        XCTAssertTrue(ClaudeActions.cashoutCloses(donor: 7, fresh: 12, onScreen: [7, 9, 12]))
+        // Элвис закрыл старое окно сам, пока шла работа.
+        XCTAssertFalse(ClaudeActions.cashoutCloses(donor: 7, fresh: 12, onScreen: [9, 12]))
+        // «Новым» оказался сам донор — закрывать его значит закрыть то, что только что открыли.
+        XCTAssertFalse(ClaudeActions.cashoutCloses(donor: 7, fresh: 7, onScreen: [7, 9]))
+    }
+
+    // MARK: - «Новый чат», ⌘N и первое сообщение (#5734, #5735, #5767)
+
+    /// Задача #5734: «💬 Новый чат» из вынесенного окна больше не жмёт ⌘N — его исполняет
+    /// главное окно, и разговор Элвиса там сменялся новым чатом. Из попапа рождается окно
+    /// рядом, из главного окна всё как было.
+    func testNewChatFromPopoutOpensWindowInsteadOfKey() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("command.json")
+        let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
+        actions.isMainWindowTitle = { $0 == "PimpMyClaude" }
+        actions.chatForTitle = { $0 == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil }
+        actions.mainWindowMatch = { ClaudeAXTests.cashoutMainMatch }
+        var delays: [TimeInterval] = []
+        actions.schedule = { delay, _ in delays.append(delay) }
+
+        // Главное окно: команд в канал не уходит вовсе, только ⌘N (он отложен на focusDelay).
+        actions.newChatCommand(nil, title: "PimpMyClaude")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path),
+                       "главному окну «Новый чат» команд не шлёт — как было до #5734")
+        XCTAssertEqual(delays, [actions.focusDelay])
+
+        // Попап: вместо ⌘N уходит `new-window` — окно рождается рядом.
+        actions.newChatCommand(nil, title: "VkusnoffKz 2")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try Data(contentsOf: file))
+                                    as? [String: Any])
+        XCTAssertEqual(json["action"] as? String, ClaudeCommand.newWindow.rawValue)
+        XCTAssertNil(json["transfer"], "«Новый чат» ничего не переносит — поле только у «Обкэшить»")
+        // Заголовка окна нет в карте probe — окно неизвестное, и развилка ведёт себя как раньше.
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "Гость", isMainTitle: false,
+                                                  knownChat: nil), .popout(chat: nil))
+    }
+
+    /// Задача #5735: ⌘N жмётся от МОМЕНТА ЗАПИСИ файла, а не от клика. Команда простояла в
+    /// очереди канала — клавиша ждёт её, иначе главное окно уезжало на пустой `/epitaxy`
+    /// раньше, чем страница получала команду, и вернуть его на чат Элвиса было некому.
+    func testNewWindowPressesKeyAfterCommandLandsOnDisk() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("command.json")
+        var now = Date(timeIntervalSince1970: 1_757_000_000)
+        // Таймер канала ловим сами: так видно, что команда правда стоит в очереди.
+        var queued: [(wait: TimeInterval, run: () -> Void)] = []
+        let channel = CommandChannel(path: file, now: { now },
+                                     schedule: { wait, block in queued.append((wait, block)) })
+        let actions = ClaudeActions(app: ClaudeApp(), commands: channel, themes: [], fonts: [],
+                                    themeStore: ThemeStore(defaults: MemoryDefaults()),
+                                    myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")),
+                                    autoPaintStore: AutoPaintStore(defaults: MemoryDefaults()),
+                                    liveColorsStore: LiveColorsStore(defaults: MemoryDefaults()))
+        actions.clock = { now }
+        actions.mainWindowMatch = { nil }
+        var delays: [TimeInterval] = []
+        actions.schedule = { delay, _ in delays.append(delay) }
+
+        // Перед «Новым окном» в канал уже написали (примерка темы, цвет проекта, сводка).
+        actions.perform(.scroll, on: nil)
+        XCTAssertEqual(try ClaudeAXTests.action(of: file), "scroll")
+
+        actions.perform(.newWindow, on: nil)
+        XCTAssertEqual(try ClaudeAXTests.action(of: file), "scroll",
+                       "команда стоит в очереди — зазор канала ещё не вышел")
+        XCTAssertTrue(delays.isEmpty, "⌘N нельзя жать раньше, чем команда легла на диск")
+
+        // Очередь дошла до записи — только теперь отсчитываются 0,8 с до ⌘N.
+        now = now.addingTimeInterval(CommandChannel.minInterval)
+        XCTAssertEqual(queued.count, 1)
+        queued.removeFirst().run()
+        XCTAssertEqual(try ClaudeAXTests.action(of: file), ClaudeCommand.newWindow.rawValue)
+        XCTAssertEqual(delays, [actions.newWindowKeyDelay])
+    }
+
+    /// Задача #5767 (она же половина #5447): первое сообщение нового окна больше не запускает
+    /// работу — оно прямо просит ничего не делать и не читать правила, потому что полная
+    /// ориентировка агента стоила по 2–5 долларов на окно. Имя чата от этого не зависит:
+    /// оно уходит своим полем `name`, и текст у окна с папкой ровно тот же.
+    func testNewWindowFirstMessageAsksToWait() throws {
+        let text = MenuModel.newWindowText.lowercased()
+        XCTAssertTrue(text.contains("не читай правила"), MenuModel.newWindowText)
+        XCTAssertTrue(text.contains("ничего не делай"), MenuModel.newWindowText)
+        XCTAssertFalse(MenuModel.newWindowText.contains("/"), "путей в первом сообщении быть не должно")
+
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("command.json")
+        let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
+        actions.mainWindowMatch = { nil }
+        actions.chatName = { project in "\(project.name) 2" }
+        actions.schedule = { _, _ in }
+        actions.newWindow(in: ClaudeAXTests.project("PimpMyClaude"), on: nil)
+
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try Data(contentsOf: file))
+                                    as? [String: Any])
+        XCTAssertEqual(json["name"] as? String, "PimpMyClaude 2", "имя чата осталось на месте")
+        XCTAssertEqual(json["text"] as? String, MenuModel.newWindowText,
+                       "с папкой первое сообщение больше не имя проекта — оно стоило хода модели")
+    }
+
+    private static func action(of file: URL) throws -> String {
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try Data(contentsOf: file))
+                                    as? [String: Any])
+        return try XCTUnwrap(json["action"] as? String)
+    }
+
+    // MARK: - авто-Allow (#5736)
+
+    /// Список исключений больше не пуст: удаление, необратимое, пуш и деньги авто-Allow не
+    /// подтверждает — диалог остаётся Элвису. Регистр не важен, незнакомый заголовок жмём,
+    /// как раньше (иначе авто-Allow замолчал бы на любой новой разметке).
+    func testAutoAllowNeverConfirmsDangerousDialogs() {
+        let list = AutoAllow(app: ClaudeApp(), hud: HUD()).blockHeadingPatterns
+        XCTAssertFalse(list.isEmpty, "предохранитель авто-Allow снова выключен")
+        for heading in ["Allow Bash to run rm -rf build?",
+                        "Claude wants to run git push --force",
+                        "Confirm PAYMENT of 120 USD?",
+                        "Allow DELETE of 12 files?"] {
+            XCTAssertTrue(AutoAllow.isBlocked(heading: heading, patterns: list), heading)
+        }
+        for heading in ["Allow Read of package.swift?",
+                        "Claude wants to run swift test",
+                        ""] {
+            XCTAssertFalse(AutoAllow.isBlocked(heading: heading, patterns: list), heading)
+        }
+        // Пустой список (его можно подставить снаружи) значит «подтверждать всё», как до #5736.
+        XCTAssertFalse(AutoAllow.isBlocked(heading: "rm -rf /", patterns: []))
+        XCTAssertTrue(TextPattern.prefix("Allow once").matches("Allow once"))
+        XCTAssertFalse(TextPattern.exact("Allow").matches("Allow always"))
+    }
+
+    /// Обход дерева, оборванный по времени, теперь виден: до кнопки могли просто не дойти,
+    /// и «нажатий не было» больше не значит «диалогов не было» (#5736).
+    func testAutoAllowReportsCutScan() {
+        let root = AXUIElementCreateApplication(getpid())
+        let past = Date.timeIntervalSinceReferenceDate - 1
+        let cut = AutoAllow.findButtons(root: root, patterns: [.exact("Allow")], deadline: past)
+        XCTAssertTrue(cut.timedOut)
+        XCTAssertTrue(cut.hits.isEmpty)
+        let full = AutoAllow.findButtons(root: root, patterns: [.exact("Allow")],
+                                         deadline: Date.timeIntervalSinceReferenceDate + 30)
+        XCTAssertFalse(full.timedOut, "обход дошёл до конца — обрывом это звать нельзя")
+        // Счётчики видны в строке диагностики: presses=<нажал>/<оборвал>/<не жал>.
+        let auto = AutoAllow(app: ClaudeApp(), hud: HUD())
+        XCTAssertEqual(auto.timeoutCount, 0)
+        XCTAssertEqual(auto.blockedCount, 0)
     }
 
     /// Сторож (критик В2 плана WF16 — повтор блокера Б1 из WF14): подменю не должно стоить

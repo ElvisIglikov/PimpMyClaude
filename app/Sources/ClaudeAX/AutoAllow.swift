@@ -23,9 +23,16 @@ final class AutoAllow {
         .prefix("Allow once"), .exact("Allow"), .prefix("Allow for this"),
         .prefix("Allow always"), .prefix("Yes, allow"),
     ]
-    /// Заголовки диалогов, которые НИКОГДА не подтверждаем (M.blockHeadingPatterns).
-    /// Пусто = подтверждать всё. Сравнение — вхождение подстроки: { "rm -rf", "git push" }.
-    var blockHeadingPatterns: [String] = []
+    /// Заголовки диалогов, которые НИКОГДА не подтверждаем: удаление, необратимое, деньги
+    /// и чужой мир снаружи (слово Элвиса по странице ревизии, вариант A вопроса 7 — #5736).
+    /// Список короткий и живёт в коде: настроек и панелей у него нет. Сравнение — вхождение
+    /// подстроки в заголовок диалога, обе стороны в нижнем регистре (`isBlocked`).
+    /// Заголовок диалога не опознан (`heading` вернул пустую строку) — жмём, как раньше:
+    /// иначе авто-Allow замолчал бы на любой незнакомой разметке.
+    var blockHeadingPatterns: [String] = [
+        "rm -rf", "rm -r ", "delete", "drop table", "drop database",
+        "git push", "force push", "payment", "refund", "invoice",
+    ]
 
     private let app: ClaudeApp
     private let hud: HUD
@@ -33,7 +40,15 @@ final class AutoAllow {
     private var lastPressAt: TimeInterval = 0
     private var log: [Press] = []
     private let maxLog = 50
+    /// Сколько диалогов не нажали по списку исключений — их же считает строка диагностики.
     private(set) var blockedCount = 0
+    /// Сколько обходов оборвалось по дедлайну, не нажав ничего (#5736): на длинном чате
+    /// дерево AX не успевает пройтись за `maxScanSeconds`, а диалог дорисовывается в его
+    /// конец — авто-Allow молчит, и без этого счётчика узнать об этом было неоткуда.
+    private(set) var timeoutCount = 0
+    /// Последний заголовок из списка исключений: пока на экране висит тот же диалог, тик
+    /// идёт раз в 1,5 с, а плашка и счёт должны сработать по одному разу на диалог.
+    private var lastBlockedHeading = ""
 
     private static let clock: DateFormatter = {
         let f = DateFormatter()
@@ -75,12 +90,20 @@ final class AutoAllow {
             AX.set(appElement, "AXEnhancedUserInterface", bool: true)
         }
         let deadline = Date.timeIntervalSinceReferenceDate + maxScanSeconds
+        var cut = false
         for window in AX.elements(appElement, kAXWindowsAttribute) {
-            for hit in AutoAllow.findButtons(root: window, patterns: buttonPatterns, deadline: deadline) {
+            let found = AutoAllow.findButtons(root: window, patterns: buttonPatterns, deadline: deadline)
+            cut = cut || found.timedOut
+            for hit in found.hits {
                 let head = AutoAllow.heading(of: hit.element)
-                if !blockHeadingPatterns.isEmpty,
-                   blockHeadingPatterns.contains(where: { head.contains($0) }) {
-                    blockedCount += 1
+                if AutoAllow.isBlocked(heading: head, patterns: blockHeadingPatterns) {
+                    // Не жмём и говорим, почему: диалог остаётся Элвису, а молчаливого
+                    // «ничего не происходит» больше нет (#5736).
+                    if head != lastBlockedHeading {
+                        lastBlockedHeading = head
+                        blockedCount += 1
+                        hud.show("Не жму сам: " + head, seconds: 2)
+                    }
                     continue
                 }
                 let now = Date.timeIntervalSinceReferenceDate
@@ -94,7 +117,17 @@ final class AutoAllow {
                 return hit.text
             }
         }
+        // Обход не дошёл до конца и ничего не нажал — считаем это отдельно от «диалогов не было».
+        if cut { timeoutCount += 1 }
         return nil
+    }
+
+    /// Диалог из списка исключений? Чистая, её и гоняют тесты. Регистр не важен: заголовок
+    /// приходит из разметки Claude, а список написан строчными.
+    static func isBlocked(heading: String, patterns: [String]) -> Bool {
+        guard !heading.isEmpty, !patterns.isEmpty else { return false }
+        let head = heading.lowercased()
+        return patterns.contains { head.contains($0.lowercased()) }
     }
 
     // MARK: - обход дерева
@@ -130,10 +163,18 @@ final class AutoAllow {
 
     /// Кнопки, чей текст подходит под паттерны. В AXButton не спускаемся (как в Lua),
     /// глубина ограничена 80 уровнями, обход обрывается по дедлайну.
-    static func findButtons(root: AXUIElement, patterns: [TextPattern], deadline: TimeInterval) -> [Hit] {
+    /// `timedOut` — обход оборвался по времени, то есть дерево пройдено НЕ целиком и кнопки
+    /// могло просто не хватить времени найти (#5736). Упор в глубину 80 обрывом не считается.
+    static func findButtons(root: AXUIElement, patterns: [TextPattern],
+                            deadline: TimeInterval) -> (hits: [Hit], timedOut: Bool) {
         var found: [Hit] = []
+        var timedOut = false
         func walk(_ element: AXUIElement, _ depth: Int) {
-            if depth > 80 || Date.timeIntervalSinceReferenceDate > deadline { return }
+            if depth > 80 { return }
+            if Date.timeIntervalSinceReferenceDate > deadline {
+                timedOut = true
+                return
+            }
             if AX.string(element, kAXRoleAttribute) == kAXButtonRole {
                 let t = deepText(of: element)
                 if patterns.contains(where: { $0.matches(t) }) { found.append(Hit(element: element, text: t)) }
@@ -142,7 +183,7 @@ final class AutoAllow {
             for child in AX.elements(element, kAXChildrenAttribute) { walk(child, depth + 1) }
         }
         walk(root, 0)
-        return found
+        return (found, timedOut)
     }
 
     /// Заголовок диалога, которому принадлежит кнопка: поднимаемся до шести родителей и в
