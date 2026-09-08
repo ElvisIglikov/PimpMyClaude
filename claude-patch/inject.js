@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf52-a-1";
+  const VERSION = "wf53-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -2634,6 +2634,16 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const PROGRESS_CARD_TONES = {
     "готов": "ok", "идёт": "run", "ждёт": "wait", "упал": "fail", "запланирован": "todo",
   };
+  // Блока про этот воркфлоу в присланных сводках не нашлось. Раньше здесь стояло
+  // «сводки нет», и Элвис читал это как поломку (08.09, #5807: «он же неспроста
+  // там ячейка стоит»). Ячейка правда есть: её место в счёте чата уже написано в
+  // заголовке и строке под ним, и остаётся сказать честно — про сам воркфлоу
+  // ещё ничего не записано. Ключ — слово состояния из progressWord.
+  const PROGRESS_CARD_BLANK = {
+    "запланирован": "ещё не расписан — что в нём будет, запишем, когда дойдёт очередь",
+    "готов": "уже сделан — что в нём было, не записали",
+  };
+  const PROGRESS_CARD_BLANK_ANY = "что в нём — пока не записали";
   const PROGRESS_CARD_SKIN = {
     dark: {
       back: "#33373f", line: "rgba(255,255,255,.16)", text: "#eef0f4", dim: "#aab0bc",
@@ -2676,7 +2686,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // «В проекте» на карточке не пишется (слово Элвиса 08.09): номер из сводки
     // говорит сам за себя, подпись остаётся только у чата без сводки.
     const where = block ? "" : `из ${info.of} · этот чат`;
-    const about = block ? progressClip(block.about || "—", PROGRESS_CARD_ABOUT_MAX) : "сводки нет";
+    const about = block
+      ? progressClip(block.about || "—", PROGRESS_CARD_ABOUT_MAX)
+      : (PROGRESS_CARD_BLANK[word] ?? PROGRESS_CARD_BLANK_ANY);
     const meta = block
       ? [block.time, block.steps ? `шаги ${block.steps.done} из ${block.steps.total}` : ""].filter(Boolean).join(" · ")
       : "";

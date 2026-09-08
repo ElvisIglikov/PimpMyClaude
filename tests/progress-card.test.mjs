@@ -154,19 +154,66 @@ test("готовый сегмент — k-й с хвоста среди ✅ (и�
   assert.match(card(loaded).textContent, /⬜ запланирован/);
 });
 
-test("сводки на сегмент нет — карточка говорит это прямо", () => {
+// Слово Элвиса 08.09 вечер (#5807): «он же неспроста там ячейка стоит — давай по
+// будущему тоже выводить инфу». Блок запланированного воркфлоу в сводке есть —
+// значит на карточке обязаны быть и «о чём», и кто его будет делать.
+test("будущий воркфлоу: «о чём» и кто будет делать — из своего блока", () => {
+  const loaded = open();
+  clickSegment(loaded, 3);
+  const text = card(loaded).textContent;
+  assert.match(text, /Workflow 38/, "номер СВОЙ, из сводки");
+  assert.match(text, /⬜ запланирован/);
+  assert.match(text, /перестройка страницы/, "«о чём» будущего воркфлоу на месте");
+  assert.equal(card(loaded).children[3].hidden, false, "этапы показаны");
+  const rows = stageRows(loaded);
+  assert.deepEqual(rows.map(row => row.icon), ["⬜", "⬜", "⬜", "⬜"],
+    "ни один этап ещё не пройден");
+  assert.deepEqual(rows.map(row => row.who), ["—", "—", "1 агент · Opus max", "—"],
+    "кто будет кодить — уже известно");
+});
+
+// Блока на эту ячейку в сводке нет вовсе. Раньше карточка отвечала «сводки нет»,
+// и Элвис читал это как поломку (#5807). Теперь она говорит то, что про ячейку
+// правда известно: место в счёте чата и что про сам воркфлоу ещё не написали.
+test("блока на сегмент нет — карточка говорит словами, а не пустотой", () => {
   const loaded = open();
   // Пятый сегмент: ⬜-блок в сводке только один, второму взяться неоткуда.
   clickSegment(loaded, 4);
   assert.equal(shown(loaded), true);
   const text = card(loaded).textContent;
   assert.match(text, /Воркфлоу 5/, "номер остаётся счётом чата");
-  assert.match(text, /сводки нет/);
-  assert.equal(card(loaded).children[3].hidden, true, "этапов без сводки не показываем");
+  assert.match(text, /из 5 · этот чат/, "и место в счёте названо");
+  assert.match(text, /⬜ запланирован/);
+  assert.match(text, /ещё не расписан — что в нём будет, запишем, когда дойдёт очередь/);
+  assert.doesNotMatch(text, /сводк/i, "слова «сводка» Элвис на карточке видеть не должен");
+  assert.equal(card(loaded).children[3].hidden, true, "этапов без блока не показываем");
 
   const bare = open({ feed: null });
   clickSegment(bare, 2);
-  assert.match(card(bare).textContent, /сводки нет/, "проекта в сводке нет вовсе — то же самое");
+  const idle = card(bare).textContent;
+  assert.match(idle, /что в нём — пока не записали/, "идущий без блока — тем же спокойным тоном");
+  assert.doesNotMatch(idle, /сводк/i);
+});
+
+// То же у готовых сегментов: ✅-блоков в сводке меньше, чем закрытых воркфлоу у
+// чата, — и первый сегмент оставался без блока (#5807, п. 3).
+test("готовый сегмент без блока — «уже сделан», а не пустота", () => {
+  const feed = [
+    "# ⚪PimpMyClaude", "обновлено 19:46", "", "41 воркфлоу", "26 готово", "39 ч", "",
+    "3️⃣6️⃣ Workflow ✅ готово", "- о чём: «Пимп, открой окно»", "",
+    "3️⃣7️⃣ Workflow 💭 идёт", "- о чём: полоска v3",
+  ].join("\n");
+  const loaded = open({ feed });
+  clickSegment(loaded, 0);
+  const text = card(loaded).textContent;
+  assert.match(text, /Воркфлоу 1/, "✅-блок на него в сводке не нашёлся");
+  assert.match(text, /✅ готов/);
+  assert.match(text, /уже сделан — что в нём было, не записали/);
+  assert.doesNotMatch(text, /сводк/i);
+
+  clickSegment(loaded, 1);
+  assert.match(card(loaded).textContent, /Workflow 36/, "а второму готовому блок достался");
+  assert.match(card(loaded).textContent, /Пимп, открой окно/);
 });
 
 test("карточка влезает в узкое окно: ширина = окно − 12, потолок 60 % высоты", () => {
