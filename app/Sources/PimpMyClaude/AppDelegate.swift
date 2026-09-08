@@ -388,8 +388,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
 
     private func operationFinished() {
         busy = false
-        // «Поставить» и «Снять» копируют claude.css из бандла ЦЕЛИКОМ (Patcher.installLiveFiles) —
-        // блок с радиусом рамки и полями надо вернуть на место (план WF14, решение 1).
+        // «Поставить» кладёт в claude.css авто-блок из бандла (Patcher.installLiveCSS, WF45 —
+        // свои правила человека при этом сохраняются), а блок надо пересчитать под живой
+        // sidePadding и версию macOS (план WF14, решение 1).
         ax.refreshLiveStyle()
         refreshState()
     }

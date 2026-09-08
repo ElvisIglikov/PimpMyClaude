@@ -23,7 +23,56 @@ public enum Patcher {
     /// в `LiveStyle.defaultSidePadding` (таргет ClaudeAX его не видит), `claude-patch/claude.json`
     /// и `DEFAULTS` в `patch-claude.mjs`. На существующих установках это ничего не меняет:
     /// `ensureConfig` готовый файл не перезаписывает.
-    public static let configDefaults: [String: Int] = ["minWindowWidth": 360, "sidePadding": 5]
+    /// `minWindowWidth: 280` (WF45, задача #5751) — у Элвиса в живом файле стоит 280, у команды
+    /// приезжало 360, и из-за этого две плитки раскладок из четырёх были серыми (ячейка уже
+    /// минимальной ширины окна). Та же цифра — в `claude-patch/claude.json`.
+    public static let configDefaults: [String: Int] = ["minWindowWidth": 280, "sidePadding": 5]
+
+    public static let cssFileName = "claude.css"
+    /// Маркеры авто-блока живого claude.css — побайтно те же, что `LiveStyle.markerStart/markerEnd`
+    /// (таргеты `Patcher` и `ClaudeAX` друг друга не видят, поэтому строки продублированы, как
+    /// уже продублирован `sidePadding`).
+    public static let cssMarkerStart = "/* PimpMyClaude:auto */"
+    public static let cssMarkerEnd = "/* /PimpMyClaude:auto */"
+
+    /// Слияние claude.css при установке (WF45, задача #5723). Приложение владеет РОВНО одним
+    /// блоком между маркерами; всё, что человек дописал вне блока, остаётся дословно — это
+    /// обещает `docs/TEAM.md`, и ровно так же делает `LiveStyle.applying`.
+    /// Живого файла нет — кладём файл из бандла целиком; в бандле блока нет — живой не трогаем.
+    public static func mergeCSS(bundled: String, live: String?) -> String {
+        guard let live = live else { return bundled }
+        guard let block = cssBlock(of: bundled) else { return live }
+        var lines = live.components(separatedBy: "\n")
+        // Хвост после последнего перевода строки — не строка файла; финальный \n добавим сами.
+        if lines.last?.isEmpty == true { lines.removeLast() }
+        let starts = lines.indices.filter { isCSSMarker(lines[$0], cssMarkerStart) }
+        let ends = lines.indices.filter { isCSSMarker(lines[$0], cssMarkerEnd) }
+        if starts.count == 1, ends.count == 1, starts[0] < ends[0] {
+            lines.replaceSubrange(starts[0]...ends[0], with: block)
+        } else {
+            // Маркеров нет, они битые или блок задвоился: старый мусор вырезаем от первого
+            // маркера до последнего и дописываем блок в конец (последний выигрывает по каскаду).
+            if let first = (starts + ends).min(), let last = (starts + ends).max() {
+                lines.removeSubrange(first...last)
+            }
+            while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
+            lines += block
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Строки авто-блока файла из бандла (от маркера до маркера включительно); блока нет — nil.
+    private static func cssBlock(of text: String) -> [String]? {
+        let lines = text.components(separatedBy: "\n")
+        guard let start = lines.indices.first(where: { isCSSMarker(lines[$0], cssMarkerStart) }),
+              let end = lines.indices.last(where: { isCSSMarker(lines[$0], cssMarkerEnd) }),
+              start < end else { return nil }
+        return Array(lines[start...end])
+    }
+
+    private static func isCSSMarker(_ line: String, _ marker: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces) == marker
+    }
 
     public static var defaultSupportDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -78,6 +127,7 @@ public enum PatchError: LocalizedError {
     case claudeWontQuit
     case noBackup(version: String, directory: String)
     case badInfoPlist(String)
+    case installBroke(why: String, restored: Bool)
     case tool(name: String, output: String)
 
     public var errorDescription: String? {
@@ -98,6 +148,12 @@ public enum PatchError: LocalizedError {
             return "Бэкапа для Claude \(version) нет в \(directory). Настоящий откат — переустановить Claude с claude.ai/download."
         case .badInfoPlist(let path):
             return "Не читается \(path)"
+        case .installBroke(let why, let restored):
+            let base = "Патч не встал: \(why)\n\n"
+            return restored
+                ? base + "Оригинальный Claude вернулся из бэкапа — он запускается. Нажми «Поставить» ещё раз."
+                : base + "Claude сейчас может не запуститься. Нажми «Поставить» ещё раз — приложение дочинит хэш и подпись; "
+                    + "не помогло — «Снять» или переустанови Claude с claude.ai/download."
         case .tool(let name, let output):
             return "\(name) не отработал: \(output)"
         }
@@ -216,23 +272,57 @@ public struct ClaudePatcher {
             try signAndVerify(entitlements: entitlements, progress: progress)
             try installLiveFiles(progress: progress)
             try writeInstalled(version: version, headerSHA256: before.headerSHA256, mainPath: before.mainPath)
-            relaunchClaude()
+            relaunchClaude(progress: progress)
             return .repaired(version: version)
         }
 
         try waitForWritable(progress: progress)
         try quitClaude(progress: progress)
-        try makeBackup(version: version, progress: progress)
+        try makeBackup(version: version, loaderVersion: before.loaderVersion, progress: progress)
         progress("Ставлю лоадер в app.asar…")
         let result = try Asar.patch(asarURL)
-        try setInfoPlistHash(result.headerSHA256)
-        try signAndVerify(entitlements: entitlements, progress: progress)
+        // Архив уже переписан: с этой секунды и до удачной подписи Claude не запускается.
+        // Осечка здесь — откат из бэкапа и внятная плашка (WF45, задача #5724).
+        do {
+            try setInfoPlistHash(result.headerSHA256)
+            try signAndVerify(entitlements: entitlements, progress: progress)
+        } catch {
+            throw rollback(after: error, version: version, entitlements: entitlements, progress: progress)
+        }
         try installLiveFiles(progress: progress)
         try writeInstalled(version: version, headerSHA256: result.headerSHA256, mainPath: result.mainPath)
         progress("Готово. Открываю Claude…")
-        relaunchClaude()
+        relaunchClaude(progress: progress)
         progress("Если macOS заново спросит разрешения (микрофон, экран) — это из-за новой подписи, один раз.")
         return .installed(version: version)
+    }
+
+    /// Задача #5724. Между `Asar.patch` и удачной подписью Claude сломан: возвращаем оригиналы
+    /// из бэкапа, сделанного минуту назад, и отдаём наверх ошибку, в которой сказано, что нажать.
+    /// Бросать отсюда нечего — исключение возвращается вызывающему, чтобы он его бросил сам.
+    func rollback(after error: Error, version: String, entitlements: URL?, progress: (String) -> Void) -> Error {
+        let why = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        let directory = backupDirectory(version)
+        let backupAsar = directory.appendingPathComponent("app.asar")
+        let backupInfo = directory.appendingPathComponent("Info.plist")
+        guard FileManager.default.fileExists(atPath: backupAsar.path) else {
+            progress("Откатить нечем: бэкапа Claude \(version) в \(directory.path) нет.")
+            return PatchError.installBroke(why: why, restored: false)
+        }
+        progress("Хэш или подпись не дописались — возвращаю оригинальный Claude \(version) из бэкапа…")
+        do {
+            try Data(contentsOf: backupAsar, options: .mappedIfSafe).write(to: asarURL, options: .atomic)
+            if FileManager.default.fileExists(atPath: backupInfo.path) {
+                try Data(contentsOf: backupInfo).write(to: infoPlistURL, options: .atomic)
+            }
+        } catch {
+            progress("Откат не удался: \(error.localizedDescription)")
+            return PatchError.installBroke(why: why, restored: false)
+        }
+        // Подпись после отката — по возможности: именно она и падала. Не вышло — файлы всё равно свои.
+        try? signAndVerify(entitlements: entitlements, progress: progress)
+        progress("Оригинальные app.asar и Info.plist вернулись на место.")
+        return PatchError.installBroke(why: why, restored: true)
     }
 
     // -------------------------------------------------------------- Снять
@@ -259,7 +349,7 @@ public struct ClaudePatcher {
         try signAndVerify(entitlements: entitlements, progress: progress)
         try? FileManager.default.removeItem(at: installedURL)
         progress("Готово. Подпись осталась локальной — подпись Apple вернёт только переустановка Claude. Открываю Claude…")
-        relaunchClaude()
+        relaunchClaude(progress: progress)
     }
 
     // -------------------------------------------------------------- Статус
@@ -267,11 +357,14 @@ public struct ClaudePatcher {
     /// Быстрый статус (решение 4): версия + ElectronAsarIntegrity против installed.json.
     /// Если installed.json нет или не сходится — один разбор asar, чтобы не соврать про чужую
     /// установку (патч мог поставить старый patch-claude.mjs); удачную находку записываем.
+    /// Номер лоадера в записи обязан быть нужным (WF45, задача #5722): иначе после подъёма
+    /// лоадера у всей команды остался бы старый лоадер и зелёная галка «Патч стоит».
     public func state() -> ClaudeState {
         guard let version = try? appVersion() else { return .claudeNotFound }
         let recorded = installedRecord()
         let currentHash = infoPlistHash()
-        if let recorded = recorded, recorded.version == version, recorded.headerSHA256 == currentHash, currentHash != nil {
+        if let recorded = recorded, recorded.version == version, recorded.headerSHA256 == currentHash, currentHash != nil,
+           recorded.loaderVersion == Patcher.requiredLoaderVersion {
             return .installed(version: version, loaderVersion: recorded.loaderVersion)
         }
         guard let asar = try? Asar.status(of: asarURL) else {
@@ -448,9 +541,16 @@ public struct ClaudePatcher {
         return runningClaude().isEmpty
     }
 
-    func relaunchClaude() {
+    /// Не вышло открыть — строкой в журнал (WF45, задача #5727): патч-то встал, исключение тут
+    /// незачем, а молчащее «Открываю Claude…» при закрытом Claude — самое обидное место.
+    func relaunchClaude(progress: (String) -> Void = { _ in }) {
         guard managesClaudeProcess else { return }
-        _ = try? Shell.run("/usr/bin/open", ["-a", appURL.path])
+        do {
+            _ = try Shell.run("/usr/bin/open", ["-a", appURL.path])
+        } catch {
+            let why = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            progress("Claude открыть не удалось: \(why). Открой его сам из «Программ».")
+        }
     }
 
     /// Патч нельзя запускать изнутри самого Claude (Claude Code в его окне): закрытие Claude убило бы
@@ -468,11 +568,19 @@ public struct ClaudePatcher {
 
     // -------------------------------------------------------------- бэкап и живые файлы
 
-    func makeBackup(version: String, progress: (String) -> Void) throws {
+    /// `loaderVersion` — что сейчас лежит в главном сценарии Claude. В бэкап идёт ТОЛЬКО чистый
+    /// архив (WF45, задача #5726): положить туда пропатченный — значит потом соврать в «Снять»
+    /// («Готово, оригинальные файлы на месте», а лоадер остался навсегда).
+    func makeBackup(version: String, loaderVersion: Int, progress: (String) -> Void) throws {
         let directory = backupDirectory(version)
         let asar = directory.appendingPathComponent("app.asar")
         let info = directory.appendingPathComponent("Info.plist")
         if FileManager.default.fileExists(atPath: asar.path) && FileManager.default.fileExists(atPath: info.path) { return }
+        guard loaderVersion == 0 else {
+            progress("В Claude \(version) уже стоит лоадер v\(loaderVersion), а чистого бэкапа этой версии нет — "
+                + "в бэкап такой архив не кладу. «Снять» оригинал не вернёт: это переустановка Claude с claude.ai/download.")
+            return
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         progress("Сохраняю оригинал Claude \(version) в \(directory.path)…")
         try Data(contentsOf: asarURL, options: .mappedIfSafe).write(to: asar, options: .atomic)
@@ -493,13 +601,27 @@ public struct ClaudePatcher {
     func installLiveFiles(progress: (String) -> Void) throws {
         try ensureConfig()
         guard let directory = resourcesDirectory else { return }
-        for name in ["inject.js", "claude.css"] {
-            let source = directory.appendingPathComponent(name)
-            guard FileManager.default.fileExists(atPath: source.path) else { continue }
-            try Data(contentsOf: source).write(to: supportDirectory.appendingPathComponent(name), options: .atomic)
+        let inject = directory.appendingPathComponent("inject.js")
+        if FileManager.default.fileExists(atPath: inject.path) {
+            try Data(contentsOf: inject).write(to: supportDirectory.appendingPathComponent("inject.js"), options: .atomic)
         }
+        try installLiveCSS(from: directory, progress: progress)
         try installWorkflowKit(from: directory)
         progress("Живые файлы в \(supportDirectory.path) обновлены.")
+    }
+
+    /// claude.css человек правит сам (`docs/TEAM.md` прямо предлагает дописывать свои правила
+    /// выше или ниже авто-блока), поэтому файл из бандла НЕ кладётся поверх (WF45, задача #5723):
+    /// из него берётся только блок между маркерами, остальное живого файла сохраняется дословно.
+    func installLiveCSS(from resources: URL, progress: (String) -> Void) throws {
+        let source = resources.appendingPathComponent(Patcher.cssFileName)
+        guard let bundled = try? String(contentsOf: source, encoding: .utf8) else { return }
+        let target = supportDirectory.appendingPathComponent(Patcher.cssFileName)
+        let live = try? String(contentsOf: target, encoding: .utf8)
+        let merged = Patcher.mergeCSS(bundled: bundled, live: live)
+        guard merged != live else { return }
+        try Data(merged.utf8).write(to: target, options: .atomic)
+        if live != nil { progress("В claude.css обновил только блок PimpMyClaude — свои правила остались на месте.") }
     }
 
     /// Комплекта в сборке нет (старый бандл) — молча пропускаем: пункт меню положит его сам.
@@ -527,7 +649,9 @@ public struct ClaudePatcher {
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let version = json["version"] as? String,
               let hash = json["headerSHA256"] as? String else { return nil }
-        return InstalledRecord(version: version, headerSHA256: hash, loaderVersion: json["loaderVersion"] as? Int ?? Patcher.requiredLoaderVersion)
+        // Поля нет — запись древняя, номер лоадера неизвестен: 0 отправит статус разбирать asar,
+        // а тот запишет правду обратно (WF45, задача #5722). Считать её «нужной версией» нельзя.
+        return InstalledRecord(version: version, headerSHA256: hash, loaderVersion: json["loaderVersion"] as? Int ?? 0)
     }
 
     func writeInstalled(version: String, headerSHA256: String, mainPath: String) throws {

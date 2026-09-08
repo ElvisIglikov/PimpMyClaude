@@ -3,8 +3,8 @@
 # Решение 5 плана WF24. Зовётся руками, строкой из docs/CHECKLIST.md; git-хука нет намеренно.
 # Использование: tools/test.sh [--js|--swift|--help]
 #   без ключа  — всё: сперва JS, потом Swift;
-#   --js       — node --check inject.js, сторожевые проверки, node --test по файлам tests/*.test.mjs, тесты CLI «Пимп»;
-#   --swift    — cd app && swift build && swift test.
+#   --js       — node --check inject.js и лоадера, сверка портов лоадера, сторожевые проверки, node --test tests/, тесты CLI «Пимп»;
+#   --swift    — cd app && swift build && swift test (пропущенные тесты видны вслух и в сводке).
 # Любая красная проверка — ненулевой код возврата и стоп: не починил — не коммитим (слово Элвиса 05.09).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -124,6 +124,61 @@ run_js() {
 
   # 8. CLI «Пимп» (WF36): те же фикстуры канала, что читает Swift-половина.
   ( cd "$ROOT" && python3 -B -m unittest tests/pimp_cli_test.py ) || fail "python3 -m unittest tests/pimp_cli_test.py: красное (см. вывод выше)"  # -B: без __pycache__ в репозитории
+
+  # 9. Лоадер (WF45, задача #5761). Боевой JS лоадера живёт строкой ДВАЖДЫ: в Loader.swift
+  #    (боевой порт) и в patch-claude.mjs (дев-инструмент). Синтаксис его никто не проверял, а
+  #    расхождение портов глазами не видно. Тело вынимаем из обоих файлов, сверяем побайтно и
+  #    гоняем node --check по вытащенному телу.
+  local dir script rc
+  dir="$(mktemp -d)"
+  script="$dir/loader-check.cjs"
+  cat > "$script" <<'NODE'
+const fs = require("fs");
+const [mjsPath, swiftPath, outPath] = process.argv.slice(2);
+const die = (message) => { process.stderr.write(message + "\n"); process.exit(1); };
+
+const mjs = fs.readFileSync(mjsPath, "utf8");
+const version = (mjs.match(/const LOADER_VERSION = (\d+);/) || [])[1];
+if (!version) die("в patch-claude.mjs не нашёлся const LOADER_VERSION");
+const declaration = mjs.indexOf("const LOADER = String.raw");
+if (declaration < 0) die("в patch-claude.mjs не нашлось объявление const LOADER = String.raw");
+const from = mjs.indexOf("`", declaration) + 1;
+const to = mjs.indexOf("`", from);
+if (!from || to < 0) die("в patch-claude.mjs не закрылась строка LOADER");
+const fromMjs = mjs.slice(from, to)
+  .split("${MARK_START}").join("/* [MyClaude:v" + version + ":start] */")
+  .split("${MARK_END}").join("/* [MyClaude:v" + version + ":end] */")
+  .split("${LOADER_VERSION}").join(version);
+
+const swift = fs.readFileSync(swiftPath, "utf8");
+const head = swift.indexOf("#\"\"\"\n");
+const tail = swift.indexOf("\n\"\"\"#", head);
+if (head < 0 || tail < 0) die("в Loader.swift не нашлась строка лоадера #\"\"\" … \"\"\"#");
+const fromSwift = swift.slice(head + 5, tail);
+fs.writeFileSync(outPath, fromSwift);
+
+if (fromSwift !== fromMjs) {
+  die("тексты лоадера разошлись: Loader.swift " + fromSwift.length + " знаков, patch-claude.mjs "
+    + fromMjs.length + " знаков. Правится только patch-claude.mjs, оттуда переносится в Loader.swift.");
+}
+process.stdout.write("v" + version + ", " + fromSwift.length + " знаков, оба порта совпадают\n");
+NODE
+  rc=0
+  node "$script" "$ROOT/claude-patch/patch-claude.mjs" "$ROOT/app/Sources/Patcher/Loader.swift" "$dir/loader.js" \
+    > "$dir/report" 2>&1 || rc=$?
+  # Синтаксис — даже если порты разошлись: битый JS в лоадере страшнее расхождения.
+  if [ -s "$dir/loader.js" ] && ! node --check "$dir/loader.js"; then
+    rm -rf "$dir"
+    fail "лоадер — не валидный JS (см. вывод выше). Он уезжает в app.asar: битый лоадер = Claude без наших окон у всей команды."
+  fi
+  if [ "$rc" -ne 0 ]; then
+    local why
+    why="$(cat "$dir/report")"
+    rm -rf "$dir"
+    fail "$why"
+  fi
+  say "лоадер: $(cat "$dir/report")"
+  rm -rf "$dir"
 }
 
 run_swift() {
@@ -136,12 +191,21 @@ run_swift() {
     fail "swift build/test: красное (см. вывод выше)"
   fi
   SWIFT_TESTS="$(awk '/Executed [0-9]+ test/ { n = $2 } END { print n + 0 }' "$out")"
+  # Пропущенные тесты (WF45, задача #5760). Тесты патчера отключаются сами, когда на Маке нет
+  # Claude.app: прогон остаётся зелёным, а число в сводке — прежним, и «✅ Swift: 202 теста»
+  # ничего не говорит о патче. Считаем пропуск и называем его вслух.
+  SWIFT_SKIPPED="$(awk '/Executed [0-9]+ test/ && /skipped/ { for (i = 1; i < NF; i++) if ($i == "with") { n = $(i + 1); break } } END { print n + 0 }' "$out")"
+  if [ "$SWIFT_SKIPPED" -gt 0 ]; then
+    printf '\n⚠️  Swift: пропущено тестов — %s, прогон НЕ полный:\n' "$SWIFT_SKIPPED"
+    grep -E 'Test skipped' "$out" | sed 's/^/    /' | sort -u
+  fi
   rm -f "$out"
 }
 
 JS_FILES=""
 JS_CHECKS=""
 SWIFT_TESTS=""
+SWIFT_SKIPPED=""
 case "${1-}" in
   --js) run_js ;;
   --swift) run_swift ;;
@@ -158,5 +222,13 @@ fi
 if [ -n "$SWIFT_TESTS" ]; then
   if [ -n "$SUMMARY" ]; then SUMMARY="$SUMMARY · "; fi
   SUMMARY="${SUMMARY}Swift: $(plural "$SWIFT_TESTS" тест теста тестов)"
+  # Пропуск идёт в само число сводки: без этого «202 теста» врёт про то, что прогнано (#5760).
+  if [ "${SWIFT_SKIPPED:-0}" -gt 0 ]; then
+    SUMMARY="$SUMMARY, из них пропущено $SWIFT_SKIPPED"
+  fi
 fi
-printf '\n✅ %s\n' "$SUMMARY"
+if [ "${SWIFT_SKIPPED:-0}" -gt 0 ]; then
+  printf '\n⚠️ %s\n' "$SUMMARY"
+else
+  printf '\n✅ %s\n' "$SUMMARY"
+fi
