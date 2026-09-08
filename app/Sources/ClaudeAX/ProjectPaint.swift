@@ -123,6 +123,9 @@ final class ProjectPaint {
 
     /// Живёт в памяти: после перезапуска приложение просто покрасит окна заново.
     private var marks: [String: Mark] = [:]
+    /// Стоял ли вид «всем окнам» на прошлом тике (задача #5739): его снятие — тот же случай,
+    /// что перезапуск Claude, отпечатки после него врут.
+    private var wasAllWindowsSet = false
 
     // MARK: - сиденья (живьём их ставит ClaudeAXController)
 
@@ -214,7 +217,15 @@ final class ProjectPaint {
     /// молчит совсем (критик Б2 плана WF18) — и отпечатки не трогает: выключат живые, и
     /// ближайший тик покрасит окно, если за это время что-то изменилось.
     func tick() {
-        guard enabled, !isQuiet, !isLiveColorsOn(), !isAllWindowsSet() else { return }
+        let allWindows = isAllWindowsSet()
+        // Вид «всем окнам» СНЯЛИ (задача #5739). Пока он стоял, страница стёрла слои окон
+        // вместе с ним, а отпечатки у нас остались прежними — папка и хэш вида не менялись,
+        // и команда не ушла бы никогда: окна стояли без цвета проекта до перезапуска
+        // приложения. Забываем отпечатки ровно как на перезапуске Claude: команд снятия тут
+        // не нужно (окна и так голые), а этот же тик покрасит их заново.
+        if wasAllWindowsSet, !allWindows { forget() }
+        wasAllWindowsSet = allWindows
+        guard enabled, !isQuiet, !isLiveColorsOn(), !allWindows else { return }
         for target in targets() { paint(target) }
     }
 
@@ -558,14 +569,47 @@ final class ProjectPaint {
     /// заголовок бывает настоящим заголовком чата, а в цели покраски стоит заглушка «Claude».
     func windowKey(forTitle title: String) -> String {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty, clean != ProjectPaint.mainWindowTitle else {
-            return ProjectPaint.mainKey
+        guard !clean.isEmpty else { return ProjectPaint.mainKey }
+        // Заглушку «Claude» носит не только главное окно (задача #5534) — разбираем по карте.
+        if clean == ProjectPaint.mainWindowTitle {
+            return ProjectPaint.stubKey(forTitle: clean, in: chatPages())
         }
         if let main = index.mainWindow()?.session?.title, main == clean {
             return ProjectPaint.mainKey
         }
         if let chat = chatForTitle(clean) { return ProjectPaint.chatPrefix + chat }
         return ProjectPaint.windowPrefix + clean
+    }
+
+    /// Ключ окна с заглушкой заголовка. Её носит и главное окно (на вкладке Claude Code —
+    /// всегда), и попап безымянного чата, а до WF46 ключ `main` доставался ОБОИМ: тема,
+    /// выбранная в безымянном попапе, уезжала в запись главного окна и держалась там после
+    /// перезапуска (#5534), а снимок раскладки писал чат такого попапа как `main`, терял его
+    /// и ставил главное окно в две ячейки (#5729).
+    ///
+    /// Разбираем по карте probe — другого источника у нас нет:
+    /// - попапа с такой заглушкой в карте нет — окно одно, и оно главное (правило до WF46);
+    /// - попап есть, а главной страницы с этой заглушкой нет — заглушку носит ровно он: ключ
+    ///   его чата, а чата он не назвал (или их два) — ключ по заголовку;
+    /// - есть и то и другое — заглушку носят двое, и она не называет никого: ключ по
+    ///   заголовку, ни `main`, ни чужой чат (то же правило, что у `ChatProbe.chat(forTitle:)`:
+    ///   лучше не покрасить, чем покрасить чужим цветом).
+    ///
+    /// Карта пуста (тумблер выключен, канал занял агент, кругов ещё не было) — окно главное,
+    /// как раньше: без ответов страниц отличить их нечем.
+    static func stubKey(forTitle title: String, in pages: [ChatPage]) -> String {
+        let popouts = pages.filter {
+            $0.kind == .popout && $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == title
+        }
+        guard !popouts.isEmpty else { return mainKey }
+        let mainToo = pages.contains {
+            $0.kind == .main && $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == title
+        }
+        let chats = Set(popouts.compactMap { $0.chat })
+        guard !mainToo, chats.count == 1, let chat = chats.first else {
+            return windowPrefix + title
+        }
+        return chatPrefix + chat
     }
 
     // MARK: - чистая часть (её же гоняют тесты)

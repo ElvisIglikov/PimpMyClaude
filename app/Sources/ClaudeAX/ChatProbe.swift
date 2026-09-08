@@ -97,6 +97,9 @@ final class ChatProbe {
     /// Метка своего скрипта — по ней приложение узнаёт файл от прошлого запуска, а человек
     /// на гейте видит, кто держит канал (`head -1 probe.js`).
     static let mark = "// myclaude-chats v1"
+    /// Потолок длины круга в метке: по нему из чужой первой строки не собирается скрипт
+    /// на мегабайт (задача #5741). Живой круг — `chats-<мс>-<4 цифры>`, это 24 знака.
+    static let nonceLimit = 64
     /// Пол частоты: круг стоит лоадеру обхода всех страниц (их 41) и записи файла на 3,9 МБ —
     /// чаще раза в 15 с спрашивать нельзя (критик Б2 плана WF29).
     static let askInterval: TimeInterval = 15
@@ -128,6 +131,10 @@ final class ChatProbe {
     /// Стор попапов на странице работает: `self:null` при нём значит «чат не определён»,
     /// а не «спросить некого» (решение 9 плана WF29).
     static let storeOK = "ok"
+    /// Сколько живёт требование «спроси страницы прямо сейчас» (задача #5770): круг уходит
+    /// ближайшим тиком (2 с) и отвечает за секунды, а спросившему надо успеть забрать карту.
+    /// Дальше при выключенном тумблере канал снова замолкает совсем.
+    static let demandSeconds: TimeInterval = 30
     /// Карту тем берём только у страницы claude.ai (решение 3 плана WF35): probe лоадер гоняет
     /// во ВСЕХ страницах, и артефакт на чужом origin вернул бы ПУСТУЮ карту — а пустая карта
     /// значит «Элвис снял всё сам» и чистит файл.
@@ -170,6 +177,11 @@ final class ChatProbe {
     /// Приложение только что писало зеркало тем — повод спросить страницы (решение 3 плана
     /// WF35). Разовый: снимается первым же вопросом.
     private var mirrored = false
+    /// До этого времени канал работает, даже когда тумблер выключен (задача #5770).
+    private var demandUntil: Date?
+    /// Требование ещё не обслужено: это повод спросить мимо пола частоты. Разовое, как
+    /// `mirrored`, — снимается первым же вопросом.
+    private var demandPending = false
 
     init(files: ChatProbeFiles = .onDisk(), now: @escaping () -> Date = Date.init,
          random: @escaping () -> Int = { Int.random(in: 0...9999) }) {
@@ -247,6 +259,37 @@ final class ChatProbe {
     /// остаётся прежним — шторма не будет.
     func noteMirror() { mirrored = true }
 
+    /// «Спроси страницы прямо сейчас» (задача #5770). Тумблер «🗂 Цвет по проекту» выключен —
+    /// канал молчит совсем (риск 11 плана WF29), и карта чатов пуста: «💾 Сохранить раскладку»
+    /// отказывало плашкой «не знаю, какие чаты в окнах — включи тумблер». Требовать тумблер
+    /// от человека стыдно, держать канал занятым ради выключенной покраски — тоже, поэтому
+    /// канал открывается НА ТРЕБОВАНИЕ и на полминуты: ближайший тик спрашивает страницы
+    /// (мимо пола частоты, но не поверх незакрытого круга), спросивший забирает карту через
+    /// `answered(after:)` и `pages`, дальше канал замолкает сам.
+    func demand(at: Date = Date()) {
+        demandPending = true
+        demandUntil = at.addingTimeInterval(ChatProbe.demandSeconds)
+    }
+
+    /// Пришёл ли круг ПОСЛЕ этого времени: по нему ждущий понимает, что карта уже про сейчас,
+    /// а не про прошлый час. Канал не наш (занят агентом) — false, ждать нечего.
+    func answered(after: Date) -> Bool {
+        guard isFresh, let at = answeredAt else { return false }
+        return at >= after
+    }
+
+    /// Требование ещё живо? Оно же тут и гасится по времени: спросили и не дождались — канал
+    /// возвращается к правилу тумблера, а не остаётся открытым навсегда.
+    private func isDemanded(_ at: Date) -> Bool {
+        guard let until = demandUntil else { return false }
+        guard at < until else {
+            demandUntil = nil
+            demandPending = false
+            return false
+        }
+        return true
+    }
+
     /// Строка для `statusText`: канал / сколько страниц ответило / сколько назвали свой чат.
     var status: String {
         "\(channel.rawValue)/\(answers.count)/\(answers.filter { $0.chat != nil }.count)"
@@ -257,13 +300,15 @@ final class ChatProbe {
     /// Общий тик 2 с: забрать ответ и, если есть повод, спросить заново. Своего таймера
     /// у канала нет — он живёт на том же таймере, что и покраска (решение 3 плана WF29).
     func tick(windowTitles: [String], indexRevision: Int) {
+        let at = now()
         // Тумблер выключен — ни записи, ни чтения: probe остаётся инструментом гейта.
-        guard isEnabled() else {
+        // Исключение одно — живое требование (задача #5770): о чатах окон спросили по делу,
+        // и полминуты канал работает как при включённом тумблере.
+        guard isEnabled() || isDemanded(at) else {
             channel = .off
             return
         }
         if channel == .off { channel = .own }
-        let at = now()
         readAnswer(at)
         let sorted = windowTitles.sorted()
         let unknown = sorted.contains { !isKnown(title: $0) }
@@ -275,6 +320,7 @@ final class ChatProbe {
         revision = indexRevision
         started = true
         mirrored = false
+        demandPending = false
         if unknown { askedAt = at }
     }
 
@@ -287,6 +333,10 @@ final class ChatProbe {
         // затёр бы свежий (критик В2 плана WF29).
         if pendingNonce != nil, let wrote = lastWriteAt,
            at.timeIntervalSince(wrote) < ChatProbe.answerTimeout { return false }
+        // Требование (задача #5770) сильнее пола частоты: человек ждёт ответа здесь и сейчас,
+        // а лишний круг ему стоит одного обхода страниц. Незакрытый круг всё равно сильнее —
+        // проверка выше.
+        if demandPending { return true }
         // Пол частоты свой, пока главное окно стоит на домашнем экране (план WF37 C3):
         // папку там меняют молча, и о смене чипа мы узнаём только следующим кругом.
         // Признак берём из своей же карты — нового параметра у тика нет.
@@ -348,9 +398,32 @@ final class ChatProbe {
         }
         // Отпечаток чужой или молчание вышло — только теперь читаем сам файл.
         guard let text = files.readScript() else { return wait(at, info.stamp) }
-        if text == lastScript || text.hasPrefix(ChatProbe.mark) { return take() }
+        if text == lastScript || ChatProbe.isOwnScript(text) { return take() }
         if at.timeIntervalSince(info.modified) > ChatProbe.foreignStale { return take() }
         return wait(at, info.stamp)
+    }
+
+    /// Наш ли это скрипт ПОБАЙТНО (задача #5741). Метка в первой строке остаётся договором —
+    /// по ней и человек на гейте, и приложение видят, кто держит канал, — но одной метки мало:
+    /// агент на гейте берёт наш файл за основу (`head -1 probe.js` в чеклисте прямо к этому
+    /// подталкивает) и дописывает своё, а мы молча переписывали бы его посреди проверки.
+    /// Поэтому из метки берём только круг и собираем скрипт заново: совпал байт в байт — он
+    /// правда наш (в том числе от прошлого запуска приложения), не совпал — чужой, и дальше
+    /// по прежнему правилу 10 минут.
+    static func isOwnScript(_ text: String) -> Bool {
+        guard let nonce = markNonce(text) else { return false }
+        return text == script(nonce: nonce, scan: false) || text == script(nonce: nonce, scan: true)
+    }
+
+    /// Круг из первой строки (`// myclaude-chats v1 <nonce>`). Метка не с начала строки, хвост
+    /// пустой, с пробелом или длиннее потолка — не наша.
+    static func markNonce(_ text: String) -> String? {
+        let head = text.prefix { $0 != "\n" }
+        guard head.hasPrefix(mark) else { return nil }
+        let nonce = head.dropFirst(mark.count).trimmingCharacters(in: .whitespaces)
+        guard !nonce.isEmpty, nonce.count <= nonceLimit,
+              !nonce.contains(where: { $0.isWhitespace }) else { return nil }
+        return nonce
     }
 
     private func take() -> Bool {
