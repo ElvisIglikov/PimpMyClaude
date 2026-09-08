@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf51-a-1";
+  const VERSION = "wf52-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -2433,9 +2433,25 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // ничего не стоит. Ключевые кадры — Web Animations (element.animate): своей
   // таблицы стилей у полосы нет и заводить её нельзя (CSP страницы, раздел 4),
   // а @keyframes без таблицы не бывает.
-  const PROGRESS_PULSE_MS = 2400;
-  const PROGRESS_GLOW_FRAMES = [{ opacity: "0.35" }, { opacity: "0.8" }, { opacity: "0.35" }];
-  const PROGRESS_PILL_FRAMES = [{ opacity: "0.6" }, { opacity: "1" }, { opacity: "0.6" }];
+  // Вдох и выдох за 3600 мс — примерно 17 дыханий в минуту, спокойный
+  // человеческий ритм (слово Элвиса 08.09 вечер: «очень плавное, не
+  // отвлекающее»). Прежние 2400 читались подмигиванием; 0,28 Гц лежит далеко
+  // ниже полосы мельканий, на которую глаз злится, но за секундный взгляд
+  // изменение уже заметно.
+  const PROGRESS_PULSE_MS = 3600;
+  // Синусоида, а не мигание: easing стоит у КАЖДОГО кадра, а не в options.
+  // Общий easing растянул бы весь круг разом, и на вершине вышел бы угол —
+  // ровно то моргание, от которого уходим; покадровый ease-in-out даёт нулевую
+  // скорость и в нижней точке, и в верхней.
+  //
+  // Размах 0,28 → 1 (было 0,35 → 0,8): разница по яркости в 3,6 раза вместо
+  // 2,3, а нижняя точка всё-таки не ноль — сегмент не пропадает, он дышит.
+  const PROGRESS_GLOW_FRAMES = [
+    { opacity: "0.28", easing: "ease-in-out" }, { opacity: "1", easing: "ease-in-out" }, { opacity: "0.28" },
+  ];
+  const PROGRESS_PILL_FRAMES = [
+    { opacity: "0.6", easing: "ease-in-out" }, { opacity: "1", easing: "ease-in-out" }, { opacity: "0.6" },
+  ];
   // Скрытое окно и «поменьше движения» в системе гасят пульс: Electron всё равно
   // придушит таймеры перекрытого окна, а анимация останется висеть.
   const progressMotionOk = () => {
@@ -2866,10 +2882,16 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       item.fill.style.setProperty("box-shadow", share > 0 ? `0 0 18px ${paint},0 0 6px ${paint}` : "none");
       // Дышит только идущий этап и вся зелёная полоса «готово»: ждёт (жёлтый) и
       // упал (красный) стоят на месте — движение там значило бы «работа идёт».
-      item.glow.style.setProperty("width", `${share}%`);
-      item.glow.style.setProperty("box-shadow", share > 0 ? `0 0 18px ${paint},0 0 10px ${paint}` : "none");
       item.pulse = share > 0 && Boolean(info) &&
         (info.state === "done" || (index === current && info.state === "run"));
+      // Свечение дышащего сегмента растянуто на ВЕСЬ сегмент, а не по заливку
+      // (слово Элвиса 08.09 вечер: «а почему никак не выделяется работа»).
+      // Заливка — это пройденные шаги, её не трогаем; но в узком окне сегмент
+      // шириной в три десятка точек залит на восьмую часть, и ореол вокруг
+      // такого огрызка глазами не читается — технически пульс шёл, а видно его
+      // не было. Дышит кусочек, который сейчас в работе, целиком.
+      item.glow.style.setProperty("width", item.pulse ? "100%" : `${share}%`);
+      item.glow.style.setProperty("box-shadow", share > 0 ? `0 0 18px ${paint},0 0 10px ${paint}` : "none");
       progressPulse(item, item.glow, item.pulse, PROGRESS_GLOW_FRAMES, "0");
       // Контур в одну точку — «сюда марафон ещё не дошёл».
       item.track.style.setProperty("box-shadow", `inset 0 0 0 1px ${accent}`);

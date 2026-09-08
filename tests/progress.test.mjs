@@ -316,15 +316,39 @@ test("пульс: дышит слой свечения идущего сегме
   const live = loaded.dom.running();
   assert.equal(live.length, 1, "дышит ровно один сегмент");
   assert.equal(live[0].node, glowOf(loaded, 2), "и это слой свечения третьего сегмента");
-  assert.equal(live[0].options.duration, 2400);
+  assert.equal(live[0].options.duration, 3600);
   assert.equal(live[0].options.iterations, Infinity);
-  assert.deepEqual(plain(live[0].frames).map(frame => frame.opacity), ["0.35", "0.8", "0.35"]);
-  assert.ok(plain(live[0].frames).every(frame => Object.keys(frame).join() === "opacity"),
-    "в кадрах только прозрачность: box-shadow не анимируем");
+  assert.deepEqual(plain(live[0].frames).map(frame => frame.opacity), ["0.28", "1", "0.28"]);
+  // Синусоида, а не мигание: easing у каждого кадра, а не общий на круг.
+  assert.deepEqual(plain(live[0].frames).map(frame => frame.easing ?? null),
+    ["ease-in-out", "ease-in-out", null], "вдох и выдох сглажены по отдельности");
+  assert.equal(live[0].options.easing, undefined, "общего easing нет — он дал бы угол на вершине");
+  assert.ok(plain(live[0].frames).every(frame => !("box-shadow" in frame) && !("width" in frame)),
+    "в кадрах только прозрачность: ни тень, ни ширину не анимируем");
   assert.equal(glowOf(loaded, 7).style.getPropertyValue("box-shadow"), "none", "пустому сегменту светиться нечем");
 
   loaded.api.dispose();
   assert.equal(loaded.dom.running().length, 0, "dispose() гасит анимацию");
+});
+
+// Слово Элвиса 08.09 вечер (#5806): «почему никак не выделяется работа». Пульс
+// шёл, но свечение было шириной в ЗАЛИВКУ — а заливка идущего воркфлоу это доля
+// пройденных шагов, и в узком окне дышало несколько точек. Теперь дышит весь
+// идущий сегмент, а заливка осталась прежней.
+test("дыхание в ширину всего идущего сегмента, заливка при этом прежняя", () => {
+  const loaded = open(RUN_LINE);
+  assert.equal(fillOf(loaded, 2).style.getPropertyValue("width"), "8%",
+    "заливка — по шагам, её не трогали");
+  assert.equal(glowOf(loaded, 2).style.getPropertyValue("width"), "100%",
+    "а дышит сегмент целиком");
+  assert.equal(glowOf(loaded, 0).style.getPropertyValue("width"), "100%", "закрытый воркфлоу и так полный");
+  assert.equal(glowOf(loaded, 7).style.getPropertyValue("width"), "0%",
+    "будущему сегменту дышать нечем — его свечение не растягивается");
+
+  const wait = open("✋⚪[PimpMyClaude](docs/status.md) · WF 3 из 8 · жду✋");
+  assert.equal(wait.dom.running().length, 0, "жёлтый не дышит");
+  assert.equal(glowOf(wait, 2).style.getPropertyValue("width"), "8%",
+    "и свечение у него не растянуто — растягивается только дыхание");
 });
 
 test("пульс: ждёт и упал стоят, «готово» дышит всей зелёной полосой", () => {
@@ -340,6 +364,32 @@ test("пульс: ждёт и упал стоят, «готово» дышит �
   assert.equal(done.dom.running().length, 8, "готово дышит целиком — это сигнал продолжать");
   assert.equal(fillOf(done, 0).style.getPropertyValue("background"), "#4dbb7d", "и вся полоса зелёная");
   assert.equal(fillOf(done, 7).style.getPropertyValue("background"), "#4dbb7d");
+});
+
+// В вынесенном окне приметы ответа почти не совпадают, и строка состояния
+// приезжает запасным путём — из текста всего окна. Дыхание обязано работать и
+// там: у Элвиса рабочие чаты как раз в попапах.
+test("дыхание работает и в вынесенном окне", () => {
+  const popout = loadInject({
+    href: "about:blank",
+    title: "Bro Flow продолжение",
+    geometry: { viewport: { width: 1200, height: 800 } },
+    html: dom => {
+      const parts = dom.composer({ top: 620 });
+      // Без приметы ответа — ровно как в «Open in new window».
+      dom.document.body.add("div", {
+        rect: { left: 100, top: 200, width: 1000, height: 300 },
+        text: `Готово.\n\n${RUN_LINE}`,
+      });
+      return parts;
+    },
+  });
+  assert.equal(popout.error, null);
+  const live = popout.dom.running();
+  assert.equal(live.length, 1, "в попапе дышит тот же один сегмент");
+  assert.equal(live[0].node, glowOf(popout, 2));
+  assert.equal(live[0].options.duration, 3600);
+  assert.equal(glowOf(popout, 2).style.getPropertyValue("width"), "100%", "и тоже во всю его ширину");
 });
 
 test("пульс гаснет в скрытом окне и при «поменьше движения»", () => {
