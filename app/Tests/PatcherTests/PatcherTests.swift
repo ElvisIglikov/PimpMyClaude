@@ -99,6 +99,115 @@ final class PatcherTests: XCTestCase {
         try patcher.installLiveFiles(progress: { _ in })
     }
 
+    /// Задача #5722: в Claude стоит СТАРЫЙ лоадер, installed.json это признаёт — значок обязан
+    /// краснеть. До правки быстрый статус сверял только версию и хэш и отвечал «патч стоит».
+    func testStateGoesLostWhenLoaderIsOld() throws {
+        let patcher = makePatcher()
+        // Кладём в главный сценарий лоадер прошлой версии — как у того, кто обновил приложение,
+        // но «Поставить» не нажал.
+        let result = try Asar.rewriteMain(patcher.asarURL) { source in
+            "/* [MyClaude:v6:start] */\n/* [MyClaude:v6:end] */\n" + Asar.stripLoader(source)
+        }
+        try patcher.setInfoPlistHash(result.headerSHA256)
+        try writeInstalledRecord(patcher, headerSHA256: result.headerSHA256, loaderVersion: 6, mainPath: result.mainPath)
+
+        let version = try patcher.appVersion()
+        XCTAssertEqual(patcher.state(), .lost(version: version, reason: "старый лоадер v6"),
+                       "старый лоадер обязан красить значок, а не оставлять зелёную галку")
+
+        // Записи без поля loaderVersion (древний installed.json) тоже нельзя считать «нужной версией».
+        try writeInstalledRecord(patcher, headerSHA256: result.headerSHA256, loaderVersion: nil, mainPath: result.mainPath)
+        XCTAssertEqual(patcher.state(), .lost(version: version, reason: "старый лоадер v6"))
+
+        // А после установки статус снова зелёный — быстрый путь не сломан.
+        _ = try patcher.install()
+        XCTAssertEqual(patcher.state(), .installed(version: version, loaderVersion: Patcher.requiredLoaderVersion))
+    }
+
+    /// Задача #5726: бэкап хранит только ЧИСТЫЙ архив. Пропатченный старым лоадером туда не идёт —
+    /// иначе «Снять» потом соврёт «оригинальные файлы на месте».
+    func testBackupSkipsAlreadyPatchedArchive() throws {
+        let patcher = makePatcher()
+        _ = try Asar.rewriteMain(patcher.asarURL) { source in
+            "/* [MyClaude:v6:start] */\n/* [MyClaude:v6:end] */\n" + Asar.stripLoader(source)
+        }
+        var log: [String] = []
+        _ = try patcher.install(progress: { log.append($0) })
+
+        let backup = patcher.backupDirectory(try patcher.appVersion()).appendingPathComponent("app.asar")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backup.path),
+                       "в бэкап попал архив с чужим лоадером — «Снять» вернёт не оригинал")
+        XCTAssertTrue(log.contains { $0.contains("уже стоит лоадер v6") }, "про пропущенный бэкап нигде не сказано: \(log)")
+        XCTAssertEqual(try Asar.status(of: patcher.asarURL).loaderVersion, Patcher.requiredLoaderVersion,
+                       "сама установка при этом обязана пройти")
+    }
+
+    /// Задача #5724: осечка между записью app.asar и подписью не должна оставлять Claude,
+    /// который не запускается. Подпись здесь падает по-настоящему: у копии нет исполняемого файла.
+    func testFailedSigningRollsArchiveBack() throws {
+        let resources = scratch.appendingPathComponent("Resources", isDirectory: true)
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        try Data("<plist/>".utf8).write(to: resources.appendingPathComponent("entitlements.plist"))
+
+        var patcher = makePatcher()
+        patcher.signsApp = true
+        patcher.resourcesDirectory = resources
+
+        var log: [String] = []
+        XCTAssertThrowsError(try patcher.install(progress: { log.append($0) })) { error in
+            guard case PatchError.installBroke(_, let restored) = error else {
+                return XCTFail("ожидалась installBroke, получено \(error)")
+            }
+            XCTAssertTrue(restored, "бэкап был свежий — откат обязан пройти")
+            XCTAssertTrue((error as? LocalizedError)?.errorDescription?.contains("Поставить") == true,
+                          "в плашке не сказано, что нажать")
+        }
+        XCTAssertEqual(try Data(contentsOf: patcher.asarURL), originalAsar, "app.asar не вернулся к исходным байтам")
+        XCTAssertTrue(log.contains { $0.contains("возвращаю оригинальный Claude") }, "про откат в журнале ни строки: \(log)")
+    }
+
+    /// Задача #5727: «Открываю Claude…» и тишина. Открыть не вышло — строкой в журнал.
+    func testRelaunchSaysWhenClaudeDidNotOpen() {
+        var patcher = makePatcher()
+        patcher.managesClaudeProcess = true
+        patcher.appURL = scratch.appendingPathComponent("НетТакогоClaude.app", isDirectory: true)
+        var log: [String] = []
+        patcher.relaunchClaude(progress: { log.append($0) })
+        XCTAssertTrue(log.contains { $0.contains("Claude открыть не удалось") }, "неудачный запуск проглочен: \(log)")
+    }
+
+    /// Задача #5723: «Поставить» больше не стирает личные правила в claude.css.
+    func testInstallLiveFilesKeepsPersonalCSS() throws {
+        let resources = scratch.appendingPathComponent("Resources", isDirectory: true)
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        try Data("/* база */\n\(Patcher.cssMarkerStart)\nbody{color:red}\n\(Patcher.cssMarkerEnd)\n".utf8)
+            .write(to: resources.appendingPathComponent(Patcher.cssFileName))
+
+        var patcher = makePatcher()
+        patcher.resourcesDirectory = resources
+        let live = support.appendingPathComponent(Patcher.cssFileName)
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        try Data("/* моё правило */\n\(Patcher.cssMarkerStart)\nbody{color:blue}\n\(Patcher.cssMarkerEnd)\n/* и ещё моё */\n".utf8)
+            .write(to: live)
+
+        try patcher.installLiveFiles(progress: { _ in })
+        let text = try String(contentsOf: live, encoding: .utf8)
+        XCTAssertEqual(text, "/* моё правило */\n\(Patcher.cssMarkerStart)\nbody{color:red}\n\(Patcher.cssMarkerEnd)\n/* и ещё моё */\n")
+    }
+
+    private func writeInstalledRecord(_ patcher: ClaudePatcher, headerSHA256: String, loaderVersion: Int?, mainPath: String) throws {
+        var record: [String: Any] = [
+            "appPath": patcher.appURL.path,
+            "version": try patcher.appVersion(),
+            "headerSHA256": headerSHA256,
+            "mainPath": mainPath,
+            "at": ISO8601DateFormatter().string(from: Date()),
+        ]
+        if let loaderVersion = loaderVersion { record["loaderVersion"] = loaderVersion }
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]).write(to: patcher.installedURL, options: .atomic)
+    }
+
     func testRestoreReturnsOriginalBytes() throws {
         let patcher = makePatcher()
         _ = try patcher.install()
@@ -117,9 +226,24 @@ final class LoaderTests: XCTestCase {
     /// Умолчания claude.json: поля по бокам — 5 px (решение Элвиса 04.09, вопрос 4 макета WF14).
     /// Та же цифра лежит в `LiveStyle.defaultSidePadding` (таргет ClaudeAX его не видит),
     /// в `claude-patch/claude.json` и в `DEFAULTS` файла `patch-claude.mjs` — мелочь М6 критика.
+    /// Ширина окна — 280 (WF45, задача #5751): на 360 две плитки раскладок из четырёх серые.
     func testConfigDefaultsCarryFivePixelSidePadding() {
         XCTAssertEqual(Patcher.configDefaults["sidePadding"], 5)
-        XCTAssertEqual(Patcher.configDefaults["minWindowWidth"], 360)
+        XCTAssertEqual(Patcher.configDefaults["minWindowWidth"], 280)
+    }
+
+    /// Задача #5723: слияние claude.css — приложение владеет только блоком между маркерами.
+    func testMergeCSSOwnsOnlyItsBlock() {
+        let block = "\(Patcher.cssMarkerStart)\nbody{color:red}\n\(Patcher.cssMarkerEnd)"
+        // Живого файла нет — кладём файл из бандла целиком.
+        XCTAssertEqual(Patcher.mergeCSS(bundled: block + "\n", live: nil), block + "\n")
+        // Маркеров в живом файле нет — блок дописывается в конец, чужие строки целы.
+        XCTAssertEqual(Patcher.mergeCSS(bundled: block + "\n", live: "/* моё */\n"), "/* моё */\n" + block + "\n")
+        // В бандле блока нет — живой файл не трогаем вовсе.
+        XCTAssertEqual(Patcher.mergeCSS(bundled: "/* без блока */\n", live: "/* моё */\n"), "/* моё */\n")
+        // Блок задвоился: мусор от первого маркера до последнего вырезаем, блок пишем в конец.
+        let doubled = "/* моё */\n\(Patcher.cssMarkerStart)\nx{}\n\(Patcher.cssMarkerEnd)\n\(Patcher.cssMarkerStart)\ny{}\n\(Patcher.cssMarkerEnd)\n"
+        XCTAssertEqual(Patcher.mergeCSS(bundled: block + "\n", live: doubled), "/* моё */\n" + block + "\n")
     }
 
     func testLoaderMarkersAreVersionSeven() {
