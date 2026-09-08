@@ -19,6 +19,10 @@ struct ChatPage: Equatable {
     /// Папка чипа над пустым полем ввода — её страница отдаёт ТОЛЬКО у главного окна и
     /// только на домашнем экране (план WF37 C1); во всех остальных случаях nil.
     let folder: String?
+    /// Что страница говорит о доезде переноса «Обкэшить» (`status().cashout.delivery`,
+    /// задача #5779): `"ждём"`, `"вставлено"` или `"отказ: <причина>"`. nil — страницу об
+    /// этом не спрашивали (круг ушёл без `cash`), сказать ей нечего или она промолчала.
+    let cashout: String?
     /// Когда пришёл круг, в котором страница ответила.
     let at: Date
 
@@ -26,13 +30,14 @@ struct ChatPage: Equatable {
     /// остались как были (критик, мелочь 1 плана WF37). Автоматический memberwise-init для
     /// `let` со значением по умолчанию Swift не заводит — отсюда свой.
     init(kind: Kind, chat: String?, title: String, path: String = "", store: String,
-         folder: String? = nil, at: Date) {
+         folder: String? = nil, cashout: String? = nil, at: Date) {
         self.kind = kind
         self.chat = chat
         self.title = title
         self.path = path
         self.store = store
         self.folder = folder
+        self.cashout = cashout
         self.at = at
     }
 }
@@ -123,6 +128,13 @@ final class ChatProbe {
     /// Потолок длины папки из ответа: путь приходит из чужой страницы, и складывать в поле
     /// команды что попало нельзя.
     static let folderLimit = 1024
+    /// Потолок длины слова о доезде переноса: строку пишет страница, и в плашку Элвису
+    /// уходит она же (задача #5779).
+    static let cashoutLimit = 200
+    /// Пол частоты, пока идёт перенос «Обкэшить»: донор стоит закрытым только по ответу
+    /// страницы, и ждать его прежние 15 с — это 15 с лишнего окна на экране (задача #5779).
+    /// Меньше 2 с не выйдет: общий тик приложения ровно такой.
+    static let cashoutInterval: TimeInterval = 4
     /// Ответ главного окна старше — берём чат из `status.json` (решение 8 плана WF29).
     /// Держать его дольше круга нельзя (находка 1 проверки WF29): переключили чат в главном
     /// окне — `status.json` знает об этом через 2 с, а карта probe обновится в лучшем случае
@@ -152,6 +164,11 @@ final class ChatProbe {
     /// Тумблер «🗂 Цвет по проекту»: выключен — канал не трогаем вовсе. Живьём его вешает
     /// `ClaudeAXController` на `ProjectPaint.enabled`.
     var isEnabled: () -> Bool = { true }
+    /// Идёт ли перенос «Обкэшить» (задача #5779). Пока идёт: канал работает даже при
+    /// выключенном тумблере (доезд текста дороже покраски), спрашиваем чаще и просим у
+    /// страниц ещё одно поле — чем кончилась вставка. Живьём вешает `ClaudeAXController`
+    /// на `ClaudeActions.cashoutPending`.
+    var isCashoutPending: () -> Bool = { false }
 
     private var answers: [ChatPage] = []
     private var answeredAt: Date?
@@ -302,9 +319,12 @@ final class ChatProbe {
     func tick(windowTitles: [String], indexRevision: Int) {
         let at = now()
         // Тумблер выключен — ни записи, ни чтения: probe остаётся инструментом гейта.
-        // Исключение одно — живое требование (задача #5770): о чатах окон спросили по делу,
-        // и полминуты канал работает как при включённом тумблере.
-        guard isEnabled() || isDemanded(at) else {
+        // Исключения два: живое требование (задача #5770) — о чатах окон спросили по делу,
+        // и полминуты канал работает как при включённом тумблере; и идущий перенос
+        // «Обкэшить» (#5779) — по ответу страницы закрывается окно Элвиса с его текстом,
+        // и молчать тут нельзя ни при каком тумблере.
+        let cash = isCashoutPending()
+        guard isEnabled() || isDemanded(at) || cash else {
             channel = .off
             return
         }
@@ -315,7 +335,7 @@ final class ChatProbe {
         // Повод запоминаем ТОЛЬКО вместе с вопросом: окно открылось, пока шёл прошлый круг
         // или пока канал держал агент, — повод обязан дожить до первого нашего вопроса.
         guard reason(titles: sorted, revision: indexRevision, unknown: unknown, at: at),
-              claim(at), ask(scan: unknown, at: at) else { return }
+              claim(at), ask(scan: unknown, cash: cash, at: at) else { return }
         titles = sorted
         revision = indexRevision
         started = true
@@ -341,9 +361,14 @@ final class ChatProbe {
         // папку там меняют молча, и о смене чипа мы узнаём только следующим кругом.
         // Признак берём из своей же карты — нового параметра у тика нет.
         let home = ChatProbe.isMainAtHome(pages, at: at)
-        let floor = home ? ChatProbe.homeInterval : ChatProbe.askInterval
+        let cash = isCashoutPending()
+        let floor = cash ? ChatProbe.cashoutInterval
+            : (home ? ChatProbe.homeInterval : ChatProbe.askInterval)
         if let wrote = lastWriteAt, at.timeIntervalSince(wrote) < floor { return false }
         if !started { return true }
+        // Идущий перенос — повод сам по себе, как и домашний экран: ни заголовки окон, ни
+        // состав чатов от того, что текст лёг в поле, не меняются (задача #5779).
+        if cash { return true }
         // Домашний экран — повод сам по себе: ни заголовки окон, ни состав чатов при смене
         // папки чипа не меняются, и спросить об этом больше некому.
         if home { return true }
@@ -412,7 +437,12 @@ final class ChatProbe {
     /// по прежнему правилу 10 минут.
     static func isOwnScript(_ text: String) -> Bool {
         guard let nonce = markNonce(text) else { return false }
-        return text == script(nonce: nonce, scan: false) || text == script(nonce: nonce, scan: true)
+        for scan in [false, true] {
+            for cash in [false, true] where text == script(nonce: nonce, scan: scan, cash: cash) {
+                return true
+            }
+        }
+        return false
     }
 
     /// Круг из первой строки (`// myclaude-chats v1 <nonce>`). Метка не с начала строки, хвост
@@ -444,9 +474,9 @@ final class ChatProbe {
 
     /// Спросить страницы. Запись не удалась (папки нет, прав нет) — считаем, что не спросили:
     /// повод останется, и ближайший тик попробует снова.
-    private func ask(scan: Bool, at: Date) -> Bool {
+    private func ask(scan: Bool, cash: Bool = false, at: Date) -> Bool {
         let nonce = ChatProbe.makeNonce(at: at, random: random())
-        let text = ChatProbe.script(nonce: nonce, scan: scan)
+        let text = ChatProbe.script(nonce: nonce, scan: scan, cash: cash)
         guard files.writeScript(text) else { return false }
         lastScript = text
         lastStamp = files.scriptInfo()?.stamp
@@ -460,8 +490,27 @@ final class ChatProbe {
     /// Скрипт для `probe.js`. Первая строка — метка владения, дальше одна проверка «наша ли
     /// это страница» и один вызов `window.__myclaude.chats()`. Ничего не пишет и ничего
     /// не красит: канал общий с гейтом, и побочные действия тут недопустимы.
-    static func script(nonce: String, scan: Bool) -> String {
+    ///
+    /// `cash` (задача #5779) добавляет к ответу слепок `status().cashout` — что страница
+    /// говорит о доезде переноса «Обкэшить». Просим его только пока перенос идёт: `status()`
+    /// считается на каждой из четырёх десятков страниц, и платить за него в обычном круге
+    /// незачем. Обычный круг при этом остался ПОБАЙТНО прежним: иначе первый запуск после
+    /// обновления приложения считал бы свой же вчерашний `probe.js` чужим и молчал 10 минут.
+    static func script(nonce: String, scan: Bool, cash: Bool = false) -> String {
         let miss = "{v:1,nonce:\(CommandChannel.jsonString(nonce)),kind:\"other\",store:\"skip\"}"
+        let ask = "api.chats({ scan: \(scan), nonce: \(CommandChannel.jsonString(nonce)) })"
+        let body = cash ? """
+            var answer = \(ask);
+            var cashout = null;
+            try {
+              if (typeof api.status === "function") cashout = (api.status() || {}).cashout || null;
+            } catch (e) {}
+            return Promise.resolve(answer).then(function (r) {
+              return (r && typeof r === "object") ? Object.assign({}, r, { cashout: cashout }) : r;
+            });
+        """ : """
+            return \(ask);
+        """
         return """
         \(mark) \(nonce)
         // Пишет PimpMyClaude: спрашивает у страницы, какой в ней чат (план WF29).
@@ -470,7 +519,7 @@ final class ChatProbe {
           try {
             var api = window.__myclaude;
             if (!api || typeof api.chats !== "function") return \(miss);
-            return api.chats({ scan: \(scan), nonce: \(CommandChannel.jsonString(nonce)) });
+        \(body)
           } catch (e) {
             return \(miss);
           }
@@ -522,9 +571,23 @@ final class ChatProbe {
                                   // у попапа и чужой страницы её и не бывает, а поверить
                                   // чужой строке значило бы покрасить окно чужим проектом.
                                   folder: kind == .main ? folderPath(result["folder"]) : nil,
+                                  cashout: cashoutWord(result["cashout"]),
                                   at: at))
         }
         return (pages, themes)
+    }
+
+    /// Слово страницы о доезде переноса (задача #5779). Контракт со страницей один:
+    /// `status().cashout` — объект, и в поле `delivery` лежит одно из трёх слов — `"ждём"`,
+    /// `"вставлено"`, `"отказ: <причина>"` (`inject.js`, раздел 12). Поля нет, оно не строка,
+    /// пустое или длиннее потолка — nil, и приложение считает, что страница ничего не
+    /// сказала: донор в этом случае НЕ закрывается вовсе.
+    static func cashoutWord(_ value: Any?) -> String? {
+        guard let map = value as? [String: Any],
+              let said = (map["delivery"] as? String)?
+                  .trimmingCharacters(in: .whitespacesAndNewlines),
+              !said.isEmpty, said.count <= cashoutLimit else { return nil }
+        return said
     }
 
     /// Папка из ответа страницы: абсолютный путь и не длиннее `folderLimit`. Всё прочее —

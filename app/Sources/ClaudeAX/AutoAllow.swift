@@ -23,15 +23,21 @@ final class AutoAllow {
         .prefix("Allow once"), .exact("Allow"), .prefix("Allow for this"),
         .prefix("Allow always"), .prefix("Yes, allow"),
     ]
-    /// Заголовки диалогов, которые НИКОГДА не подтверждаем: удаление, необратимое, деньги
-    /// и чужой мир снаружи (слово Элвиса по странице ревизии, вариант A вопроса 7 — #5736).
-    /// Список короткий и живёт в коде: настроек и панелей у него нет. Сравнение — вхождение
-    /// подстроки в заголовок диалога, обе стороны в нижнем регистре (`isBlocked`).
+    /// Что НИКОГДА не подтверждаем: удаление и необратимое, деньги, внешние сервисы (слово
+    /// Элвиса по странице ревизии, вариант A вопроса 7 — #5736). Список короткий и живёт в
+    /// коде: настроек и панелей у него нет.
+    ///
+    /// Сравнение — с НАЧАЛОМ команды, которую диалог подтверждает (`action(of:)` + `isBlocked`),
+    /// а не с любым местом заголовка. До #5779 слово ловилось где угодно, и «Claude wants to
+    /// read refunds.md» глушил авто-Allow на ровном месте: у VkusnoffKz оплаты, счета и
+    /// возвраты — это имена файлов в каждом втором вопросе. Теперь ловятся команды (`rm -rf …`,
+    /// `delete from …`) и имена инструментов (`payment_create`), а хвосты путей — нет.
+    /// «force push» из списка ушёл: команда всегда начинается с `git push`.
     /// Заголовок диалога не опознан (`heading` вернул пустую строку) — жмём, как раньше:
     /// иначе авто-Allow замолчал бы на любой незнакомой разметке.
-    var blockHeadingPatterns: [String] = [
-        "rm -rf", "rm -r ", "delete", "drop table", "drop database",
-        "git push", "force push", "payment", "refund", "invoice",
+    var blockActionPatterns: [String] = [
+        "rm ", "sudo rm", "delete", "drop table", "drop database",
+        "git push", "payment", "refund", "invoice",
     ]
 
     private let app: ClaudeApp
@@ -96,7 +102,7 @@ final class AutoAllow {
             cut = cut || found.timedOut
             for hit in found.hits {
                 let head = AutoAllow.heading(of: hit.element)
-                if AutoAllow.isBlocked(heading: head, patterns: blockHeadingPatterns) {
+                if AutoAllow.isBlocked(heading: head, patterns: blockActionPatterns) {
                     // Не жмём и говорим, почему: диалог остаётся Элвису, а молчаливого
                     // «ничего не происходит» больше нет (#5736).
                     if head != lastBlockedHeading {
@@ -122,12 +128,56 @@ final class AutoAllow {
         return nil
     }
 
-    /// Диалог из списка исключений? Чистая, её и гоняют тесты. Регистр не важен: заголовок
-    /// приходит из разметки Claude, а список написан строчными.
+    /// Обёртка вопроса вокруг действия: её снимаем, чтобы осталось само действие.
+    /// Порядок важен — длинная обёртка идёт раньше своей короткой части.
+    static let actionWrappers = [
+        "allow claude to ", "claude wants to ", "do you want to ", "would you like to ",
+        "let claude ", "allow ", "confirm ", "run ", "execute ", "use ", "call ",
+    ]
+    /// «… to run », «… wants to use » — после этих слов начинается сама команда, даже если
+    /// перед ними стоит имя инструмента («Allow Bash to run …»).
+    static let actionMarkers = [" to run ", " to use ", " to execute ", " to call ", " to launch "]
+    /// Одно действие бывает цепочкой: `cd build && rm -rf *` — опасна вторая команда, и
+    /// начало у неё своё.
+    static let commandSeparators = CharacterSet(charactersIn: ";|&`\n")
+
+    /// Что диалог на самом деле подтверждает, без вопросительной обёртки и в нижнем регистре:
+    /// «Allow Bash to run rm -rf build?» → «rm -rf build», «Claude wants to edit invoice.md» →
+    /// «edit invoice.md». Чистая, её и гоняют тесты.
+    static func action(of heading: String) -> String {
+        var text = heading.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        while let last = text.last, last == "?" || last == "." || last == "!" { text.removeLast() }
+        // Хвост после САМОГО ПОЗДНЕГО признака команды: «allow claude to use bash to run rm …».
+        var cut: String.Index?
+        for marker in actionMarkers {
+            guard let found = text.range(of: marker, options: .backwards) else { continue }
+            if cut == nil || found.upperBound > cut! { cut = found.upperBound }
+        }
+        if let cut = cut {
+            text = String(text[cut...])
+        } else {
+            // Обёртки снимаются слоями: «allow run rm -rf x» → «run rm -rf x» → «rm -rf x».
+            for _ in 0..<3 {
+                guard let wrapper = actionWrappers.first(where: { text.hasPrefix($0) }) else { break }
+                text.removeFirst(wrapper.count)
+            }
+        }
+        return text.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Диалог из списка исключений? Чистая, её и гоняют тесты. Сравнивается НАЧАЛО команды
+    /// (`action(of:)`), а не любое место заголовка: иначе имя файла (`refunds.md`,
+    /// `delete-old.sql`) глушило бы авто-Allow без всякой причины (#5779).
+    /// Регистр не важен: заголовок приходит из разметки Claude, список написан строчными.
     static func isBlocked(heading: String, patterns: [String]) -> Bool {
         guard !heading.isEmpty, !patterns.isEmpty else { return false }
-        let head = heading.lowercased()
-        return patterns.contains { head.contains($0.lowercased()) }
+        let wanted = patterns.map { $0.lowercased() }
+        for command in action(of: heading).components(separatedBy: commandSeparators) {
+            let clean = command.trimmingCharacters(in: .whitespaces)
+            guard !clean.isEmpty else { continue }
+            if wanted.contains(where: { clean.hasPrefix($0) }) { return true }
+        }
+        return false
     }
 
     // MARK: - обход дерева

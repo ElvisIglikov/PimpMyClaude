@@ -189,7 +189,8 @@ final class ClaudeActions {
     /// значит, что откроется новое окно и оно заменит полностью старое»): рамку донора
     /// снимаем сейчас, пока окно живо, и его угол уходит в команду точкой — окно рождается
     /// сразу на месте старого (заодно уходит обрезка `popoutOrigin` по главному экрану).
-    /// Донор закрывается не здесь, а когда новое окно появилось на экране (`cashoutTick`).
+    /// Донор закрывается не здесь и не по факту появления окна, а когда страница подтвердила
+    /// доезд текста (`cashoutTick`, #5779).
     private func cashoutNewWindow(from window: AXUIElement, chat: String?) {
         let project = chat.flatMap { projectForChat($0) }
         if let project = project { onProjectUsed?(project) }
@@ -199,10 +200,11 @@ final class ClaudeActions {
                   transfer: true)
     }
 
-    // MARK: - замена окна на «Обкэшить» (#5768)
+    // MARK: - замена окна на «Обкэшить» (#5768; закрытие по доезду — #5779)
 
     /// Работа «Обкэшить»: чьё место занимает новое окно и какие окна были ДО ⌘N — по ним
-    /// новое окно и опознаётся (по имени нельзя: чат ещё не переименован).
+    /// отсеиваются чужие окна, родившиеся в те же секунды (окно от канала «Пимп», вынос
+    /// другого чата, разворот свёрнутого).
     private struct CashoutJob {
         let donor: CGWindowID
         let frame: CGRect
@@ -212,18 +214,43 @@ final class ClaudeActions {
 
     private var cashoutJob: CashoutJob?
 
-    /// Сколько ждём новое окно: столько же, сколько «🪟 Новое окно» — цепочка одна и та же
-    /// (страница создаёт чат, отправляет первое сообщение и выносит его окном).
-    static let cashoutWaitSeconds: TimeInterval = 40
+    /// Идёт ли перенос прямо сейчас. По нему канал probe работает при любом тумблере и
+    /// спрашивает страницы чаще (`ChatProbe.isCashoutPending`): пока перенос в пути, ответ
+    /// страницы решает судьбу окна с текстом Элвиса.
+    var cashoutPending: Bool { cashoutJob != nil }
 
-    /// Что делать на тике замены.
-    enum CashoutStep: Equatable {
-        /// Новое окно ещё не появилось — ждём.
-        case wait
-        /// Появилось: этому окну ставим рамку донора, и только потом закрываем донора.
-        case replace(CGWindowID)
-        /// Вышло время — бросаем работу и НИЧЕГО не закрываем.
-        case giveUp
+    /// Сколько ждём доезда текста. Не «на глаз», а СУММА пауз худшего честного хода цепочки
+    /// (правило ElvisOS, #5785): 0,1 с фокус → 0,6 с очередь канала → 0,5 с опрос
+    /// `command.json` лоадером → 0,8 с до ⌘N → 95 с сторож цепочки «Нового окна» на странице
+    /// (`NEW_WINDOW_GUARD_MS`: домашний экран 5 + папка 10 + отправка 3 + сессия 15 + строка
+    /// сайдбара 21,5 + имя 7,5 + возврат 1, плюс её собственный запас) → ~6,9 с на вставку с
+    /// подтверждением в новом окне (сторож 0,3 с + ожидание чужого черновика 1,8 с + два
+    /// способа вставки, 12 и 20 повторов по 150 мс) → ~9 с на круг probe (пол частоты 4 с +
+    /// опрос лоадера 2 с + обход страниц + общий тик 2 с). Итого 113 с, округлено вверх.
+    /// Всё это время донор ЖИВ: цена ожидания — лишнее окно на экране, цена спешки —
+    /// потерянный текст.
+    static let cashoutWaitSeconds: TimeInterval = 120
+
+    /// Пауза между рамкой нового окна и закрытием донора: свежее окно нельзя спрашивать
+    /// сразу после смены рамки — её ставит оконный сервер, а Electron перерисовывает окно
+    /// своим ходом (урок ElvisOS, #5784).
+    static let cashoutSettlePause: TimeInterval = 0.35
+
+    /// Словарь доезда со страницей (`status().cashout.delivery`, `inject.js` раздел 12):
+    /// `"ждём"` — перенос в пути, `"вставлено"` — текст лёг в поле, `"отказ: <причина>"` —
+    /// приговор с причиной. Ничего другого приложение за конец работы не считает.
+    static let cashoutLanded = "вставлено"
+    static let cashoutRefusedPrefix = "отказ:"
+
+    /// Что говорят страницы о доезде переноса.
+    enum CashoutDelivery: Equatable {
+        /// Никто ещё не сказал ни «доехало», ни «не доедет» — ждём.
+        case waiting
+        /// Текст лёг в поле; заголовок — у той страницы, которая это сказала (она и есть
+        /// адресат переноса, чужая страница такого ответа дать не может).
+        case landed(title: String)
+        /// Приговор с причиной: закрывать нечего и незачем.
+        case refused(String)
     }
 
     /// Куда рождать новое окно: РОВНО в угол донора, без уступа и без обрезки по экрану —
@@ -234,12 +261,41 @@ final class ClaudeActions {
         return (Int(frame.origin.x.rounded()), Int(frame.origin.y.rounded()))
     }
 
-    /// Шаг замены — чистый, его и гоняют тесты: появилось окно, которого до ⌘N не было, —
-    /// заменяем; не появилось за `limit` — бросаем.
-    static func cashoutStep(before: Set<CGWindowID>, now: [CGWindowID], since: TimeInterval,
-                            limit: TimeInterval = cashoutWaitSeconds) -> CashoutStep {
-        if let fresh = now.first(where: { !before.contains($0) }) { return .replace(fresh) }
-        return since >= limit ? .giveUp : .wait
+    /// Приговор по ответам страниц — чистый, его и гоняют тесты. «Вставлено» сильнее любого
+    /// отказа: отказ мог прийти от СОСЕДНЕЙ страницы, которой перенос не адресован.
+    ///
+    /// `since` — начало работы: ответы круга, пришедшего РАНЬШЕ нажатия, о нашем переносе
+    /// сказать ничего не могут (страница тогда ещё не видела записи), а сказать «вставлено»
+    /// о прошлом переносе — могут. Такой круг мы не слушаем вовсе (находка гейта WF50):
+    /// иначе два «Обкэшить» подряд закрывали бы второго донора по ответу про первый.
+    static func cashoutDelivery(pages: [ChatPage], since: Date? = nil) -> CashoutDelivery {
+        let pages = since.map { start in pages.filter { $0.at >= start } } ?? pages
+        for page in pages where page.cashout == cashoutLanded {
+            return .landed(title: page.title.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        for page in pages {
+            guard let said = page.cashout, said.hasPrefix(cashoutRefusedPrefix) else { continue }
+            let why = said.dropFirst(cashoutRefusedPrefix.count)
+                .trimmingCharacters(in: .whitespaces)
+            return .refused(why.isEmpty ? MenuModel.cashoutNoAnswerReason : why)
+        }
+        return .waiting
+    }
+
+    /// Наше ли это окно (#5779): среди окон, которых до ⌘N не было, ровно одно с заголовком
+    /// той страницы, что назвалась адресатом переноса. Заголовок пустой, совпадений ноль или
+    /// больше одного — nil: чужое окно, родившееся в те же секунды (окно канала «Пимп»,
+    /// вынос другого чата, служебные окна Electron 800×600 без заголовка), не должно ни
+    /// занимать рамку донора, ни закрывать его.
+    static func cashoutFresh(title: String, before: Set<CGWindowID>,
+                             windows: [(id: CGWindowID, title: String)]) -> CGWindowID? {
+        let wanted = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !wanted.isEmpty else { return nil }
+        let hits = windows.filter {
+            !before.contains($0.id)
+                && $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == wanted
+        }
+        return hits.count == 1 ? hits.first?.id : nil
     }
 
     /// Закрывать ли донора: только когда новое окно правда другое и донор ещё на экране
@@ -247,6 +303,11 @@ final class ClaudeActions {
     static func cashoutCloses(donor: CGWindowID, fresh: CGWindowID, onScreen: [CGWindowID]) -> Bool {
         donor != fresh && onScreen.contains(donor)
     }
+
+    /// Что страницы сказали о доезде переноса — карта probe (задача #5779). Живьём вешает
+    /// `ClaudeAXController`; без него ответов нет вовсе, и донор не закрывается НИКОГДА:
+    /// это и есть безопасная деградация — текст Элвиса дороже лишнего окна на экране.
+    var cashoutAnswers: () -> [ChatPage] = { [] }
 
     /// Запомнить работу до ⌘N: номера окон Quartz, номер донора и его рамка. Донора не нашли
     /// в списке окон (AX не отдал пары) — работы нет, и «Обкэшить» ведёт себя как до #5768.
@@ -259,35 +320,79 @@ final class ClaudeActions {
                                 before: Set(windows.map { $0.id }), startedAt: clock())
     }
 
-    /// Общий тик 2 с, пока идёт замена (своего таймера у неё нет — зовёт `ClaudeAXController`).
-    /// Появилось новое окно — ставим ему рамку донора и ТОЛЬКО ПОТОМ закрываем донора;
-    /// не появилось за 40 с — бросаем работу и ничего не закрываем.
+    /// Общий тик 2 с, пока идёт перенос (своего таймера у него нет — зовёт `ClaudeAXController`).
+    ///
+    /// Донор закрывается ТОЛЬКО по подтверждению доезда (#5779): между «окно появилось» и
+    /// «текст лёг в поле» у страницы пять путей отказа, и закрытие по факту появления окна
+    /// стоило бы Элвису текста навсегда. Пришёл приговор — не закрываем ничего и говорим
+    /// причину; не пришло ничего за потолок — тоже не закрываем.
     func cashoutTick(at: Date? = nil) {
         guard let job = cashoutJob else { return }
         let now = at ?? clock()
-        let windows = pimpWindows()
-        switch ClaudeActions.cashoutStep(before: job.before, now: windows.map { $0.id },
-                                         since: now.timeIntervalSince(job.startedAt)) {
-        case .wait:
-            return
-        case .giveUp:
+        switch ClaudeActions.cashoutDelivery(pages: cashoutAnswers(), since: job.startedAt) {
+        case .refused(let why):
+            // Приговор: доезда не будет. Молча выходить нельзя — это «кнопка не работает»
+            // (урок ElvisOS, #5784).
             cashoutJob = nil
-            onWarning?(MenuModel.cashoutNoWindowNotice)
-        case .replace(let fresh):
+            onWarning?(MenuModel.cashoutKeptNotice(why))
+        case .landed(let title):
+            let windows = pimpWindows()
+            guard let fresh = ClaudeActions.cashoutFresh(
+                title: title, before: job.before,
+                windows: windows.map { (id: $0.id, title: $0.title) }) else {
+                // Текст доехал, а окна с этим заголовком на экране ещё нет (AX отдаёт имя
+                // не сразу) — ждём до потолка и донора не трогаем.
+                cashoutGiveUp(job, now: now, windows: windows)
+                return
+            }
             cashoutJob = nil
-            guard let born = windows.first(where: { $0.id == fresh }) else { return }
-            ClaudeActions.setFrame(born.window, job.frame)
-            onWindowsMoved?()
-            guard ClaudeActions.cashoutCloses(donor: job.donor, fresh: fresh,
-                                              onScreen: windows.map { $0.id }),
-                  let donor = windows.first(where: { $0.id == job.donor }) else { return }
-            AX.close(donor.window)
-            // Отказ страницы («переносить было нечего») приложению не виден: донора мы всё
-            // равно закрываем — чат из списка слева никуда не делся, теряется только пустой
-            // черновик, — и говорим об этом прямо.
-            onWarning?(MenuModel.cashoutReplacedNotice)
+            cashoutReplace(job, fresh: fresh, windows: windows)
+        case .waiting:
+            cashoutGiveUp(job, now: now, windows: nil)
         }
     }
+
+    /// Потолок вышел — бросаем работу и говорим правду о том, чего не дождались. Донора не
+    /// трогаем ни в одном случае.
+    private func cashoutGiveUp(_ job: CashoutJob, now: Date,
+                               windows: [(id: CGWindowID, window: AXUIElement,
+                                          title: String, frame: CGRect)]?) {
+        guard now.timeIntervalSince(job.startedAt) >= ClaudeActions.cashoutWaitSeconds else { return }
+        cashoutJob = nil
+        let live = windows ?? pimpWindows()
+        let born = live.contains { !job.before.contains($0.id) }
+        onWarning?(born ? MenuModel.cashoutKeptNotice(MenuModel.cashoutNoAnswerReason)
+                        : MenuModel.cashoutNoWindowNotice)
+    }
+
+    /// Текст доехал: новое окно занимает место донора, и только потом донор закрывается.
+    /// Порядок и пауза — урок ElvisOS (#5784): исходное окно портим ПОСЛЕДНИМ действием, а
+    /// свежее окно не трогаем сразу после смены рамки.
+    private func cashoutReplace(_ job: CashoutJob, fresh: CGWindowID,
+                                windows: [(id: CGWindowID, window: AXUIElement,
+                                           title: String, frame: CGRect)]) {
+        guard let born = windows.first(where: { $0.id == fresh }) else { return }
+        AX.timeout(born.window, ClaudeActions.axWindowTimeout)
+        ClaudeActions.setFrame(born.window, job.frame)
+        onWindowsMoved?()
+        after(ClaudeActions.cashoutSettlePause) { [weak self] in
+            guard let self = self else { return }
+            let live = self.pimpWindows()
+            guard ClaudeActions.cashoutCloses(donor: job.donor, fresh: fresh,
+                                              onScreen: live.map { $0.id }),
+                  let donor = live.first(where: { $0.id == job.donor }) else { return }
+            // Кнопки закрытия у окна может не быть вовсе (Electron ещё не отдал дерево) —
+            // тогда плашка обязана сказать правду, а не «старое закрыл» (#5779, задача 3).
+            AX.timeout(donor.window, ClaudeActions.axWindowTimeout)
+            self.onWarning?(AX.close(donor.window) ? MenuModel.cashoutReplacedNotice
+                                                   : MenuModel.cashoutCloseFailedNotice)
+        }
+    }
+
+    /// Свой срок ответа окну-элементу: от элемента приложения он НЕ наследуется (замер
+    /// ElvisOS, #5784), а все вызовы AX синхронные и идут в главном потоке — зависший
+    /// Electron не должен вешать тик приложения.
+    static let axWindowTimeout: Float = 1.0
 
     /// Поля команды после id, action, at: scope, title, match?, chat? (контракт части B плана
     /// WF37, эталоны `tests/fixtures/cashout/cashout-*.json`). Главному окну уходит `match`

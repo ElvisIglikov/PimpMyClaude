@@ -94,6 +94,10 @@ public final class ClaudeAXController: ClaudeAXControlling {
         // заголовку, а заголовок попапа — снимок имени чата на момент выноса в окно (#5455).
         // Связь сиденьями, а не через `init`: `ProjectPaint` собирают напрямую тесты.
         chatProbe.isEnabled = { [weak self] in self?.projectPaint.enabled ?? false }
+        // Пока идёт перенос «Обкэшить», канал probe работает при любом тумблере и спрашивает
+        // страницы чаще: по их ответу закрывается окно Элвиса с его текстом (#5779).
+        chatProbe.isCashoutPending = { [weak self] in self?.actions.cashoutPending ?? false }
+        actions.cashoutAnswers = { [weak self] in self?.chatProbe.pages ?? [] }
         projectPaint.chatPages = { [weak self] in self?.chatProbe.pages ?? [] }
         projectPaint.chatForTitle = { [weak self] title in self?.chatProbe.chat(forTitle: title) }
         // Темы на диске (план WF35): зеркало закрепляющих команд и повод спросить probe.
@@ -407,8 +411,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
             self.projects.absorb(self.index.projects(), at: Date())
             // Канал «Пимп» — на этом же тике: запросы из любого чата лежат файлами.
             self.pimp.tick()
-            // «Обкэшить» из попапа ждёт новое окно, чтобы поставить его на место старого
-            // и закрыть старое (#5768). Работы нет — тик ничего не делает.
+            // «Обкэшить» из попапа ждёт ПОДТВЕРЖДЕНИЯ доезда текста, чтобы поставить новое
+            // окно на место старого и закрыть старое (#5768, #5779). Работы нет — тик ничего
+            // не делает. Стоит после круга probe: ответ страниц уже прочитан этим тиком.
             self.actions.cashoutTick()
             self.tickTitles = nil
         }
@@ -499,10 +504,11 @@ public final class ClaudeAXController: ClaudeAXControlling {
         autoAllow.history.map { "\($0.at)  \($0.heading)  [\($0.button)] ok=\($0.ok)" }
     }
 
-    /// Заголовки диалогов, которые авто-Allow никогда не подтверждает (M.blockHeadingPatterns).
+    /// Команды и действия, которые авто-Allow никогда не подтверждает (#5736; сравнение по
+    /// началу команды диалога, а не по всему заголовку — #5779).
     public var blockedHeadings: [String] {
-        get { autoAllow.blockHeadingPatterns }
-        set { autoAllow.blockHeadingPatterns = newValue }
+        get { autoAllow.blockActionPatterns }
+        set { autoAllow.blockActionPatterns = newValue }
     }
 
     // MARK: - хоткеи по активации Claude

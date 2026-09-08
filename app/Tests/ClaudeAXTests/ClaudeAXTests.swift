@@ -2075,30 +2075,225 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(ClaudeActions.cashoutOrigin(donor: nil).y, ClaudeActions.popoutWindowFallback.y)
     }
 
-    /// Шаг замены: пока нового окна нет — ждём, появилось — заменяем, вышли 40 с — бросаем.
-    func testCashoutStepWaitsForNewWindowThenGivesUp() {
-        let before: Set<CGWindowID> = [7, 9]
-        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [7, 9], since: 0), .wait)
-        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [7, 9], since: 39.9), .wait)
-        // Донора закрыли руками, нового окна нет — всё равно ждём, а потом бросаем.
-        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [9], since: 1), .wait)
-        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [7, 9], since: 40), .giveUp)
-        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [7, 9, 12], since: 1),
-                       .replace(12))
-        // Время вышло, но окно всё-таки родилось — замена сильнее срока.
-        XCTAssertEqual(ClaudeActions.cashoutStep(before: before, now: [7, 9, 12], since: 60),
-                       .replace(12))
-        XCTAssertEqual(ClaudeActions.cashoutWaitSeconds, 40)
+    /// Страница ещё ничего не сказала — ждём; сказала «вставлено» — закрываем; сказала
+    /// приговор — не закрываем ничего и говорим причину (#5779). Отказ СОСЕДНЕЙ страницы
+    /// («перенос не в это окно») работу не заканчивает.
+    func testCashoutWaitsForDeliveryNotForWindow() {
+        let at = Date(timeIntervalSince1970: 1_757_000_000)
+        func page(_ title: String, _ said: String?) -> ChatPage {
+            ChatPage(kind: .popout, chat: nil, title: title, store: "ok", cashout: said, at: at)
+        }
+        // Окно уже родилось и даже ответило — но пока не «вставлено», это ожидание.
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("VkusnoffKz 3", nil)]), .waiting)
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("VkusnoffKz 3", "ждём"),
+                                                             page("PimpMyClaude", "")]),
+                       .waiting)
+        // Доезд подтверждён — и заголовок берётся у той страницы, которая это сказала.
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("Гость", "ждём"),
+                                                             page("VkusnoffKz 3", "вставлено")]),
+                       .landed(title: "VkusnoffKz 3"))
+        // Приговор с причиной: доезда не будет. «Вставлено» сильнее приговора соседней страницы.
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("Гость", "отказ: поле ввода пропало")]),
+                       .refused("поле ввода пропало"))
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("Гость", "отказ: текст не попал в поле"),
+                                                             page("VkusnoffKz 3", "вставлено")]),
+                       .landed(title: "VkusnoffKz 3"))
+        // Приговор без причины всё равно называет что-то человеческое, а не пустоту.
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("Гость", "отказ:")]),
+                       .refused(MenuModel.cashoutNoAnswerReason))
+        XCTAssertEqual(ClaudeActions.cashoutLanded, "вставлено")
+        // Круг, пришедший ДО нажатия, говорит о прошлом переносе — его не слушаем вовсе
+        // (находка гейта WF50): два «Обкэшить» подряд закрывали бы второго донора по
+        // ответу про первый.
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("VkusnoffKz 3", "вставлено")],
+                                                     since: at.addingTimeInterval(1)),
+                       .waiting)
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("VkusnoffKz 3", "вставлено")],
+                                                     since: at),
+                       .landed(title: "VkusnoffKz 3"))
     }
 
-    /// Донора закрываем только после того, как новое окно появилось, и только если он ещё
-    /// на экране: не появилось — не закрываем ничего (шаг `.giveUp` до закрытия не доходит).
+    /// Потолок ожидания — СУММА пауз худшего честного хода цепочки, а не «на глаз» (#5785):
+    /// фокус, очередь канала, опрос командного файла, ⌘N, сторож цепочки на странице,
+    /// вставка с подтверждением и круг probe.
+    func testCashoutWaitCoversWholeChain() {
+        let focus = 0.1, queue = CommandChannel.minInterval, loader = 0.5, key = 0.8
+        let pageGuard = 95.0          // NEW_WINDOW_GUARD_MS в inject.js
+        // Сторож вставки 0,3 с + ожидание чужого черновика 1,8 с + два способа вставки
+        // с подтверждением (12 и 20 повторов по 150 мс).
+        let paste = 0.3 + 1.8 + 12 * 0.15 + 20 * 0.15
+        let probe = ChatProbe.cashoutInterval + 2 + 1 + 2 // пол частоты, лоадер, обход, тик
+        let honest = focus + queue + loader + key + pageGuard + paste + probe
+        XCTAssertGreaterThanOrEqual(ClaudeActions.cashoutWaitSeconds, honest,
+                                    "потолок меньше суммы пауз — Элвис получит «не доехало» раньше доезда")
+        XCTAssertEqual(ClaudeActions.cashoutWaitSeconds, 120)
+        // Прежние 40 с не покрывали даже сторожа самой цепочки.
+        XCTAssertLessThan(40, honest)
+    }
+
+    /// Наше окно — только то, чей заголовок назвала страница-адресат, и только среди окон,
+    /// которых до ⌘N не было. Чужое окно тех же секунд (канал «Пимп», вынос другого чата,
+    /// служебные окна Electron без заголовка) не занимает рамку и не закрывает донора.
+    func testCashoutFreshWindowIsOnlyOurs() {
+        let before: Set<CGWindowID> = [7, 9]
+        let windows: [(id: CGWindowID, title: String)] = [
+            (7, "VkusnoffKz 2"), (9, "PimpMyClaude"), (12, "VkusnoffKz 3"), (13, ""),
+        ]
+        XCTAssertEqual(ClaudeActions.cashoutFresh(title: "VkusnoffKz 3", before: before,
+                                                  windows: windows), 12)
+        // Окно с этим именем было и до ⌘N — оно не наше.
+        XCTAssertNil(ClaudeActions.cashoutFresh(title: "VkusnoffKz 2", before: before,
+                                                windows: windows))
+        // Служебное окно без заголовка и пустое имя адресата рамку не занимают.
+        XCTAssertNil(ClaudeActions.cashoutFresh(title: "", before: before, windows: windows))
+        // Два свежих окна с одним именем — не угадываем вовсе.
+        XCTAssertNil(ClaudeActions.cashoutFresh(title: "VkusnoffKz 3", before: before,
+                                                windows: windows + [(14, "VkusnoffKz 3")]))
+        // Заголовок ещё не доехал до AX — ждём, а не берём единственное свежее окно.
+        XCTAssertNil(ClaudeActions.cashoutFresh(title: "VkusnoffKz 3", before: before,
+                                                windows: [(7, "VkusnoffKz 2"), (12, "Claude")]))
+    }
+
+    /// Донора закрываем только после подтверждённого доезда, и только если он ещё на экране:
+    /// не доехало — не закрываем ничего.
     func testCashoutClosesDonorOnlyAfterReplacement() {
         XCTAssertTrue(ClaudeActions.cashoutCloses(donor: 7, fresh: 12, onScreen: [7, 9, 12]))
         // Элвис закрыл старое окно сам, пока шла работа.
         XCTAssertFalse(ClaudeActions.cashoutCloses(donor: 7, fresh: 12, onScreen: [9, 12]))
         // «Новым» оказался сам донор — закрывать его значит закрыть то, что только что открыли.
         XCTAssertFalse(ClaudeActions.cashoutCloses(donor: 7, fresh: 7, onScreen: [7, 9]))
+    }
+
+    /// Плашка говорит правду (#5779, задача 3): «старое закрыл» — только когда `AX.close`
+    /// правда сработал; у окна без кнопки закрытия текст другой. И у каждого отказа своя
+    /// причина: молчаливый выход = «кнопка не работает» (урок ElvisOS).
+    func testCashoutNoticesTellTheTruth() {
+        XCTAssertTrue(MenuModel.cashoutReplacedNotice.contains("Старое закрыл"))
+        XCTAssertTrue(MenuModel.cashoutCloseFailedNotice.contains("закрыть не смог"))
+        XCTAssertFalse(MenuModel.cashoutCloseFailedNotice.contains("Старое закрыл"))
+        XCTAssertEqual(MenuModel.cashoutKeptNotice("перенос протух"),
+                       "Перенос не доехал (перенос протух) — старое окно оставил как было")
+        XCTAssertTrue(MenuModel.cashoutKeptNotice(MenuModel.cashoutNoAnswerReason)
+                        .contains("не подтвердила вставку"))
+        XCTAssertTrue(MenuModel.cashoutNoWindowNotice.contains("оставил как было"))
+    }
+
+    /// Без карты probe (канал занят агентом, тумблер выключен) ответов нет — и донор не
+    /// закрывается НИКОГДА: это и есть безопасная деградация. Плюс пауза между рамкой и
+    /// закрытием — урок ElvisOS о свежем окне (#5784).
+    func testCashoutWithoutAnswersNeverCloses() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: actions.cashoutAnswers()), .waiting)
+        XCTAssertFalse(actions.cashoutPending, "работы нет — тик не должен трогать окна")
+        // Тик без работы молчит: ни плашек, ни движения окон.
+        var warnings: [String] = []
+        actions.onWarning = { warnings.append($0) }
+        actions.cashoutTick()
+        XCTAssertTrue(warnings.isEmpty)
+        XCTAssertEqual(ClaudeActions.cashoutSettlePause, 0.35)
+        XCTAssertEqual(ClaudeActions.axWindowTimeout, 1.0)
+    }
+
+    /// Канал probe спрашивает о доезде ТОЛЬКО пока идёт перенос: `status()` считается на
+    /// каждой из четырёх десятков страниц, и платить за него в обычном круге незачем (#5779).
+    func testChatProbeScriptAsksAboutCashoutOnlyWhenNeeded() {
+        let plain = ChatProbe.script(nonce: "chats-1-0001", scan: false, cash: false)
+        let asking = ChatProbe.script(nonce: "chats-1-0001", scan: false, cash: true)
+        XCTAssertFalse(plain.contains("cashout"))
+        XCTAssertFalse(plain.contains("api.status"))
+        XCTAssertTrue(asking.contains("api.status()"))
+        XCTAssertTrue(asking.contains("cashout"))
+        // Все четыре варианта скрипта остаются НАШИМИ: иначе приложение уступило бы канал
+        // самому себе и замолчало на минуту.
+        for scan in [false, true] {
+            for cash in [false, true] {
+                XCTAssertTrue(ChatProbe.isOwnScript(ChatProbe.script(nonce: "chats-1-0002",
+                                                                     scan: scan, cash: cash)))
+            }
+        }
+        XCTAssertFalse(ChatProbe.isOwnScript("\(ChatProbe.mark) chats-1-0002\nчужое"))
+
+        // Обычный круг остался ПОБАЙТНО прежним: иначе первый запуск после обновления
+        // приложения считал бы свой же вчерашний probe.js чужим и молчал 10 минут.
+        XCTAssertEqual(plain, """
+        \(ChatProbe.mark) chats-1-0001
+        // Пишет PimpMyClaude: спрашивает у страницы, какой в ней чат (план WF29).
+        // Свой probe.js на гейте? Приложение уступит: чужой свежий файл оно не переписывает.
+        (function () {
+          try {
+            var api = window.__myclaude;
+            if (!api || typeof api.chats !== "function") return {v:1,nonce:"chats-1-0001",kind:"other",store:"skip"};
+            return api.chats({ scan: false, nonce: "chats-1-0001" });
+          } catch (e) {
+            return {v:1,nonce:"chats-1-0001",kind:"other",store:"skip"};
+          }
+        })()
+
+        """)
+    }
+
+    /// Слово о доезде приезжает тем же кругом probe, что и чаты: `status().cashout.delivery`.
+    /// Чужая строка просеивается, как папка: не строка, пустая или огромная — считаем, что
+    /// страница промолчала, и донор не закрывается.
+    func testChatProbeReadsCashoutResult() {
+        XCTAssertEqual(ChatProbe.cashoutWord(["delivery": " вставлено "]), "вставлено")
+        XCTAssertNil(ChatProbe.cashoutWord(nil))
+        XCTAssertNil(ChatProbe.cashoutWord(["delivery": ""]))
+        XCTAssertNil(ChatProbe.cashoutWord(["record": true]))
+        XCTAssertNil(ChatProbe.cashoutWord("вставлено"))
+        XCTAssertNil(ChatProbe.cashoutWord(["delivery": String(repeating: "я", count: 201)]))
+
+        let json = """
+        {"at":"2026-09-08T13:00:00.000Z","results":[
+          {"id":1,"url":"about:blank","result":{"v":1,"nonce":"chats-1-0003","kind":"popout",
+           "title":"VkusnoffKz 3","store":"ok",
+           "cashout":{"record":false,"to":null,"title":null,"stampedAt":null,"refusal":null,
+                      "delivery":"вставлено"}}}]}
+        """
+        let pages = ChatProbe.parse(json.data(using: .utf8), nonce: "chats-1-0003",
+                                    at: Date(timeIntervalSince1970: 1_757_000_000))
+        XCTAssertEqual(pages.count, 1)
+        XCTAssertEqual(pages.first?.cashout, "вставлено")
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: pages), .landed(title: "VkusnoffKz 3"))
+    }
+
+    /// Пока идёт перенос, канал probe работает при ЛЮБОМ тумблере: по ответу страницы
+    /// закрывается окно Элвиса с его текстом, и молчать тут нельзя (#5779).
+    func testChatProbeWorksWhileCashoutPending() {
+        var script: String?
+        var writes = 0
+        var now = Date(timeIntervalSince1970: 1_757_100_000)
+        let files = ChatProbeFiles(scriptInfo: { script == nil ? nil : ("\(writes)", now) },
+                                   readScript: { script },
+                                   writeScript: { text in
+                                       script = text
+                                       writes += 1
+                                       return true
+                                   },
+                                   resultInfo: { nil }, readResult: { nil })
+        let probe = ChatProbe(files: files, now: { now }, random: { 7 })
+        var pending = false
+        probe.isEnabled = { false }
+        probe.isCashoutPending = { pending }
+
+        probe.tick(windowTitles: ["VkusnoffKz 2"], indexRevision: 1)
+        XCTAssertEqual(writes, 0, "тумблер выключен и переноса нет — канала не касаемся")
+
+        pending = true
+        probe.tick(windowTitles: ["VkusnoffKz 2"], indexRevision: 1)
+        XCTAssertEqual(writes, 1)
+        XCTAssertTrue(script?.contains("cashout") == true, "круг обязан спросить о доезде")
+        // Свой пол частоты: прежние 15 с — это 15 с лишнего окна на экране.
+        XCTAssertEqual(ChatProbe.cashoutInterval, 4)
+        XCTAssertLessThan(ChatProbe.cashoutInterval, ChatProbe.askInterval)
+
+        now = now.addingTimeInterval(60)
+        pending = false
+        probe.tick(windowTitles: ["VkusnoffKz 2"], indexRevision: 1)
+        XCTAssertEqual(writes, 1, "перенос кончился — канал снова молчит по тумблеру")
     }
 
     // MARK: - «Новый чат», ⌘N и первое сообщение (#5734, #5735, #5767)
@@ -2214,12 +2409,16 @@ final class ClaudeAXTests: XCTestCase {
     /// подтверждает — диалог остаётся Элвису. Регистр не важен, незнакомый заголовок жмём,
     /// как раньше (иначе авто-Allow замолчал бы на любой новой разметке).
     func testAutoAllowNeverConfirmsDangerousDialogs() {
-        let list = AutoAllow(app: ClaudeApp(), hud: HUD()).blockHeadingPatterns
+        let list = AutoAllow(app: ClaudeApp(), hud: HUD()).blockActionPatterns
         XCTAssertFalse(list.isEmpty, "предохранитель авто-Allow снова выключен")
         for heading in ["Allow Bash to run rm -rf build?",
                         "Claude wants to run git push --force",
                         "Confirm PAYMENT of 120 USD?",
-                        "Allow DELETE of 12 files?"] {
+                        "Allow DELETE of 12 files?",
+                        // Опасное второе в цепочке — начало у него своё.
+                        "Allow Bash to run cd build && rm -rf *?",
+                        // Инструмент внешнего сервиса зовётся своим именем.
+                        "Allow Claude to use refund_create?"] {
             XCTAssertTrue(AutoAllow.isBlocked(heading: heading, patterns: list), heading)
         }
         for heading in ["Allow Read of package.swift?",
@@ -2231,6 +2430,38 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertFalse(AutoAllow.isBlocked(heading: "rm -rf /", patterns: []))
         XCTAssertTrue(TextPattern.prefix("Allow once").matches("Allow once"))
         XCTAssertFalse(TextPattern.exact("Allow").matches("Allow always"))
+    }
+
+    /// #5779, задача 2: сравниваем не со ВСЕМ заголовком, а с началом команды. Имена файлов
+    /// (`refunds.md`, `delete-old.sql`, `invoice.ts`) авто-Allow больше не глушат — у
+    /// VkusnoffKz оплаты и возвраты в каждом втором вопросе, и молчал он там без причины.
+    func testAutoAllowIgnoresDangerousWordsInFileNames() {
+        let list = AutoAllow(app: ClaudeApp(), hud: HUD()).blockActionPatterns
+        for heading in ["Claude wants to read refunds.md",
+                        "Claude wants to edit invoice.ts",
+                        "Allow Read of delete-old-orders.sql?",
+                        "Allow Bash to run cat payments/README.md?",
+                        "Claude wants to write src/payment-form.tsx"] {
+            XCTAssertFalse(AutoAllow.isBlocked(heading: heading, patterns: list), heading)
+        }
+        // «force push» из списка ушёл — команда всегда начинается с `git push`.
+        XCTAssertFalse(list.contains("force push"))
+        XCTAssertTrue(list.contains("git push"))
+    }
+
+    /// Что именно подтверждает диалог: обёртка вопроса и имя инструмента снимаются, остаётся
+    /// команда. По ней и идёт сравнение (#5779).
+    func testAutoAllowActionDropsQuestionWrapper() {
+        XCTAssertEqual(AutoAllow.action(of: "Allow Bash to run rm -rf build?"), "rm -rf build")
+        XCTAssertEqual(AutoAllow.action(of: "Claude wants to run git push --force"),
+                       "git push --force")
+        XCTAssertEqual(AutoAllow.action(of: "Claude wants to edit invoice.md"), "edit invoice.md")
+        XCTAssertEqual(AutoAllow.action(of: "Confirm PAYMENT of 120 USD?"), "payment of 120 usd")
+        XCTAssertEqual(AutoAllow.action(of: "Allow run rm -rf x"), "rm -rf x")
+        XCTAssertEqual(AutoAllow.action(of: "Allow Claude to use bash to run rm -rf x?"),
+                       "rm -rf x", "берём самый поздний признак команды")
+        XCTAssertEqual(AutoAllow.action(of: "Allow DELETE of 12 files?"), "delete of 12 files")
+        XCTAssertEqual(AutoAllow.action(of: ""), "")
     }
 
     /// Обход дерева, оборванный по времени, теперь виден: до кнопки могли просто не дойти,
