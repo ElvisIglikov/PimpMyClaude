@@ -1,0 +1,69 @@
+{
+ "workflow": "WF42 — Ревизор ⚪PimpMyClaude",
+ "plan": "docs/plan-wf42-2026-09-08.md",
+ "branch": "main",
+ "revision": "a116786",
+ "status": "финиш",
+ "orchestrator": "Opus 5 max",
+ "models_note": "Элвис 08.09.2026 утро: «Fable подписка заканчивается, в этом чате оркестратором будет Опус 5 Макс, фейболов в этом чате не запускай». По WORKFLOW.md это случай «Fable кончился» — ВСЕ роли прогона идут на Opus 5 max, включая критика и проверку.",
+ "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/3e64d0c7-28f7-4287-b144-de4cb548a201/workflows/scripts/revizor-pimpmyclaude-wf_49ed79ff-a0b.js",
+ "run_id": "wf_49ed79ff-a0b",
+ "resumes": 0,
+ "watchdog": "CronCreate 06b3d3af, каждый час в :23, чат-оркестратор",
+ "snapshot": "/private/tmp/claude-501/-Users-elvis--ElvisProjects-PimpMyClaude/3e64d0c7-28f7-4287-b144-de4cb548a201/scratchpad/revizor-snapshot (git worktree --detach a116786)",
+ "tasks": [
+  "#5662",
+  "#5709",
+  "#5710"
+ ],
+ "gate_input": {
+  "tests": "bash tools/test.sh зелёный 08.09 09:49: JS 18 файлов / 225 проверок, Python CLI 39, Swift 202, код возврата 0",
+  "inject_js_lines": 6107,
+  "swift_lines": 13311,
+  "test_lines": 13244,
+  "docs_lines": 17279,
+  "open_tasks_project": 60,
+  "app_installed": "1.4.0 (8) из main",
+  "dist_zip": "1.3.0 — команда сидит на старом"
+ },
+ "live_checks_done": [
+  "09:47 · pimp.py windows → «Окон 2: Claude · VkusnoffKz 3» — канал жив",
+  "09:52 · pimp.py projects → 8 проектов",
+  "09:52 · pimp.py projects --status → сводки восьми проектов со status.md (WF41 работает живьём)",
+  "09:52 · pimp.py layouts → «Раскладок пока нет» (Элвис ещё не сохранял)"
+ ],
+ "next_steps": [
+  "Дождаться 12 отчётов зон и оспаривания",
+  "Сохранить docs/revizor-wf42-2026-09-08.json и .md",
+  "Дедуп между зонами и со 60 открытыми задачами Trelvis",
+  "Находки → задачи в Trelvis одной командой save-json",
+  "HTML владельцу по HTML.md со списком «оставить как есть»",
+  "План чистки WF43 батчами → критик Opus max → одобрение Элвиса → кодинг"
+ ],
+ "journal": [
+  "09:45 · вход — правила SkilZZZ и паспорт прочитаны, tools/test.sh зелёный, снимок a116786 снят worktree",
+  "09:50 · Trelvis: заведены #5709 (рефакторинг) и #5710 (карта функций); #5662 «Ревизор» — тот же прогон",
+  "09:52 · план docs/plan-wf42-2026-09-08.md написан, 12 зон нарезано",
+  "09:55 · волна запущена: 12 ревизоров Opus 5 max (только чтение снимка) + оспаривание Opus 5 max",
+  "09:56 · сторож поставлен (крон :23)",
+  "10:45 · 12 зон отчитались (13 агентов, 3,1 млн токенов, 59 мин); оспаривание: опровергнуть не удалось ни одной находки — 37 подтверждены, 3 известны",
+  "10:50 · отчёты сохранены: docs/revizor-wf42-2026-09-08.json (полные) и .md (выжимка, 518 КБ)",
+  "10:55 · 49 находок заведены в Trelvis (#5713–#5761); заметки на #5683 #5533 #5381",
+  "11:00 · план чистки docs/plan-wf43-2026-09-08.md написан, критик (Opus 5 max) запущен",
+  "11:10 · страница Элвису docs/revizor-wf42-elvisu.html по HTML.md (5 вопросов, вариант A рекомендован везде)"
+ ],
+ "result": {
+  "zones": 12,
+  "health_avg": 3.1,
+  "risks": 56,
+  "refuted": 0,
+  "tasks": "#5713-#5761",
+  "works_map": {
+   "всего": 210,
+   "работает": 123,
+   "подозрительно": 34,
+   "сломано": 27,
+   "живьём не проверялось": 26
+  }
+ }
+}
