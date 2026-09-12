@@ -382,39 +382,33 @@ test("тяга за полоску тоже возвращает ленту вн
   assert.equal(tail.scrollTop, 900, "по концу тяги лента вернулась вниз");
 });
 
-test("клик по свёрнутой полоске открывает поле на три строки, а не во всю высоту", () => {
+test("клик по свёрнутой полоске открывает поле обычной высотой", () => {
+  // Три фиксированные строки тут пробовались 12.09 и сняты в тот же день: жёсткая
+  // высота воюет с вложениями — блок ввода с пятью скриншотами перестаёт влезать
+  // в окно, подрезка режет высоту, Claude перерисовывает вложения, и низ окна
+  // прыгает. Клик снова открывает поле так, как его держит сам Claude.
   const loaded = loadInject({ html: newBuildStand(), title: "Trelvis" });
-  // Обычная высота этого окна — 150: её Claude помнит сам, и в живом окне
-  // Элвиса она доходила до 384 точек, потому что когда-то там лежал длинный
-  // черновик. Клик обязан открывать поле на свои три строки, а не на неё.
-  assert.equal(loaded.api.status().natural, 150, "обычная высота этого окна замерена");
   loaded.api.setStage(STRETCHED, { height: 300 });
   loaded.api.setStage(COLLAPSED);
   clickHandle(loaded);
-  assert.equal(loaded.api.status().stage, STRETCHED, "четвёртой ступени нет — это «растянуто» с малой высотой");
-  assert.equal(loaded.api.status().height, 72, "три строки по 24 точки");
-  // Служебная высота память не затирает: иначе возврат в «растянуто» открывал бы
-  // поле на эти же три строки вместо натянутого рукой размера.
+  assert.equal(loaded.api.status().stage, NORMAL, "клик поднял поле на обычную высоту");
+  assert.equal(loaded.api.status().height, null, "своей цифры обычная высота не держит");
   clickHandle(loaded);
   assert.equal(loaded.api.status().stage, COLLAPSED, "второй клик сворачивает — лестница цела");
   loaded.api.setStage(STRETCHED);
-  assert.equal(loaded.api.status().height, 300, "вернулись к натянутому рукой размеру");
+  assert.equal(loaded.api.status().height, 300, "натянутый рукой размер память не потеряла");
 });
 
-test("из поля в три строки тяга вниз уменьшает поле, а не выбрасывает его вверх", () => {
+test("подмены высоты у обычной ступени нет вовсе — полю нечем воевать с вложениями", () => {
+  // Сторож против возврата жёсткой высоты кликом: пока подмены нет, низ окна
+  // прыгать не может (слово Элвиса 12.09 19:00).
   const loaded = loadInject({ html: newBuildStand(), title: "Trelvis" });
   loaded.api.setStage(COLLAPSED);
   clickHandle(loaded);
-  assert.equal(loaded.api.status().height, 72);
-  // Поле стоит НИЖЕ обычной высоты (72 против 150), и защёлка «ниже обычной —
-  // значит обычная» кидала его вверх: жест наоборот.
-  dragHandle(loaded, 600, 620);
-  assert.equal(loaded.api.status().stage, STRETCHED, "ступень не перескочила");
-  assert.equal(loaded.api.status().height, 52, "поле уменьшилось ровно на пройденный путь");
-  // Тяга, начатая ВЫШЕ обычной высоты, как защёлкивала обычную, так и
-  // защёлкивает: этот жест трогать было нельзя.
-  loaded.api.setStage(STRETCHED, { height: 300 });
-  dragHandle(loaded, 600, 800);
-  assert.equal(loaded.api.status().stage, NORMAL, "сверху вниз — обычная высота");
-  assert.equal(loaded.api.status().height, null, "и поле снова слушается Claude");
+  assert.equal(loaded.parts.root.style.getPropertyValue(HEIGHT_VARIABLE), "",
+    "после клика высота поля ничем не подменена");
+  dragHandle(loaded, 600, 500);
+  assert.equal(loaded.api.status().stage, STRETCHED, "рукой поле по-прежнему растягивается");
+  assert.ok(loaded.parts.root.style.getPropertyValue(HEIGHT_VARIABLE) !== "",
+    "и вот тогда подмена появляется — по воле руки, а не сама");
 });
