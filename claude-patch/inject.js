@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf57-a-1";
+  const VERSION = "wf58-b-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -745,7 +745,7 @@ ${THEME_ROOT_SELECTOR} {
   --df-tray-hairline: ${mixHex(accent, background, 0.62)} !important;
 }
 html, body, #root, .dframe-root, .dframe-content, [class*="dframe-content"] { background: ${background} !important; color: ${foreground} !important; }
-.dframe-sidebar, [class*="dframe-sidebar"], [data-testid*="sidebar"] { background-color: ${sidebar} !important; background-image: none !important; }
+.dframe-sidebar, [class*="dframe-sidebar"]:not([class*="dframe-sidebar-edge"]), [data-testid*="sidebar"] { background-color: ${sidebar} !important; background-image: none !important; }
 ::selection { color: ${background} !important; background: ${accent} !important; }
 input, textarea, select, [contenteditable="true"] { caret-color: ${accent} !important; }
 ${epitaxyCss({ type: theme.type, background, foreground, accent, panel, muted, code })}
@@ -3042,6 +3042,10 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Идём от последнего ответа к более старым и останавливаемся на первом, где
   // строка нашлась: это и есть «последняя по ленте».
   const progressRead = () => {
+    // Сторожа «чат пустой» здесь нет намеренно (#5855): приметы разговора
+    // (CHAT_STARTED_SELECTOR, isFreshChat) в главном окне с десятью ответами на
+    // экране дают НОЛЬ — «Message actions» живёт только под мышью (замер 12.09
+    // 17:51). Чужое из окна отсекает не он, а панель разговора в запасном пути.
     // Те же приметы ответа, что у «Обкэшить» (ANSWER_SELECTOR + answerUsable): разметка
     // claude.ai и окна Claude Code разная, свой узкий селектор в 1.40609.1 не находил ничего.
     let nodes = [];
@@ -3065,9 +3069,16 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     }
     // Запасной путь: в окнах «Open in new window» приметы ответа почти не совпадают
     // (проверено 04.09: 0–3 узла на сотню сообщений, лента виртуальная). Тогда читаем
-    // текст всего окна без черновика в поле ввода — в нём строка состояния есть.
+    // текст ПАНЕЛИ РАЗГОВОРА без черновика в поле ввода — в нём строка состояния есть.
+    //
+    // Панели, а не всего окна (#5855): в главном окне в текст body попадает сайдбар с
+    // ЧУЖИМИ чатами, а на body висит и наша же карточка подсказки со строками сводки —
+    // чат без своей строки состояния брал этот текст за свой. Замер 12.09 17:47: панель
+    // есть во всех окнах Claude Code (главном и вынесенных), поле ввода и сайдбар лежат
+    // ВНЕ её. Панели нет (claude.ai, чужая разметка) — берём body, как раньше.
     try {
-      let text = document.body?.innerText ?? "";
+      const panel = document.querySelector('.epitaxy-chat-panel-body,[data-testid="epitaxy-virtual-transcript"]');
+      let text = (panel ?? document.body)?.innerText ?? "";
       const draft = (state.composerBlock?.innerText ?? "").trim();
       if (draft && text.endsWith(draft)) text = text.slice(0, -draft.length);
       else if (draft) text = text.replace(draft, "");
