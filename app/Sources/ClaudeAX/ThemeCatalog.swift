@@ -1,14 +1,36 @@
 import Foundation
 
+/// Набор меню: три коротких списка цветов вместо одного длинного (слово Элвиса 12.09:
+/// «мне надо будет три списка, не один длинный», задача #5801). Признак ТОЛЬКО для
+/// приложения: в команду `theme` набор не уезжает и страница про наборы не знает — яркие
+/// «Лимонад» и «Апельсин» остаются для неё светлыми по `type`, как любая светлая тема.
+enum ThemeSet: String, CaseIterable {
+    case dark
+    case light
+    case bright
+}
+
 /// Тема окна Claude из `claude-patch/themes.json` (каталог пишет батч A). Формат sol из ElvisOS:
-/// `{"version":1,"themes":[{"id","name","type","palette":{accent,background,foreground,sidebar,panel,muted}}]}`.
+/// `{"version":1,"themes":[{"id","name","type","set"?,"palette":{accent,background,foreground,sidebar,panel,muted}}]}`.
 /// Палитру Swift не разбирает: она целиком уезжает в command.json, CSS делает страница.
 struct Theme: Equatable {
     let id: String
     let name: String
     /// «dark» или «light» — по нему страница ставит `color-scheme`.
     let type: String
+    /// В каком списке меню тема живёт. Поля нет — набор берётся из `type`: так все
+    /// двадцать четыре старых цвета остались там же, где стояли.
+    let set: ThemeSet
     let palette: [String: String]
+
+    init(id: String, name: String, type: String, set: ThemeSet? = nil,
+         palette: [String: String]) {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.set = set ?? (type == "light" ? .light : .dark)
+        self.palette = palette
+    }
 
     /// Порядок ключей палитры в команде — как в контракте (п. 5 плана WF6); неизвестные идут
     /// следом по алфавиту.
@@ -31,7 +53,8 @@ struct Theme: Equatable {
         ])
     }
 
-    /// «Тёмная» или «светлая» половина подменю (заголовки ТЁМНЫЕ / СВЕТЛЫЕ).
+    /// Светлая ли тема для СТРАНИЦЫ (`color-scheme`). Со списком меню не путать: яркие
+    /// «Лимонад» и «Апельсин» светлые и при этом лежат в наборе «Яркие».
     var isLight: Bool { type == "light" }
 }
 
@@ -74,7 +97,9 @@ enum ThemeCatalog {
             guard let id = item["id"] as? String, !id.isEmpty,
                   let name = item["name"] as? String, !name.isEmpty,
                   let palette = item["palette"] as? [String: String], !palette.isEmpty else { return nil }
-            return Theme(id: id, name: name, type: item["type"] as? String ?? "dark", palette: palette)
+            return Theme(id: id, name: name, type: item["type"] as? String ?? "dark",
+                         set: (item["set"] as? String).flatMap(ThemeSet.init(rawValue:)),
+                         palette: palette)
         }
     }
 }

@@ -264,10 +264,33 @@ enum MenuModel {
     static let allWindowsTitle = "Всем окнам"
     static let allWindowsIcon = "🖥"
     static let allWindowsHeader = "ВСЕМ ОКНАМ"
-    /// Disabled-заголовки секций.
-    static let myThemesHeader = "МОИ ТЕМЫ"
-    static let darkThemesHeader = "ТЁМНЫЕ"
-    static let lightThemesHeader = "СВЕТЛЫЕ"
+    /// Disabled-заголовок секции своих тем. Капса у цветов больше нет (макет WF52, раздел
+    /// «Решено»): пишем обычными буквами, как Claude в своих меню.
+    static let myThemesHeader = "Мои темы"
+    /// Три списка цветов вместо одного длинного (слово Элвиса 12.09, задача #5801): каждый —
+    /// своё подменю с галкой у того набора, откуда взят цвет окна.
+    static let darkThemesHeader = "Тёмные"
+    static let lightThemesHeader = "Светлые"
+    static let brightThemesHeader = "Яркие"
+    static let darkThemesIcon = "🌙"
+    static let lightThemesIcon = "☀️"
+    static let brightThemesIcon = "✨"
+
+    static func themeSetTitle(_ set: ThemeSet) -> String {
+        switch set {
+        case .dark: return darkThemesHeader
+        case .light: return lightThemesHeader
+        case .bright: return brightThemesHeader
+        }
+    }
+
+    static func themeSetIcon(_ set: ThemeSet) -> String {
+        switch set {
+        case .dark: return darkThemesIcon
+        case .light: return lightThemesIcon
+        case .bright: return brightThemesIcon
+        }
+    }
     /// Секции подменю «Шрифт» — по категориям (решение 7 плана WF9), в порядке FontCategory.
     static let serifFontsHeader = "С ЗАСЕЧКАМИ"
     static let sansFontsHeader = "БЕЗ ЗАСЕЧЕК"

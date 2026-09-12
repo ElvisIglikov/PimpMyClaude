@@ -892,17 +892,18 @@ final class MinimizeMenu: NSObject {
         return item
     }
 
-    /// «🎨 Цвет ▸» — один список (решение Элвиса 04.09, вопрос 3 макета).
+    /// «🎨 Цвет ▸» — три коротких списка (слово Элвиса 12.09, задача #5801).
     static func colorItem(_ config: MenuConfig, scope: String,
                           includeMyThemes: Bool = false) -> NSMenuItem {
         submenuItem(title: MenuModel.colorTitle, icon: MenuModel.themeIcon,
                     submenu: themeList(config, scope: scope, includeMyThemes: includeMyThemes))
     }
 
-    /// Список цветов одного адресата: «Как у Claude» первым, разделитель, ТЁМНЫЕ, разделитель,
-    /// СВЕТЛЫЕ — секции отделены полоской так же, как «МОИ ТЕМЫ» (прямой вопрос Элвиса
-    /// «почему мои темы отделены полоской, а светлые от тёмных нет»).
-    /// `includeMyThemes` — секция МОИ ТЕМЫ сверху: у окна она уехала на уровень «Оформление ▸»,
+    /// Список цветов одного адресата: «Как у Claude» первым, разделитель, дальше три набора
+    /// подменю — 🌙 Тёмные, ☀️ Светлые, ✨ Яркие (макет WF52, слово Элвиса 12.09: «мне надо
+    /// будет три списка, не один длинный»). Галка стоит и у самого набора — того, откуда взят
+    /// цвет окна: искать выбранное по всем трём спискам не надо.
+    /// `includeMyThemes` — секция «Мои темы» сверху: у окна она уехала на уровень «Оформление ▸»,
     /// у «Всем окнам ▸» осталась здесь, иначе свою тему нельзя было бы дать всем окнам (блокер Б2).
     ///
     /// Пока крутятся живые цвета, весь список погашен и сверху стоит та же строка «сначала
@@ -941,11 +942,19 @@ final class MinimizeMenu: NSObject {
         reset.isEnabled = !live
         submenu.addItem(reset)
 
-        for (title, themes) in [(MenuModel.darkThemesHeader, config.themes.filter { !$0.isLight }),
-                                (MenuModel.lightThemesHeader, config.themes.filter { $0.isLight })]
-        where !themes.isEmpty {
-            addSeparator(submenu)
-            submenu.addItem(header(title))
+        // Полоска одна — между «Как у Claude» и наборами: сами наборы стоят одной тройкой
+        // (макет WF52), и линии между ними разбили бы её на три куска.
+        let groups: [(set: ThemeSet, themes: [Theme])] = ThemeSet.allCases.compactMap { set in
+            let themes = config.themes.filter { $0.set == set }
+            return themes.isEmpty ? nil : (set: set, themes: themes)
+        }
+        if !groups.isEmpty { addSeparator(submenu) }
+        for (set, themes) in groups {
+            let list = NSMenu(title: MenuModel.themeSetTitle(set))
+            list.autoenablesItems = false
+            // Примерка живёт на том уровне, где лежат сами цвета (план WF31): делегат нужен
+            // каждому списку набора, иначе наведение в нём ничего не красило бы.
+            if !all { list.delegate = PreviewMenuDelegate.shared }
             for theme in themes {
                 let item = BlockMenuItem(title: theme.name) {
                     config.apply(scope, .set(theme), .keep, .keep, .keep)
@@ -954,8 +963,16 @@ final class MinimizeMenu: NSObject {
                 item.image = swatch(palette: theme.palette)
                 item.state = theme.id == selected ? .on : .off
                 item.isEnabled = !live
-                submenu.addItem(item)
+                list.addItem(item)
             }
+            let item = submenuItem(title: MenuModel.themeSetTitle(set),
+                                   icon: MenuModel.themeSetIcon(set), submenu: list)
+            let chosen = themes.contains(where: { $0.id == selected })
+            item.state = chosen ? .on : .off
+            // Крутятся живые цвета — набор не открыть вовсе: выбор в нём был бы мёртвой
+            // кнопкой (#5742), а пункты внутри уже погашены тем же признаком.
+            item.isEnabled = !live
+            submenu.addItem(item)
         }
         return submenu
     }

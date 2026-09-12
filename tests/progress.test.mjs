@@ -376,8 +376,14 @@ test("дыхание работает и в вынесенном окне", () =
     geometry: { viewport: { width: 1200, height: 800 } },
     html: dom => {
       const parts = dom.composer({ top: 620 });
-      // Без приметы ответа — ровно как в «Open in new window».
-      dom.document.body.add("div", {
+      // Без приметы ответа — ровно как в «Open in new window», но внутри панели
+      // разговора: запасное чтение с 12.09 читает только её, и в живых
+      // вынесенных окнах панель есть (замер 12.09 17:47).
+      const panel = dom.document.body.add("div", {
+        class: "epitaxy-chat-panel-body",
+        rect: { left: 100, top: 100, width: 1000, height: 420 },
+      });
+      panel.add("div", {
         rect: { left: 100, top: 200, width: 1000, height: 300 },
         text: `Готово.\n\n${RUN_LINE}`,
       });
@@ -416,6 +422,87 @@ test("новый чат без строки состояния: один пус�
   assert.equal(fillOf(loaded, 0).style.getPropertyValue("width"), "0%");
   assert.equal(loaded.dom.running().length, 0, "контуру дышать нечем");
   assert.match(loaded.api.status().progress.reason, /пустой контур/, "причина названа честно");
+});
+
+// ---- чат считает только свой разговор (#5855, WF58) -------------------------
+// Замер живьём 12.09 17:47: в главном окне document.body.innerText — это сайдбар
+// со списком ЧУЖИХ чатов плюс разговор, а сам разговор лежит в
+// .epitaxy-chat-panel-body (поле ввода и сайдбар — вне её). Полоса читала весь
+// текст окна, и новый чат показывал зелёными девять чужих воркфлоу.
+const FOREIGN_LINE = "✅⚪[PimpMyClaude](docs/status.md) · WF 9 из 9 · готово✅";
+// Окно Claude Code: сайдбар с чужим чатом и панель разговора. build(panel)
+// дописывает в панель то, что видно в ЭТОМ чате.
+const claudeWindow = (build = null, { sidebar = true } = {}) => dom => {
+  const parts = dom.composer({ top: 620 });
+  if (sidebar) dom.document.body.add("div", {
+    class: "sidebar", rect: { left: 0, top: 0, width: 260, height: 800 },
+    text: `Recents\nPimpMyClaude\n${FOREIGN_LINE}`,
+  });
+  const panel = dom.document.body.add("div", {
+    class: "epitaxy-chat-panel-body", rect: { left: 260, top: 0, width: 940, height: 600 },
+  });
+  // Внутри панели — сама лента, и она тоже попадает в наш селектор: в живом окне
+  // узлов поэтому ДВА, вложенных друг в друга (замер 12.09 18:30). Выбор «своей»
+  // панели обязан их различать, иначе запасное чтение умирает совсем.
+  const lane = panel.add("div", {
+    attrs: { "data-testid": "epitaxy-virtual-transcript" },
+    rect: { left: 260, top: 0, width: 940, height: 600 },
+  });
+  if (build) build(lane);
+  return parts;
+};
+
+test("новый чат не берёт чужую строку состояния из окна (#5855)", () => {
+  const loaded = loadInject({ html: claudeWindow(), title: "PimpMyClaude" });
+  const progress = plain(loaded.api.status().progress);
+  assert.equal(progress.wf, null, "в новом чате своей строки нет — и чужой не место");
+  assert.deepEqual(progress.segments, [0], "пустой контур");
+  assert.match(progress.reason, /пустой контур/);
+});
+
+test("чужая сводка проектов сегментов не рисует (#5855)", () => {
+  // Окно БЕЗ сайдбара нарочно: иначе тест зелен из-за него, а не из-за сводки,
+  // и кто-нибудь потом заведёт чтение сводки в марафон незамеченным (находка
+  // проверяющего 12.09).
+  const loaded = loadInject({ html: claudeWindow(null, { sidebar: false }), title: "PimpMyClaude" });
+  loaded.dom.command({
+    id: "s58", action: "status", at: "now", scope: "all",
+    projects: [{ name: "PimpMyClaude", text: FEED }],
+  });
+  const progress = plain(loaded.api.status().progress);
+  assert.equal(progress.wf, null, "сводка — текст для подсказки, а не марафон этого чата");
+  assert.deepEqual(progress.segments, [0], "и после сводки контур пуст");
+});
+
+test("разговор идёт, своей строки нет — полоса пустая, хотя в окне чужая есть (#5855)", () => {
+  const loaded = loadInject({
+    title: "PimpMyClaude",
+    html: claudeWindow(panel => panel.add("div", {
+      attrs: { "data-testid": "assistant-message" },
+      rect: { left: 300, top: 200, width: 800, height: 200 },
+      text: "Готово, проверь.",
+    })),
+  });
+  assert.equal(plain(loaded.api.status().progress).wf, null, "чужая строка из сайдбара не считается");
+});
+
+test("окно без примет ответа: своя строка из панели читается, чужая из окна — нет (#5855)", () => {
+  const own = "💭⚪[PimpMyClaude](docs/status.md) · WF 2 из 4 · идёт💭";
+  const loaded = loadInject({
+    title: "PimpMyClaude",
+    html: claudeWindow(panel => {
+      // В вынесенном окне приметы ответа почти не совпадают (замер 04.09) —
+      // остаётся строка действий под ответом: по ней видно, что разговор идёт.
+      panel.add("div", { attrs: { "aria-label": "Message actions" }, text: "3 minutes ago\n" });
+      panel.add("div", {
+        rect: { left: 300, top: 200, width: 800, height: 200 },
+        text: `Готово.\n\n${own}`,
+      });
+    }),
+  });
+  const progress = plain(loaded.api.status().progress);
+  assert.equal(progress.wf, 2, "запасной путь живёт — но читает панель, а не окно");
+  assert.equal(progress.of, 4, "счёт свой, а не девять чужих");
 });
 
 test("сводка: точное имя проекта выигрывает, префикс — только когда он один", () => {
