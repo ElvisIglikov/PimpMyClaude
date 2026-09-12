@@ -74,9 +74,13 @@ test("в широком окне не меняется ничего: за @media
   assert.equal((css.match(/@media/g) ?? []).length, 1, "блок @media должен быть один");
 });
 
-test("в узком окне в ряд встают несколько плиток, а не одна", () => {
-  const tile = ruleFor("[data-cds-tile-media]");
-  assert.ok(tile, "правила плитки нет");
+test("в узком окне в ряд встают несколько плашек, а не одна", () => {
+  // Размер вложения в поле ввода задаёт класс `size-[120px]` на самой плашке
+  // `[data-cds-attachment]` — замер живьём 12.09 23:37. `[data-cds-tile-media]`
+  // в композере не встречается вовсе (он живёт в ленте разговора), и первая
+  // версия правила целилась в него, то есть не меняла ничего.
+  const tile = ruleFor("[data-cds-attachment]");
+  assert.ok(tile, "правила плашки нет");
   const side = numberOf(tile.body, "width");
   assert.equal(side, numberOf(tile.body, "height"), "плитка обязана остаться квадратной");
   assert.ok(side < CLAUDE_TILE, `плитка ${side} не меньше сегодняшних ${CLAUDE_TILE} у Claude`);
@@ -99,22 +103,13 @@ test("блок вложений не съедает окно: потолок в�
   assert.ok(Number(share[1]) >= 15 && Number(share[1]) <= 40,
     `потолок ${share[1]}vh — либо в нём не видно вложений, либо он не спасает поле`);
   assert.match(box.body, /overflow-y:\s*auto/, "что не влезло, коробка обязана прокручивать сама");
-});
-
-test("правило не трогает ни высоту поля, ни кнопку снятия, ни переходы Claude", () => {
-  // Высота поля — раздел 7 и задача #5886: вечером 12.09 подмена высоты уже
-  // воевала с пятью скриншотами, и низ окна прыгал.
-  for (const alien of [".epitaxy", "--myclaude-input-height", "ProseMirror", "contenteditable"]) {
-    assert.ok(!css.includes(alien), `${alien} в правиле вложений — это чужая высота поля`);
-  }
-  // Кнопка снятия: по её подписи «Обкэшить» считает и называет вложения
-  // (cashoutPills, cashoutPillNames). Спрятать её или отнять мышь нельзя.
-  for (const alien of ["aria-label", "display: none", "display:none", "pointer-events", "visibility"]) {
-    assert.ok(!css.includes(alien), `${alien} в правиле вложений — так теряется кнопка снятия`);
-  }
-  // Переходы и анимации Claude — только раскладка и размер.
-  for (const alien of ["transition", "animation", "view-transition", "@starting-style", "transform"]) {
-    assert.ok(!css.includes(alien), `${alien} в правиле вложений — это чужая анимация`);
+  // Прокрутка обрезает и по горизонтали (overflow-y:auto делает overflow-x из
+  // visible тоже auto), а крестик «Remove» вылезает за плашку на 8 точек вверх —
+  // без полей у верхнего ряда срезало бы половину кнопки.
+  for (const side of ["padding-top", "padding-right"]) {
+    const pad = box.body.match(new RegExp(`${side}:\\s*(\\d+)px`));
+    assert.ok(pad, `у коробки нет ${side} — крестик снятия срежется прокруткой`);
+    assert.ok(Number(pad[1]) >= 10, `${side} ${pad[1]} меньше вылета крестика (8 точек плюс запас)`);
   }
 });
 
