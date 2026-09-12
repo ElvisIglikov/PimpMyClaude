@@ -51,6 +51,38 @@ const noModelRowStand = dom => {
   });
   return { block, shell, root, editor };
 };
+// Низ окна в сборке Claude от 12.09.2026: .epitaxy-prompt держит уже не рамку
+// поля, а ВЕСЬ низ — рамку и строку модели под ней (замер в живом окне, #5857).
+// Внутри рамки, кроме поля, стоит полоса вложений: из-за неё прежний разбор
+// отдавал рамкой сам .epitaxy-prompt, блок ввода совпадал с рамкой, сворачивать
+// становилось нечего — и одинарный клик переставал сворачивать поле вовсе.
+const newBuildStand = ({ left = 100, width = 1000, editorWidth = null } = {}) => dom => {
+  const inner = editorWidth ?? width - 20;
+  const prompt = dom.document.body.add("div", {
+    class: "epitaxy-prompt", rect: { left, top: 500, width, height: 260 },
+  });
+  const block = prompt.add("div", {
+    class: "flex w-full min-w-0 flex-col font-sans", rect: { left, top: 500, width, height: 260 },
+  });
+  const shell = block.add("div", {
+    class: "bg-surface-3", rect: { left, top: 500, width, height: 220 },
+  });
+  const files = shell.add("div", {
+    class: "attachments", rect: { left, top: 500, width, height: 60 },
+  });
+  const root = shell.add("div", {
+    class: "editor-root", rect: { left: left + 10, top: 566, width: inner, height: 150 },
+    computed: { overflowY: "auto" },
+  });
+  const editor = root.add("div", {
+    class: "ProseMirror", attrs: { contenteditable: "true" },
+    rect: { left: left + 10, top: 566, width: inner, height: 150 },
+  });
+  const modelRow = block.add("div", {
+    class: "model-row", rect: { left, top: 724, width, height: 36 },
+  });
+  return { prompt, block, shell, files, root, editor, modelRow };
+};
 const open = (options = {}) => loadInject({ html: composerStand, title: "Trelvis", ...options });
 const collapsed = node => node.getAttribute(BLOCK_ATTRIBUTE);
 
@@ -120,6 +152,36 @@ test("строки модели нет — сворачиваем одну ра�
   loaded.api.setStage(COLLAPSED);
   assert.equal(collapsed(loaded.parts.shell), "collapsed");
   assert.equal(collapsed(loaded.parts.block), null, "открытое поле лучше слепого окна");
+});
+
+test("новая разметка Claude: сворачивается рамка поля, а не весь низ окна", () => {
+  const loaded = loadInject({ html: newBuildStand(), title: "Trelvis" });
+  const { prompt, shell, modelRow } = loaded.parts;
+  assert.equal(loaded.api.status().modelRow, true, "строка модели найдена под рамкой");
+  const targets = loaded.inner.collapseTargets();
+  assert.equal(targets.length, 1, "сворачиваем ровно рамку поля");
+  assert.equal(targets[0], shell, "и это рамка со вложениями, а не .epitaxy-prompt целиком");
+  loaded.api.setStage(COLLAPSED);
+  // Главная проверка: до правки сворачивать было нечего, и ступень откатывалась
+  // в обычную — клик по полоске визуально не делал ничего.
+  assert.equal(loaded.api.status().stage, COLLAPSED, "ступень держится");
+  assert.equal(collapsed(shell), "collapsed");
+  assert.equal(collapsed(prompt), null, "иначе вместе с полем уедет строка модели");
+  assert.equal(collapsed(modelRow), null, "«Auto · Opus 5 · Max» видно и в свёрнутом поле");
+});
+
+test("узкое окно: поле уже 200 точек — полоска над ним всё равно есть", () => {
+  // Окна Элвиса шириной 280: поле внутри 194 точки, и по прежнему голому порогу
+  // в 200 оно вовсе не считалось полем — ручки в подчинённых окнах не было.
+  const loaded = loadInject({
+    html: newBuildStand({ left: 5, width: 244, editorWidth: 194 }), title: "Trelvis",
+    geometry: { viewport: { width: 255, height: 780 } },
+  });
+  const status = loaded.api.status();
+  assert.equal(status.editor, true, "поле найдено");
+  assert.equal(status.handleVisible, true, "полоска показана");
+  loaded.api.setStage(COLLAPSED);
+  assert.equal(loaded.api.status().collapsedNodes, 1, "и сворачивается тоже");
 });
 
 test("сворачивать нечего — в свёрнутой ступени не залипаем", () => {

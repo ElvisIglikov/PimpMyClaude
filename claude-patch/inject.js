@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf53-a-1";
+  const VERSION = "wf53-b-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -3441,7 +3441,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   handle.setAttribute("role", "separator");
   handle.setAttribute("aria-orientation", "horizontal");
   handle.setAttribute("aria-label", "Изменить высоту поля ввода");
-  handle.title = "Потяни вверх или вниз\nКлик свернёт, двойной — во всю высоту";
+  // Подсказки при наведении нет: всплывающее «Потяни вверх или вниз» мешало
+  // читать переписку и закрывало строку модели (слово Элвиса 12.09.2026,
+  // #5857). Слепым полоска не стала — её называет aria-label.
   // Кнопки на полоске нет: стрелка получалась крошечной, сидела у правого края
   // и попасть в неё было нечем. Свёрнутое поле разворачивает одиночный клик по
   // любому месту полоски.
@@ -3475,12 +3477,18 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // держит черновик. Без этой поблажки поле терялось, свёрнутость снималась,
   // блок разворачивался — и на следующем кадре всё повторялось: низ окна
   // начинал мигать с частотой перерисовки.
+  // Ниже этой ширины найденное считается не полем ввода, а чужим элементом
+  // страницы. Порог не голые 200 точек: окна Элвиса бывают по 280, поле внутри
+  // получается 194 — и по голому порогу поля в подчинённых окнах не находилось
+  // вовсе, а вместе с ним пропадала и полоска над ним (#5857). В узком окне
+  // порог считается от самого окна, в широком остаётся прежним.
+  const narrowLimit = () => Math.min(200, innerWidth * 0.6);
   const visibleEditor = element => {
     const computed = getComputedStyle(element);
     if (element.disabled || computed.display === "none" || computed.visibility === "hidden") return false;
     if (element.closest(COLLAPSED_BLOCK_SELECTOR)) return true;
     const rect = element.getBoundingClientRect();
-    return rect.width >= 200 && rect.bottom > 0 && rect.top < innerHeight;
+    return rect.width >= narrowLimit() && rect.bottom > 0 && rect.top < innerHeight;
   };
   // Кэш держится не на счётчике мутаций (во время набора дерево меняется каждую
   // букву), а на проверке самого ответа: прежнее поле всё ещё в документе, всё
@@ -3513,6 +3521,16 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     }
     return editor.parentElement;
   };
+  // Видимая строка под узлом: строка модели или любая другая полоса. sr-only и
+  // пустые обёртки в счёт не идут — по этой же примете разбирается низ блока в
+  // findComposerParts.
+  const rowUnder = node => {
+    for (let sibling = node.nextElementSibling; sibling; sibling = sibling.nextElementSibling) {
+      if (sibling.classList.contains("sr-only") || sibling.getAttribute("aria-hidden") === "true") continue;
+      if (sibling.getBoundingClientRect().height >= MODEL_ROW_MIN_HEIGHT) return sibling;
+    }
+    return null;
+  };
   // Внешняя рамка composer: полоску ставим на её верхнюю границу — над строкой
   // вложений, а не между вложениями и текстом. В нынешней сборке рамка зовётся
   // .epitaxy-prompt (замер оркестратора), и если она на месте — берём её. Если
@@ -3520,9 +3538,25 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // скругление, у контейнеров вокруг его нет вовсе. Скруглённый предок не
   // считается рамкой, если поднялся над полем выше, чем помещается строка
   // вложений: это уже разметка страницы.
+  //
+  // В сборке 12.09.2026 .epitaxy-prompt держит уже не рамку поля, а ВЕСЬ низ
+  // окна: рамку и строку модели под ней. Отдать его рамкой — значит остаться
+  // без внешнего блока: findComposerBlock возвращает тогда тот же узел,
+  // collapseTargets — пустой список, и одинарный клик перестаёт сворачивать
+  // поле вовсе (#5857, замер в живом окне: блок ввода на 566 точек из 784).
+  // Поэтому рамку ищем ВНУТРИ него — берём самого верхнего предка поля, под
+  // которым в том же родителе стоит ещё одна видимая строка. Именно она и есть
+  // строка модели, а всё, что выше неё, — рамка со вложениями.
+  const framedInside = (named, start) => {
+    let frame = null;
+    for (let node = start; node && node !== named && named.contains(node); node = node.parentElement) {
+      if (rowUnder(node)) frame = node;
+    }
+    return frame;
+  };
   const findShell = (editor, editorRoot) => {
     const named = editor?.closest?.(".epitaxy-prompt");
-    if (named?.isConnected) return named;
+    if (named?.isConnected) return framedInside(named, editorRoot ?? editor) ?? named;
     const start = editorRoot ?? editor;
     const base = start.getBoundingClientRect();
     let shell = start;
@@ -3644,11 +3678,6 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     state.collapsedNodes = next;
     handle.dataset.collapsed = collapsed ? "true" : "false";
     handle.setAttribute("aria-label", collapsed ? "Вернуть поле ввода" : "Изменить высоту поля ввода");
-    // Подсказка в две строки: одна строка через точки читалась как список
-    // условий, а человеку надо понять, что можно и потянуть, и щёлкнуть.
-    handle.title = collapsed
-      ? "Поле ввода свёрнуто\nНажми, чтобы вернуть"
-      : "Потяни вверх или вниз\nКлик свернёт, двойной — во всю высоту";
   };
 
   // ---- 7. Высота ----------------------------------------------------------
@@ -3881,7 +3910,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       if (measured >= MIN_HEIGHT) state.natural = measured;
     }
     const rect = state.shell.getBoundingClientRect();
-    if (rect.width < 200 || rect.bottom <= 0 || rect.top >= innerHeight) { handle.style.display = "none"; return; }
+    if (rect.width < narrowLimit() || rect.bottom <= 0 || rect.top >= innerHeight) { handle.style.display = "none"; return; }
     handle.style.display = "flex";
     // Узкая полоска по центру рамки и верхом на её кромке (донор). Место под
     // неё считаем от полной ширины за вычетом скруглений: в совсем узком окне
