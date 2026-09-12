@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Карточка полоски — как будет</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 20px 14px 70px;
+    background: #202226;
+    color: #e8eaee;
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: clamp(30px, 8vw, 46px); line-height: 1.08; margin: 0 0 8px; letter-spacing: -.02em; }
+  .by { color: #8f96a3; font-size: 14px; margin: 0 0 24px; }
+  h2 {
+    font-size: clamp(26px, 7vw, 38px); line-height: 1.12; letter-spacing: -.02em;
+    margin: 52px 0 6px; padding-top: 18px; border-top: 1px solid #33373f;
+  }
+  h2 .n { color: #7ea0ff; margin-right: 10px; }
+  h2 .rec { color: #4dbb7d; font-size: .5em; letter-spacing: 0; white-space: nowrap; }
+  .lead { color: #b8bec9; font-size: 15px; margin: 0 0 18px; max-width: 620px; }
+
+  .ask { background: #2a2d33; border: 1px solid #3a3f48; border-left: 4px solid #f5c542; border-radius: 14px; padding: 16px 18px; }
+  .ask p { margin: 0 0 10px; }
+  .ask p:last-child { margin-bottom: 0; }
+  .ask .big { font-size: 18px; font-weight: 700; }
+  .done-list { margin: 22px 0 0; padding: 0; list-style: none; color: #aab0bc; font-size: 15px; }
+  .done-list li { padding-left: 24px; position: relative; margin-bottom: 6px; }
+  .done-list li::before { content: "✓"; position: absolute; left: 0; color: #4dbb7d; }
+  .done-head { color: #8f96a3; font-size: 14px; margin: 24px 0 8px; text-transform: uppercase; letter-spacing: .06em; }
+
+  .toc { margin: 0 0 26px; padding: 14px 16px; background: #23262b; border: 1px solid #33373f; border-radius: 14px; }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc li { margin: 5px 0; }
+  .toc a { color: #cdd9ff; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  .boards { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+  .board {
+    flex: 1 1 320px; min-width: 0;
+    background: #191b1f; border: 1px solid #33373f; border-radius: 18px;
+    padding: 20px 12px 22px; display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
+  }
+  /* Карточка внутри показана в НАСТОЯЩЕМ размере, поэтому коробка её обнимает,
+     а широкая 400 в узком экране ездит внутри себя, а не тащит страницу. */
+  .board.hug { flex: 0 1 auto; }
+  .board.wide { flex: 0 1 auto; max-width: 100%; overflow-x: auto; }
+  .board.light { background: #f4f1e8; border-color: #ded9cc; }
+  .cap { font-size: 13px; color: #8f96a3; }
+  .cap b { color: #cfd4dd; }
+  .board.light .cap { color: #5b6070; }
+  .board.light .cap b { color: #2a2e38; }
+
+  .pm { margin: 14px 0 0; padding: 0; list-style: none; font-size: 15px; }
+  .pm li { margin-bottom: 6px; }
+  .pm b { color: #cfd4dd; }
+
+  .lines { margin: 0 0 14px; padding: 12px 16px; background: #191b1f; border: 1px solid #33373f; border-radius: 14px; }
+  .lines .l { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 6px 0; }
+  .lines .l + .l { border-top: 1px solid #2a2d33; }
+  .lines .k { color: #8f96a3; font-size: 13px; min-width: 96px; }
+  .lines .v { font-size: 15px; }
+  .lines .v b { color: #cdd9ff; font-weight: 600; }
+
+  .dict { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 18px; }
+  .chip { background: #2a2d33; border: 1px solid #3a3f48; border-radius: 999px; padding: 7px 14px; font-size: 15px; }
+  .chip.now { border-color: #7ea0ff; color: #cdd9ff; }
+  .was { color: #8f96a3; }
+  .arr { color: #7ea0ff; padding: 0 4px; }
+  .note { color: #aab0bc; font-size: 15px; }
+
+  /* ── Карточка: размеры, отступы и цвета сняты с живого кода ── */
+  .tip {
+    width: min(400px, 100%); box-sizing: border-box;
+    padding: 9px 11px 8px; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--back); color: var(--text); box-shadow: var(--shadow);
+    font: 13px/1.4 -apple-system, system-ui, sans-serif;
+    white-space: normal; overflow-wrap: anywhere; overflow: hidden;
+  }
+  /* Ширина карточки в жизни: min(400, ширина окна − 12). Окно 280 → 268 точек,
+     окно 908 → 400. Обе цифры стоят тут как есть, без подгонки. */
+  .tip.w268 { width: 268px; flex: none; }
+  .tip.w400 { width: 400px; flex: none; }
+  .skin-dark {
+    --back: #33373f; --line: rgba(255,255,255,.16); --text: #eef0f4; --dim: #aab0bc;
+    --shadow: 0 18px 44px rgba(0,0,0,.62), 0 2px 6px rgba(0,0,0,.45);
+    --run: 126,160,255; --ok: 77,187,125; --wait: 245,197,66; --fail: 238,106,95; --todo: 150,155,165;
+  }
+  .skin-light {
+    --back: #ffffff; --line: rgba(20,24,32,.16); --text: #171a20; --dim: #666c7a;
+    --shadow: 0 18px 44px rgba(20,24,32,.24), 0 2px 6px rgba(20,24,32,.12);
+    --run: 47,98,216; --ok: 31,154,90; --wait: 196,138,0; --fail: 204,58,48; --todo: 130,136,150;
+  }
+  .tone-run { --tone: var(--run); }
+  .tone-ok { --tone: var(--ok); }
+  .tone-wait { --tone: var(--wait); }
+  .tone-todo { --tone: var(--todo); }
+  .card { border-left: 4px solid rgb(var(--tone)); padding-left: 12px; }
+  .head { display: flex; align-items: center; column-gap: 10px; row-gap: 4px; flex-wrap: wrap; }
+  .c-title { font-size: 15px; font-weight: 700; }
+  .where { font-size: 12px; color: var(--dim); }
+  .pill {
+    border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 650;
+    border: 1px solid rgba(var(--tone),.4); color: rgb(var(--tone)); background: rgba(var(--tone),.14);
+    white-space: nowrap;
+  }
+  .about { margin-top: 5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .meta { margin-top: 4px; font-size: 12px; color: var(--dim); }
+  .stages { margin-top: 7px; }
+  .row {
+    display: grid; grid-template-columns: 20px 74px minmax(0, 1fr); column-gap: 4px;
+    align-items: baseline; padding: 2px 6px; margin: 0 -6px; border-radius: 6px;
+  }
+  .row .ic { font-size: 12px; }
+  .row .lbl { font-weight: 600; color: var(--text); }
+  .row .who { font-size: 12px; min-width: 0; color: var(--dim); }
+  .row.todo { opacity: .55; }
+  .row.now { background: rgba(var(--tone),.14); }
+  .row.now .lbl { color: rgb(var(--tone)); }
+  .row.now .who { color: var(--text); }
+  .foot {
+    margin-top: 7px; padding-top: 5px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* Новый подвал: строка не рубится, а переносится — целиком видно всегда. */
+  .foot.wrap { white-space: normal; overflow: visible; text-overflow: clip; }
+  .foot.solo { margin-top: 0; padding-top: 0; border-top: 0; }
+  .pulse { animation: pill 3.6s ease-in-out infinite; }
+  @keyframes pill { 0% { opacity: .6 } 50% { opacity: 1 } 100% { opacity: .6 } }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Карточка полоски — как будет</h1>
+  <p class="by">макет · Opus max · 12.09.2026</p>
+
+  <section class="ask">
+    <p class="big">Вопрос один: пишем роли твоими словами?</p>
+    <p>Рекомендую так, как ты и сказал — число после модели: <b>«Fable Extra 1, Fable High 1»</b>,
+      <b>«Opus Max 2»</b>, <b>«Fable High 1»</b>, а у плана остаётся <b>«я · Fable Extra»</b>.
+      Посмотри разделы 2 и 3 и ответь одной фразой: «годится» или как надо иначе.</p>
+    <p>Заголовок карточки будет <b>«Воркфлоу 1»</b> — вся карточка русская, латинского слова в ней
+      больше нет. Захочешь «Workflow 1» — скажи, поменяю одной строкой.</p>
+  </section>
+
+  <nav class="toc">
+    <ol>
+      <li><a href="#s1">Так сейчас — узкое окно</a></li>
+      <li><a href="#s2">Как будет — рекомендую</a></li>
+      <li><a href="#s3">Альтернатива: у одиночки число не писать</a></li>
+      <li><a href="#s4">Длинная строка — двенадцать агентов</a></li>
+      <li><a href="#s5">Подвал — из чисел и в две строки</a></li>
+      <li><a href="#s6">«из 5 · этот чат» — по-человечески</a></li>
+      <li><a href="#s7">Цвета состояний</a></li>
+      <li><a href="#s8">Слова вместо xhigh</a></li>
+    </ol>
+  </nav>
+
+  <p class="done-head">Решено, не переспрашиваю</p>
+  <ul class="done-list">
+    <li>«закончит примерно в 23:30» → «закончит в 23:30».</li>
+    <li>Подвал собирается из чисел и виден целиком — можно в две строки.</li>
+    <li>Эффорт пишется словами Claude Code: xhigh → Extra.</li>
+    <li>«1 агент», «2 агента» и «×1» с карточки уходят.</li>
+    <li>Карточки ниже нарисованы в настоящий размер: 268 точек — это твоё окно 280.</li>
+  </ul>
+
+  <h2 id="s1"><span class="n">1</span>Так сейчас — узкое окно</h2>
+  <p class="lead">Точь-в-точь то, что у тебя на экране в окне 280: те же цвета, тот же размер, тот же
+    обрыв подвала.</p>
+  <div class="boards">
+    <div class="board hug">
+      <div class="cap"><b>узкое окно (так у тебя)</b> · карточка 268 точек</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-wait">
+          <div class="head">
+            <div class="c-title">Workflow 1</div>
+            <div class="pill">⚠️ ждёт тебя</div>
+          </div>
+          <div class="about">стоп-лист и статусы кассы сами приходят на сайт, доставка и точка с карты уезжают в кассу</div>
+          <div class="meta">21:15 → закончит примерно в 23:30 · идёт 45 мин · шаги 0 из 2</div>
+          <div class="stages">
+            <div class="row done"><div class="ic">✅</div><div class="lbl">план</div><div class="who">я · Fable xhigh</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">критик</div><div class="who">1 агент · Fable high</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">кодинг</div><div class="who">2 агента · Opus max</div></div>
+            <div class="row now"><div class="ic">💭</div><div class="lbl">проверка</div><div class="who">2 агента · Fable xhigh ×1, Fable high ×1</div></div>
+          </div>
+          <div class="foot">VkusnoffKz · 1 воркфлоу этого чата · 0 готово · 45 мин потрачено</div>
+        </div>
+      </div>
+      <div class="cap">подвал рубится в самом начале; в широком окне ты видел обрыв позже —
+        на «45 мин потр…»</div>
+    </div>
+  </div>
+  <ul class="pm">
+    <li><b>Что мешает:</b> подвал обрывается, «1 агент» и «×1» занимают место, старательность написана
+      непонятным «xhigh».</li>
+  </ul>
+
+  <h2 id="s2"><span class="n">2</span>Как будет <span class="rec">(рекомендую)</span></h2>
+  <p class="lead">Ровно твои слова: число после модели — «Fable Extra 1, Fable High 1». У плана
+    остаётся «я».</p>
+  <div class="boards">
+    <div class="board hug">
+      <div class="cap"><b>узкое окно (так у тебя)</b> · 268 точек</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-wait">
+          <div class="head">
+            <div class="c-title">Воркфлоу 1</div>
+            <div class="pill">⚠️ ждёт тебя</div>
+          </div>
+          <div class="about">стоп-лист и статусы кассы сами приходят на сайт, доставка и точка с карты уезжают в кассу</div>
+          <div class="meta">21:15 → закончит в 23:30 · идёт 45 мин · шаги 0 из 2</div>
+          <div class="stages">
+            <div class="row done"><div class="ic">✅</div><div class="lbl">план</div><div class="who">я · Fable Extra</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">критик</div><div class="who">Fable High 1</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">кодинг</div><div class="who">Opus Max 2</div></div>
+            <div class="row now"><div class="ic">💭</div><div class="lbl">проверка</div><div class="who">Fable Extra 1, Fable High 1</div></div>
+          </div>
+          <div class="foot wrap">VkusnoffKz · 1 воркфлоу, 0 готово · 45 мин</div>
+        </div>
+      </div>
+      <div class="cap" id="cap2narrow">места мало: у проверки «кто» и подвал уходят на вторую строчку — зато видно всё</div>
+    </div>
+
+    <div class="board wide">
+      <div class="cap"><b>широкое окно</b> · 400 точек, для сравнения</div>
+      <div class="tip skin-dark w400">
+        <div class="card tone-wait">
+          <div class="head">
+            <div class="c-title">Воркфлоу 1</div>
+            <div class="pill">⚠️ ждёт тебя</div>
+          </div>
+          <div class="about">стоп-лист и статусы кассы сами приходят на сайт, доставка и точка с карты уезжают в кассу</div>
+          <div class="meta">21:15 → закончит в 23:30 · идёт 45 мин · шаги 0 из 2</div>
+          <div class="stages">
+            <div class="row done"><div class="ic">✅</div><div class="lbl">план</div><div class="who">я · Fable Extra</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">критик</div><div class="who">Fable High 1</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">кодинг</div><div class="who">Opus Max 2</div></div>
+            <div class="row now"><div class="ic">💭</div><div class="lbl">проверка</div><div class="who">Fable Extra 1, Fable High 1</div></div>
+          </div>
+          <div class="foot wrap">VkusnoffKz · 1 воркфлоу, 0 готово · 45 мин</div>
+        </div>
+      </div>
+      <div class="cap">то же самое, только ничего не переносится</div>
+    </div>
+  </div>
+  <ul class="pm">
+    <li><b>Почему:</b> сначала видно, кем делали, а число идёт хвостиком — и читается это как твоя речь.</li>
+    <li><b>Минус:</b> у одиночки всё равно стоит единица — «Fable High 1».</li>
+  </ul>
+
+  <h2 id="s3"><span class="n">3</span>Альтернатива: у одиночки число не писать</h2>
+  <p class="lead">Всё то же, но единицу опускаем, когда агент один. Разница — в одной строке.</p>
+  <div class="lines">
+    <div class="l"><span class="k">рекомендую</span><span class="v">критик <b>Fable High 1</b> · кодинг <b>Opus Max 2</b> · проверка <b>Fable Extra 1, Fable High 1</b></span></div>
+    <div class="l"><span class="k">альтернатива</span><span class="v">критик <b>Fable High</b> · кодинг <b>Opus Max 2</b> · проверка <b>Fable Extra 1, Fable High 1</b></span></div>
+  </div>
+  <ul class="pm">
+    <li><b>Почему:</b> у одиночки на два знака короче.</li>
+    <li><b>Минус:</b> в смешанной строке единицы всё равно остаются, и рядом с голой «Fable High» это
+      читается вразнобой.</li>
+  </ul>
+
+  <h2 id="s4"><span class="n">4</span>Длинная строка — двенадцать агентов</h2>
+  <p class="lead">Такое уже записано в счёте: было «12 агентов · Opus max ×5, Opus high ×6,
+    Opus medium ×1». Вот как это ляжет в узкое окно.</p>
+  <div class="boards">
+    <div class="board hug">
+      <div class="cap"><b>целиком</b> · 268 точек</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-run">
+          <div class="head">
+            <div class="c-title">Воркфлоу 3</div>
+            <div class="pill pulse">💭 идёт кодинг</div>
+          </div>
+          <div class="about">меню, корзина и оплата переезжают на новый движок целиком</div>
+          <div class="meta">09:20 → закончит в 15:40 · идёт 2,4 ч · шаги 2 из 4</div>
+          <div class="stages">
+            <div class="row done"><div class="ic">✅</div><div class="lbl">план</div><div class="who">я · Fable Extra</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">критик</div><div class="who">Fable High 1</div></div>
+            <div class="row now" id="longfull"><div class="ic">💭</div><div class="lbl">кодинг</div><div class="who">Opus Max 5, Opus High 6, Opus Medium 1</div></div>
+            <div class="row todo"><div class="ic">⬜</div><div class="lbl">проверка</div><div class="who">—</div></div>
+          </div>
+          <div class="foot wrap">VkusnoffKz · 12 воркфлоу, 9 готово · 39 ч</div>
+        </div>
+      </div>
+      <div class="cap" id="cap4full">строка «кто» заняла <b>три строчки</b> — карточка выросла</div>
+    </div>
+
+    <div class="board hug">
+      <div class="cap"><b>сокращённо</b> · две модели и «и ещё 1»</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-run">
+          <div class="head">
+            <div class="c-title">Воркфлоу 3</div>
+            <div class="pill pulse">💭 идёт кодинг</div>
+          </div>
+          <div class="about">меню, корзина и оплата переезжают на новый движок целиком</div>
+          <div class="meta">09:20 → закончит в 15:40 · идёт 2,4 ч · шаги 2 из 4</div>
+          <div class="stages">
+            <div class="row done"><div class="ic">✅</div><div class="lbl">план</div><div class="who">я · Fable Extra</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">критик</div><div class="who">Fable High 1</div></div>
+            <div class="row now" id="longshort"><div class="ic">💭</div><div class="lbl">кодинг</div><div class="who">Opus Max 5, Opus High 6 и ещё 1</div></div>
+            <div class="row todo"><div class="ic">⬜</div><div class="lbl">проверка</div><div class="who">—</div></div>
+          </div>
+          <div class="foot wrap">VkusnoffKz · 12 воркфлоу, 9 готово · 39 ч</div>
+        </div>
+      </div>
+      <div class="cap" id="cap4short"><b>две строчки</b> вместо трёх — одна модель спряталась за «и ещё 1»</div>
+    </div>
+  </div>
+  <ul class="pm">
+    <li><b>Решай глазами:</b> слева всё честно до последнего агента, справа короче, но одну модель
+      приходится прятать за «и ещё 1».</li>
+  </ul>
+
+  <h2 id="s5"><span class="n">5</span>Подвал — из чисел и в две строки</h2>
+  <p class="lead">Подвал перестаём переписывать словами из чужого файла: вынимаем числа и складываем
+    свою фразу. Не влезло — переносим, а не рубим.</p>
+  <div class="boards">
+    <div class="board hug">
+      <div class="cap">сейчас</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-wait">
+          <div class="foot solo">VkusnoffKz · 1 воркфлоу этого чата · 0 готово · 45 мин потрачено</div>
+        </div>
+      </div>
+      <div class="cap">обрыв — конца не видно</div>
+    </div>
+
+    <div class="board hug">
+      <div class="cap">станет</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-wait">
+          <div class="foot solo wrap" id="foot2">VkusnoffKz · 1 воркфлоу, 0 готово · 45 мин</div>
+        </div>
+      </div>
+      <div class="cap" id="cap5two">одной строкой не влезло — ушло на вторую, зато видно до конца</div>
+    </div>
+
+    <div class="board hug">
+      <div class="cap">имя проекта покороче</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-ok">
+          <div class="foot solo wrap" id="foot3">Trelvis · 3 воркфлоу, 2 готово · 12 мин</div>
+        </div>
+      </div>
+      <div class="cap" id="cap5one">влезло в одну строку</div>
+    </div>
+
+    <div class="board hug">
+      <div class="cap">в чужом файле написано непонятно</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-run">
+          <div class="foot solo wrap">iikoWiki · 3 воркфлоу, 1 готово · время не замерялось</div>
+        </div>
+      </div>
+      <div class="cap">«время не замерялось» в число не превратить — показываем как написано,
+        ничего не выдумываем</div>
+    </div>
+  </div>
+  <ul class="pm">
+    <li><b>Откуда числа:</b> шапки у проектов написаны вразнобой — «7 воркфлоу в этом чате»,
+      «4,2 ч учтено», «1,5 суток потрачено». Числа забираем, слова пишем свои.</li>
+  </ul>
+
+  <h2 id="s6"><span class="n">6</span>«из 5 · этот чат» — по-человечески</h2>
+  <p class="lead">Так карточка выглядит, когда про этот воркфлоу в счёте ещё ничего не записано.</p>
+  <div class="boards">
+    <div class="board hug">
+      <div class="cap">сейчас</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-todo">
+          <div class="head">
+            <div class="c-title">Воркфлоу 3</div>
+            <div class="where">из 5 · этот чат</div>
+            <div class="pill">⬜ запланирован</div>
+          </div>
+          <div class="about">ещё не расписан — что в нём будет, запишем, когда дойдёт очередь</div>
+          <div class="foot wrap">VkusnoffKz · 5 воркфлоу, 2 готово · 3,5 ч</div>
+        </div>
+      </div>
+      <div class="cap">«из 5 · этот чат» — непонятно, из чего пять</div>
+    </div>
+
+    <div class="board hug">
+      <div class="cap">станет</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-todo">
+          <div class="head">
+            <div class="c-title">Воркфлоу 3</div>
+            <div class="where">3-й из 5 в этом чате</div>
+            <div class="pill">⬜ запланирован</div>
+          </div>
+          <div class="about">ещё не расписан — что в нём будет, запишем, когда дойдёт очередь</div>
+          <div class="foot wrap">VkusnoffKz · 5 воркфлоу, 2 готово · 3,5 ч</div>
+        </div>
+      </div>
+      <div class="cap">видно и место, и сколько всего</div>
+    </div>
+  </div>
+  <ul class="pm">
+    <li><b>Почему так:</b> это единственное место, где карточка говорит про счёт чата, — пусть говорит
+      целой фразой.</li>
+    <li><b>Твоими словами</b> было «5-й воркфлоу этого чата» — скажи, и напишу так; тогда из карточки
+      пропадёт, сколько их всего.</li>
+  </ul>
+
+  <h2 id="s7"><span class="n">7</span>Цвета состояний</h2>
+  <p class="lead">Те же карточки в новом виде, когда работа идёт и когда закончена. Плашка дышит — так же, как на экране.</p>
+  <div class="boards">
+
+    <div class="board hug">
+      <div class="cap">работа идёт — синий</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-run">
+          <div class="head">
+            <div class="c-title">Воркфлоу 2</div>
+            <div class="pill pulse">💭 идёт кодинг</div>
+          </div>
+          <div class="about">карточка говорит словами Claude Code, вложения перестают съедать узкое окно</div>
+          <div class="meta">21:15 → закончит в 22:40 · идёт 20 мин · шаги 1 из 2</div>
+          <div class="stages">
+            <div class="row done"><div class="ic">✅</div><div class="lbl">план</div><div class="who">я · Fable Extra</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">критик</div><div class="who">Fable High 1</div></div>
+            <div class="row now"><div class="ic">💭</div><div class="lbl">кодинг</div><div class="who">Opus Max 2</div></div>
+            <div class="row todo"><div class="ic">⬜</div><div class="lbl">проверка</div><div class="who">—</div></div>
+          </div>
+          <div class="foot wrap">PimpMyClaude · 2 воркфлоу, 1 готово · 1,2 ч</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="board hug">
+      <div class="cap">сделано — зелёный</div>
+      <div class="tip skin-dark w268">
+        <div class="card tone-ok">
+          <div class="head">
+            <div class="c-title">Воркфлоу 1</div>
+            <div class="pill pulse">✅ готов</div>
+          </div>
+          <div class="about">поле ввода снова сворачивается, полоска села на строку модели</div>
+          <div class="meta">19:40 → 21:00 · 1,3 ч · шаги 2 из 2</div>
+          <div class="stages">
+            <div class="row done"><div class="ic">✅</div><div class="lbl">план</div><div class="who">я · Fable Extra</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">критик</div><div class="who">Fable High 1</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">кодинг</div><div class="who">Opus Max 2</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">проверка</div><div class="who">Fable Extra 1, Fable High 1</div></div>
+          </div>
+          <div class="foot wrap">PimpMyClaude · 2 воркфлоу, 1 готово · 1,2 ч</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="board light hug">
+      <div class="cap">то же в светлом окне — карточка светлая</div>
+      <div class="tip skin-light w268">
+        <div class="card tone-ok">
+          <div class="head">
+            <div class="c-title">Воркфлоу 1</div>
+            <div class="pill pulse">✅ готов</div>
+          </div>
+          <div class="about">поле ввода снова сворачивается, полоска села на строку модели</div>
+          <div class="meta">19:40 → 21:00 · 1,3 ч · шаги 2 из 2</div>
+          <div class="stages">
+            <div class="row done"><div class="ic">✅</div><div class="lbl">план</div><div class="who">я · Fable Extra</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">критик</div><div class="who">Fable High 1</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">кодинг</div><div class="who">Opus Max 2</div></div>
+            <div class="row done"><div class="ic">✅</div><div class="lbl">проверка</div><div class="who">Fable Extra 1, Fable High 1</div></div>
+          </div>
+          <div class="foot wrap">PimpMyClaude · 2 воркфлоу, 1 готово · 1,2 ч</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <h2 id="s8"><span class="n">8</span>Слова вместо xhigh</h2>
+  <p class="lead">Так старательность модели называется в самом Claude Code — пять слов на ползунке:</p>
+  <div class="dict">
+    <span class="chip now">Low</span>
+    <span class="chip now">Medium</span>
+    <span class="chip now">High</span>
+    <span class="chip now">Extra</span>
+    <span class="chip now">Max</span>
+  </div>
+  <p class="lead">Что во что превращается на карточке:</p>
+  <div class="dict">
+    <span class="chip"><span class="was">low</span><span class="arr">→</span>Low</span>
+    <span class="chip"><span class="was">medium</span><span class="arr">→</span>Medium</span>
+    <span class="chip"><span class="was">high</span><span class="arr">→</span>High</span>
+    <span class="chip"><span class="was">xhigh</span><span class="arr">→</span>Extra</span>
+    <span class="chip"><span class="was">max</span><span class="arr">→</span>Max</span>
+  </div>
+  <p class="note">Самая дорогая модель по-прежнему видна отдельно: «🔴 Fable Max» останется красной и жирной.</p>
+
+</div>
+</body>
+</html>
