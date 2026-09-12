@@ -323,6 +323,11 @@
     // полоске), а не от руки Элвиса. Признак один на весь файл: по нему высота
     // не попадает в lastStretched ни при постановке, ни при уходе со ступени.
     service: false,
+    // Снимок ленты на время тяги: сама лента и стояла ли она внизу.
+    dragTail: null,
+    dragTailDown: false,
+    // Тяга началась на служебной высоте — «обычную» ей защёлкивать нельзя.
+    dragLow: false,
     // Высота, на которой верх поля перестаёт подниматься; живёт до выхода из
     // растянутого вида.
     ceiling: null,
@@ -3865,9 +3870,19 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // «вниз к последнему сообщению» и казалась оторванной от поля (#5866,
     // #5867). Сливаться с полосой прогресса ей больше нечем: на свёрнутом поле
     // та переехала на низ блока ввода (progressApply).
-    handle.style.top = `${Math.round(row && row.height > 0
+    // Кнопку Claude «вниз к последнему сообщению» зона захвата не ест: где та
+    // прижата к строке модели, полоска встаёт под её низом. Ищем кнопку только
+    // в свёрнутом виде и только по её собственной примете.
+    let below = null;
+    try {
+      const down = document.querySelector('[aria-label="Scroll to bottom"]');
+      const box = down?.isConnected ? down.getBoundingClientRect() : null;
+      if (box && box.height > 0) below = box.bottom;
+    } catch {}
+    const seat = row && row.height > 0
       ? row.top - HANDLE_HEIGHT / 2
-      : innerHeight - HANDLE_HEIGHT - 4)}px`;
+      : innerHeight - HANDLE_HEIGHT - 4;
+    handle.style.top = `${Math.round(below != null ? Math.max(seat, below) : seat)}px`;
     // Хит-тест нужен и здесь: меню модели и effort раскрываются вверх ровно над
     // этим местом. Но одного хит-теста мало: свёрнутая полоска сидит верхом на
     // кромке строки модели, то есть половиной уже вне блока ввода, и любой
@@ -4003,6 +4018,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // ---- 10. Ступени --------------------------------------------------------
   const finishDrag = () => {
     if (!state.dragging) return;
+    // Тяга меняет высоту мимо setStage (высота едет прямо в applyHeight), и без
+    // этих строк лента после жеста осталась бы недокрученной: поле отняло у неё
+    // место, а прокрутку никто не двинул (#5869, находка проверяющего 12.09).
+    if (state.dragTailDown) {
+      const tail = state.dragTail;
+      if (tail?.isConnected) { try { tail.scrollTop = tail.scrollHeight; } catch {} }
+    }
+    state.dragTail = null;
+    state.dragTailDown = false;
     state.dragging = false;
     handle.dataset.dragging = "false";
     document.documentElement.style.cursor = "";
@@ -4017,26 +4041,16 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // точек, стоило открыть поле). Поэтому на каждой смене ступени: стояла лента
   // внизу — вернём её вниз.
   //
-  // Скроллер ищем по факту — прокручивается, высокий и не наш, — а не по
-  // классам: в Claude Code лента своя, в обычном чате claude.ai другая, и по
-  // именам они не сходятся. Обход не частый: ступень меняют кликом и тягой, не
-  // мутациями ленты.
+  // Ленту ищем ТЕМ ЖЕ искателем, что и команда «Прокрутить» (раздел 13): он
+  // знает виртуальную ленту по примете и иначе идёт от последнего сообщения
+  // вверх. Свой обход «самый высокий прокручиваемый узел» держался в главном
+  // окне на восьми точках: лента 668, боковая панель 660 — двухстрочный
+  // черновик, и мы крутили бы список чатов (находка проверяющего 12.09).
+  // findScroller объявлен ниже по файлу — на смене ступени он уже есть, а
+  // try прикрывает единственный случай, когда ступень тронули на самом старте.
   const TAIL_SLACK = 2;
-  const TAIL_MIN_VIEW = 200;
   const tailScroller = () => {
-    let best = null;
-    for (const node of document.querySelectorAll("div,main,section")) {
-      // Сперва два дешёвых числа и только потом стили: getComputedStyle на всю
-      // страницу стоил бы дороже самой ступени.
-      const view = Number(node.clientHeight) || 0;
-      if (view < TAIL_MIN_VIEW || !(Number(node.scrollHeight) > view)) continue;
-      if (state.composerBlock?.contains(node)) continue;
-      let overflow = "";
-      try { overflow = getComputedStyle(node).overflowY ?? ""; } catch {}
-      if (overflow !== "auto" && overflow !== "scroll") continue;
-      if (best == null || view > (Number(best.clientHeight) || 0)) best = node;
-    }
-    return best;
+    try { return findScroller(); } catch { return null; }
   };
   const tailAtBottom = node => node != null &&
     Number(node.scrollHeight) - Number(node.clientHeight) - Number(node.scrollTop) <= TAIL_SLACK;
@@ -4107,6 +4121,14 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       ? 0
       : (state.height ?? state.editorRoot.getBoundingClientRect().height);
     state.dragNatural = naturalHeight();
+    // Снимок ленты на момент захвата: стояла внизу — вернём вниз по концу тяги.
+    state.dragTail = tailScroller();
+    state.dragTailDown = tailAtBottom(state.dragTail);
+    // Поле открыто служебной высотой (три строки от клика) — оно заведомо ниже
+    // обычного, и защёлкивать «обычную высоту» тягой вниз нельзя: жест вниз
+    // кидал бы поле вверх. Признак гаснет, как только тяга поднялась выше
+    // обычной высоты.
+    state.dragLow = state.service === true;
     document.documentElement.style.cursor = "ns-resize";
     document.documentElement.style.userSelect = "none";
     handle.dataset.dragging = "true";
@@ -4132,12 +4154,13 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       if (desired > MIN_HEIGHT) setStage(STAGE_NORMAL);
       return;
     }
-    // Защёлкнуть «обычную высоту» имеет право только тяга, начатая НЕ НИЖЕ этой
-    // высоты: поле, открытое кликом на три строки, стоит заметно ниже обычного,
-    // и тяга вниз выбрасывала бы его вверх — жест наоборот (#5868). Из низкого
-    // поля тяга вниз просто уменьшает высоту, а в самом низу поле сворачивается
-    // веткой выше.
-    if (state.stage === STAGE_STRETCHED && desired < natural && state.startHeight >= natural) {
+    // Защёлкнуть «обычную высоту» тяга вниз не имеет права, пока поле стоит на
+    // служебной высоте (три строки от клика): оно заведомо ниже обычной, и жест
+    // вниз выбрасывал бы его вверх (#5868). Мерить высотой начала жеста нельзя —
+    // у Элвиса обычная высота не замерена вовсе (поле пустое), и запасные 96
+    // точек запирали бы защёлку навсегда (находка проверяющего 12.09).
+    if (state.dragLow && desired >= natural) state.dragLow = false;
+    if (state.stage === STAGE_STRETCHED && desired < natural && !state.dragLow) {
       setStage(STAGE_NORMAL);
       return;
     }
@@ -4545,7 +4568,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   const onCashoutPick = event => {
     try {
       const target = event?.target;
-      if (target?.tagName === "INPUT" && target.type === "file") cashoutRemember(target.files);
+      // Кнопка «+» живёт в строке модели, а она видна и при свёрнутом поле:
+      // выбранный ею файл прикреплялся так же невидимо, как вставленный (#5870).
+      if (target?.tagName === "INPUT" && target.type === "file") cashoutFiles(target.files);
     } catch {}
   };
 
@@ -6691,6 +6716,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       url: location.href,
       stage: state.stage,
       height: state.height,
+      // Высота от клика по свёрнутой полоске (три строки), а не от руки.
+      service: state.service,
       ceiling: state.ceiling,
       natural: state.natural,
       cssOk: state.cssOk,

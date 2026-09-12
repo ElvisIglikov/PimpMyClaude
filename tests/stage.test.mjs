@@ -62,7 +62,7 @@ const noModelRowStand = dom => {
 // Claude «вниз к последнему сообщению» висит НАД строкой модели отдельным
 // слоем — position:absolute, z-index:1, вне .epitaxy-prompt. Свёрнутая полоска
 // стояла ровно на этой кнопке (#5866, #5867).
-const newBuildStand = ({ left = 100, width = 1000, editorWidth = null } = {}) => dom => {
+const newBuildStand = ({ left = 100, width = 1000, editorWidth = null, scrollButtonTop = 714 } = {}) => dom => {
   const inner = editorWidth ?? width - 20;
   const prompt = dom.document.body.add("div", {
     class: "epitaxy-prompt", rect: { left, top: 500, width, height: 260 },
@@ -90,7 +90,7 @@ const newBuildStand = ({ left = 100, width = 1000, editorWidth = null } = {}) =>
   });
   const scrollButton = dom.document.body.add("button", {
     attrs: { "aria-label": "Scroll to bottom" },
-    rect: { left: left + width / 2 - 16, top: 714, width: 32, height: 24 },
+    rect: { left: left + width / 2 - 16, top: scrollButtonTop, width: 32, height: 24 },
     computed: { position: "absolute", zIndex: "1" },
   });
   return { prompt, block, shell, files, root, editor, modelRow, scrollButton };
@@ -100,6 +100,9 @@ const collapsed = node => node.getAttribute(BLOCK_ATTRIBUTE);
 // Зона захвата полоски (высота в CSS) — по ней считается, где идёт сама линия:
 // зона стоит верхом на кромке, линия — ровно посередине зоны.
 const HANDLE_HEIGHT = 18;
+// Высота самой полосы прогресса — столько же, сколько в inject.js: по ней видно,
+// что линия полоски и линия полосы не сливаются в одну.
+const PROGRESS_BAR_HEIGHT = 2;
 const box = node => node.getBoundingClientRect();
 const handleOf = loaded => loaded.dom.query("#myclaude-input-handle");
 const handleTop = loaded => parseFloat(handleOf(loaded).style.top);
@@ -122,9 +125,15 @@ const dragHandle = (loaded, from, to) => {
 };
 // Лента разговора: прокручиваемый высокий блок БЕЗ примет Claude — полоска
 // обязана находить его по факту, а не по классам.
+// Лента разговора — та самая, которую ищет findScroller: виртуальная лента
+// Claude со своей приметой. Своего обхода «самый высокий прокручиваемый узел» у
+// нас больше нет: в главном окне он держался в восьми точках от боковой панели
+// со списком чатов (находка проверяющего 12.09).
 const addTranscript = (loaded, { scrollTop }) => {
   const tail = loaded.document.body.add("div", {
-    class: "some-generated-class", rect: { left: 0, top: 0, width: 1200, height: 500 },
+    class: "some-generated-class",
+    attrs: { "data-testid": "epitaxy-virtual-transcript" },
+    rect: { left: 0, top: 0, width: 1200, height: 500 },
     computed: { overflowY: "auto" },
   });
   tail.clientHeight = 500;
@@ -282,13 +291,18 @@ test("свёрнутая полоска легла на кромку строк�
   const { modelRow, scrollButton } = loaded.parts;
   loaded.api.setStage(COLLAPSED);
   assert.equal(handleOf(loaded).dataset.collapsed, "true", "полоска знает, что поле свёрнуто");
-  assert.equal(handleTop(loaded), box(modelRow).top - HANDLE_HEIGHT / 2,
-    "зона захвата стоит верхом на кромке строки модели — как на открытом поле она стоит на кромке рамки");
-  assert.equal(handleLine(loaded), box(modelRow).top, "сама линия — ровно на кромке");
-  // До 12.09 полоска висела на целую свою высоту выше строки модели и линией
-  // приходилась ровнёхонько на кнопку Claude «вниз к последнему сообщению».
-  assert.ok(handleLine(loaded) >= box(scrollButton).bottom,
-    `линия ${handleLine(loaded)} ниже кнопки Claude (низ ${box(scrollButton).bottom})`);
+  // Место полоски — кромка строки модели, но не выше низа кнопки Claude «вниз к
+  // последнему сообщению»: там, где та прижата к строке, зона захвата съедала бы
+  // её нижнюю треть и клик уходил бы полоске, а не кнопке.
+  assert.ok(handleTop(loaded) >= box(scrollButton).bottom,
+    `зона захвата (верх ${handleTop(loaded)}) начинается не выше низа кнопки ${box(scrollButton).bottom}`);
+  assert.ok(handleTop(loaded) >= box(modelRow).top - HANDLE_HEIGHT / 2,
+    "и не выше кромки строки модели — выше неё полоска висела бы в пустоте, как до 12.09");
+  // Кнопка отодвинута от строки модели — полоска садится ровно на кромку.
+  const free = loadInject({ html: newBuildStand({ scrollButtonTop: 640 }), title: "Trelvis" });
+  free.api.setStage(COLLAPSED);
+  assert.equal(handleLine(free), box(free.parts.modelRow).top,
+    "кнопка не мешает — линия ровно на кромке строки модели");
 });
 
 test("у свёрнутого поля полоса прогресса переезжает на низ блока — линии не сливаются", () => {
@@ -301,7 +315,7 @@ test("у свёрнутого поля полоса прогресса пере�
   // встала линия полоски: без переезда две линии рисовались бы одна в одну.
   assert.equal(loaded.api.status().progress.anchor, "низ блока");
   assert.equal(barTop(loaded), box(block).bottom - 1, "полоса ушла на низ блока ввода");
-  assert.ok(barTop(loaded) - handleLine(loaded) >= HANDLE_HEIGHT,
+  assert.ok(barTop(loaded) - handleLine(loaded) >= PROGRESS_BAR_HEIGHT + 4,
     `между линиями ${barTop(loaded) - handleLine(loaded)} точек — не сливаются`);
   loaded.api.setStage(NORMAL);
   assert.equal(loaded.api.status().progress.anchor, "рамка", "поле открыли — якорь вернулся");
@@ -344,6 +358,28 @@ test("файл в свёрнутое поле сначала открывает 
   loaded.api.setStage(COLLAPSED);
   loaded.document.dispatchEvent({ type: "paste", clipboardData: { files: [] } });
   assert.equal(loaded.api.status().stage, COLLAPSED, "вставка без файлов поле не трогает");
+  // Третья дверь — кнопка «+»: она живёт в строке модели, а та видна и при
+  // свёрнутом поле, так что выбранный ею файл пропадал так же молча.
+  const picker = loaded.document.body.add("input", { attrs: { type: "file" } });
+  picker.type = "file";
+  picker.files = [loaded.dom.file("скрин.png")];
+  loaded.document.dispatchEvent({ type: "change", target: picker });
+  assert.equal(loaded.api.status().stage, NORMAL, "файл, выбранный кнопкой, тоже открыл поле");
+});
+
+test("тяга за полоску тоже возвращает ленту вниз", () => {
+  // Доскрутка на смене ступени ленту спасает только у клика: тяга меняет высоту
+  // мимо ступеней, и низ разговора опять уезжал под поле (находка проверяющего).
+  const loaded = loadInject({ html: newBuildStand(), title: "Trelvis" });
+  const tail = addTranscript(loaded, { scrollTop: 900 });
+  const handle = handleOf(loaded);
+  handle.dispatchEvent({ type: "pointerdown", button: 0, clientY: 600, pointerId: 1 });
+  tail.scrollTop = 400;                       // поле отняло у ленты место
+  // Тягу слушает документ, а не сама полоска: рука уходит с неё на первом же
+  // движении.
+  loaded.document.dispatchEvent({ type: "pointermove", clientY: 590, pointerId: 1 });
+  loaded.document.dispatchEvent({ type: "pointerup", clientY: 590, pointerId: 1 });
+  assert.equal(tail.scrollTop, 900, "по концу тяги лента вернулась вниз");
 });
 
 test("клик по свёрнутой полоске открывает поле на три строки, а не во всю высоту", () => {
