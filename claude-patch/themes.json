@@ -312,6 +312,132 @@
         "panel": "#ffffff",
         "muted": "#856b73"
       }
+    },
+    {
+      "id": "mango",
+      "name": "Манго",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#fd8b27",
+        "background": "#512b15",
+        "foreground": "#fce9de",
+        "sidebar": "#3a1d0c",
+        "panel": "#6b3c22",
+        "muted": "#be8c6f"
+      }
+    },
+    {
+      "id": "honey",
+      "name": "Мёд",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#e6ad02",
+        "background": "#503c14",
+        "foreground": "#fcf2de",
+        "sidebar": "#38290c",
+        "panel": "#695121",
+        "muted": "#bca069"
+      }
+    },
+    {
+      "id": "lemonade",
+      "name": "Лимонад",
+      "type": "light",
+      "set": "bright",
+      "palette": {
+        "accent": "#b12c00",
+        "background": "#ffeb85",
+        "foreground": "#322b08",
+        "sidebar": "#ffe45e",
+        "panel": "#fff7cf",
+        "muted": "#7f7234"
+      }
+    },
+    {
+      "id": "orangeade",
+      "name": "Апельсин",
+      "type": "light",
+      "set": "bright",
+      "palette": {
+        "accent": "#a31000",
+        "background": "#ffcb8f",
+        "foreground": "#321f08",
+        "sidebar": "#ffb969",
+        "panel": "#ffedd9",
+        "muted": "#815d35"
+      }
+    },
+    {
+      "id": "lime",
+      "name": "Лайм",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#7ed102",
+        "background": "#374912",
+        "foreground": "#f2fcde",
+        "sidebar": "#25320a",
+        "panel": "#4c631f",
+        "muted": "#95b457"
+      }
+    },
+    {
+      "id": "coral",
+      "name": "Коралл",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#fd7661",
+        "background": "#541915",
+        "foreground": "#fce0de",
+        "sidebar": "#3d100c",
+        "panel": "#6d2722",
+        "muted": "#c27b76"
+      }
+    },
+    {
+      "id": "fuchsia",
+      "name": "Фуксия",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#fd69cc",
+        "background": "#53163c",
+        "foreground": "#fcdef1",
+        "sidebar": "#3d0c2b",
+        "panel": "#6d2251",
+        "muted": "#c277a7"
+      }
+    },
+    {
+      "id": "electric",
+      "name": "Электрик",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#02baf2",
+        "background": "#143c50",
+        "foreground": "#def2fc",
+        "sidebar": "#0c2938",
+        "panel": "#215169",
+        "muted": "#6ca2bd"
+      }
+    },
+    {
+      "id": "ultra",
+      "name": "Ультрафиолет",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#c674fe",
+        "background": "#381655",
+        "foreground": "#eedefc",
+        "sidebar": "#270d3f",
+        "panel": "#4b236e",
+        "muted": "#a078c2"
+      }
     }
   ]
 }

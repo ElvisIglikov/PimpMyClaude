@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf53-b-1";
+  const VERSION = "wf57-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -137,6 +137,12 @@
   // Одиночный клик ждёт возможного второго: без задержки каждый двойной клик
   // успевал бы сначала сделать лишний шаг по лестнице.
   const CLICK_STEP_DELAY = 260;
+  // На сколько открывает поле клик по свёрнутой полоске: три строки по 24 точки
+  // (замер живого окна). «Сколько хочет Claude» тут не годится — в окне, где
+  // когда-то лежал длинный черновик, обычная высота помнится как 384 точки, и
+  // поле распахивалось на пол-экрана (#5868). Высота служебная: в память
+  // «растянуто» она не идёт (см. setStage и state.service).
+  const CLICK_OPEN_HEIGHT = 72;
   // Свёрнутая полоска уже рамки на пятую часть и стоит по центру: во всю ширину
   // её зона захвата накрывала бы строку модели под ней.
   const COLLAPSED_WIDTH_SCALE = 0.8;
@@ -313,6 +319,10 @@
     // Последняя высота, которую натянули рукой. Живёт в памяти окна и переживает
     // уход на другие ступени: без неё возврат в «растянуто» терял бы размер.
     lastStretched: initialHeight,
+    // Нынешняя высота «растянуто» — служебная (три строки от клика по свёрнутой
+    // полоске), а не от руки Элвиса. Признак один на весь файл: по нему высота
+    // не попадает в lastStretched ни при постановке, ни при уходе со ступени.
+    service: false,
     // Высота, на которой верх поля перестаёт подниматься; живёт до выхода из
     // растянутого вида.
     ceiling: null,
@@ -2842,7 +2852,14 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const width = Math.round(rect.width - inset * 2);
     // Полоса сидит верхом на кромке: половина линии выше низа рамки, половина
     // ниже. На запасном якоре кромка — верх строки инструментов.
-    const top = Math.round(onFrame ? rect.bottom : rect.top) - 1;
+    //
+    // Свёрнутое поле — случай особый: рамка схлопнута в ноль и её низ приходится
+    // ровно туда, куда с 12.09 встала линия свёрнутой полоски, — две линии
+    // сливались бы в одну (#5866). Пока поле свёрнуто, полоса садится на низ
+    // всего блока ввода: строка модели осталась на виду и держит его низ.
+    const blockBottom = state.stage === STAGE_COLLAPSED
+      ? Math.round(block.getBoundingClientRect().bottom) : null;
+    const top = (blockBottom ?? Math.round(onFrame ? rect.bottom : rect.top)) - 1;
     if (progressCovered(top, left, left + width)) {
       progressState.reason = "полосу закрыло меню";
       progressHide();
@@ -2853,7 +2870,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // ждёт первого ответа, а не «сломалась». Причину при этом называем честно —
     // её читает гейт через probe.
     progressState.reason = info ? null : "нет строки состояния — пустой контур";
-    progressState.anchor = onFrame ? "рамка" : "строка инструментов";
+    progressState.anchor = blockBottom != null
+      ? "низ блока" : (onFrame ? "рамка" : "строка инструментов");
     const shares = info ? progressShares(info, width) : [0];
     progressState.segments = shares;
     // Полоса сейчас спрятана — значит это её появление: ни первый показ при
@@ -2948,10 +2966,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     if (!box || progressBar.style.display === "none") return false;
     if (y < box.top - PROGRESS_HIT_SLACK || y > box.top + PROGRESS_BAR_HEIGHT + PROGRESS_HIT_SLACK) return false;
     if (x < box.left || x > box.right) return false;
-    // Ручка сильнее полосы. У свёрнутого поля она стоит ровно над строкой
-    // модели (раздел 9, placeCollapsedHandle) — там же, где линия прогресса, —
-    // и кликом по ней поле возвращают. Не уступи мы здесь, вернуть поле стало бы
-    // нечем: наш обработчик глушит клик на захвате, до самой ручки.
+    // Ручка сильнее полосы: кликом по ней возвращают свёрнутое поле, и не уступи
+    // мы здесь, вернуть его стало бы нечем — наш обработчик глушит клик на
+    // захвате, до самой ручки. С 12.09 линии разведены (ручка на кромке строки
+    // модели, полоса на низе блока), но уступка остаётся: их разводит
+    // геометрия, а она у Claude меняется без предупреждения.
     try {
       if (handle.style.display !== "none") {
         const rect = handle.getBoundingClientRect();
@@ -3839,16 +3858,22 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     handle.style.display = "flex";
     handle.style.left = `${Math.round(left + (span - width) / 2)}px`;
     handle.style.width = `${width}px`;
-    // Свёрнутая полоска стоит на 5 точек выше, чем раньше: на кромке строки
-    // модели её линия сливалась с полосой прогресса (слово Элвиса 05.09 19:30).
+    // Линия садится ровно на верхнюю кромку строки модели — так же, как на
+    // открытом поле она садится на кромку рамки: зона захвата стоит верхом на
+    // кромке, то есть выше неё ровно половина. Выше (на целую высоту зоны, как
+    // было до 12.09) полоска висела над строкой модели поверх кнопки Claude
+    // «вниз к последнему сообщению» и казалась оторванной от поля (#5866,
+    // #5867). Сливаться с полосой прогресса ей больше нечем: на свёрнутом поле
+    // та переехала на низ блока ввода (progressApply).
     handle.style.top = `${Math.round(row && row.height > 0
-      ? row.top - HANDLE_HEIGHT - 2
+      ? row.top - HANDLE_HEIGHT / 2
       : innerHeight - HANDLE_HEIGHT - 4)}px`;
     // Хит-тест нужен и здесь: меню модели и effort раскрываются вверх ровно над
-    // этим местом. Но одного хит-теста мало: центр свёрнутой полоски лежит выше
-    // строки модели, то есть уже вне блока ввода, и любой градиент расшифровки с
-    // position:absolute спрятал бы её навсегда — а вернуть поле мышью больше
-    // нечем. Поэтому прячем только когда меню действительно открыто.
+    // этим местом. Но одного хит-теста мало: свёрнутая полоска сидит верхом на
+    // кромке строки модели, то есть половиной уже вне блока ввода, и любой
+    // градиент расшифровки с position:absolute спрятал бы её навсегда — а
+    // вернуть поле мышью больше нечем. Поэтому прячем только когда меню
+    // действительно открыто.
     state.handleCovered = !state.dragging && overlayOpen() && popupCoversHandle();
     if (state.handleCovered) handle.style.display = "none";
   };
@@ -3985,12 +4010,53 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     storeHeight(state.height);
     scheduleLayout();
   };
+
+  // Лента разговора за полем не следит: место, которое поле у неё отняло, она
+  // отдаёт снизу, а прокрутку никто не двигает — последние строки уезжают под
+  // поле, и мышью их уже не достать (#5869; замер 12.09: недокрут ленты 0 → 40
+  // точек, стоило открыть поле). Поэтому на каждой смене ступени: стояла лента
+  // внизу — вернём её вниз.
+  //
+  // Скроллер ищем по факту — прокручивается, высокий и не наш, — а не по
+  // классам: в Claude Code лента своя, в обычном чате claude.ai другая, и по
+  // именам они не сходятся. Обход не частый: ступень меняют кликом и тягой, не
+  // мутациями ленты.
+  const TAIL_SLACK = 2;
+  const TAIL_MIN_VIEW = 200;
+  const tailScroller = () => {
+    let best = null;
+    for (const node of document.querySelectorAll("div,main,section")) {
+      // Сперва два дешёвых числа и только потом стили: getComputedStyle на всю
+      // страницу стоил бы дороже самой ступени.
+      const view = Number(node.clientHeight) || 0;
+      if (view < TAIL_MIN_VIEW || !(Number(node.scrollHeight) > view)) continue;
+      if (state.composerBlock?.contains(node)) continue;
+      let overflow = "";
+      try { overflow = getComputedStyle(node).overflowY ?? ""; } catch {}
+      if (overflow !== "auto" && overflow !== "scroll") continue;
+      if (best == null || view > (Number(best.clientHeight) || 0)) best = node;
+    }
+    return best;
+  };
+  const tailAtBottom = node => node != null &&
+    Number(node.scrollHeight) - Number(node.clientHeight) - Number(node.scrollTop) <= TAIL_SLACK;
+
   // Единственная точка смены ступени: и тяга, и клики, и команды снаружи ходят
   // только через неё, поэтому ступень и высота не могут разъехаться.
   const setStage = (next, options) => {
     const value = Math.max(STAGE_COLLAPSED, Math.min(STAGE_STRETCHED, next));
     const height = options?.height;
     if (state.stage === value && (value !== STAGE_STRETCHED || height == null)) return;
+    // Меряем ДО правки высоты: после неё «стояла ли лента внизу» уже не узнать.
+    const tail = tailScroller();
+    const tailDown = tailAtBottom(tail);
+    // Служебная высота — та, что поле получает не от руки Элвиса, а от клика по
+    // свёрнутой полоске (три строки, #5868). В память «растянуто» она не идёт
+    // ни при постановке, ни при уходе с ней со ступени: иначе возврат открывал
+    // бы поле на эти три строки вместо натянутого рукой размера.
+    const service = options?.service === true;
+    const wasService = state.service;
+    state.service = value === STAGE_STRETCHED && service;
     state.stage = value;
     storeStage(value);
     if (value === STAGE_STRETCHED) {
@@ -3998,12 +4064,12 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       // не к потолку окна: сначала последняя натянутая рукой высота и только
       // потом максимум.
       state.height = clampHeight(height ?? state.height ?? state.lastStretched ?? maximumHeight());
-      state.lastStretched = state.height;
+      if (!service) state.lastStretched = state.height;
     } else {
       // Обычная высота и полоска своей высоты не хранят: подмену снимаем, и поле
       // снова слушается самого Claude. Саму цифру помним в памяти окна, иначе
       // возврат в «растянуто» открывал бы поле во всё окно вместо прежнего.
-      state.lastStretched = state.height ?? state.lastStretched;
+      if (!wasService) state.lastStretched = state.height ?? state.lastStretched;
       state.height = null;
       // Достигнутый упор верен только для текущего вида: сменилась ступень —
       // считать заново.
@@ -4016,8 +4082,12 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     }
     applyCollapse();
     applyHeight();
-    if (options?.silent) return;
-    layout();
+    if (!options?.silent) layout();
+    // Доскручиваем последним: до этого высота поля ещё едет, и целиться было бы
+    // не во что. Не стояла лента внизу — не трогаем: человек сам ушёл наверх.
+    if (tailDown && tail?.isConnected) {
+      try { tail.scrollTop = tail.scrollHeight; } catch {}
+    }
   };
 
   const onPointerDown = event => {
@@ -4062,20 +4132,38 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       if (desired > MIN_HEIGHT) setStage(STAGE_NORMAL);
       return;
     }
-    if (state.stage === STAGE_STRETCHED && desired < natural) { setStage(STAGE_NORMAL); return; }
+    // Защёлкнуть «обычную высоту» имеет право только тяга, начатая НЕ НИЖЕ этой
+    // высоты: поле, открытое кликом на три строки, стоит заметно ниже обычного,
+    // и тяга вниз выбрасывала бы его вверх — жест наоборот (#5868). Из низкого
+    // поля тяга вниз просто уменьшает высоту, а в самом низу поле сворачивается
+    // веткой выше.
+    if (state.stage === STAGE_STRETCHED && desired < natural && state.startHeight >= natural) {
+      setStage(STAGE_NORMAL);
+      return;
+    }
     if (state.stage !== STAGE_STRETCHED) {
       if (desired > natural + STAGE_DRAG_SLACK) setStage(STAGE_STRETCHED, { height: desired });
       return;
     }
+    // Высоту тронула рука — служебной она быть перестала, и в память «растянуто»
+    // пойдёт уже она.
+    state.service = false;
     state.height = clampHeight(desired);
     applyHeight();
     layout();
   };
 
-  // Одиночный клик — шаг по лестнице: полоску разворачивает до обычной высоты,
-  // любое развёрнутое поле сворачивает. Шаг отложен: второй клик двойного
-  // приходит сюда же, и без задержки каждый двойной клик успевал бы сначала
-  // сделать лишний шаг.
+  // Одиночный клик — шаг по лестнице: полоску разворачивает на три строки, любое
+  // развёрнутое поле сворачивает. Шаг отложен: второй клик двойного приходит
+  // сюда же, и без задержки каждый двойной клик успевал бы сначала сделать
+  // лишний шаг.
+  //
+  // Три строки — вместо прежней «обычной высоты»: её Claude в каждом окне помнит
+  // свою, и там, где когда-то лежал длинный черновик, клик распахивал поле на
+  // пол-экрана (#5868, замер: обычная высота 384 точки при живом поле в 24).
+  // Ступень при этом остаётся «растянуто» — четвёртой ступени у лестницы нет, —
+  // а высота идёт служебной и память натянутого рукой размера не трогает.
+  // Двойной клик как разворачивал во всю высоту, так и разворачивает.
   const cancelClickStep = () => {
     if (!state.clickTimer) return;
     clearTimeout(state.clickTimer);
@@ -4096,7 +4184,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       // экземпляр сняли — тогда шаг свернул бы поле, а полоски для возврата уже
       // нет.
       if (state.dragging || !state.alive) return;
-      setStage(state.stage === STAGE_COLLAPSED ? STAGE_NORMAL : STAGE_COLLAPSED);
+      if (state.stage !== STAGE_COLLAPSED) { setStage(STAGE_COLLAPSED); return; }
+      setStage(STAGE_STRETCHED, { height: CLICK_OPEN_HEIGHT, service: true });
     }, CLICK_STEP_DELAY);
   };
 
@@ -4440,10 +4529,19 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     while (total > CASHOUT_BYTES_MAX && home.shelf.length > 1) total -= home.shelf.shift().size;
     startCashoutSweep();
   };
+  // Файлы на входе в поле: положить на полку и — если поле свёрнуто — открыть
+  // его. Свёрнутая рамка схлопнута в ноль (height:0, opacity:0), и вложение
+  // прикрепляется невидимо: Элвис видит, что скриншот «не вставился», хотя
+  // Claude его уже взял (#5870). Перехватывать событие нам нечем и незачем —
+  // открыли поле и отпустили его своим ходом к Claude.
+  const cashoutFiles = list => {
+    cashoutRemember(list);
+    if (list?.length && state.stage === STAGE_COLLAPSED) setStage(STAGE_NORMAL);
+  };
   // Слушатели ставятся на ЗАХВАТЕ (раздел 16): Claude зовёт preventDefault, и на
   // всплытии события до нас доходят не всегда.
-  const onCashoutPaste = event => { try { cashoutRemember(event?.clipboardData?.files); } catch {} };
-  const onCashoutDrop = event => { try { cashoutRemember(event?.dataTransfer?.files); } catch {} };
+  const onCashoutPaste = event => { try { cashoutFiles(event?.clipboardData?.files); } catch {} };
+  const onCashoutDrop = event => { try { cashoutFiles(event?.dataTransfer?.files); } catch {} };
   const onCashoutPick = event => {
     try {
       const target = event?.target;
@@ -6625,7 +6723,8 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
         total: progressState.info?.total ?? null,
         state: progressState.info?.state ?? null,
         segments: progressState.segments.slice(),
-        // На чём сидит линия: "рамка" или запасное "строка инструментов".
+        // На чём сидит линия: "рамка", у свёрнутого поля "низ блока", а
+        // запасное — "строка инструментов".
         anchor: progressState.anchor,
         reason: progressState.reason,
         // Карточка сегмента: какой сегмент открыт кликом (с нуля), открыта ли
