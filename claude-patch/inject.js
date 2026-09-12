@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf58-e-1";
+  const VERSION = "wf60-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -455,6 +455,31 @@
   // так они едут пропорционально сами и не спорят с выбором Элвиса.
   const SIZE_HEADINGS = [["h1", 1.6], ["h2", 1.35], ["h3", 1.18], ["h4", 1.05]];
   const SIZE_CODE_SCALE = 0.9;
+  // Вложения ПОЛЯ ВВОДА в узком окне (WF61, #5912). Замер живьём 12.09 23:37
+  // (вставили картинку в поле и сняли разметку): плашка вложения — это
+  // `div[data-cds=MessageAttachmentsImage][data-cds-attachment]` с классом
+  // `size-[120px]`, то есть 120×120 задаёт КЛАСС на самой плашке, а не
+  // `[data-cds-tile-media]` — его в композере нет вовсе (он живёт в ленте
+  // разговора, там плитки 247×142). Первая версия правила целилась в него и не
+  // меняла ничего: молча, без красного теста. В окне 280 на поле остаётся 194
+  // точки — в ряд встаёт РОВНО ОДНА плашка. Пять скриншотов = 600 точек, то есть всё окно: ни черновика, ни
+  // строки модели, печатать негде. В широком окне те же плитки ложатся сеткой, и
+  // трогать её незачем — отсюда порог. 560 стоит далеко и от окон Элвиса
+  // (255–259 точек внутри окна 280), и от его широкого окна (829): разметка
+  // Claude может подвинуться на десяток точек, решение от этого не поедет.
+  const NARROW_WINDOW_MAX = 560;
+  // Сторона плашки в узком окне. 56 + зазор 6 (его ставит сам Claude, `gap-xs`) —
+  // это три штуки в ряд на 220 точках ряда; меньше уже не картинка, а значок.
+  const NARROW_TILE = 56;
+  // Крестик «Remove» (20×20) сидит в углу плашки и вылезает за неё на 8 точек
+  // вверх — замер живьём. Коробка с прокруткой обрезает всё, что торчит наружу
+  // (overflow-y:auto делает и overflow-x:auto), поэтому даём ей поля: без них у
+  // верхнего ряда срезало бы половину кнопки, а ею Элвис снимает вложение.
+  const NARROW_ATTACHMENTS_PAD = 12;
+  // Потолок всего блока вложений — доля ОКНА, а не точки Claude: на экране
+  // Элвиса (784 точки) это ~196, то есть три ряда плиток. Что не влезло, блок
+  // прокручивает у себя внутри, а поле ввода остаётся на месте.
+  const NARROW_ATTACHMENTS_HEIGHT = "25vh";
   // Неоновая рамка окна (WF12, #5343): оверлей во всё окно, свет внутрь.
   // Скругление — как у окна macOS; 2 точки линии и то же свечение, что у полосы
   // прогресса, потому что цвет у них один — акцент темы.
@@ -1013,6 +1038,45 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     return `${rules.join("\n")}\n`;
   };
 
+  // Отдельная таблица стилей (см. attachmentsSheet ниже) — раскладка вложений
+  // ПОЛЯ ВВОДА в узком окне (WF61, #5912). Ни цветов, ни высоты самого поля в
+  // ней нет вовсе: высотой поля владеет раздел 7, и лезть туда нельзя —
+  // вечером 12.09 подмена высоты уже воевала с пятью скриншотами, и низ окна
+  // прыгал.
+  //
+  // Целимся ТОЛЬКО в потомков `[data-cds-composer-attachments]`. Тем же
+  // компонентом Claude рисует вложения В ЛЕНТЕ разговора, и отделяет одно от
+  // другого ровно этой приметой: у него самого плитки ленты растут правилом
+  // `…[data-fit=natural]:not([data-cds-composer-attachments] *)`. Голый
+  // `[data-cds-attachment]` не трогаем никогда — это попало бы в ленту, а там
+  // плитки бывают и 247×142, и 427×320, и они не наше дело.
+  //
+  // Правил два. Плашка: жёсткие 120×120 Claude меняем на 56×56, и в ряд встают
+  // три, а не одна (перенос делает он сам — у ряда `flex-wrap: wrap`, трогать
+  // раскладку не нужно); `min-*: 0` — чтобы правило пережило день, когда Claude
+  // допишет композеру свой `min-width` (в ленте у него он уже есть). Коробка:
+  // потолок высоты, своя прокрутка и поля под вылет крестика.
+  // Переходы и анимации Claude (`view-transition`, `@starting-style`, transition
+  // у плашки) не переопределяем — только раскладка и размер. `!important` здесь
+  // не про каскад таблиц, а про день, когда Claude уточнит свой селектор:
+  // важное правило автора сильнее любого обычного.
+  const attachmentsCss = () => `/* PimpMyClaude · вложения поля ввода в узком окне */
+@media (max-width: ${NARROW_WINDOW_MAX}px) {
+  [data-cds-composer-attachments] [data-cds-attachment] {
+    width: ${NARROW_TILE}px !important;
+    height: ${NARROW_TILE}px !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+  }
+  [data-cds-composer-attachments] {
+    max-height: ${NARROW_ATTACHMENTS_HEIGHT} !important;
+    overflow-y: auto !important;
+    padding-top: ${NARROW_ATTACHMENTS_PAD}px !important;
+    padding-right: ${NARROW_ATTACHMENTS_PAD}px !important;
+  }
+}
+`;
+
   // Свет рамки — три тени внутрь одним цветом: линия в две точки, широкий ореол
   // и второй проход по нему, отчего свет плотнее у самой кромки. Приём тот же,
   // что у полосы прогресса (раздел 2б), и цвет тот же — акцент темы.
@@ -1248,6 +1312,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Размер — третья таблица по тому же доводу: сменить размер, не тронув ни
   // цветов, ни шрифта.
   const sizeSheet = new CSSStyleSheet();
+  // Четвёртая таблица — вложения поля ввода в узком окне (WF61, #5912). В
+  // отличие от трёх верхних она не слой: её содержимое не зависит ни от команды,
+  // ни от выбора Элвиса, — поэтому ставится один раз здесь и снимается вместе с
+  // экземпляром, а не по applyLayer.
+  const attachmentsSheet = new CSSStyleSheet();
   const detachSheet = sheet => {
     try { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(item => item !== sheet); } catch {}
   };
@@ -1257,7 +1326,15 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       return true;
     } catch { return false; }
   };
-  track(() => { detachSheet(themeSheet); detachSheet(fontSheet); detachSheet(sizeSheet); });
+  track(() => {
+    detachSheet(themeSheet); detachSheet(fontSheet); detachSheet(sizeSheet); detachSheet(attachmentsSheet);
+  });
+  // Ставим сразу и только в окнах Claude: в артефакте и браузерной панели поля
+  // ввода нет вовсе, а лишняя таблица там — лишняя таблица (см. themable).
+  if (themable) {
+    try { attachmentsSheet.replaceSync(attachmentsCss()); } catch {}
+    adoptSheet(attachmentsSheet);
+  }
   // Сироты от прежней реализации (<style id=…>, в том числе зеркальные копии) и
   // оверлей рамки от упавшей на середине установки.
   for (const orphan of document.querySelectorAll(`#${THEME_STYLE_ID}`)) orphan.remove();
@@ -1977,7 +2054,11 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     { key: "code", label: "кодинг", re: /^кодинг/i },
     { key: "check", label: "проверка", re: /^проверк/i },
   ];
-  const STATUS_EFFORT_RE = /\s(low|medium|high|xhigh|max)$/i;
+  // Хвост строки роли — эффорт. Слово `extra` стоит здесь ради уже написанных
+  // файлов (#5907): карточка показывает `xhigh` словами Claude Code («Extra»), и
+  // где-то в сводке это слово могли записать сразу так — без него «Fable Extra»
+  // перестало бы читаться как модель с эффортом вовсе.
+  const STATUS_EFFORT_RE = /\s(low|medium|high|xhigh|extra|max)$/i;
   // Шапка сводки — три строки счёта («41 воркфлоу», «26 готово», «39 ч»): они
   // уходят в подвал карточки.
   const STATUS_HEAD_LINES = 3;
@@ -2228,9 +2309,17 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       who: cardNode(row, { "font-size": "12px", "min-width": "0" }),
     };
   });
+  // Подвал — ДВЕ строки с переносом, а не одна с обрезкой (#5910): в окне 280 под
+  // текст подвала остаётся 228 точек, а даже короткая фраза «VkusnoffKz · 1
+  // воркфлоу, 0 готово · 45 мин» занимает 243 — одной строкой она обрывалась на
+  // полуслове. Показ (display) переписывается при каждой смене текста: атрибут
+  // hidden прячет узел правилом `[hidden]{display:none}`, а оно слабее
+  // объявления в самом узле — подвал без текста остался бы на экране пустой
+  // чертой.
   const progressCardFoot = cardNode(progressCard, {
     "margin-top": "7px", "padding-top": "5px", "border-top-width": "1px", "border-top-style": "solid",
-    "font-size": "12px", "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis",
+    "font-size": "12px", display: "-webkit-box", "-webkit-line-clamp": "2",
+    "-webkit-box-orient": "vertical", overflow: "hidden",
   });
   progressTip.appendChild(progressCard);
 
@@ -2659,14 +2748,123 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       run: "47,98,216", ok: "31,154,90", wait: "196,138,0", fail: "204,58,48", todo: "130,136,150",
     },
   };
-  // Кто делал этап: «2 агента · Opus max». Fable max — красный кружок и жирным
-  // (слово Элвиса 04.09 21:10): по нему видно, где потрачена дорогая модель.
+  // Эффорт словами самого Claude Code (#5907). У ползунка Effort пять делений —
+  // Low · Medium · High · Extra · Max, — а сводки пишут «xhigh»: Элвис это слово
+  // не читает («он не выкупит, короче»). Переводим ТОЛЬКО на показе: файлы
+  // сводок пишут и читают агенты, и там слово остаётся прежним. Чего в списке
+  // нет, не выдумываем — показываем как написано.
+  const PROGRESS_EFFORT_WORDS = {
+    low: "Low", medium: "Medium", high: "High", xhigh: "Extra", extra: "Extra", max: "Max",
+  };
+  // «×1» в конце записи модели: «Fable xhigh ×1». Знак берём и математический, и
+  // латинскую «x», и кириллическую «х» — диктуется голосом, пишется по-разному.
+  const PROGRESS_TIMES_RE = /\s*[×xх*]\s*(\d+)\s*$/i;
+  // Сколько моделей помещается в колонку «кто»: в окне 280 она 126 точек, и
+  // третья запись уводит строку на третью строчку карточки. Остаток прячем за
+  // «и ещё N».
+  const PROGRESS_WHO_MODELS = 2;
+  // Одна запись «кто»: «Fable xhigh ×1» → Fable Extra, счёт 1. Счёт здесь
+  // необязателен — у «- проверка · 🔴 **Fable max**» его нет вовсе.
+  const progressModel = (text) => {
+    const line = String(text ?? "").replace(/\s+/g, " ").trim();
+    if (!line) return null;
+    const times = line.match(PROGRESS_TIMES_RE);
+    const name = (times ? line.slice(0, line.length - times[0].length) : line).trim();
+    if (!name) return null;
+    const effort = name.match(STATUS_EFFORT_RE);
+    const model = effort ? name.slice(0, name.length - effort[0].length).trim() : name;
+    const word = effort ? (PROGRESS_EFFORT_WORDS[effort[1].toLowerCase()] ?? effort[1]) : "";
+    return {
+      text: [model, word].filter(Boolean).join(" "),
+      count: times ? Number(times[1]) : null,
+      // Fable max — красный кружок и жирным (слово Элвиса 04.09 21:10): по нему
+      // видно, где потрачена дорогая модель. Примета считается по записи, так
+      // что и в списке из двух моделей она не теряется.
+      fable: /fable/i.test(model) && /^max$/i.test(effort?.[1] ?? ""),
+    };
+  };
+  // Сколько агентов стояло на этапе: «1 агент», «2 агента» → число. «я» числа не
+  // даёт — это слово Элвиса про себя, оно и остаётся словом.
+  const progressAgentsCount = (text) => {
+    const digits = String(text ?? "").match(/\d+/);
+    return digits ? Number(digits[0]) : null;
+  };
+  // Кто делал этап. Раньше строка читалась как «2 агента · Opus max» и «2 агента
+  // · Fable xhigh ×1, Fable high ×1» — Элвис попросил убрать и «N агентов», и
+  // «×N» (#5908): число стоит ПОСЛЕ модели, «Opus Max 2», «Fable Extra 1, Fable
+  // High 1». Нет ни того ни другого — показываем модель без числа.
   const progressWho = (role) => {
     if (!role) return { text: "—", fable: false };
-    const model = [role.model, role.effort].filter(Boolean).join(" ");
-    const fable = /fable/i.test(role.model) && role.effort.toLowerCase() === "max";
-    const text = [role.agents, fable ? `🔴 ${model}` : model].filter(Boolean).join(" · ");
-    return { text: text || "—", fable };
+    // Режем список ТОЛЬКО по запятой и точке с запятой. Раньше в разделители
+    // входила и «·», а ею Codex/Astra разделяет части одной записи («project_audit
+    // независимо, root по интерфейсу · gpt-6-astra») — половинки занимали оба
+    // места, и имя модели пропадало с карточки вовсе.
+    const models = [role.model, role.effort].filter(Boolean).join(" ")
+      .split(/\s*[,;]\s*/).map(progressModel).filter(Boolean);
+    const agents = progressAgentsCount(role.agents);
+    // Счёт агентов из строки роли годится, только когда модель одна и своего
+    // числа у неё нет: у списка «×1, ×1» числа уже стоят при моделях, а сумма их
+    // и есть те самые «2 агента».
+    if (models.length === 1 && models[0].count === null && agents !== null) models[0].count = agents;
+    const shown = models.slice(0, PROGRESS_WHO_MODELS)
+      .map(item => [item.fable ? `🔴 ${item.text}` : item.text, item.count === null ? "" : `${item.count}`]
+        .filter(Boolean).join(" "));
+    const rest = models.length - shown.length;
+    const list = [shown.join(", "), rest > 0 ? `и ещё ${rest}` : ""].filter(Boolean).join(" ");
+    // «я» остаётся впереди и через точку: «я · Fable Extra» (слово Элвиса).
+    // Число агентов уходит к модели — но только если модель вообще написана:
+    // у голого «- кодинг · 2 агента» сказать больше нечего, и строку показываем
+    // как есть, а не прочерком.
+    // «я» остаётся, даже когда рядом стоит число («я + 1 агент»): иначе Элвис
+    // пропадал бы со своей же строки плана.
+    const mine = /(^|[\s+])я([\s+]|$)/u.test(String(role.agents ?? ""));
+    const word = mine ? "я"
+      : (models.length === 0 || agents === null ? String(role.agents ?? "").trim() : "");
+    const text = [word, list].filter(Boolean).join(" · ");
+    // Красный кружок и жирное — примета ПОКАЗАННЫХ записей: спряталась за «и ещё
+    // N» — и жирной строки быть не должно, иначе непонятно, за что она жирная.
+    return { text: text || "—", fable: models.slice(0, PROGRESS_WHO_MODELS).some(item => item.fable) };
+  };
+  // Время на карточке: «21:15 → закончит примерно в 23:30 · идёт 45 мин». Слово
+  // «примерно» Элвис попросил убрать (#5909) — в шаблоне правил его больше нет,
+  // но в десятках уже написанных сводок оно осталось, поэтому чистим на показе.
+  // Границу слова тут даёт взгляд вперёд, а не `\b`: `\b` в JS считает словом
+  // только латиницу с цифрами, и у кириллицы он не срабатывает вовсе.
+  const progressTime = (text) => String(text ?? "")
+    .replace(/\s*примерно(?![\p{L}\p{N}])/giu, "").replace(/\s+/g, " ").trim();
+  // Счёт проекта в подвале. Шапку status.md пишут разные агенты и вразнобой:
+  // «1 воркфлоу этого чата», «7 воркфлоу в этом чате», «0 готово», «45 мин
+  // потрачено», «4,2 ч учтено», «1,5 суток потрачено». Три такие строки ехали в
+  // подвал дословно, склеивались в невнятицу и обрывались на середине (#5910).
+  // Теперь берём из них числа, а фразу пишем свою — и слово «воркфлоу» тоже
+  // своё, одно на всю карточку (#5911). Строку, из которой числа не достали,
+  // показываем как есть: терять из подвала нельзя ничего.
+  const PROGRESS_FOOT_WF_RE = /^(\d+)\s*воркфлоу/i;
+  const PROGRESS_FOOT_DONE_RE = /^(\d+)\s*готов/i;
+  // Единица времени — целым словом, как её написали («мин», «минут», «ч»,
+  // «часа», «суток»): хвост вроде «потрачено» и «учтено» отбрасываем. Длинные
+  // слова стоят перед короткими, иначе «3 часа» прочиталось бы как «3 ч».
+  // Границу слова снова даёт взгляд вперёд — `\b` кириллицы не видит.
+  const PROGRESS_FOOT_TIME_RE = /^(\d+(?:[.,]\d+)?)\s*(мин\S*|час\S*|сут\S*|дн\S*|день|ч)(?![\p{L}\p{N}])/iu;
+  const progressFoot = (project, head) => {
+    let count = null;
+    let done = null;
+    let time = "";
+    const rest = [];
+    for (const raw of Array.isArray(head) ? head : []) {
+      const line = String(raw ?? "").replace(/\s+/g, " ").trim();
+      if (!line) continue;
+      const wf = line.match(PROGRESS_FOOT_WF_RE);
+      if (wf && count === null) { count = wf[1]; continue; }
+      const ready = line.match(PROGRESS_FOOT_DONE_RE);
+      if (ready && done === null) { done = ready[1]; continue; }
+      const spent = line.match(PROGRESS_FOOT_TIME_RE);
+      if (spent && !time) { time = `${spent[1]} ${spent[2]}`; continue; }
+      rest.push(line);
+    }
+    const score = [count === null ? "" : `${count} воркфлоу`, done === null ? "" : `${done} готово`]
+      .filter(Boolean).join(", ");
+    return [project, score, time, ...rest].filter(Boolean).join(" · ");
   };
   const progressTipShow = () => {
     const info = progressState.info;
@@ -2685,17 +2883,22 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     const stages = progressStages(block);
     const skin = PROGRESS_CARD_SKIN[progressDark() ? "dark" : "light"];
     const tone = skin[PROGRESS_CARD_TONES[word] ?? "run"];
-    const title = block ? `Workflow ${block.number ?? number}` : `Воркфлоу ${number}`;
+    // Слово одно на всю карточку — русское (#5911): заголовок писался то
+    // «Workflow 1», то «Воркфлоу 1», а подвал всегда кириллицей, и разнобой
+    // бросился Элвису в глаза.
+    const title = `Воркфлоу ${block ? (block.number ?? number) : number}`;
     // «В проекте» на карточке не пишется (слово Элвиса 08.09): номер из сводки
-    // говорит сам за себя, подпись остаётся только у чата без сводки.
-    const where = block ? "" : `из ${info.of} · этот чат`;
+    // говорит сам за себя, подпись остаётся только у чата без сводки. Раньше
+    // она читалась «из 5 · этот чат» — непонятно, из чего пять (#5911).
+    const where = block ? "" : `${number}-й из ${info.of} в этом чате`;
     const about = block
       ? progressClip(block.about || "—", PROGRESS_CARD_ABOUT_MAX)
       : (PROGRESS_CARD_BLANK[word] ?? PROGRESS_CARD_BLANK_ANY);
     const meta = block
-      ? [block.time, block.steps ? `шаги ${block.steps.done} из ${block.steps.total}` : ""].filter(Boolean).join(" · ")
+      ? [progressTime(block.time), block.steps ? `шаги ${block.steps.done} из ${block.steps.total}` : ""]
+        .filter(Boolean).join(" · ")
       : "";
-    const foot = [info.project, ...(feed?.head ?? [])].filter(Boolean).join(" · ");
+    const foot = progressFoot(info.project, feed?.head);
     const rows = stages.rows.map((row, order) => {
       const state = block?.state === "done"
         ? (row.role ? "done" : "todo")
@@ -2724,6 +2927,9 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
       progressCardMeta.hidden = meta === "";
       progressCardFoot.textContent = foot;
       progressCardFoot.hidden = foot === "";
+      // Показ пишем в самом узле: у подвала стоит своё объявление display (две
+      // строки с переносом), и правило `[hidden]{display:none}` его не пересилит.
+      progressCardFoot.style.setProperty("display", foot === "" ? "none" : "-webkit-box");
       progressCardStages.hidden = !block;
       for (let order = 0; order < progressCardRows.length; order += 1) {
         const node = progressCardRows[order];
@@ -6860,6 +7066,7 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
   // Ставит её только tests/load.mjs, чтобы дотянуться до чистых функций замыкания.
   // Глушителя ошибок здесь нет намеренно: переименовали функцию — люк обязан кричать, а не отдавать тестам undefined.
   if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ themeCss, epitaxyCss, fontCss, sizeCss,
+    attachmentsCss,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     codeCss, codePalette, contrastRatio, readableOn,
     chatKey, chatIdKey, chatTitleKey, chatEntry, migrateChatKey, sameSessionKey, restoreKeyOk, chatsThemes,

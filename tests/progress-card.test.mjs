@@ -116,13 +116,13 @@ test("клик по идущему сегменту открывает карт�
   clickSegment(loaded, 2);
   assert.equal(shown(loaded), true, "клик по сегменту открыл карточку");
   const text = card(loaded).textContent;
-  assert.match(text, /Workflow 37/, "номер СВОЙ, из сводки проекта, а не третий по чату");
+  assert.match(text, /Воркфлоу 37/, "номер СВОЙ, из сводки проекта, а не третий по чату");
   assert.doesNotMatch(text, /в проекте/, "«в проекте» не пишется (слово Элвиса 08.09)");
   assert.match(text, /💭 идёт/);
   assert.match(text, /полоска v3/, "«о чём» на месте");
   assert.match(text, /18:09 → 18:50 · 25 мин/, "время на месте");
   assert.match(text, /шаги 1 из 3/);
-  assert.match(text, /41 воркфлоу · 26 готово · 39 ч/, "в подвале — счёт проекта из шапки сводки");
+  assert.match(text, /41 воркфлоу, 26 готово · 39 ч/, "в подвале — счёт проекта, собранный из чисел шапки");
 });
 
 test("четыре этапа со своим состоянием и «кто»; Fable max — 🔴 и жирным", () => {
@@ -133,7 +133,8 @@ test("четыре этапа со своим состоянием и «кто»
   assert.deepEqual(rows.map(row => row.icon), ["✅", "✅", "💭", "⬜"],
     "пройденные с галочкой, идущий с 💭, будущие пустым квадратом");
   assert.deepEqual(rows.map(row => row.who),
-    ["я · Fable xhigh", "1 агент · Opus max", "2 агента · Opus max", "🔴 Fable max"]);
+    ["я · Fable Extra", "Opus Max 1", "Opus Max 2", "🔴 Fable Max"],
+    "эффорт словами Claude Code, число агентов — после модели (#5907, #5908)");
   assert.equal(rows[3].bold, "700", "Fable max — жирным");
   assert.equal(rows[0].bold, "400");
 });
@@ -141,16 +142,16 @@ test("четыре этапа со своим состоянием и «кто»
 test("готовый сегмент — k-й с хвоста среди ✅ (история), будущий — ⬜ после идущего", () => {
   const loaded = open();
   clickSegment(loaded, 1);
-  assert.match(card(loaded).textContent, /Workflow 36/, "второй готовый — последний ✅ сводки");
+  assert.match(card(loaded).textContent, /Воркфлоу 36/, "второй готовый — последний ✅ сводки");
   assert.match(card(loaded).textContent, /✅ готов/);
   assert.match(card(loaded).textContent, /Пимп, открой окно/);
 
   clickSegment(loaded, 0);
-  assert.match(card(loaded).textContent, /Workflow 35/, "первый готовый — предпоследний ✅");
+  assert.match(card(loaded).textContent, /Воркфлоу 35/, "первый готовый — предпоследний ✅");
   assert.match(card(loaded).textContent, /темы по id чата/);
 
   clickSegment(loaded, 3);
-  assert.match(card(loaded).textContent, /Workflow 38/, "будущий — первый ⬜ после идущего");
+  assert.match(card(loaded).textContent, /Воркфлоу 38/, "будущий — первый ⬜ после идущего");
   assert.match(card(loaded).textContent, /⬜ запланирован/);
 });
 
@@ -161,14 +162,14 @@ test("будущий воркфлоу: «о чём» и кто будет дел
   const loaded = open();
   clickSegment(loaded, 3);
   const text = card(loaded).textContent;
-  assert.match(text, /Workflow 38/, "номер СВОЙ, из сводки");
+  assert.match(text, /Воркфлоу 38/, "номер СВОЙ, из сводки");
   assert.match(text, /⬜ запланирован/);
   assert.match(text, /перестройка страницы/, "«о чём» будущего воркфлоу на месте");
   assert.equal(card(loaded).children[3].hidden, false, "этапы показаны");
   const rows = stageRows(loaded);
   assert.deepEqual(rows.map(row => row.icon), ["⬜", "⬜", "⬜", "⬜"],
     "ни один этап ещё не пройден");
-  assert.deepEqual(rows.map(row => row.who), ["—", "—", "1 агент · Opus max", "—"],
+  assert.deepEqual(rows.map(row => row.who), ["—", "—", "Opus Max 1", "—"],
     "кто будет кодить — уже известно");
 });
 
@@ -182,7 +183,7 @@ test("блока на сегмент нет — карточка говорит 
   assert.equal(shown(loaded), true);
   const text = card(loaded).textContent;
   assert.match(text, /Воркфлоу 5/, "номер остаётся счётом чата");
-  assert.match(text, /из 5 · этот чат/, "и место в счёте названо");
+  assert.match(text, /5-й из 5 в этом чате/, "и место в счёте названо по-человечески (#5911)");
   assert.match(text, /⬜ запланирован/);
   assert.match(text, /ещё не расписан — что в нём будет, запишем, когда дойдёт очередь/);
   assert.doesNotMatch(text, /сводк/i, "слова «сводка» Элвис на карточке видеть не должен");
@@ -212,7 +213,7 @@ test("готовый сегмент без блока — «уже сделан�
   assert.doesNotMatch(text, /сводк/i);
 
   clickSegment(loaded, 1);
-  assert.match(card(loaded).textContent, /Workflow 36/, "а второму готовому блок достался");
+  assert.match(card(loaded).textContent, /Воркфлоу 36/, "а второму готовому блок достался");
   assert.match(card(loaded).textContent, /Пимп, открой окно/);
 });
 
@@ -254,7 +255,7 @@ test("повторный клик по тому же сегменту закры
   assert.equal(state.open, true);
   assert.equal(state.segment, 1);
   assert.equal(state.variant, "3A", "вариант карточки виден гейту");
-  assert.match(state.card, /Workflow 36/, "и её слепок тоже");
+  assert.match(state.card, /Воркфлоу 36/, "и её слепок тоже");
 });
 
 test("карточка идущего и готового дышит, ждущая — нет; dispose() гасит", () => {
@@ -294,4 +295,124 @@ test("строка состояния пропала — карточка зак
   assert.equal(shown(loaded), false, "строка вернулась — карточка ждёт клика");
   clickSegment(loaded, 2);
   assert.equal(shown(loaded), true, "по клику открывается как прежде");
+});
+
+// ---- карточка говорит человеческими словами (WF60, #5907–#5911) -------------
+// Сводку пишут агенты своими словами и по своему шаблону; карточку читает
+// Элвис. Всё, что ниже, — про ПОКАЗ: файлы сводок остаются как есть, меняется
+// то, что видно глазами.
+
+// Сводка на один идущий воркфлоу: роли подставляются строками.
+const roleFeed = (roles, head = ["2 воркфлоу", "0 готово", "12 мин"]) => [
+  "# ⚪PimpMyClaude", "обновлено 19:46", "", ...head, "",
+  "7️⃣ Workflow 💭 идёт", "- о чём: карточка словами",
+  ...roles,
+].join("\n");
+const whoRows = (roles, head) => {
+  const loaded = open({ feed: roleFeed(roles, head) });
+  clickSegment(loaded, 2);
+  return stageRows(loaded).map(row => row.who);
+};
+
+test("эффорт пишется словами самого Claude Code: xhigh → Extra (#5907)", () => {
+  assert.deepEqual(whoRows([
+    "- планирование · я · Fable xhigh",
+    "- критика · 1 агент · Fable low",
+    "- кодинг · 1 агент · Opus medium 💭",
+    "- проверка · 1 агент · Opus high",
+  ]), ["я · Fable Extra", "Fable Low 1", "Opus Medium 1", "Opus High 1"]);
+});
+
+test("слова, которого нет у ползунка Effort, не выдумываем — показываем как есть", () => {
+  assert.deepEqual(whoRows([
+    "- планирование · я · Fable ultra",
+    "- кодинг · 2 агента · Opus 💭",
+    "- проверка · 🔴 **Fable max**",
+  ]), ["я · Fable ultra", "—", "Opus 2", "🔴 Fable Max"]);
+});
+
+test("число агентов стоит после модели, «N агентов» и «×N» в карточку не попадают (#5908)", () => {
+  assert.deepEqual(whoRows([
+    "- планирование · я · Fable xhigh",
+    "- критика · 1 агент · Fable high",
+    "- кодинг · 2 агента · Opus max 💭",
+    "- проверка · 2 агента · Fable xhigh ×1, Fable high ×1",
+  ]), ["я · Fable Extra", "Fable High 1", "Opus Max 2", "Fable Extra 1, Fable High 1"]);
+});
+
+test("моделей больше двух — хвост прячется за «и ещё N»", () => {
+  // В окне 280 колонка «кто» всего 126 точек: полный список занимает три
+  // строчки карточки, сокращённый — две.
+  assert.deepEqual(whoRows([
+    "- кодинг · 12 агентов · Opus max ×5, Opus high ×6, Opus medium ×1 💭",
+  ])[2], "Opus Max 5, Opus High 6 и ещё 1");
+});
+
+test("«я» остаётся, даже когда рядом стоит число: «я + 1 агент»", () => {
+  // Реальная строка из docs/status.md самого проекта. До правки гейта Элвис
+  // пропадал со своей же строки плана — оставались одни модели.
+  assert.deepEqual(whoRows(["- планирование · я + 1 агент · Fable xhigh, Opus max"])[0],
+    "я · Fable Extra, Opus Max");
+});
+
+test("части одной записи, разделённые «·», за две модели не считаются", () => {
+  // Так пишет Codex/Astra в 🟡DrStrange: «·» у него разделяет части ОДНОЙ
+  // записи, и когда мы резали список ещё и по ней, имя модели пропадало совсем.
+  const who = whoRows([
+    "- проверка · project_audit независимо, root по интерфейсу · gpt-6-astra 💭",
+  ])[3];
+  assert.ok(who.includes("gpt-6-astra"), `модель потерялась: «${who}»`);
+});
+
+test("Fable max спрятался за «и ещё N» — строка не жирная", () => {
+  const loaded = open({ feed: roleFeed([
+    "- кодинг · Opus max ×2, Opus high ×3, 🔴 **Fable max** ×1 💭",
+  ]) });
+  clickSegment(loaded, 2);
+  const row = stageRows(loaded)[2];
+  assert.ok(!row.who.includes("🔴"), `кружок показан у спрятанной записи: «${row.who}»`);
+  assert.notEqual(row.weight, "700", "строка жирная, а красного кружка в ней не видно");
+});
+
+test("модели нет вовсе — строка роли показывается как написана, а не прочерком", () => {
+  assert.deepEqual(whoRows(["- кодинг · 2 агента 💭"])[2], "2 агента");
+});
+
+test("«примерно» из строки времени на показе убрано (#5909)", () => {
+  const loaded = open({ feed: roleFeed([
+    "- 21:15 → закончит примерно в 23:30 · идёт 45 мин",
+    "- кодинг · 1 агент · Opus max 💭",
+  ]) });
+  clickSegment(loaded, 2);
+  const text = card(loaded).textContent;
+  assert.match(text, /21:15 → закончит в 23:30 · идёт 45 мин/, "время осталось целым, слово ушло");
+  assert.doesNotMatch(text, /примерно/, "«примерно» Элвис на карточке видеть не должен");
+});
+
+test("подвал собран из чисел шапки, а слово «воркфлоу» своё (#5910, #5911)", () => {
+  // Шапки у проектов написаны вразнобой — карточка берёт из них числа.
+  const foot = (head) => {
+    const loaded = open({ feed: roleFeed(["- кодинг · 1 агент · Opus max 💭"], head) });
+    clickSegment(loaded, 2);
+    return card(loaded).children[4].textContent;
+  };
+  assert.equal(foot(["1 воркфлоу этого чата", "0 готово", "45 мин потрачено"]),
+    "PimpMyClaude · 1 воркфлоу, 0 готово · 45 мин");
+  assert.equal(foot(["7 воркфлоу в этом чате", "3 готово", "4,2 ч учтено"]),
+    "PimpMyClaude · 7 воркфлоу, 3 готово · 4,2 ч");
+  assert.equal(foot(["2 воркфлоу", "1 готово", "1,5 суток потрачено"]),
+    "PimpMyClaude · 2 воркфлоу, 1 готово · 1,5 суток");
+  assert.equal(foot(["2 воркфлоу", "1 готово", "3 макета ждут ответа"]),
+    "PimpMyClaude · 2 воркфлоу, 1 готово · 3 макета ждут ответа",
+    "строку, из которой числа не достали, показываем как есть — терять нельзя ничего");
+});
+
+test("подвалу разрешены две строки: перенос вместо обрыва на полуслове", () => {
+  const loaded = open();
+  clickSegment(loaded, 2);
+  const foot = card(loaded).children[4];
+  assert.equal(foot.style.getPropertyValue("white-space"), "", "нет nowrap — текст переносится");
+  assert.equal(foot.style.getPropertyValue("-webkit-line-clamp"), "2");
+  assert.equal(foot.style.getPropertyValue("display"), "-webkit-box",
+    "показ пишется в самом узле: [hidden] слабее объявления в узле");
 });
