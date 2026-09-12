@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf58-b-1";
+  const VERSION = "wf58-d-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -3071,14 +3071,36 @@ body, button, input, textarea, select, h1, h2, h3, h4, h5, h6, p, label, li, td,
     // (проверено 04.09: 0–3 узла на сотню сообщений, лента виртуальная). Тогда читаем
     // текст ПАНЕЛИ РАЗГОВОРА без черновика в поле ввода — в нём строка состояния есть.
     //
-    // Панели, а не всего окна (#5855): в главном окне в текст body попадает сайдбар с
-    // ЧУЖИМИ чатами, а на body висит и наша же карточка подсказки со строками сводки —
-    // чат без своей строки состояния брал этот текст за свой. Замер 12.09 17:47: панель
-    // есть во всех окнах Claude Code (главном и вынесенных), поле ввода и сайдбар лежат
-    // ВНЕ её. Панели нет (claude.ai, чужая разметка) — берём body, как раньше.
+    // Панели, а не всего окна (#5855): в текст body попадает сайдбар с ЧУЖИМИ чатами и
+    // наша же карточка подсказки со строками сводки — чат без своей строки состояния брал
+    // этот текст за свой. Замер 12.09 17:47: панель есть во всех окнах Claude Code
+    // (главном и вынесенных), поле ввода, сайдбар и наши слои лежат ВНЕ её.
+    //
+    // Панели нет вовсе — значит и разговора нет (домашний экран после ⌘N): читать нечего,
+    // и полоска остаётся пустым контуром. Прежнее падение на body делало ровно то, от чего
+    // затевалась правка (находка проверяющего 12.09): «новый чат» Элвиса — это и есть
+    // домашний экран, где панели не бывает.
+    //
+    // Селекторов два, и в живом окне они попадают в ДВА ВЛОЖЕННЫХ узла одной и той же
+    // панели (замер 12.09 18:30: .epitaxy-chat-panel-body и лента внутри неё) — поэтому
+    // сперва оставляем только внешние. Их больше одной — окно разделено на два чата, и
+    // своя панель та, что стоит над нашим полем ввода: первая по документу показывала бы
+    // чужой чат всему окну.
     try {
-      const panel = document.querySelector('.epitaxy-chat-panel-body,[data-testid="epitaxy-virtual-transcript"]');
-      let text = (panel ?? document.body)?.innerText ?? "";
+      const found = [...document.querySelectorAll('.epitaxy-chat-panel-body,[data-testid="epitaxy-virtual-transcript"]')];
+      const panels = found.filter(node => !found.some(other => other !== node && other.contains(node)));
+      let panel = panels[0] ?? null;
+      const box = state.composerBlock?.isConnected ? state.composerBlock.getBoundingClientRect() : null;
+      if (panels.length > 1 && box) {
+        let best = -Infinity;
+        for (const node of panels) {
+          const rect = node.getBoundingClientRect();
+          const share = Math.min(rect.right, box.right) - Math.max(rect.left, box.left);
+          if (share > best) { best = share; panel = node; }
+        }
+      }
+      if (panel == null) return null;
+      let text = panel.innerText ?? "";
       const draft = (state.composerBlock?.innerText ?? "").trim();
       if (draft && text.endsWith(draft)) text = text.slice(0, -draft.length);
       else if (draft) text = text.replace(draft, "");

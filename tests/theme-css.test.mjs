@@ -35,6 +35,14 @@ test("themeCss несёт цвета палитры и схему по типу 
   assert.ok(css.includes("color-scheme: dark !important;"));
   assert.ok(themeCss(light).includes("color-scheme: light !important;"));
   assert.ok(css.includes("--df-bg-sidebar: #000811 !important;"), "сайдбар красится своим цветом");
+  // Рейку «Resize sidebar» (dframe-sidebar-edge) красить нельзя: у Claude она
+  // прозрачная, а наш цвет боковой панели темнее фона — и у левого края главного
+  // окна появлялась тонкая тёмная полоса (#5871). Сам сайдбар при этом красится
+  // точным классом и по data-testid.
+  const rule = css.split("\n").find(line => line.includes('[class*="dframe-sidebar"]')) ?? "";
+  assert.match(rule, /:not\(\[class\*="dframe-sidebar-edge"\]\)/, "рейка исключена из покраски");
+  assert.match(rule, /\.dframe-sidebar,/, "сам сайдбар красится точным классом");
+  assert.match(rule, /\[data-testid\*="sidebar"\]/, "и его части по data-testid");
 });
 
 test("в теме нет ни NaN, ни undefined, и каждое правило с !important", () => {

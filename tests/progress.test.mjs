@@ -376,8 +376,14 @@ test("дыхание работает и в вынесенном окне", () =
     geometry: { viewport: { width: 1200, height: 800 } },
     html: dom => {
       const parts = dom.composer({ top: 620 });
-      // Без приметы ответа — ровно как в «Open in new window».
-      dom.document.body.add("div", {
+      // Без приметы ответа — ровно как в «Open in new window», но внутри панели
+      // разговора: запасное чтение с 12.09 читает только её, и в живых
+      // вынесенных окнах панель есть (замер 12.09 17:47).
+      const panel = dom.document.body.add("div", {
+        class: "epitaxy-chat-panel-body",
+        rect: { left: 100, top: 100, width: 1000, height: 420 },
+      });
+      panel.add("div", {
         rect: { left: 100, top: 200, width: 1000, height: 300 },
         text: `Готово.\n\n${RUN_LINE}`,
       });
@@ -426,16 +432,23 @@ test("новый чат без строки состояния: один пус�
 const FOREIGN_LINE = "✅⚪[PimpMyClaude](docs/status.md) · WF 9 из 9 · готово✅";
 // Окно Claude Code: сайдбар с чужим чатом и панель разговора. build(panel)
 // дописывает в панель то, что видно в ЭТОМ чате.
-const claudeWindow = (build = null) => dom => {
+const claudeWindow = (build = null, { sidebar = true } = {}) => dom => {
   const parts = dom.composer({ top: 620 });
-  dom.document.body.add("div", {
+  if (sidebar) dom.document.body.add("div", {
     class: "sidebar", rect: { left: 0, top: 0, width: 260, height: 800 },
     text: `Recents\nPimpMyClaude\n${FOREIGN_LINE}`,
   });
   const panel = dom.document.body.add("div", {
     class: "epitaxy-chat-panel-body", rect: { left: 260, top: 0, width: 940, height: 600 },
   });
-  if (build) build(panel);
+  // Внутри панели — сама лента, и она тоже попадает в наш селектор: в живом окне
+  // узлов поэтому ДВА, вложенных друг в друга (замер 12.09 18:30). Выбор «своей»
+  // панели обязан их различать, иначе запасное чтение умирает совсем.
+  const lane = panel.add("div", {
+    attrs: { "data-testid": "epitaxy-virtual-transcript" },
+    rect: { left: 260, top: 0, width: 940, height: 600 },
+  });
+  if (build) build(lane);
   return parts;
 };
 
@@ -448,7 +461,10 @@ test("новый чат не берёт чужую строку состояни
 });
 
 test("чужая сводка проектов сегментов не рисует (#5855)", () => {
-  const loaded = loadInject({ html: claudeWindow(), title: "PimpMyClaude" });
+  // Окно БЕЗ сайдбара нарочно: иначе тест зелен из-за него, а не из-за сводки,
+  // и кто-нибудь потом заведёт чтение сводки в марафон незамеченным (находка
+  // проверяющего 12.09).
+  const loaded = loadInject({ html: claudeWindow(null, { sidebar: false }), title: "PimpMyClaude" });
   loaded.dom.command({
     id: "s58", action: "status", at: "now", scope: "all",
     projects: [{ name: "PimpMyClaude", text: FEED }],
