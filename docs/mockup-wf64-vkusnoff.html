@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тема «Вкуснофф» — как будет выглядеть окно</title>
+<style>
+  /* Страница нарочно покрашена теми же цветами, что и сама тема: Элвис видит
+     их не списком, а целиком — как они уживаются друг с другом. */
+  :root {
+    --фон: #0f0f10;
+    --панель: #1c1c1e;
+    --боковая: #17171a;
+    --текст: #f5f2ee;
+    --вторичный: #b8b0a8;
+    --акцент: #ff9800;
+    --борт: #52350c;
+    --борт-сильный: #875408;
+    --ховер: #3a280d;
+    --код: #242324;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 20px 16px 48px;
+    background: var(--фон);
+    color: var(--текст);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow-x: hidden;
+  }
+  .лист { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: clamp(28px, 8vw, 40px); line-height: 1.15; margin: 0 0 10px; }
+  .подзаголовок { color: var(--вторичный); margin: 0 0 28px; }
+  h2 {
+    font-size: clamp(26px, 7vw, 34px);
+    line-height: 1.2;
+    margin: 40px 0 6px;
+    padding-top: 20px;
+    border-top: 1px solid var(--борт);
+  }
+  h2 .номер { color: var(--акцент); margin-right: 10px; }
+  .пояснение { color: var(--вторичный); margin: 0 0 18px; }
+
+  nav ol { margin: 0; padding-left: 22px; }
+  nav li { margin: 6px 0; font-size: 18px; }
+  nav a { color: var(--текст); }
+  a { color: var(--акцент); }
+
+  .свотчи {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px;
+    align-items: start;
+  }
+  .свотч { background: var(--панель); border-radius: 12px; }
+  /* Квадрат цвета лежит ВНУТРИ карточки с тонкой светлой обводкой: фон темы
+     (#0f0f10) совпадает с фоном страницы, и без обводки его квадрата не видно. */
+  .цвет { height: 84px; margin: 10px 10px 0; border-radius: 9px; border: 1px solid rgba(255, 255, 255, .12); }
+  .подпись { padding: 10px 12px 12px; }
+  .имя { font-weight: 700; }
+  .хекс {
+    color: var(--вторичный);
+    font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    text-transform: uppercase;
+  }
+  .где { color: var(--вторичный); font-size: 14px; margin-top: 4px; }
+
+  .предупреждение {
+    background: var(--панель);
+    border-left: 4px solid var(--акцент);
+    border-radius: 0 12px 12px 0;
+    padding: 14px 16px;
+    margin: 0 0 20px;
+  }
+  .предупреждение b { color: var(--акцент); }
+
+  /* Макет окна: ширина резиновая, боковая панель узкая — страница не должна
+     ездить вбок даже на телефоне. */
+  .окно {
+    background: var(--фон);
+    border: 1px solid var(--борт);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .шапка {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 12px;
+    background: var(--боковая);
+    border-bottom: 1px solid var(--борт);
+  }
+  .кружок { width: 11px; height: 11px; border-radius: 50%; }
+  .название { margin-left: 6px; color: var(--вторичный); font-size: 13px; }
+  .нутро { display: flex; min-height: 300px; }
+  .бок {
+    width: 132px;
+    flex: 0 0 132px;
+    background: var(--боковая);
+    border-right: 1px solid var(--борт);
+    padding: 10px 8px;
+  }
+  .бок-заголовок { color: var(--вторичный); font-size: 12px; padding: 0 6px 8px; }
+  .строка {
+    padding: 7px 8px;
+    border-radius: 7px;
+    font-size: 13px;
+    color: var(--текст);
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .строка-под-мышкой { background: var(--ховер); }
+  .лента { flex: 1 1 auto; padding: 14px; min-width: 0; }
+  .мой {
+    background: var(--панель);
+    border: 1px solid var(--борт);
+    border-radius: 12px;
+    padding: 9px 12px;
+    margin: 0 0 14px auto;
+    max-width: 82%;
+    font-size: 14px;
+  }
+  .ответ { font-size: 14px; margin-bottom: 12px; }
+  pre.код {
+    background: var(--код);
+    border: 1px solid var(--борт-сильный);
+    border-radius: 10px;
+    padding: 11px 12px;
+    margin: 0 0 14px;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow-x: auto;
+  }
+  .ключ { color: #c678dd; }
+  .слово { color: #e06c75; }
+  .строчка { color: #98c379; }
+  .заметка { color: #717989; }
+  .поле {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--панель);
+    border: 1px solid var(--борт-сильный);
+    border-radius: 12px;
+    padding: 10px 10px 10px 14px;
+  }
+  .черновик { flex: 1 1 auto; color: var(--вторичный); font-size: 14px; }
+  .отправить {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--акцент);
+    color: #1c1917;
+    font-size: 17px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .внизу {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--борт);
+    color: var(--вторичный);
+    font-size: 14px;
+  }
+  @media (max-width: 460px) {
+    .бок { width: 104px; flex-basis: 104px; }
+    .нутро { min-height: 260px; }
+  }
+</style>
+</head>
+<body>
+<div class="лист">
+
+  <h1>Тема «Вкуснофф»</h1>
+  <p class="подзаголовок">Цвета взяты с твоего сайта vkusnoff.kz — из его тёмного режима. Ниже видно, каким станет окно.</p>
+
+  <nav>
+    <ol>
+      <li><a href="#один">Шесть цветов темы</a></li>
+      <li><a href="#два">Четыре цвета, которые добавятся сами</a></li>
+      <li><a href="#три">Как будет выглядеть окно</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="один"><span class="номер">1</span>Шесть цветов темы</h2>
+  <p class="пояснение">Это всё, что есть у темы. Пять из шести взяты с сайта один в один.</p>
+
+  <div class="свотчи">
+    <div class="свотч">
+      <div class="цвет" style="background:#0f0f10"></div>
+      <div class="подпись">
+        <div class="имя">Фон</div>
+        <div class="хекс">#0f0f10</div>
+        <div class="где">Лента разговора, самый тёмный.</div>
+      </div>
+    </div>
+    <div class="свотч">
+      <div class="цвет" style="background:#1c1c1e"></div>
+      <div class="подпись">
+        <div class="имя">Панель</div>
+        <div class="хекс">#1c1c1e</div>
+        <div class="где">Твои сообщения и поле ввода.</div>
+      </div>
+    </div>
+    <div class="свотч">
+      <div class="цвет" style="background:#17171a"></div>
+      <div class="подпись">
+        <div class="имя">Боковая панель</div>
+        <div class="хекс">#17171a</div>
+        <div class="где">Список чатов. Этого цвета на сайте нет — взял ступеньку между фоном и панелью.</div>
+      </div>
+    </div>
+    <div class="свотч">
+      <div class="цвет" style="background:#f5f2ee"></div>
+      <div class="подпись">
+        <div class="имя">Текст</div>
+        <div class="хекс">#f5f2ee</div>
+        <div class="где">Тёплый белый, как на сайте.</div>
+      </div>
+    </div>
+    <div class="свотч">
+      <div class="цвет" style="background:#b8b0a8"></div>
+      <div class="подпись">
+        <div class="имя">Вторичный текст</div>
+        <div class="хекс">#b8b0a8</div>
+        <div class="где">Даты, подписи, серые мелочи.</div>
+      </div>
+    </div>
+    <div class="свотч">
+      <div class="цвет" style="background:#ff9800"></div>
+      <div class="подпись">
+        <div class="имя">Акцент</div>
+        <div class="хекс">#ff9800</div>
+        <div class="где">Твой оранжевый: кнопки и ссылки.</div>
+      </div>
+    </div>
+  </div>
+
+  <h2 id="два"><span class="номер">2</span>Четыре цвета, которые добавятся сами</h2>
+
+  <div class="предупреждение">
+    <b>Что надо знать заранее.</b> Эти четыре цвета я не выбирал — программа считает их сама, от оранжевого.
+    Поэтому рамки вокруг поля ввода, коробка с кодом и подсветка строки, на которую наведёшь мышь, выйдут
+    коричнево-оранжевыми, а не серыми, как на сайте. В одной теме это не поправить: счёт общий на все темы.
+  </div>
+
+  <div class="свотчи">
+    <div class="свотч">
+      <div class="цвет" style="background:#52350c"></div>
+      <div class="подпись">
+        <div class="имя">Борт</div>
+        <div class="хекс">#52350c</div>
+        <div class="где">Обычные рамки и линии.</div>
+      </div>
+    </div>
+    <div class="свотч">
+      <div class="цвет" style="background:#875408"></div>
+      <div class="подпись">
+        <div class="имя">Сильный борт</div>
+        <div class="хекс">#875408</div>
+        <div class="где">Рамка поля ввода и коробки с кодом.</div>
+      </div>
+    </div>
+    <div class="свотч">
+      <div class="цвет" style="background:#3a280d"></div>
+      <div class="подпись">
+        <div class="имя">Строка под мышкой</div>
+        <div class="хекс">#3a280d</div>
+        <div class="где">Подсветка чата в списке.</div>
+      </div>
+    </div>
+    <div class="свотч">
+      <div class="цвет" style="background:#242324"></div>
+      <div class="подпись">
+        <div class="имя">Подложка кода</div>
+        <div class="хекс">#242324</div>
+        <div class="где">Коробка, в которой лежит код.</div>
+      </div>
+    </div>
+  </div>
+
+  <h2 id="три"><span class="номер">3</span>Как будет выглядеть окно</h2>
+  <p class="пояснение">Уменьшенное окно Claude в этих цветах. Обрати внимание на рыжие рамки и на рыжую подсветку строки «Корзина» — это то, о чём я предупредил выше.</p>
+
+  <div class="окно">
+    <div class="шапка">
+      <span class="кружок" style="background:#ff5f57"></span>
+      <span class="кружок" style="background:#febc2e"></span>
+      <span class="кружок" style="background:#28c840"></span>
+      <span class="название">Вкуснофф</span>
+    </div>
+    <div class="нутро">
+      <aside class="бок">
+        <div class="бок-заголовок">Чаты</div>
+        <div class="строка">Меню</div>
+        <div class="строка строка-под-мышкой">Корзина</div>
+        <div class="строка">Баннеры</div>
+        <div class="строка">Доставка</div>
+      </aside>
+      <main class="лента">
+        <div class="мой">Покажи цвет кнопки на сайте.</div>
+        <div class="ответ">Кнопка красится фирменным оранжевым:</div>
+        <pre class="код"><span class="ключ">const</span> <span class="слово">кнопка</span> = <span class="строчка">"#ff9800"</span>;
+<span class="заметка">// тот самый оранжевый</span></pre>
+        <div class="поле">
+          <span class="черновик">Напиши сюда…</span>
+          <span class="отправить">↑</span>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <p class="внизу">сделал: кодинг · Opus 5 max · 13.09.2026</p>
+
+</div>
+</body>
+</html>

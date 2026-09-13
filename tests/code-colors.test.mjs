@@ -111,8 +111,8 @@ test("судья читаемости сверен: чёрное на белом
   assert.ok(contrastRatio("#777777", "#ffffff") < TARGET, "на волосок светлее порога — уже нет");
 });
 
-test("подсветка читается на всех 33 темах: токен ≥ 4,5, комментарий ≥ 3,5", () => {
-  assert.equal(THEMES.length, 33, "палитр в themes.json стало другое число — пороги перепроверить");
+test("подсветка читается на всех 34 темах: токен ≥ 4,5, комментарий ≥ 3,5", () => {
+  assert.equal(THEMES.length, 34, "палитр в themes.json стало другое число — пороги перепроверить");
   for (const theme of THEMES) {
     const { surface, tokens } = codeOf(theme);
     for (const name of BRIGHT) {
@@ -124,7 +124,7 @@ test("подсветка читается на всех 33 темах: токе�
   }
 });
 
-test("текст блока и инлайн-чип читаются на всех 33 темах", () => {
+test("текст блока и инлайн-чип читаются на всех 34 темах", () => {
   for (const theme of THEMES) {
     const { surface, ink, chipInk } = codeOf(theme);
     const text = contrastRatio(ink, surface);

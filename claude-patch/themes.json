@@ -197,6 +197,19 @@
       }
     },
     {
+      "id": "vkusnoff",
+      "name": "Вкуснофф",
+      "type": "dark",
+      "palette": {
+        "accent": "#ff9800",
+        "background": "#0f0f10",
+        "foreground": "#f5f2ee",
+        "sidebar": "#17171a",
+        "panel": "#1c1c1e",
+        "muted": "#b8b0a8"
+      }
+    },
+    {
       "id": "peach",
       "name": "Персиковая",
       "type": "light",
