@@ -46,8 +46,8 @@ const firePaste = (loaded, { target, files = [], text = "" }) =>
     clipboardData: { files, getData: () => text },
   });
 
-const fireKey = (loaded, { target, key = "v", metaKey = true }) =>
-  loaded.document.dispatchEvent({ type: "keydown", key, metaKey, target });
+const fireKey = (loaded, { target, key = "v", code = "KeyV", metaKey = true }) =>
+  loaded.document.dispatchEvent({ type: "keydown", key, code, metaKey, target });
 
 // Что доехало в поле ввода: имена файлов каждой пришедшей туда вставки.
 const watchEditor = loaded => {
@@ -129,7 +129,21 @@ test("⌘V мимо поля ставит курсор в поле — и бол
 
   // Курсор уводит только ⌘V: иначе поле забирало бы фокус на любой клавише.
   loaded.document.activeElement = null;
-  fireKey(loaded, { target: loaded.parts.transcript, key: "c" });
+  fireKey(loaded, { target: loaded.parts.transcript, key: "c", code: "KeyC" });
+  assert.equal(loaded.document.activeElement, null, "фокус увела клавиша, которая не ⌘V");
+});
+
+// Элвис сидит в русской раскладке, и там та же клавиша отдаёт key «м»: по одному
+// key дорога 1 у него не срабатывала бы никогда, и весь ⌘V держался бы на
+// запасной дороге. Приметы две, хватает любой — code от раскладки не зависит.
+test("русская раскладка: ⌘V узнаётся по code, а не по букве", () => {
+  const loaded = page();
+  fireKey(loaded, { target: loaded.parts.transcript, key: "м", code: "KeyV" });
+  assert.equal(loaded.document.activeElement, loaded.parts.editor, "курсор не встал в поле ввода");
+
+  // А чужая клавиша с ⌘ фокус по-прежнему не уводит — ни буквой, ни кодом.
+  loaded.document.activeElement = null;
+  fireKey(loaded, { target: loaded.parts.transcript, key: "с", code: "KeyC" });
   assert.equal(loaded.document.activeElement, null, "фокус увела клавиша, которая не ⌘V");
 });
 
