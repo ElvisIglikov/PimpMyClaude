@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf62-a-1";
+  const VERSION = "wf63-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -2146,7 +2146,7 @@ div:has(> .ProseMirror) {
         current = {
           number: statusLineNumber(line), mark: title[1],
           icon: hit ? hit[0] : STATUS_DEFAULT_ICON, state: hit ? hit[1] : "todo",
-          about: "", steps: null, time: "", roles: [],
+          about: "", steps: null, time: "", roles: [], past: [],
         };
         continue;
       }
@@ -2160,6 +2160,19 @@ div:has(> .ProseMirror) {
       if (!item) continue;
       const steps = item.match(/^шаги\s+(\d+)\s+из\s+(\d+)/i);
       if (steps && !current.steps) current.steps = { done: Number(steps[1]), total: Number(steps[2]) };
+      // «- прошлые шаги: планирование · я · Opus max; критика · 1 агент · Fable xhigh»
+      // (шаблон AGENTS.md). Раньше вся строка становилась одной ролью с именем
+      // «прошлые шаги: планирование», и на карточке у закрытых этапов стоял
+      // прочерк — Элвис 13.09: «галочки стоят, а кто это делал, непонятно»
+      // (#5977). Режем по «;» и разбираем каждый кусок как обычную роль. Ветка
+      // стоит ДО «о чём»: сводку пишут люди и агенты, порядок пунктов в блоке
+      // не гарантирован. Примета без `\w`: кириллицы он не знает вовсе.
+      if (/^прошл\S*\s+шаг/i.test(item)) {
+        current.past = item.replace(/^[^:]*:\s*/, "").split(/\s*;\s*/)
+          .map(part => part.trim()).filter(part => part.includes("·"))
+          .map(statusRole);
+        continue;
+      }
       if (!current.about && !/^шаги\b/i.test(item) && !/\d\s*:\s*\d/.test(item)) {
         current.about = item.replace(/^о\s+чём\s*:\s*/i, "");
         continue;
@@ -2455,7 +2468,10 @@ div:has(> .ProseMirror) {
   const progressStages = (block) => {
     const rows = STATUS_STAGES.map(stage => ({
       key: stage.key, label: stage.label,
-      role: block?.roles.find(role => stage.re.test(role.role)) ?? null,
+      // Роль ищем сперва среди текущих, потом среди прошлых шагов: у закрытых
+      // этапов «кто» живёт только там (#5977).
+      role: block?.roles.find(role => stage.re.test(role.role))
+        ?? block?.past?.find(role => stage.re.test(role.role)) ?? null,
     }));
     let now = rows.findIndex(row => row.role?.running);
     if (now < 0) for (let index = 0; index < rows.length; index += 1) if (rows[index].role) now = index;
@@ -2824,8 +2840,11 @@ div:has(> .ProseMirror) {
     // числа у неё нет: у списка «×1, ×1» числа уже стоят при моделях, а сумма их
     // и есть те самые «2 агента».
     if (models.length === 1 && models[0].count === null && agents !== null) models[0].count = agents;
+    // Знак «×» перед числом вернул Элвис 13.09 (#5976): «Opus Max 1» он читает
+    // как номер версии модели, а «Opus Max ×1» — как «одна штука». Само
+    // «N агентов» при этом не возвращается, уходил именно счётчик словами.
     const shown = models.slice(0, PROGRESS_WHO_MODELS)
-      .map(item => [item.fable ? `🔴 ${item.text}` : item.text, item.count === null ? "" : `${item.count}`]
+      .map(item => [item.fable ? `🔴 ${item.text}` : item.text, item.count === null ? "" : `×${item.count}`]
         .filter(Boolean).join(" "));
     const rest = models.length - shown.length;
     const list = [shown.join(", "), rest > 0 ? `и ещё ${rest}` : ""].filter(Boolean).join(" ");
@@ -6815,8 +6834,31 @@ div:has(> .ProseMirror) {
 
   // Тик вынесен в функцию: после отказа от наблюдения интервал снимают, а при
   // возврате заводят заново — тем же телом.
+  // Сторож дёрганья (#5978, слово Элвиса 13.09: «вверх-вниз, вверх-вниз, опять
+  // эта херня началась»). Болезнь неуловимая: на двенадцати вложениях и длинном
+  // черновике в двух окнах подряд низ окна стоит намертво, а у Элвиса скачет.
+  // Поэтому не чиним вслепую, а КОПИМ факты: последние смены высоты блока ввода
+  // с метками времени. По ним будет видно, кто её меняет и как часто —
+  // `status().jumps`. Сам сторож ничего не меняет и ничего не рисует.
+  const JUMP_LOG_MAX = 24;
+  const JUMP_MIN = 2;
+  const jumpLog = [];
+  let jumpLast = null;
+  const noteJump = () => {
+    const block = state.composerBlock?.isConnected ? state.composerBlock
+      : (state.shell?.isConnected ? state.shell : null);
+    if (!block) { jumpLast = null; return; }
+    const height = Math.round(block.getBoundingClientRect().height);
+    if (jumpLast === null) { jumpLast = height; return; }
+    if (Math.abs(height - jumpLast) < JUMP_MIN) return;
+    jumpLog.push({ at: Date.now(), from: jumpLast, to: height, pills: cashoutPills() });
+    if (jumpLog.length > JUMP_LOG_MAX) jumpLog.shift();
+    jumpLast = height;
+  };
+
   const heartbeatTick = () => {
     if (!state.alive) return;
+    try { noteJump(); } catch {}
     // Лента могла смениться целиком (React пересобрал разговор): наблюдатель за
     // временем остался бы висеть на выброшенном узле и оглох — мутаций оттуда
     // больше не придёт, а значит и переехать сам он уже не сможет.
@@ -6946,6 +6988,8 @@ div:has(> .ProseMirror) {
       composerBlock: Boolean(state.composerBlock?.isConnected),
       modelRow: Boolean(state.modelRow?.isConnected),
       collapsedNodes: state.collapsedNodes.length,
+      // Сторож дёрганья (#5978): последние смены высоты блока ввода.
+      jumps: jumpLog.slice(),
       handleVisible: handle.style.display !== "none",
       handleCovered: state.handleCovered,
       layoutRuns: state.layoutRuns,

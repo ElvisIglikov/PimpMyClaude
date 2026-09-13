@@ -133,7 +133,7 @@ test("четыре этапа со своим состоянием и «кто»
   assert.deepEqual(rows.map(row => row.icon), ["✅", "✅", "💭", "⬜"],
     "пройденные с галочкой, идущий с 💭, будущие пустым квадратом");
   assert.deepEqual(rows.map(row => row.who),
-    ["я · Fable Extra", "Opus Max 1", "Opus Max 2", "🔴 Fable Max"],
+    ["я · Fable Extra", "Opus Max ×1", "Opus Max ×2", "🔴 Fable Max"],
     "эффорт словами Claude Code, число агентов — после модели (#5907, #5908)");
   assert.equal(rows[3].bold, "700", "Fable max — жирным");
   assert.equal(rows[0].bold, "400");
@@ -169,7 +169,7 @@ test("будущий воркфлоу: «о чём» и кто будет дел
   const rows = stageRows(loaded);
   assert.deepEqual(rows.map(row => row.icon), ["⬜", "⬜", "⬜", "⬜"],
     "ни один этап ещё не пройден");
-  assert.deepEqual(rows.map(row => row.who), ["—", "—", "Opus Max 1", "—"],
+  assert.deepEqual(rows.map(row => row.who), ["—", "—", "Opus Max ×1", "—"],
     "кто будет кодить — уже известно");
 });
 
@@ -320,7 +320,7 @@ test("эффорт пишется словами самого Claude Code: xhigh
     "- критика · 1 агент · Fable low",
     "- кодинг · 1 агент · Opus medium 💭",
     "- проверка · 1 агент · Opus high",
-  ]), ["я · Fable Extra", "Fable Low 1", "Opus Medium 1", "Opus High 1"]);
+  ]), ["я · Fable Extra", "Fable Low ×1", "Opus Medium ×1", "Opus High ×1"]);
 });
 
 test("слова, которого нет у ползунка Effort, не выдумываем — показываем как есть", () => {
@@ -328,16 +328,16 @@ test("слова, которого нет у ползунка Effort, не вы�
     "- планирование · я · Fable ultra",
     "- кодинг · 2 агента · Opus 💭",
     "- проверка · 🔴 **Fable max**",
-  ]), ["я · Fable ultra", "—", "Opus 2", "🔴 Fable Max"]);
+  ]), ["я · Fable ultra", "—", "Opus ×2", "🔴 Fable Max"]);
 });
 
-test("число агентов стоит после модели, «N агентов» и «×N» в карточку не попадают (#5908)", () => {
+test("число агентов стоит после модели со знаком ×, «N агентов» в карточку не попадает (#5908, #5976)", () => {
   assert.deepEqual(whoRows([
     "- планирование · я · Fable xhigh",
     "- критика · 1 агент · Fable high",
     "- кодинг · 2 агента · Opus max 💭",
     "- проверка · 2 агента · Fable xhigh ×1, Fable high ×1",
-  ]), ["я · Fable Extra", "Fable High 1", "Opus Max 2", "Fable Extra 1, Fable High 1"]);
+  ]), ["я · Fable Extra", "Fable High ×1", "Opus Max ×2", "Fable Extra ×1, Fable High ×1"]);
 });
 
 test("моделей больше двух — хвост прячется за «и ещё N»", () => {
@@ -345,7 +345,17 @@ test("моделей больше двух — хвост прячется за 
   // строчки карточки, сокращённый — две.
   assert.deepEqual(whoRows([
     "- кодинг · 12 агентов · Opus max ×5, Opus high ×6, Opus medium ×1 💭",
-  ])[2], "Opus Max 5, Opus High 6 и ещё 1");
+  ])[2], "Opus Max ×5, Opus High ×6 и ещё 1");
+});
+
+test("у закрытых этапов видно, кто их делал — из строки «прошлые шаги» (#5977)", () => {
+  // Так пишет сводка, когда прогон ушёл дальше: роли текущего шага отдельными
+  // строками, а пройденные — одной строкой через «;». До правки у плана и
+  // критика на карточке стоял прочерк, хотя галочки были.
+  assert.deepEqual(whoRows([
+    "- прошлые шаги: планирование · я · Opus max; критика · 1 агент · Fable xhigh",
+    "- кодинг · 1 агент · Opus max 💭",
+  ]), ["я · Opus Max", "Fable Extra ×1", "Opus Max ×1", "—"]);
 });
 
 test("«я» остаётся, даже когда рядом стоит число: «я + 1 агент»", () => {
