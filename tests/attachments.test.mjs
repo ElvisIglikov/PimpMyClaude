@@ -34,44 +34,66 @@ const GAP = 8;
 const CLAUDE_TILE = 120;
 // Примета композера: любой наш селектор обязан начинаться с неё.
 const COMPOSER = "[data-cds-composer-attachments]";
+// Прямой родитель редактора — это и есть прокручиваемая область текста (замер
+// живьём 13.09: `w-full max-h-96 min-h-[var(--cmp-row-h)] overflow-y-auto`).
+const EDITOR_PARENT = "div:has(> .ProseMirror)";
+// Свой потолок области текста у Claude — 24rem. Выше него не поднимаемся.
+const CLAUDE_EDITOR = 384;
 
 const css = attachmentsCss();
-// Разбор: всё правило — один блок @media, внутри него обычные правила.
+// Разбор двух уровней (WF62): потолки стоят во ВСЕХ окнах, а размер плашки —
+// только в узком, внутри @media.
 const media = css.match(/@media\s*\(max-width:\s*(\d+)px\)\s*\{([\s\S]*)\}\s*$/);
 const threshold = media ? Number(media[1]) : null;
-const rules = media
-  ? [...media[2].matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(item => ({
-    selector: item[1].trim(),
-    body: item[2].trim(),
-  }))
-  : [];
+const parse = text => [...String(text).replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}@]+)\{([^{}]*)\}/g)]
+  .map(item => ({ selector: item[1].trim(), body: item[2].trim() }));
+const narrowRules = media ? parse(media[2]) : [];
+const wideRules = parse(css.slice(0, css.indexOf("@media")));
+const rules = [...wideRules, ...narrowRules];
 const ruleFor = part => rules.find(rule => rule.selector.includes(part)) ?? null;
 const numberOf = (body, property) => {
   const hit = body.match(new RegExp(`${property}:\\s*(\\d+(?:\\.\\d+)?)px`));
   return hit ? Number(hit[1]) : null;
 };
 
-test("правило целится только в вложения ПОЛЯ ВВОДА — лента разговора не наша", () => {
+test("правило целится только в ПОЛЕ ВВОДА — лента разговора не наша", () => {
   assert.ok(rules.length > 0, "правил не нашлось вовсе");
   for (const rule of rules) {
     // Список через запятую разбираем по частям: проверка «начинается с»
-    // пропустила бы в ленту разговора весь хвост такого списка.
+    // пропустила бы в ленту разговора весь хвост такого списка. Разрешены две
+    // приметы: коробка вложений композера и прямой родитель самого редактора.
     for (const part of rule.selector.split(",").map(item => item.trim())) {
-      assert.ok(part.startsWith(COMPOSER), `селектор «${part}» начинается не с приметы поля ввода`);
+      assert.ok(part.startsWith(COMPOSER) || part === EDITOR_PARENT,
+        `селектор «${part}» — не примета поля ввода`);
     }
   }
+});
+
+test("потолки стоят во всех окнах, а размер плашки — только в узком", () => {
+  // Болезнь #5951 живёт и в широком окне: у Элвиса в окне 653×784 девять
+  // вложений и длинный текст утащили низ блока ввода на 853 — за край экрана.
+  assert.ok(wideRules.some(rule => rule.selector === COMPOSER), "у коробки вложений нет потолка вне @media");
+  assert.ok(wideRules.some(rule => rule.selector === EDITOR_PARENT), "у области текста нет потолка вне @media");
+  assert.ok(narrowRules.every(rule => rule.selector.includes("[data-cds-attachment]")),
+    "в @media узкого окна осталось что-то кроме размера плашки");
+});
+
+test("область текста ограничена потолком, и не выше собственного потолка Claude", () => {
+  const editor = wideRules.find(rule => rule.selector === EDITOR_PARENT);
+  assert.ok(editor, "правила области текста нет");
+  // Только max-height: подмена height вечером 12.09 уже роняла низ окна (#5886).
+  assert.match(editor.body, /max-height:\s*min\(/, "потолок обязан быть min(точки, доля окна)");
+  assert.ok(!/[^-]height:/.test(editor.body.replace(/max-height:/g, "")), "высоту поля подменять нельзя — только потолок");
+  const own = Number(editor.body.match(/min\(\s*(\d+)px/)?.[1]);
+  assert.ok(own > 0 && own <= CLAUDE_EDITOR, `потолок ${own} выше собственного потолка Claude (${CLAUDE_EDITOR})`);
+  const share = Number(editor.body.match(/(\d+)vh/)?.[1]);
+  assert.ok(share >= 25 && share <= 50, `доля окна ${share}vh — либо печатать негде, либо низ снова уедет`);
 });
 
 test("порог узкого окна — числом, и между окнами Элвиса", () => {
   assert.ok(threshold !== null, "@media по ширине окна не нашёлся");
   assert.ok(threshold > NARROW_WINDOW, `порог ${threshold} не накрывает узкое окно (${NARROW_WINDOW})`);
   assert.ok(threshold < WIDE_WINDOW, `порог ${threshold} задевает широкое окно (${WIDE_WINDOW})`);
-});
-
-test("в широком окне не меняется ничего: за @media нет ни одного правила", () => {
-  const outside = css.slice(0, css.indexOf("@media"));
-  assert.ok(!outside.includes("{"), `за пределами @media стоит правило: «${outside.trim()}»`);
-  assert.equal((css.match(/@media/g) ?? []).length, 1, "блок @media должен быть один");
 });
 
 test("в узком окне в ряд встают несколько плашек, а не одна", () => {
@@ -98,7 +120,7 @@ test("блок вложений не съедает окно: потолок в�
   assert.ok(box, "правила самой коробки вложений нет");
   // Доля ОКНА (vh), а не точки Claude: у Элвиса окна разной высоты, и зашитое
   // число врало бы то в одну, то в другую сторону.
-  const share = box.body.match(/max-height:\s*(\d+)vh/);
+  const share = box.body.match(/max-height:[^;]*?(\d+)vh/);
   assert.ok(share, `потолок высоты задан не долей окна: «${box.body}»`);
   assert.ok(Number(share[1]) >= 15 && Number(share[1]) <= 40,
     `потолок ${share[1]}vh — либо в нём не видно вложений, либо он не спасает поле`);
