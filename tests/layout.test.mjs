@@ -325,7 +325,8 @@ test("рейка: тяга меняет --myclaude-side в границах, о�
     loaded.document.dispatchEvent({ type: "pointermove", clientX: to, pointerId: 1 });
   };
   const drop = to => loaded.document.dispatchEvent({ type: "pointerup", clientX: to, pointerId: 1 });
-  drag(776, 700);
+  // Захват ровно на кромке доки (780): зазор курсор–кромка нулевой, ширина = правый край панели − курсор.
+  drag(DOCK.left, 700);
   assert.equal(bar.dataset.dragging, "true");
   assert.equal(loaded.document.documentElement.style.cursor, "col-resize");
   // Ширина = правый край панели (1100) − курсор.

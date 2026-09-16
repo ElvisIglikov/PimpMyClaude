@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf66-c-1";
+  const VERSION = "wf66-d-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1196,6 +1196,17 @@ div:has(> .ProseMirror) {
   // и сэкономить место»). Шапка и дока заезжают в это поле отрицательным
   // margin, текст ленты не задет — его край на 24 левее.
   const COLUMN_PULL = 12;
+  // Полоса прокрутки ленты рисуется у правой кромки её прокрутки; после подтяжки
+  // колонки она упёрлась в поле ввода (слово Элвиса 17.09 02:40: «слишком сильно
+  // прижал… должна идти ровно посередине»). Тело ленты (не прокрутка — оно не
+  // едет) получает правое поле: правая кромка прокрутки и с ней полоса уходят
+  // влево, и полоса встаёт по центру промежутка между текстом (у него свой
+  // отступ 24 от кромки, sidePadding) и полем ввода (кромка колонки). Рейка
+  // ширины ставится по той же полосе — они одна над другой (placeSideRail).
+  const TRANSCRIPT_EDGE_GAP = 14;
+  // Видимая ширина накладной полосы прокрутки macOS: offsetWidth − clientWidth
+  // у неё ноль, мерить нечего.
+  const SCROLLBAR_VISUAL = 10;
   // Пустой блок Claude в конце ленты (`[data-testid="transcript-spacer"]`) НЕ
   // ТРОГАТЬ: это не отступ под затемнение, а хвост виртуальной ленты — Claude
   // пишет ему inline высоту недорисованных строк (замер 17.09 00:10: 7424 px при
@@ -1240,6 +1251,7 @@ nav[aria-label="Repository and pull request controls"] {
       min-width: 0;
       min-height: 0;
       padding-top: var(--myclaude-top-clearance, 0px);
+      padding-right: ${TRANSCRIPT_EDGE_GAP}px;
     }
     & .group\\/approval-dock {
       grid-column: 2;
@@ -3943,7 +3955,7 @@ nav[aria-label="Repository and pull request controls"] {
       else localStorage.setItem(SIDE_STORAGE_KEY, String(Math.round(value)));
     } catch {}
   };
-  const wideState = { on: false, panel: null, dragging: false };
+  const wideState = { on: false, panel: null, dragging: false, grip: 0 };
   const TOP_CLEARANCE_VARIABLE = "--myclaude-top-clearance";
   // Инлайн-переменные на чужом узле снимаются вместе с экземпляром; следующий
   // прогон вернёт их на первом же проходе (ширину — из хранилища).
@@ -4009,7 +4021,12 @@ nav[aria-label="Repository and pull request controls"] {
       return;
     }
     rail.style.setProperty("display", "block");
-    rail.style.setProperty("left", `${Math.round(box.left - SIDE_RAIL_WIDTH / 2)}px`);
+    // Рейка стоит над полосой прокрутки ленты (центр видимой полосы у правой
+    // кромки прокрутки); прокрутки нет (стенд, чужая сборка) — на кромке доки.
+    const scroller = panel.querySelector('[data-testid="epitaxy-virtual-transcript"]');
+    const scrollerBox = scroller?.isConnected ? scroller.getBoundingClientRect() : null;
+    const railCenter = scrollerBox && scrollerBox.width > 0 ? scrollerBox.right - SCROLLBAR_VISUAL / 2 : box.left;
+    rail.style.setProperty("left", `${Math.round(railCenter - SIDE_RAIL_WIDTH / 2)}px`);
     rail.style.setProperty("top", `${Math.round(frame.top)}px`);
     rail.style.setProperty("height", `${Math.round(frame.height)}px`);
     rail.style.setProperty("color", progressAccent());
@@ -4017,9 +4034,12 @@ nav[aria-label="Repository and pull request controls"] {
   // Тяга: ширина колонки = правый край панели − курсор, в границах
   // [SIDE_MIN, 60 % панели]. Значение уходит инлайн-переменной на панель, сетка
   // пересчитывается сама; отпустили — в хранилище. Двойной клик — умолчание.
+  // Рейка стоит не на кромке колонки, а над полосой прокрутки левее её: чтобы
+  // колонка не прыгала на первом же движении, запоминаем зазор между курсором
+  // и кромкой доки в момент захвата и тянем кромку, а не курсор.
   const railSide = (panel, x) => {
     const frame = panel.getBoundingClientRect();
-    return Math.round(Math.min(frame.width * SIDE_MAX_SHARE, Math.max(SIDE_MIN, frame.right - x)));
+    return Math.round(Math.min(frame.width * SIDE_MAX_SHARE, Math.max(SIDE_MIN, frame.right - (x + wideState.grip))));
   };
   const onRailDown = event => {
     if (event.button !== 0) return;
@@ -4028,6 +4048,8 @@ nav[aria-label="Repository and pull request controls"] {
     event.preventDefault();
     wideState.dragging = true;
     wideState.panel = panel;
+    const dockBox = sideDock(panel)?.getBoundingClientRect();
+    wideState.grip = dockBox && dockBox.width > 0 ? dockBox.left - event.clientX : 0;
     rail.dataset.dragging = "true";
     document.documentElement.style.cursor = "col-resize";
     document.documentElement.style.userSelect = "none";
