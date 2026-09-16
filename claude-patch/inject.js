@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf66-e-1";
+  const VERSION = "wf66-f-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1149,14 +1149,21 @@ div:has(> .ProseMirror) {
   // замер 21:05), поэтому дока переписывает её в свою, наследуемую
   // `--myclaude-dock-pad-*`, и уже её читает поле.
   const DOCK_PAD = 12;
-  // Место под кнопки окна над лентой — на НЕпрокручиваемом теле ленты (уезжать
-  // при прокрутке ему нечем), через переменную `--myclaude-top-clearance`, которую
-  // ставит JS (раздел 2г, applyTopClearance): нужна она, только когда панель
-  // начинается у левого края окна — под кнопками окна и «Show sidebar». Примета
-  // `data-top-left` у шапки для этого не годится: Claude держит её «true» и при
-  // открытой боковой панели, когда кнопки окна висят над панелью, а не над лентой
-  // (гейт 16.09 21:30: 36 px пустоты над текстом — «сверху не используется место»).
-  const TITLEBAR_CLEARANCE = 36;
+  // Полоса под кнопками окна. Когда панель начинается у левого края окна (боковая
+  // панель свёрнута, любой попап), над лентой висят кнопки окна и «Show sidebar»,
+  // и первые 32 точки ленты под ними пропадали бы. До 17.09 там стоял пустой
+  // отступ; по слову Элвиса 17.09 03:25 («место пропадает попусту — заголовок
+  // влево переносить») в эту полосу переезжает ШАПКА чата: JS (applyTitleSide)
+  // ставит панели атрибут `data-myclaude-title="left"`, и сетка кладёт шапку в
+  // левую колонку первой строкой (с родным отступом Claude под кнопки: 112 в
+  // главном окне, 68 в попапе — там нет кнопки боковой панели), лента — под ней,
+  // а дока занимает правую колонку на обе строки. Открыта боковая панель —
+  // кнопки над ней, шапка справа, как раньше. Примета `data-top-left` у шапки для
+  // этого не годится: Claude держит её «true» и при открытой боковой панели.
+  const TITLE_SIDE_ATTRIBUTE = "data-myclaude-title";
+  const TITLE_INSET_VARIABLE = "--myclaude-title-inset";
+  const TITLE_INSET_MAIN = 112;
+  const TITLE_INSET_POPOUT = 68;
   // Левее этой точки панели стоят кнопки окна (до ~70) и «Show sidebar» (82–110).
   const TITLEBAR_CLEARANCE_LEFT = 120;
   // Поле ввода в широком виде (WF66, #6187, #6188). Вложения — ПОСЛЕ текста,
@@ -1252,8 +1259,17 @@ nav[aria-label="Repository and pull request controls"] {
       grid-row: 1 / 3;
       min-width: 0;
       min-height: 0;
-      padding-top: var(--myclaude-top-clearance, 0px);
       padding-right: ${TRANSCRIPT_EDGE_GAP}px;
+    }
+    &:is(.epitaxy-chat-panel[${TITLE_SIDE_ATTRIBUTE}="left"] > *) > .epitaxy-titlebar {
+      grid-column: 1;
+      margin-left: var(${TITLE_INSET_VARIABLE}, ${TITLE_INSET_MAIN}px) !important;
+    }
+    &:is(.epitaxy-chat-panel[${TITLE_SIDE_ATTRIBUTE}="left"] > *) > .contents > .epitaxy-chat-panel-body {
+      grid-row: 2 / 3;
+    }
+    &:is(.epitaxy-chat-panel[${TITLE_SIDE_ATTRIBUTE}="left"] > *) .group\\/approval-dock {
+      grid-row: 1 / 3;
     }
     & .group\\/approval-dock {
       grid-column: 2;
@@ -3961,23 +3977,28 @@ nav[aria-label="Repository and pull request controls"] {
     } catch {}
   };
   const wideState = { on: false, panel: null, dragging: false, grip: 0 };
-  const TOP_CLEARANCE_VARIABLE = "--myclaude-top-clearance";
-  // Инлайн-переменные на чужом узле снимаются вместе с экземпляром; следующий
-  // прогон вернёт их на первом же проходе (ширину — из хранилища).
+  // Инлайн-переменные и атрибут на чужом узле снимаются вместе с экземпляром;
+  // следующий прогон вернёт их на первом же проходе (ширину — из хранилища).
   track(() => {
     try { wideState.panel?.style?.removeProperty(SIDE_VARIABLE); } catch {}
-    try { wideState.panel?.style?.removeProperty(TOP_CLEARANCE_VARIABLE); } catch {}
+    try { wideState.panel?.style?.removeProperty(TITLE_INSET_VARIABLE); } catch {}
+    try { wideState.panel?.removeAttribute(TITLE_SIDE_ATTRIBUTE); } catch {}
   });
-  // Место под кнопки окна над лентой: только когда панель начинается у левого
-  // края окна (главное окно со свёрнутой боковой панелью, любой попап); с открытой
-  // боковой панелью кнопки висят над ней, и лента идёт от самого верха.
-  const applyTopClearance = (panel, wide) => {
+  // Куда класть шапку: панель начинается у левого края окна (главное окно со
+  // свёрнутой боковой панелью, любой попап) — шапка влево, в полосу под кнопками
+  // окна; иначе — вправо, над полем ввода.
+  const applyTitleSide = (panel, wide) => {
     if (!panel) return;
     wideState.panel = panel;
-    if (!wide) { panel.style.removeProperty(TOP_CLEARANCE_VARIABLE); return; }
-    const need = panel.getBoundingClientRect().left < TITLEBAR_CLEARANCE_LEFT;
-    const value = need ? `${TITLEBAR_CLEARANCE}px` : "0px";
-    if (panel.style.getPropertyValue(TOP_CLEARANCE_VARIABLE) !== value) panel.style.setProperty(TOP_CLEARANCE_VARIABLE, value);
+    const left = wide && panel.getBoundingClientRect().left < TITLEBAR_CLEARANCE_LEFT;
+    if (!left) {
+      if (panel.hasAttribute(TITLE_SIDE_ATTRIBUTE)) panel.removeAttribute(TITLE_SIDE_ATTRIBUTE);
+      panel.style.removeProperty(TITLE_INSET_VARIABLE);
+      return;
+    }
+    const inset = `${location.href === "about:blank" ? TITLE_INSET_POPOUT : TITLE_INSET_MAIN}px`;
+    if (panel.style.getPropertyValue(TITLE_INSET_VARIABLE) !== inset) panel.style.setProperty(TITLE_INSET_VARIABLE, inset);
+    if (panel.getAttribute(TITLE_SIDE_ATTRIBUTE) !== "left") panel.setAttribute(TITLE_SIDE_ATTRIBUTE, "left");
   };
   const applySide = (panel, value) => {
     if (!panel) return;
@@ -4746,7 +4767,7 @@ nav[aria-label="Repository and pull request controls"] {
     const panel = layoutPanel(editor);
     const wide = wideLayout(panel);
     syncWide(wide);
-    applyTopClearance(panel, wide);
+    applyTitleSide(panel, wide);
     placeSideRail(panel, wide);
     applyCollapse();
     if (!state.shell?.isConnected) { handle.style.display = "none"; return; }
@@ -7780,7 +7801,7 @@ nav[aria-label="Repository and pull request controls"] {
   // Ставит её только tests/load.mjs, чтобы дотянуться до чистых функций замыкания.
   // Глушителя ошибок здесь нет намеренно: переименовали функцию — люк обязан кричать, а не отдавать тестам undefined.
   if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ themeCss, epitaxyCss, fontCss, sizeCss,
-    attachmentsCss, layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, PROGRESS_GAP, TITLEBAR_CLEARANCE, TITLEBAR_CLEARANCE_LEFT, WIDE_TILE,
+    attachmentsCss, layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, PROGRESS_GAP, TITLE_SIDE_ATTRIBUTE, TITLEBAR_CLEARANCE_LEFT, WIDE_TILE,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     codeCss, codePalette, contrastRatio, readableOn,
     chatKey, chatIdKey, chatTitleKey, chatEntry, migrateChatKey, sameSessionKey, restoreKeyOk, chatsThemes,

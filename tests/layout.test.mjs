@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { loadInject, loadInner, plain } from "./load.mjs";
 
 const { inner } = loadInner({ title: "Trelvis" });
-const { layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, TITLEBAR_CLEARANCE, WIDE_TILE } = inner;
+const { layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, TITLE_SIDE_ATTRIBUTE, WIDE_TILE } = inner;
 
 const WIDE_FLAG = "--myclaude-wide";
 const SIDE_VARIABLE = "--myclaude-side";
@@ -126,9 +126,10 @@ test("дочерние правила сетки вложены в её усло
   const body = grid.children.find(item => item.selector === "& > .contents > .epitaxy-chat-panel-body");
   assert.ok(body && /grid-row:\s*1 \/ 3/.test(body.body) && /min-height:\s*0/.test(body.body),
     "лента — левая колонка на обе строки, min-height:0");
-  // Место под кнопки окна — переменная, которую ставит JS по положению панели
-  // (примета data-top-left у шапки врёт при открытой боковой панели, гейт 16.09).
-  assert.ok(/padding-top:\s*var\(--myclaude-top-clearance, 0px\)/.test(body.body), "место под кнопки окна — переменной от JS");
+  // Шапка уезжает влево под кнопки окна по атрибуту, который ставит JS по положению
+  // панели (примета data-top-left у шапки врёт при открытой боковой панели, гейт 16.09).
+  const titleLeft = grid.children.find(item => item.selector.includes('[data-myclaude-title="left"]') && item.selector.endsWith("> .epitaxy-titlebar"));
+  assert.ok(titleLeft && /grid-column:\s*1/.test(titleLeft.body), "шапка влево — по атрибуту от JS");
   // Хвост виртуальной ленты Claude (`transcript-spacer`) не трогаем никогда: его
   // высоту пишет сам Claude, и правило на неё ломало прокрутку (17.09, #6176).
   assert.ok(!layoutCss().includes("transcript-spacer"), "хвост виртуальной ленты Claude не трогаем");
@@ -297,12 +298,13 @@ test("широкий вид: ступень обычная, замера natural
   assert.equal(bar.style.getPropertyValue("top"), `${PANEL.top}px`);
   assert.equal(bar.style.getPropertyValue("height"), `${PANEL.height}px`, "во всю высоту панели");
   assert.equal(loaded.dom.queryAll(`#${RAIL_ID}`).length, 1, "узел один на окно");
-  // Панель начинается на 200 — кнопок окна над лентой нет, места под них не оставляем.
-  assert.equal(loaded.parts.panel.style.getPropertyValue("--myclaude-top-clearance"), "0px", "боковая панель открыта — лента от самого верха");
-  // Панель у левого края окна (свёрнутая боковая панель, попап) — кнопки окна над лентой.
+  // Панель начинается на 200 — кнопок окна над лентой нет, шапка справа.
+  assert.equal(loaded.parts.panel.getAttribute(TITLE_SIDE_ATTRIBUTE), null, "боковая панель открыта — шапка справа");
+  // Панель у левого края окна (свёрнутая боковая панель, попап) — шапка уезжает влево под кнопки окна.
   loaded.parts.panel.rect = { ...PANEL, left: 40 };
   settle(loaded);
-  assert.equal(loaded.parts.panel.style.getPropertyValue("--myclaude-top-clearance"), `${TITLEBAR_CLEARANCE}px`, "панель у края окна — место под кнопки");
+  assert.equal(loaded.parts.panel.getAttribute(TITLE_SIDE_ATTRIBUTE), "left", "панель у края окна — шапка влево");
+  assert.equal(loaded.parts.panel.style.getPropertyValue("--myclaude-title-inset"), "112px", "отступ под кнопки окна главного окна");
 });
 
 test("возврат в узкий вид: ступень берётся из хранилища, рейка прячется, ручка возвращается", () => {
