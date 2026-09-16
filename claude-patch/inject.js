@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf66-f-1";
+  const VERSION = "wf66-g-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1212,7 +1212,14 @@ div:has(> .ProseMirror) {
   // ширины ставится по той же полосе — они одна над другой (placeSideRail).
   // Было 14 («ровно посередине»), но Элвису так не понравилось (17.09 03:20):
   // «как была изначально, прилеплена, — чуть-чуть левее, самую малость».
-  const TRANSCRIPT_EDGE_GAP = 4;
+  // 17.09 04:10: «ещё чуть-чуть поближе к полю» и одинаково с полосой поля ввода — 2.
+  const TRANSCRIPT_EDGE_GAP = 2;
+  // Полоса прокрутки ПОЛЯ ВВОДА стояла в 8 точках от рамки (внутреннее поле
+  // коробки); по слову Элвиса 17.09 04:10 («слишком далеко от края, поджать,
+  // как у ChatGPT») прокрутка редактора выезжает в это поле отрицательным
+  // margin, а текст остаётся на месте — тем же числом добавлено правое поле
+  // самой прокрутке. Итог: обе полосы, ленты и поля, в 2 точках от кромки.
+  const EDITOR_SCROLL_PULL = 6;
   // Видимая ширина накладной полосы прокрутки macOS: offsetWidth − clientWidth
   // у неё ноль, мерить нечего.
   const SCROLLBAR_VISUAL = 10;
@@ -1309,6 +1316,9 @@ nav[aria-label="Repository and pull request controls"] {
       flex: 1 1 auto;
       min-height: 0;
       max-height: none !important;
+      margin-right: -${EDITOR_SCROLL_PULL}px;
+      width: calc(100% + ${EDITOR_SCROLL_PULL}px) !important;
+      padding-right: ${EDITOR_SCROLL_PULL}px !important;
     }
     & .group\\/approval-dock [data-cds-composer-attachments] [data-cds-attachment] {
       width: ${WIDE_TILE}px !important;
