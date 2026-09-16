@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf65-b-1";
+  const VERSION = "wf65-c-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1159,6 +1159,12 @@ div:has(> .ProseMirror) {
   // глотка воздуха, иначе под последней строкой «обрезь, а место есть».
   const TRANSCRIPT_SPACER = 8;
   const layoutCss = () => `/* PimpMyClaude · широкий вид окна (WF65) */
+/* #6186: только текст подтверждённого composer, включая вложенные стили Claude.
+   Чипы, кнопки и их потомки сохраняют собственный размер. */
+:is(.epitaxy-prompt, [data-cds="ChatComposer"]) .ProseMirror[data-myclaude-composer-font="true"]
+  :is(p, span, div, li, ul, ol, blockquote, pre, code, strong, em, a, h1, h2, h3, h4, h5, h6):not(:is([contenteditable="false"], button, svg)):not(:is([contenteditable="false"], button, svg) *) {
+  font-size: inherit !important;
+}
 nav[aria-label="Repository and pull request controls"] {
   display: none !important;
 }
@@ -4148,6 +4154,81 @@ nav[aria-label="Repository and pull request controls"] {
       .sort((left, right) => right.score - left.score)[0]?.element ?? null;
     return editorHit;
   };
+  // ---- 5а. Размер текста только в поле ввода (Dictator, #6186) -------------
+  // Отдельная настройка: size.question принадлежит отправленным вопросам.
+  // localStorage хранит предпочтение, но клавиша меняет только это окно;
+  // другие открытые окна применят сохранённое при следующем инжекте.
+  const COMPOSER_FONT_KEY = "myclaude-composer-font-size-v1";
+  const COMPOSER_FONT_MIN = 11;
+  const COMPOSER_FONT_MAX = 32;
+  let composerFontPx = (() => {
+    try {
+      const value = Number(localStorage.getItem(COMPOSER_FONT_KEY));
+      return Number.isInteger(value) && value >= COMPOSER_FONT_MIN && value <= COMPOSER_FONT_MAX
+        ? value : null;
+    } catch { return null; }
+  })();
+  const COMPOSER_FONT_MARK = "data-myclaude-composer-font";
+  // findEditor имеет геометрический fallback на чужие поля. Здесь он не годится:
+  // нужен живой ProseMirror внутри известного блока ввода Claude.
+  const isFontComposer = editor => editor?.isConnected &&
+    editor.matches('.ProseMirror[contenteditable="true"]') &&
+    !!editor.closest('.epitaxy-prompt, [data-cds="ChatComposer"]');
+  let composerFontStyle = null;
+  const clearComposerFont = () => {
+    if (!composerFontStyle) return;
+    const { editor, previous, priority, applied, previousMark } = composerFontStyle;
+    // Чужую более позднюю правку стиля не откатываем.
+    if (editor.style.getPropertyValue("font-size") === applied) {
+      if (previous) editor.style.setProperty("font-size", previous, priority);
+      else editor.style.removeProperty("font-size");
+    }
+    if (editor.getAttribute(COMPOSER_FONT_MARK) === "true") {
+      if (previousMark == null) editor.removeAttribute(COMPOSER_FONT_MARK);
+      else editor.setAttribute(COMPOSER_FONT_MARK, previousMark);
+    }
+    composerFontStyle = null;
+  };
+  const applyComposerFont = editor => {
+    if (!themable || composerFontPx == null || !isFontComposer(editor)) {
+      clearComposerFont();
+      return;
+    }
+    if (composerFontStyle?.editor !== editor) {
+      clearComposerFont();
+      composerFontStyle = {
+        editor, previous: editor.style.getPropertyValue("font-size"),
+        previousMark: editor.getAttribute(COMPOSER_FONT_MARK),
+        priority: typeof editor.style.getPropertyPriority === "function"
+          ? editor.style.getPropertyPriority("font-size") : "", applied: "",
+      };
+    }
+    if (editor.getAttribute(COMPOSER_FONT_MARK) !== "true") editor.setAttribute(COMPOSER_FONT_MARK, "true");
+    const size = `${composerFontPx}px`;
+    if (editor.style.getPropertyValue("font-size") !== size) {
+      editor.style.setProperty("font-size", size, "important");
+    }
+    composerFontStyle.applied = size;
+  };
+  track(clearComposerFont);
+  const onComposerFontKey = event => {
+    if (!themable || !state.alive || !document.hasFocus() || event.defaultPrevented || event.isComposing ||
+        !event.ctrlKey || !event.altKey || !event.metaKey || event.shiftKey ||
+        !["BracketLeft", "BracketRight"].includes(event.code)) return false;
+    const editor = state.editor;
+    if (!isFontComposer(editor) || editor !== findEditor() || overlayOpen()) return false;
+    const current = composerFontPx ?? parseFloat(getComputedStyle(editor).getPropertyValue("font-size"));
+    if (!Number.isFinite(current)) return false;
+    composerFontPx = Math.max(COMPOSER_FONT_MIN, Math.min(COMPOSER_FONT_MAX,
+      Math.round(current) + (event.code === "BracketRight" ? 1 : -1)));
+    applyComposerFont(editor);
+    try { localStorage.setItem(COMPOSER_FONT_KEY, String(composerFontPx)); } catch {}
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    scheduleLayout();
+    return true;
+  };
+
   // Скролл-контейнер редактора: высотой управляет он, поэтому кнопки composer
   // остаются на месте, а текст внутри прокручивается штатно.
   const findEditorRoot = editor => {
@@ -4532,6 +4613,7 @@ nav[aria-label="Repository and pull request controls"] {
       state.collapsedNodes.some(node => node.isConnected);
     if (keepCollapsed) { placeCollapsedHandle(); return; }
     if (editor !== state.editor) {
+      clearComposerFont();
       clearResizer();
       state.editor = editor;
       state.editorRoot = editor ? findEditorRoot(editor) : null;
@@ -4539,6 +4621,7 @@ nav[aria-label="Repository and pull request controls"] {
     }
     if (!editor) { handle.style.display = "none"; placeSideRail(null, false); return; }
     noteEditorFound();
+    applyComposerFont(editor);
     const block = findComposerBlock(editor, state.shell);
     if (block !== state.composerBlock) {
       clearCollapsedNodes();
@@ -7272,6 +7355,7 @@ nav[aria-label="Repository and pull request controls"] {
   // странице нет открытого диалога/меню/списка — там Escape нужен, чтобы их закрыть.
   const ESC_OVERLAY_SELECTOR = '[role="dialog"],[role="menu"],[role="listbox"],[role="alertdialog"],[data-state="open"],[cmdk-root]';
   const onKeyDown = (event) => {
+    if (onComposerFontKey(event)) return;
     if (event.key !== "Escape" || event.defaultPrevented) return;
     if (document.querySelector(ESC_OVERLAY_SELECTOR)) return;
     event.preventDefault();
