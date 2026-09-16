@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf66-d-1";
+  const VERSION = "wf66-e-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1203,7 +1203,9 @@ div:has(> .ProseMirror) {
   // влево, и полоса встаёт по центру промежутка между текстом (у него свой
   // отступ 24 от кромки, sidePadding) и полем ввода (кромка колонки). Рейка
   // ширины ставится по той же полосе — они одна над другой (placeSideRail).
-  const TRANSCRIPT_EDGE_GAP = 14;
+  // Было 14 («ровно посередине»), но Элвису так не понравилось (17.09 03:20):
+  // «как была изначально, прилеплена, — чуть-чуть левее, самую малость».
+  const TRANSCRIPT_EDGE_GAP = 4;
   // Видимая ширина накладной полосы прокрутки macOS: offsetWidth − clientWidth
   // у неё ноль, мерить нечего.
   const SCROLLBAR_VISUAL = 10;
@@ -3918,6 +3920,9 @@ nav[aria-label="Repository and pull request controls"] {
   // заводит: всё ходит в существующем проходе layout() (раздел 9).
   const SIDE_RAIL_ID = "myclaude-side-rail";
   const SIDE_RAIL_WIDTH = 8;
+  // Пауза перед появлением линии рейки на наведении — как у всплывающих
+  // подсказок системы: случайный проезд курсора её не зажигает.
+  const SIDE_RAIL_REVEAL_MS = 400;
   // Ширина колонки, выбранная мышью: localStorage — окна Claude делят её, как и
   // ширину боковой панели у самого Claude.
   const SIDE_STORAGE_KEY = "myclaude-wide-side-v1";
@@ -4123,8 +4128,12 @@ nav[aria-label="Repository and pull request controls"] {
     // проявляется линия в 3 точки — как рейка боковой панели у самого Claude
     // (слово Элвиса 17.09 02:00: «чтобы везде одинаково»).
     `#${SIDE_RAIL_ID}{position:fixed;display:none;width:${SIDE_RAIL_WIDTH}px;padding:0;border:0;background:transparent;cursor:col-resize;user-select:none;-webkit-user-select:none;touch-action:none;z-index:2147483646}`,
-    `#${SIDE_RAIL_ID}>span{position:absolute;left:50%;top:0;bottom:0;width:3px;margin-left:-1.5px;border-radius:2px;background:currentColor;opacity:0;transition:opacity 120ms ease}`,
-    `#${SIDE_RAIL_ID}:hover>span,#${SIDE_RAIL_ID}[data-dragging="true"]>span{opacity:.9}`,
+    // Линия проявляется не сразу, а после паузы — курсор и так каждую минуту
+    // пересекает промежуток по дороге к полю ввода, и мгновенная линия «мигает,
+    // бесит» (слово Элвиса 17.09 03:20); гаснет сразу. Яркость — вполсилы.
+    `#${SIDE_RAIL_ID}>span{position:absolute;left:50%;top:0;bottom:0;width:3px;margin-left:-1.5px;border-radius:2px;background:currentColor;opacity:0;transition:opacity 160ms ease}`,
+    `#${SIDE_RAIL_ID}:hover>span{opacity:.45;transition-delay:${SIDE_RAIL_REVEAL_MS}ms}`,
+    `#${SIDE_RAIL_ID}[data-dragging="true"]>span{opacity:.55;transition-delay:0ms}`,
     // Схлопнутый узел: не display:none, а полоска нулевой высоты — редактор
     // остаётся живым, черновик и фокус переживают сворачивание.
     `[${BLOCK_ATTRIBUTE}="collapsed"]{height:0 !important;min-height:0 !important;max-height:0 !important;padding-top:0 !important;padding-bottom:0 !important;margin-top:0 !important;margin-bottom:0 !important;overflow:hidden !important;opacity:0 !important;pointer-events:none !important}`,
