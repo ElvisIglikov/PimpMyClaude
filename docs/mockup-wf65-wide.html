@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Широкий режим окна Claude — макет</title>
+<style>
+  :root {
+    --фон: #16101d;
+    --окно: #251a30;
+    --панель: #352543;
+    --боковая: #1d1426;
+    --поле: #3d2b4d;
+    --линия: rgba(255,255,255,.10);
+    --текст: #f1ecf6;
+    --вторичный: #b3a6c2;
+    --акцент: #c9a6ff;
+    --оранж: #f0a04b;
+    --зел: #6ad19a;
+    --красн: #e06464;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px 14px 60px;
+    background: var(--фон); color: var(--текст);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow-x: hidden;
+  }
+  h1 { font-size: clamp(30px, 8vw, 46px); line-height: 1.1; margin: 0 0 8px; }
+  h2 { font-size: clamp(30px, 7.5vw, 42px); line-height: 1.15; margin: 48px 0 8px; padding-top: 18px; border-top: 1px solid var(--линия); }
+  h3 { font-size: clamp(20px, 5vw, 24px); margin: 22px 0 6px; }
+  p { max-width: 760px; margin: 6px 0; }
+  .подпись { color: var(--вторичный); }
+  nav ul { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 8px 18px; }
+  nav a { color: var(--акцент); font-size: 18px; text-decoration: none; border-bottom: 1px dotted var(--акцент); }
+  a { color: var(--акцент); }
+  .ряд { display: flex; gap: 18px; overflow-x: auto; padding-bottom: 8px; }
+  .кадр-обёртка { flex: 0 0 auto; }
+  .кадр-подпись { color: var(--вторичный); margin: 6px 0 0; font-size: 14px; }
+
+  /* ---- окно Claude, нарисованное толще, чем в жизни ---- */
+  .окно {
+    position: relative; background: var(--окно); border-radius: 12px;
+    border: 1px solid var(--линия); overflow: hidden; font-size: 11.5px; line-height: 1.35;
+    box-shadow: 0 20px 50px rgba(0,0,0,.5);
+  }
+  .окно.широкое { width: 900px; height: 560px; display: grid; grid-template-columns: 172px 1fr 268px; }
+  .окно.узкое { width: 330px; height: 560px; display: grid; grid-template-rows: 34px 1fr auto; }
+  .светофор { position: absolute; left: 10px; top: 9px; display: flex; gap: 6px; z-index: 5; }
+  .светофор i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+  .боковая { background: var(--боковая); padding: 34px 8px 8px; border-right: 1px solid var(--линия); }
+  .боковая .п { padding: 4px 8px; border-radius: 6px; color: var(--вторичный); }
+  .боковая .п.акт { background: rgba(201,166,255,.14); color: var(--текст); }
+  .боковая .проект { margin-top: 10px; color: var(--вторичный); font-weight: 600; }
+  .лента { padding: 8px 18px; overflow: hidden; position: relative; }
+  .лента p { font-size: 11.5px; margin: 0 0 7px; max-width: none; }
+  .лента .я { color: var(--текст); background: var(--панель); border-radius: 8px; padding: 6px 8px; }
+  .лента .статус { color: var(--акцент); }
+  .лента .h { font-weight: 700; margin-top: 8px; }
+  .правая { border-left: 1px solid var(--линия); display: flex; flex-direction: column; background: var(--окно); }
+  .шапка { display: flex; align-items: center; gap: 6px; padding: 8px 8px 6px; border-bottom: 1px solid var(--линия); white-space: nowrap; overflow: hidden; }
+  .шапка .заголовок { overflow: hidden; text-overflow: ellipsis; min-width: 30px; }
+  .чип { background: rgba(255,255,255,.08); border-radius: 6px; padding: 1px 6px; color: var(--вторичный); flex: 0 0 auto; }
+  .кнопки { margin-left: auto; display: flex; gap: 5px; color: var(--вторичный); flex: 0 0 auto; }
+  .кнопки span { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--линия); display: grid; place-items: center; font-size: 9px; }
+  .поле { flex: 1; margin: 8px; background: var(--поле); border-radius: 8px; padding: 8px 9px; color: var(--текст); display: flex; flex-direction: column; min-height: 0; }
+  .поле .черновик { flex: 1; white-space: pre-wrap; color: var(--текст); }
+  .поле .курсор { display: inline-block; width: 1px; height: 12px; background: var(--текст); vertical-align: -2px; animation: мигание 1s steps(2) infinite; }
+  @keyframes мигание { 50% { opacity: 0; } }
+  .строка-модели { display: flex; align-items: center; gap: 8px; padding: 0 12px 6px; color: var(--вторичный); font-size: 11px; }
+  .строка-модели .м { margin-left: auto; }
+  .полоса { display: flex; gap: 4px; padding: 0 12px 9px; }
+  .полоса i { display: block; height: 3px; border-radius: 2px; background: var(--акцент); }
+  .полоса i.свет { box-shadow: 0 0 8px rgba(201,166,255,.45); animation: дыхание 3.6s ease-in-out infinite; }
+  .полоса i.пусто { background: transparent; box-shadow: inset 0 0 0 1px var(--акцент); }
+  .полоса i.готово { background: var(--зел); }
+  @keyframes дыхание { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+  .узкое .шапка { padding: 9px 8px 6px 78px; }
+  .узкое .лента { padding: 8px 14px; }
+  .узкое .низ { border-top: 1px solid var(--линия); }
+  .узкое .поле { flex: none; height: 62px; margin: 8px 8px 4px; }
+  .ручка { height: 3px; width: 44px; margin: 3px auto 0; border-radius: 2px; background: rgba(255,255,255,.28); }
+  .метка { position: absolute; background: var(--оранж); color: #1a1006; font-weight: 700; font-size: 10px; padding: 2px 6px; border-radius: 4px; z-index: 6; }
+
+  /* ---- мелочи ---- */
+  .мини { background: var(--окно); border: 1px solid var(--линия); border-radius: 10px; padding: 10px 12px; font-size: 12px; margin: 8px 0; max-width: 760px; }
+  .мини .шапка { border: 0; padding: 4px 0; }
+  .мини .строка-модели { padding: 6px 0 0; }
+  .мини .полоса { padding: 0; }
+  .было { color: var(--вторичный); font-size: 13px; margin: 0 0 4px; }
+  .зачёркнуто { text-decoration: line-through; opacity: .45; }
+  .гит { display: flex; align-items: center; gap: 10px; background: var(--панель); border-radius: 8px; padding: 7px 10px; }
+  .гит .плюс { color: var(--зел); } .гит .минус { color: var(--красн); } .гит .кнопка { margin-left: auto; border: 1px solid var(--линия); border-radius: 6px; padding: 1px 8px; }
+
+  /* ---- вопросы ---- */
+  .вопрос { max-width: 760px; }
+  .вариант { background: var(--окно); border: 1px solid var(--линия); border-radius: 10px; padding: 10px 14px; margin: 8px 0; }
+  .вариант.рек { border-color: var(--акцент); }
+  .вариант b { font-size: 17px; }
+  .вариант .почему, .вариант .минус { margin: 3px 0 0; color: var(--вторичный); font-size: 15px; }
+  .вариант .почему::before { content: "почему: "; color: var(--зел); }
+  .вариант .минус::before { content: "минус: "; color: var(--красн); }
+  ul.решено { max-width: 760px; padding-left: 22px; }
+  ul.решено li { margin: 6px 0; }
+  .итог { margin-top: 36px; padding: 14px 16px; border-radius: 10px; background: var(--окно); border: 1px solid var(--акцент); max-width: 760px; font-size: 17px; }
+</style>
+</head>
+<body>
+
+<h1>Широкий режим окна Claude</h1>
+<p class="подпись">макет · Fable xhigh · 16.09.2026 · задача #6176</p>
+<p>Окно само переключается между двумя видами: узкое живёт как сейчас, широкое раскладывается на три колонки —
+чаты, только текст разговора во всю высоту, справа шапка и большое поле ввода. Ниже оба вида и три вопроса.</p>
+
+<nav><ul>
+  <li><a href="#широкое">Широкое окно</a></li>
+  <li><a href="#узкое">Узкое окно</a></li>
+  <li><a href="#мелочи">Шапка, полоска, лишняя строка</a></li>
+  <li><a href="#вопросы">Вопросы</a></li>
+  <li><a href="#решено">Решено</a></li>
+</ul></nav>
+
+<h2 id="широкое">Широкое окно — три колонки</h2>
+<p class="подпись">Нарисовано толще, чем в жизни. Полоска прогресса дышит, как настоящая.</p>
+<div class="ряд"><div class="кадр-обёртка">
+<div class="окно широкое">
+  <div class="светофор"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+  <div class="боковая">
+    <div class="п">＋ New</div><div class="п">Artifacts</div><div class="п">Customize</div><div class="п">More</div>
+    <div class="проект">StaffSchedule ›</div>
+    <div class="проект">VkusnoffKz</div>
+    <div class="п акт">★ Казахские баннеры…</div><div class="п">★ Кассовые вебхуки…</div><div class="п">Адресный шаг Вкуснова</div>
+    <div class="проект">PimpMyClaude</div>
+    <div class="п">Переделка макета окна…</div>
+  </div>
+  <div class="лента">
+    <span class="метка" style="left:0;top:0">от самого верха</span>
+    <p>…на этой неделе, свежих цифр у меня нет.</p>
+    <p class="h">👾 ЭЛВИС, СДЕЛАЙ</p>
+    <p>1. ⚠️ Пришли отчёт Астры по второму ключу кассы: какой пароль вписала в веб-хук и попал ли он в Railway.</p>
+    <p>2. Купоны — открой первый макет. Скажи одной фразой: «в переезд», «сейчас» или «не включать».</p>
+    <p>3. Пробный домен — промт Астре в ChatGPT (две минуты). Напиши «сделала» — я проверю сертификат.</p>
+    <p>4. Когда будет минутка — переключи язык на сайте и посмотри баннеры, корзину, адрес, карту, часы и акции.</p>
+    <p>5. Вечером около 23:00 — DNS в hoster.kz по плану, записи продиктую.</p>
+    <p class="статус">✅🟠VkusnoffKz · WF 2 из 3 · готово✅</p>
+    <p class="подпись">Ran 9 commands (1 failed) ›</p>
+    <p>Точка продолжения выложена, идёт последняя проверка после выкладки; дальше сайт до девяти утра не трогаю.</p>
+    <p class="статус">✅🟠VkusnoffKz · WF 2 из 3 · готово✅</p>
+    <p class="подпись">Ran a command ›</p>
+    <p>Проверка после выкладки зелёная, сайт в порядке. До девяти утра ничего не трогаю.</p>
+    <p class="я">Так, по идее, очень удобно же, когда поле ввода вот так сбоку. Оно большое, в него удобно вводить что-то.</p>
+    <p>Понял так. Сейчас окно живёт в два этажа: сверху шапка чата, снизу поле ввода, а текст зажат между ними…</p>
+    <span class="метка" style="right:0;bottom:0">до самого низа, без затемнений</span>
+  </div>
+  <div class="правая">
+    <div class="шапка">
+      <span>💻</span><span class="заголовок">Переделка макета окна чата</span><span class="чип">📁 PimpMyClaude</span>
+      <div class="кнопки"><span>&gt;_</span><span>⊞</span><span>⊕</span><span>⋮</span></div>
+    </div>
+    <div class="поле"><div class="черновик">Я сюда могу большие тексты вводить тогда, и мне будет удобно работать.
+
+Отступы внутри поля узкие: текст идёт почти от края до края колонки.<span class="курсор"></span></div></div>
+    <div class="строка-модели"><span>＋</span><span>🎤 ⌄</span><span>Auto</span><span class="м">Fable 5.1 · Extra ◐</span></div>
+    <div class="полоса"><i class="готово" style="flex:1"></i><i class="свет" style="flex:1"></i><i class="пусто" style="flex:1"></i></div>
+  </div>
+</div>
+<p class="кадр-подпись">Кнопки окна — одни, слева. Шапка со всеми своими кнопками и имя папки целиком — справа наверху. Полоска прогресса — под строкой модели, с зазором.</p>
+</div></div>
+
+<h2 id="узкое">Узкое окно — как сейчас</h2>
+<p class="подпись">Всё на своих местах: шапка сверху, поле внизу, полоска-ручка над полем. Только без затемнений, и имя папки не сворачивается.</p>
+<div class="ряд"><div class="кадр-обёртка">
+<div class="окно узкое">
+  <div class="светофор"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+  <div class="шапка">
+    <span>💻</span><span class="заголовок">Переделка мак…</span><span class="чип">📁 PimpMyClaude</span>
+    <div class="кнопки"><span>⋮</span></div>
+  </div>
+  <div class="лента">
+    <p class="h">👾 ЭЛВИС, СДЕЛАЙ</p>
+    <p>1. ⚠️ Пришли отчёт Астры по второму ключу кассы.</p>
+    <p>2. Купоны — открой первый макет и скажи одной фразой.</p>
+    <p class="статус">✅🟠VkusnoffKz · WF 2 из 3 · готово✅</p>
+    <p>Проверка после выкладки зелёная, сайт в порядке.</p>
+    <p class="я">Так, по идее, очень удобно же, когда поле ввода сбоку.</p>
+    <p>Понял так. Сейчас окно живёт в два этажа…</p>
+  </div>
+  <div class="низ">
+    <div class="ручка"></div>
+    <div class="поле"><div class="черновик">Черновик…<span class="курсор"></span></div></div>
+    <div class="строка-модели"><span>＋</span><span>🎤 ⌄</span><span>Auto</span><span class="м">Fable 5.1 · Extra ◐</span></div>
+    <div class="полоса"><i class="готово" style="flex:1"></i><i class="свет" style="flex:1"></i><i class="пусто" style="flex:1"></i></div>
+  </div>
+</div>
+</div></div>
+
+<h2 id="мелочи">Шапка, полоска, лишняя строка</h2>
+<p>Три мелочи из твоего сообщения — делаются в обоих видах окна.</p>
+
+<h3>Имя папки не сворачивается</h3>
+<div class="мини">
+  <p class="было">было в узком окне:</p>
+  <div class="шапка"><span>💻</span><span class="заголовок">Переделка макета окна чата</span><span class="чип">📁</span><div class="кнопки"><span>&gt;_</span><span>⊞</span><span>⊕</span><span>⋮</span></div></div>
+  <p class="было" style="margin-top:8px">будет — имя целиком, укорачивается заголовок чата, кнопки прячутся как раньше:</p>
+  <div class="шапка"><span>💻</span><span class="заголовок">Переделка мак…</span><span class="чип">📁 PimpMyClaude</span><div class="кнопки"><span>⋮</span></div></div>
+</div>
+
+<h3>Полоска прогресса — мягче и с зазором</h3>
+<div class="мини">
+  <p class="было">было — яркий ореол, линия сидит прямо на надписи:</p>
+  <div class="строка-модели" style="padding-bottom:0"><span>＋</span><span>Auto</span><span class="м">Fable 5.1 · Extra ◐</span></div>
+  <div class="полоса" style="margin-top:-1px"><i style="flex:1;box-shadow:0 0 18px var(--акцент),0 0 10px var(--акцент)"></i><i class="пусто" style="flex:1"></i></div>
+  <p class="было" style="margin-top:14px">будет — ореол вдвое слабее, между надписью и линией маленький зазор:</p>
+  <div class="строка-модели"><span>＋</span><span>Auto</span><span class="м">Fable 5.1 · Extra ◐</span></div>
+  <div class="полоса" style="margin-top:4px"><i class="свет" style="flex:1"></i><i class="пусто" style="flex:1"></i></div>
+</div>
+
+<h3>Строка «ветка · +N −M · Create PR» — не показывается никогда</h3>
+<div class="мини">
+  <div class="гит зачёркнуто"><span>PimpMyClaude main</span><span class="плюс">+3,331</span><span class="минус">−143</span><span class="кнопка">Create PR ⌄</span><span>✕</span></div>
+  <p class="было" style="margin-top:8px">Эта полоса над полем ввода больше не появится ни в одном окне.</p>
+</div>
+
+<h2 id="вопросы">Вопросы</h2>
+<p>Ответь одной фразой на каждый или скажи «как рекомендуешь».</p>
+
+<div class="вопрос">
+<h3>1. Когда включать широкий вид?</h3>
+<div class="вариант рек"><b>Когда тексту хватает места (рекомендую)</b>
+  <p class="почему">считаем не окно, а область чата без боковой панели: с закрытой панелью хватит окна на две трети экрана, с открытой — почти во весь экран. При твоём увеличении шрифта порог сам подстраивается.</p>
+  <p class="минус">открыл боковую панель в окне на две трети — вид может вернуться в узкий.</p></div>
+<div class="вариант"><b>Только когда окно во всю ширину экрана</b>
+  <p class="почему">правило проще некуда, ничего не прыгает.</p>
+  <p class="минус">окно чуть уже экрана — и три колонки пропали.</p></div>
+<div class="вариант"><b>Вручную, переключателем в меню жёлтой кнопки</b>
+  <p class="почему">полный контроль.</p>
+  <p class="минус">лишний клик каждый раз, и ты просил «чтобы включалось само».</p></div>
+</div>
+
+<div class="вопрос">
+<h3>2. Какой ширины правая колонка с полем ввода?</h3>
+<div class="вариант рек"><b>Треть области чата, но не уже поля ввода узкого окна (рекомендую)</b>
+  <p class="почему">на большом окне поле широкое, на пограничном — текст не давится.</p>
+  <p class="минус">ширина поля меняется вместе с окном.</p></div>
+<div class="вариант"><b>Как вынесенное окно на твоём скриншоте — постоянная</b>
+  <p class="почему">привычная ширина, всегда одинаковая.</p>
+  <p class="минус">на широком окне справа пустовато, на пограничном текст тесноват.</p></div>
+<div class="вариант"><b>Половина</b>
+  <p class="почему">большие тексты вводить просторнее всего.</p>
+  <p class="минус">ответ нейронки читается в узкой колонке.</p></div>
+</div>
+
+<div class="вопрос">
+<h3>3. Затемнения сверху и снизу текста убрать и в узком окне?</h3>
+<div class="вариант рек"><b>Убрать везде (рекомендую)</b>
+  <p class="почему">одно правило на оба вида, текст читается до края.</p>
+  <p class="минус">в узком окне текст обрезается кромкой поля резко, без плавности.</p></div>
+<div class="вариант"><b>Только в широком</b>
+  <p class="почему">узкое окно остаётся один в один как сегодня.</p>
+  <p class="минус">два разных поведения.</p></div>
+</div>
+
+<h2 id="решено">Решено, не переспрашиваю</h2>
+<ul class="решено">
+  <li>Кнопки окна закрыть-свернуть-развернуть — одни, в левом верхнем углу, как сейчас.</li>
+  <li>Боковая панель с чатами — без изменений.</li>
+  <li>Шапка справа ведёт себя как сейчас: лишние кнопки прячутся при нехватке места; имя папки — никогда.</li>
+  <li>Поле ввода в широком виде занимает всю высоту колонки, отступы внутри узкие; полоска-ручка свёртки в широком виде не показывается, в узком живёт как раньше.</li>
+  <li>Полоска прогресса остаётся в обоих видах: под строкой модели, с маленьким зазором и ореолом вдвое слабее.</li>
+  <li>Кнопка «к последнему сообщению» в широком виде висит внизу колонки с текстом.</li>
+  <li>Строка «Create PR» скрыта всегда.</li>
+</ul>
+
+<div class="итог">Скажи номера вопросов, где я не угадал, и что там выбрать, — или «как рекомендуешь». Дальше план идёт на проверку и в работу.</div>
+
+</body>
+</html>

@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf64-c-1";
+  const VERSION = "wf65-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1095,6 +1095,140 @@ div:has(> .ProseMirror) {
 }
 `;
 
+  // Пятая таблица (layoutSheet ниже) — широкий вид окна (WF65, #6176–#6179):
+  // лента разговора во всю высоту слева, шапка и поле ввода — правой колонкой.
+  // Три правила снаружи блока стоят во ВСЕХ окнах: строка репозитория
+  // «+3,331 −143 · Create PR» не показывается никогда (#6179), затемнения ленты
+  // сверху и снизу убраны и в узком окне тоже (слово Элвиса 16.09 20:33), имя
+  // папки в шапке не превращается в значок (#6177) — правило целится только в
+  // спрятанное имя чипа, заголовок чата ужимается сам, кнопки прячутся как раньше.
+  //
+  // Сам широкий вид — контейнерный запрос по плитке чата, а не по окну: обёртка
+  // панели у Claude объявлена контейнером `tile-slot` (замер 16.09, главное окно
+  // и попап), и с открытой рядом плиткой терминала плитка чата ýже окна — порог
+  // меряет именно её. Флаг `--myclaude-wide: 1` на панели — ЕДИНСТВЕННЫЙ оракул
+  // для JS (wideLayout): второго порога по innerWidth нет, иначе CSS и JS
+  // разошлись бы на десяток точек. Флаг и сетка ставятся только на ПРОВЕРЕННОЙ
+  // форме разметки (шапка + .contents с телом ленты + дока) — попап другой сборки
+  // остаётся flex-колонкой, и ручка с полоской там живут как в узком окне.
+  // Сетка без переноса DOM: оба `div.contents` прозрачны для grid, три узла
+  // расставляются как есть. Дочерние правила вложены (`&`) в правило сетки:
+  // условие `:has()` написано один раз, и ни одно из них не сработает там, где
+  // сетки нет (иначе `margin-left: 0` у шапки съел бы место под кнопки окна).
+  //
+  // Поле ввода во всю колонку — цепочкой замера, не догадкой: .epitaxy-prompt →
+  // ChatComposer → коробка и четыре block-обёртки (у всех ровно один поточный
+  // ребёнок, кнопки абсолютные) → ChatComposerEditor (`div:has(> .ProseMirror)`)
+  // — каждой flex-колонка и `flex: 1`, `height: 100%` не раздаём никому. Потолок
+  // области текста из attachmentsSheet снимается `max-height: none !important` —
+  // спор двух !important решает порядок таблиц, эта стоит после. Правило плитки
+  // 56×56 продублировано: колонка 300–420 ýже порога 560, а @media там по окну.
+  const WIDE_PANEL_MIN = 640;
+  const WIDE_FLAG = "--myclaude-wide";
+  const SIDE_VARIABLE = "--myclaude-side";
+  // Правая колонка: не уже 300 (300 − 98 = 202 ≥ narrowLimit — редактор остаётся
+  // «полем»), не шире 60 % панели; умолчание — доля панели с обеими границами.
+  const SIDE_DEFAULT = "clamp(300px, 36%, 420px)";
+  const SIDE_MIN = 300;
+  const SIDE_MAX_SHARE = 0.6;
+  // Отступ поля ввода от краёв колонки (было 24): «отступы не должны быть такими
+  // большими». Поля самой доки НЕ трогаем: их держит `sidePadding` из
+  // claude.json — блок `PimpMyClaude:auto` в claude.css ставит их с !important
+  // и приходит через insertCSS как USER-стиль, а пользовательский !important
+  // сильнее любого авторского, даже инлайнового (замер гейта 16.09 20:58–21:10:
+  // computed 24px при любом нашем правиле). Поэтому поле ввода само выезжает в
+  // эти поля отрицательным margin: отступ = padding + margin = var + (12 − var)
+  // = 12 при любом sidePadding (переменную `--chat-column-gutter-*` дока несёт
+  // всегда — ею и задан её padding). Переменная Claude зарегистрирована без
+  // наследования (`@property … inherits: false`, у поля ввода она пуста —
+  // замер 21:05), поэтому дока переписывает её в свою, наследуемую
+  // `--myclaude-dock-pad-*`, и уже её читает поле.
+  const DOCK_PAD = 12;
+  // Место под кнопки окна над лентой — по примете самой шапки (data-top-left),
+  // на НЕпрокручиваемом теле ленты: уезжать при прокрутке ему нечем.
+  const TITLEBAR_CLEARANCE = 36;
+  const layoutCss = () => `/* PimpMyClaude · широкий вид окна (WF65) */
+nav[aria-label="Repository and pull request controls"] {
+  display: none !important;
+}
+.epitaxy-chat-panel .scroll-fade-strip-top,
+.epitaxy-chat-panel .scroll-fade-strip-bottom {
+  display: none !important;
+}
+.epitaxy-titlebar .group\\/lead[data-pills-compact] .group-data-\\[pills-compact\\]\\/lead\\:hidden {
+  display: inline-block !important;
+}
+@container tile-slot (min-width: ${WIDE_PANEL_MIN}px) {
+  .epitaxy-chat-panel:has(> div > .epitaxy-titlebar):has(> div > .contents > .epitaxy-chat-panel-body):has(.group\\/approval-dock) {
+    ${WIDE_FLAG}: 1;
+    ${SIDE_VARIABLE}: ${SIDE_DEFAULT};
+  }
+  .epitaxy-chat-panel > div:has(> .epitaxy-titlebar):has(> .contents > .epitaxy-chat-panel-body):has(.group\\/approval-dock) {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) clamp(${SIDE_MIN}px, var(${SIDE_VARIABLE}), ${SIDE_MAX_SHARE * 100}%);
+    grid-template-rows: auto minmax(0, 1fr);
+    & > .epitaxy-titlebar {
+      grid-column: 2;
+      grid-row: 1;
+      min-width: 0;
+      margin-left: 0 !important;
+    }
+    & > .contents > .epitaxy-chat-panel-body {
+      grid-column: 1;
+      grid-row: 1 / 3;
+      min-width: 0;
+      min-height: 0;
+    }
+    & > .epitaxy-titlebar[data-top-left="true"] + .contents > .epitaxy-chat-panel-body {
+      padding-top: ${TITLEBAR_CLEARANCE}px;
+    }
+    & .group\\/approval-dock {
+      grid-column: 2;
+      grid-row: 2;
+      min-width: 0;
+      min-height: 0;
+      --myclaude-dock-pad-start: var(--chat-column-gutter-start);
+      --myclaude-dock-pad-end: var(--chat-column-gutter-end);
+    }
+    & .group\\/approval-dock [aria-label="Scroll to bottom"] {
+      left: auto;
+      top: auto;
+      right: calc(100% + ${DOCK_PAD}px);
+      bottom: ${DOCK_PAD}px;
+    }
+    & .epitaxy-prompt {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+      width: auto;
+      margin-inline: calc(${DOCK_PAD}px - var(--myclaude-dock-pad-start)) calc(${DOCK_PAD}px - var(--myclaude-dock-pad-end));
+    }
+    & [data-cds="ChatComposer"] {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    & [data-cds="ChatComposer"] div:has(.ProseMirror):not(:has(> .ProseMirror)) {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    & [data-cds="ChatComposer"] div:has(> .ProseMirror) {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: none !important;
+    }
+    & .group\\/approval-dock [data-cds-composer-attachments] [data-cds-attachment] {
+      width: ${NARROW_TILE}px !important;
+      height: ${NARROW_TILE}px !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+    }
+  }
+}
+`;
+
   // Свет рамки — три тени внутрь одним цветом: линия в две точки, широкий ореол
   // и второй проход по нему, отчего свет плотнее у самой кромки. Приём тот же,
   // что у полосы прогресса (раздел 2б), и цвет тот же — акцент темы.
@@ -1335,6 +1469,10 @@ div:has(> .ProseMirror) {
   // ни от выбора Элвиса, — поэтому ставится один раз здесь и снимается вместе с
   // экземпляром, а не по applyLayer.
   const attachmentsSheet = new CSSStyleSheet();
+  // Пятая — широкий вид окна (WF65): такая же не-слой, ставится один раз и
+  // снимается с экземпляром. В массиве стоит ПОСЛЕ attachmentsSheet: спор двух
+  // !important за max-height у области текста решает порядок таблиц.
+  const layoutSheet = new CSSStyleSheet();
   const detachSheet = sheet => {
     try { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(item => item !== sheet); } catch {}
   };
@@ -1346,12 +1484,15 @@ div:has(> .ProseMirror) {
   };
   track(() => {
     detachSheet(themeSheet); detachSheet(fontSheet); detachSheet(sizeSheet); detachSheet(attachmentsSheet);
+    detachSheet(layoutSheet);
   });
   // Ставим сразу и только в окнах Claude: в артефакте и браузерной панели поля
   // ввода нет вовсе, а лишняя таблица там — лишняя таблица (см. themable).
   if (themable) {
     try { attachmentsSheet.replaceSync(attachmentsCss()); } catch {}
     adoptSheet(attachmentsSheet);
+    try { layoutSheet.replaceSync(layoutCss()); } catch {}
+    adoptSheet(layoutSheet);
   }
   // Сироты от прежней реализации (<style id=…>, в том числе зеркальные копии) и
   // оверлей рамки от упавшей на середине установки.
@@ -1955,6 +2096,11 @@ div:has(> .ProseMirror) {
   // Элвис не должен.
   const PROGRESS_BAR_HEIGHT = 2;
   const PROGRESS_HIT_SLACK = 4;
+  // Зазор между кромкой рамки и линией (WF65, #6178): до этого линия сидела
+  // верхом на кромке и «сильно прижата к надписи Fable Extra» — под рамкой есть
+  // 8 точек поля панели, две из них отдаём воздуху. Тот же зазор у якоря «низ
+  // блока» (свёрнутое поле).
+  const PROGRESS_GAP = 2;
   // Уже этого якорь считается вырожденным: React как раз пересобирает низ окна,
   // и рамка на кадр съезжает в ноль. Тогда полоса садится на запасной якорь.
   const PROGRESS_MIN_WIDTH = 80;
@@ -3095,7 +3241,11 @@ div:has(> .ProseMirror) {
     // всего блока ввода: строка модели осталась на виду и держит его низ.
     const blockBottom = state.stage === STAGE_COLLAPSED
       ? Math.round(block.getBoundingClientRect().bottom) : null;
-    const top = (blockBottom ?? Math.round(onFrame ? rect.bottom : rect.top)) - 1;
+    // Под рамкой и под низом блока — с зазором PROGRESS_GAP (#6178); на запасном
+    // якоре линия по-прежнему сидит верхом на кромке строки инструментов.
+    const top = blockBottom != null || onFrame
+      ? (blockBottom ?? Math.round(rect.bottom)) + PROGRESS_GAP
+      : Math.round(rect.top) - 1;
     if (progressCovered(top, left, left + width)) {
       progressState.reason = "полосу закрыло меню";
       progressHide();
@@ -3144,8 +3294,9 @@ div:has(> .ProseMirror) {
       item.fill.style.setProperty("background", paint);
       // Свечение двумя тенями — приём донора: широкий мягкий ореол и второй
       // проход по той же тени, отчего свет плотнее у самой линии. Пустому
-      // сегменту светиться нечем.
-      item.fill.style.setProperty("box-shadow", share > 0 ? `0 0 18px ${paint},0 0 6px ${paint}` : "none");
+      // сегменту светиться нечем. Радиусы вдвое меньше прежних 18/6 и 18/10:
+      // «свечение сделать чуть менее ярким» (слово Элвиса 16.09, #6178).
+      item.fill.style.setProperty("box-shadow", share > 0 ? `0 0 9px ${paint},0 0 3px ${paint}` : "none");
       // Дышит только идущий этап и вся зелёная полоса «готово»: ждёт (жёлтый) и
       // упал (красный) стоят на месте — движение там значило бы «работа идёт».
       item.pulse = share > 0 && Boolean(info) &&
@@ -3157,7 +3308,7 @@ div:has(> .ProseMirror) {
       // такого огрызка глазами не читается — технически пульс шёл, а видно его
       // не было. Дышит кусочек, который сейчас в работе, целиком.
       item.glow.style.setProperty("width", item.pulse ? "100%" : `${share}%`);
-      item.glow.style.setProperty("box-shadow", share > 0 ? `0 0 18px ${paint},0 0 10px ${paint}` : "none");
+      item.glow.style.setProperty("box-shadow", share > 0 ? `0 0 9px ${paint},0 0 5px ${paint}` : "none");
       progressPulse(item, item.glow, item.pulse, PROGRESS_GLOW_FRAMES, "0");
       // Контур в одну точку — «сюда марафон ещё не дошёл».
       item.track.style.setProperty("box-shadow", `inset 0 0 0 1px ${accent}`);
@@ -3662,11 +3813,165 @@ div:has(> .ProseMirror) {
   // восстановления темы выше.
   try { liveRestore(); } catch {}
 
+  // ---- 2г. Широкий вид окна (WF65) -----------------------------------------
+  // Раскладку делает CSS (layoutCss, раздел 2а); здесь — то, что страница обязана
+  // знать сама: широкий ли сейчас вид, что при этом делать со ступенями поля и
+  // рейка ширины правой колонки. Своих таймеров и наблюдателей раздел не
+  // заводит: всё ходит в существующем проходе layout() (раздел 9).
+  const SIDE_RAIL_ID = "myclaude-side-rail";
+  const SIDE_RAIL_WIDTH = 8;
+  // Ширина колонки, выбранная мышью: localStorage — окна Claude делят её, как и
+  // ширину боковой панели у самого Claude.
+  const SIDE_STORAGE_KEY = "myclaude-wide-side-v1";
+  const layoutPanel = editor => {
+    try {
+      return editor?.closest?.(".epitaxy-chat-panel") ?? document.querySelector(".epitaxy-chat-panel");
+    } catch { return null; }
+  };
+  // Единственный оракул: флаг, который CSS ставит на панель внутри контейнерного
+  // запроса (см. layoutCss). На innerWidth не падаем никогда — стенды тестов
+  // шириной 1200 обязаны оставаться узкими, а в бою второй порог разошёлся бы
+  // с первым.
+  const wideLayout = panel => {
+    if (!panel?.isConnected) return false;
+    try { return getComputedStyle(panel).getPropertyValue(WIDE_FLAG).trim() === "1"; } catch { return false; }
+  };
+  // Дока — правая колонка целиком: её левая кромка и ширина — это и есть колонка.
+  const sideDock = panel => {
+    try { return panel?.querySelector?.('[class~="group/approval-dock"]') ?? null; } catch { return null; }
+  };
+  const sideWidth = panel => {
+    const dock = sideDock(panel);
+    const box = dock?.isConnected ? dock.getBoundingClientRect() : null;
+    return box && box.width > 0 ? Math.round(box.width) : null;
+  };
+  const readStoredSide = () => {
+    try {
+      const stored = Number(localStorage.getItem(SIDE_STORAGE_KEY));
+      return Number.isFinite(stored) && stored >= SIDE_MIN ? Math.round(stored) : null;
+    } catch { return null; }
+  };
+  const storeSide = value => {
+    try {
+      if (value == null) localStorage.removeItem(SIDE_STORAGE_KEY);
+      else localStorage.setItem(SIDE_STORAGE_KEY, String(Math.round(value)));
+    } catch {}
+  };
+  const wideState = { on: false, panel: null, dragging: false };
+  // Инлайн-переменная на чужом узле снимается вместе с экземпляром; следующий
+  // прогон вернёт её из хранилища на первом же проходе.
+  track(() => {
+    try { wideState.panel?.style?.removeProperty(SIDE_VARIABLE); } catch {}
+  });
+  const applySide = (panel, value) => {
+    if (!panel) return;
+    wideState.panel = panel;
+    if (value == null) panel.style.removeProperty(SIDE_VARIABLE);
+    else panel.style.setProperty(SIDE_VARIABLE, `${Math.round(value)}px`);
+  };
+  // Ступени в широком виде выключены: поле стоит на обычной высоте и растёт само
+  // вместе с колонкой, ручки нет — свёрнутое поле тут исчезло бы навсегда.
+  // Хранилище ступени при этом НЕ переписываем: возврат в узкий вид берёт ступень
+  // оттуда, как при инжекте, — поле возвращается таким, каким его оставили.
+  const syncWide = wide => {
+    if (wide) {
+      if (state.stage !== STAGE_NORMAL) {
+        const stage = readStoredStage();
+        const height = readStoredHeight();
+        setStage(STAGE_NORMAL, { silent: true });
+        if (stage != null) storeStage(stage);
+        storeHeight(height);
+      }
+    } else if (wideState.on) {
+      const stage = readStoredStage();
+      if (stage != null && stage !== state.stage) setStage(stage, { silent: true });
+    }
+    wideState.on = wide;
+  };
+  // Рейка стоит fixed по координатам, как ручка и полоса: узел живёт в body, а не
+  // в дереве Claude (довод раздела 4 — React пересобирает панель, и свой узел
+  // внутри неё пришлось бы ловить заново). Место — левая кромка доки, во всю
+  // высоту панели; в узком виде рейки нет.
+  const placeSideRail = (panel, wide) => {
+    if (!wide || !panel) {
+      if (rail.style.display !== "none") rail.style.setProperty("display", "none");
+      return;
+    }
+    // Сохранённая ширина ставится ДО замера: после неё колонка уже другая.
+    if (!panel.style.getPropertyValue(SIDE_VARIABLE)) {
+      const stored = readStoredSide();
+      if (stored != null) applySide(panel, stored);
+    }
+    const dock = sideDock(panel);
+    const box = dock?.isConnected ? dock.getBoundingClientRect() : null;
+    const frame = panel.getBoundingClientRect();
+    if (!box || box.width <= 0 || frame.height <= 0) {
+      if (rail.style.display !== "none") rail.style.setProperty("display", "none");
+      return;
+    }
+    rail.style.setProperty("display", "block");
+    rail.style.setProperty("left", `${Math.round(box.left - SIDE_RAIL_WIDTH / 2)}px`);
+    rail.style.setProperty("top", `${Math.round(frame.top)}px`);
+    rail.style.setProperty("height", `${Math.round(frame.height)}px`);
+    rail.style.setProperty("color", progressAccent());
+  };
+  // Тяга: ширина колонки = правый край панели − курсор, в границах
+  // [SIDE_MIN, 60 % панели]. Значение уходит инлайн-переменной на панель, сетка
+  // пересчитывается сама; отпустили — в хранилище. Двойной клик — умолчание.
+  const railSide = (panel, x) => {
+    const frame = panel.getBoundingClientRect();
+    return Math.round(Math.min(frame.width * SIDE_MAX_SHARE, Math.max(SIDE_MIN, frame.right - x)));
+  };
+  const onRailDown = event => {
+    if (event.button !== 0) return;
+    const panel = layoutPanel(state.editor);
+    if (!panel) return;
+    event.preventDefault();
+    wideState.dragging = true;
+    wideState.panel = panel;
+    rail.dataset.dragging = "true";
+    document.documentElement.style.cursor = "col-resize";
+    document.documentElement.style.userSelect = "none";
+    try { rail.setPointerCapture(event.pointerId); } catch {}
+  };
+  const onRailMove = event => {
+    if (!wideState.dragging) return;
+    const panel = wideState.panel;
+    if (!panel?.isConnected) return;
+    event.preventDefault();
+    applySide(panel, railSide(panel, event.clientX));
+    layout();
+  };
+  const onRailUp = () => {
+    if (!wideState.dragging) return;
+    wideState.dragging = false;
+    rail.dataset.dragging = "false";
+    document.documentElement.style.cursor = "";
+    document.documentElement.style.userSelect = "";
+    const panel = wideState.panel;
+    const value = Number.parseFloat(panel?.style?.getPropertyValue(SIDE_VARIABLE) ?? "");
+    if (Number.isFinite(value)) storeSide(value);
+    scheduleLayout();
+  };
+  const onRailReset = () => {
+    applySide(wideState.panel ?? layoutPanel(state.editor), null);
+    storeSide(null);
+    layout();
+  };
+  // Лоадер перечитал файл посреди тяги — курсор и запрет выделения на
+  // documentElement сняли бы только по отпусканию, а обработчика уже нет.
+  track(() => {
+    if (!wideState.dragging) return;
+    wideState.dragging = false;
+    document.documentElement.style.cursor = "";
+    document.documentElement.style.userSelect = "";
+  });
+
   // ---- 3. Сироты прошлых установок ---------------------------------------
   // Реестра у них могло и не быть (падение до его заполнения), а в окне они уже
   // висят. Сносим по id и по своим атрибутам — иначе полосок в окне остаётся
   // столько же, сколько было падений.
-  for (const id of [STYLE_ID, HANDLE_ID]) {
+  for (const id of [STYLE_ID, HANDLE_ID, SIDE_RAIL_ID]) {
     for (const orphan of document.querySelectorAll(`#${id}`)) orphan.remove();
   }
   for (const node of document.querySelectorAll(`[${EDITOR_ROOT_ATTRIBUTE}],[${EDITOR_ATTRIBUTE}],[${BLOCK_ATTRIBUTE}]`)) {
@@ -3690,6 +3995,11 @@ div:has(> .ProseMirror) {
     `#${HANDLE_ID}[data-collapsed="true"]{cursor:pointer}`,
     `#${HANDLE_ID}[data-collapsed="true"]>span{height:3px;opacity:.30}`,
     `#${HANDLE_ID}[data-collapsed="true"]:hover>span{height:4px;opacity:.45}`,
+    // Рейка ширины правой колонки (WF65, раздел 2г): прозрачная, при наведении и
+    // тяге — акцентом (color ставит placeSideRail), как рейка боковой панели у
+    // Claude.
+    `#${SIDE_RAIL_ID}{position:fixed;display:none;width:${SIDE_RAIL_WIDTH}px;padding:0;border:0;background:transparent;cursor:col-resize;user-select:none;-webkit-user-select:none;touch-action:none;z-index:2147483646;transition:background 120ms ease}`,
+    `#${SIDE_RAIL_ID}:hover,#${SIDE_RAIL_ID}[data-dragging="true"]{background:currentColor;opacity:.45}`,
     // Схлопнутый узел: не display:none, а полоска нулевой высоты — редактор
     // остаётся живым, черновик и фокус переживают сворачивание.
     `[${BLOCK_ATTRIBUTE}="collapsed"]{height:0 !important;min-height:0 !important;max-height:0 !important;padding-top:0 !important;padding-bottom:0 !important;margin-top:0 !important;margin-bottom:0 !important;overflow:hidden !important;opacity:0 !important;pointer-events:none !important}`,
@@ -3738,6 +4048,15 @@ div:has(> .ProseMirror) {
   handle.appendChild(document.createElement("span"));
   (document.body ?? document.documentElement).appendChild(handle);
   track(() => handle.remove());
+  // Рейка ширины правой колонки (раздел 2г) — тем же приёмом: один узел на окно,
+  // в body, ставится по координатам; в узком виде спрятана.
+  const rail = document.createElement("div");
+  rail.id = SIDE_RAIL_ID;
+  rail.setAttribute("role", "separator");
+  rail.setAttribute("aria-orientation", "vertical");
+  rail.setAttribute("aria-label", "Изменить ширину правой колонки");
+  (document.body ?? document.documentElement).appendChild(rail);
+  track(() => rail.remove());
   // Резерв на случай, когда CSP страницы не пустила наш <style>: положение
   // полоски и саму линию ставим напрямую через CSSOM — его CSP не касается
   // (запрещён бывает <style> и атрибут style, а не element.style.setProperty).
@@ -3757,6 +4076,11 @@ div:has(> .ProseMirror) {
     for (const [name, value] of Object.entries(box)) handle.style.setProperty(name, value);
     const span = handle.firstElementChild;
     if (span) for (const [name, value] of Object.entries(line)) span.style.setProperty(name, value);
+    for (const [name, value] of Object.entries({
+      position: "fixed", display: "none", width: `${SIDE_RAIL_WIDTH}px`, padding: "0", border: "0",
+      background: "transparent", cursor: "col-resize", "user-select": "none", "touch-action": "none",
+      "z-index": "2147483646",
+    })) rail.style.setProperty(name, value);
   }
 
   // ---- 5. Поиск поля ввода ------------------------------------------------
@@ -4188,7 +4512,7 @@ div:has(> .ProseMirror) {
       state.editorRoot = editor ? findEditorRoot(editor) : null;
       state.shell = editor ? findShell(editor, state.editorRoot) : null;
     }
-    if (!editor) { handle.style.display = "none"; return; }
+    if (!editor) { handle.style.display = "none"; placeSideRail(null, false); return; }
     noteEditorFound();
     const block = findComposerBlock(editor, state.shell);
     if (block !== state.composerBlock) {
@@ -4203,10 +4527,23 @@ div:has(> .ProseMirror) {
       state.frameChild = parts?.frameChild ?? null;
       state.modelRow = parts?.modelRow ?? null;
     }
+    // Широкий вид (раздел 2г) решается ДО сворачивания: ступень там одна,
+    // обычная, — и applyCollapse ниже обязан видеть уже её. Открытие боковой
+    // панели меняет ширину плитки без resize, но флаг спрашивается на каждом
+    // проходе, а контейнерный запрос CSS перестраивает сетку сам.
+    const panel = layoutPanel(editor);
+    const wide = wideLayout(panel);
+    syncWide(wide);
+    placeSideRail(panel, wide);
     applyCollapse();
     if (!state.shell?.isConnected) { handle.style.display = "none"; return; }
     if (state.stage === STAGE_COLLAPSED) { placeCollapsedHandle(); return; }
     applyHeight();
+    // В широком виде ручки нет (слово Элвиса: «давай их пока не будем вообще»),
+    // а замер обычной высоты пропускается: поле растянуто на всю колонку, и туда
+    // легла бы высота колонки — после возврата в узкий вид порог «растянуто»
+    // стал бы недостижим.
+    if (wide) { handle.style.display = "none"; placeProgress(); return; }
     // Обычная высота известна только здесь: на этой ступени подмены высоты нет и
     // поле показывает свой собственный размер.
     if (state.stage === STAGE_NORMAL && state.editorRoot?.isConnected) {
@@ -6878,6 +7215,12 @@ div:has(> .ProseMirror) {
   on(document, "pointermove", onPointerMove, { capture: true });
   on(document, "pointerup", finishDrag, { capture: true });
   on(document, "pointercancel", finishDrag, { capture: true });
+  // Рейка ширины правой колонки (раздел 2г) — тем же набором, что и ручка.
+  on(rail, "pointerdown", onRailDown);
+  on(rail, "dblclick", onRailReset);
+  on(document, "pointermove", onRailMove, { capture: true });
+  on(document, "pointerup", onRailUp, { capture: true });
+  on(document, "pointercancel", onRailUp, { capture: true });
   on(window, "resize", scheduleLayout);
   on(window, "scroll", onScrolled, true);
   on(window, "myclaude-command", onCommand);
@@ -7078,6 +7421,15 @@ div:has(> .ProseMirror) {
       jumps: jumpLog.slice(),
       handleVisible: handle.style.display !== "none",
       handleCovered: state.handleCovered,
+      // Широкий вид (раздел 2г, WF65): включён ли, ширина панели чата и правой
+      // колонки в точках (в узком виде колонки нет — null).
+      layout: (() => {
+        const panel = layoutPanel(state.editor);
+        const wide = wideLayout(panel);
+        let width = null;
+        try { width = panel ? Math.round(panel.getBoundingClientRect().width) : null; } catch {}
+        return { wide, panel: width, side: wide ? sideWidth(panel) : null };
+      })(),
       layoutRuns: state.layoutRuns,
       mutationBatches: state.mutationBatches,
       mutationSkipped: state.mutationSkipped,
@@ -7214,7 +7566,7 @@ div:has(> .ProseMirror) {
   // Ставит её только tests/load.mjs, чтобы дотянуться до чистых функций замыкания.
   // Глушителя ошибок здесь нет намеренно: переименовали функцию — люк обязан кричать, а не отдавать тестам undefined.
   if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ themeCss, epitaxyCss, fontCss, sizeCss,
-    attachmentsCss,
+    attachmentsCss, layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, PROGRESS_GAP,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     codeCss, codePalette, contrastRatio, readableOn,
     chatKey, chatIdKey, chatTitleKey, chatEntry, migrateChatKey, sameSessionKey, restoreKeyOk, chatsThemes,

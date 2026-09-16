@@ -12,7 +12,7 @@
 // конце файла, — четыре жалобы Элвиса 12.09 на низ окна (WF57).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadInject } from "./load.mjs";
+import { loadInject, loadInner } from "./load.mjs";
 
 const BLOCK_ATTRIBUTE = "data-myclaude-composer-block";
 const HEIGHT_VARIABLE = "--myclaude-input-height";
@@ -108,6 +108,8 @@ const handleOf = loaded => loaded.dom.query("#myclaude-input-handle");
 const handleTop = loaded => parseFloat(handleOf(loaded).style.top);
 const handleLine = loaded => handleTop(loaded) + HANDLE_HEIGHT / 2;
 const barTop = loaded => parseFloat(loaded.dom.query("#myclaude-progress-bar").style.top);
+// Зазор между кромкой рамки и линией полосы (WF65, #6178) — из люка, не дублируем число.
+const { PROGRESS_GAP } = loadInner({ title: "Trelvis" }).inner;
 // Одиночный клик шагает не сразу: 260 мс он ждёт возможного второго. Таймеры в
 // стабе сами не идут — дёргаем ровно тот, что поставил этот клик.
 const clickHandle = loaded => {
@@ -309,12 +311,12 @@ test("у свёрнутого поля полоса прогресса пере�
   const loaded = loadInject({ html: newBuildStand(), title: "Trelvis" });
   const { block, shell } = loaded.parts;
   assert.equal(loaded.api.status().progress.anchor, "рамка", "на открытом поле якорь прежний");
-  assert.equal(barTop(loaded), box(shell).bottom - 1, "и линия сидит на низе рамки");
+  assert.equal(barTop(loaded), box(shell).bottom + PROGRESS_GAP, "и линия сидит под низом рамки с зазором");
   loaded.api.setStage(COLLAPSED);
   // Свёрнутая рамка схлопнута в ноль, и её низ приходится ровно туда, куда
   // встала линия полоски: без переезда две линии рисовались бы одна в одну.
   assert.equal(loaded.api.status().progress.anchor, "низ блока");
-  assert.equal(barTop(loaded), box(block).bottom - 1, "полоса ушла на низ блока ввода");
+  assert.equal(barTop(loaded), box(block).bottom + PROGRESS_GAP, "полоса ушла под низ блока ввода");
   assert.ok(barTop(loaded) - handleLine(loaded) >= PROGRESS_BAR_HEIGHT + 4,
     `между линиями ${barTop(loaded) - handleLine(loaded)} точек — не сливаются`);
   loaded.api.setStage(NORMAL);
