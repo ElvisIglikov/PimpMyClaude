@@ -1154,10 +1154,12 @@ div:has(> .ProseMirror) {
   const TITLEBAR_CLEARANCE = 36;
   // Левее этой точки панели стоят кнопки окна (до ~70) и «Show sidebar» (82–110).
   const TITLEBAR_CLEARANCE_LEFT = 120;
-  // Пустой блок Claude в конце ленты (`transcript-spacer`, inline `height: 48px`)
-  // держал место под нижнее затемнение; затемнения нет — в широком виде хватит
-  // глотка воздуха, иначе под последней строкой «обрезь, а место есть».
-  const TRANSCRIPT_SPACER = 8;
+  // Пустой блок Claude в конце ленты (`[data-testid="transcript-spacer"]`) НЕ
+  // ТРОГАТЬ: это не отступ под затемнение, а хвост виртуальной ленты — Claude
+  // пишет ему inline высоту недорисованных строк (замер 17.09 00:10: 7424 px при
+  // прокрутке вверх, 48 у самого низа). Правило `height: 8px !important` (гейт
+  // 21:24) ломало геометрию прокрутки — лента «телепортировалась» (слово
+  // Элвиса 00:05). Снизу под последней строкой остаётся его собственный воздух.
   const layoutCss = () => `/* PimpMyClaude · широкий вид окна (WF65) */
 /* #6186: только текст подтверждённого composer, включая вложенные стили Claude.
    Чипы, кнопки и их потомки сохраняют собственный размер. */
@@ -1196,9 +1198,6 @@ nav[aria-label="Repository and pull request controls"] {
       min-width: 0;
       min-height: 0;
       padding-top: var(--myclaude-top-clearance, 0px);
-    }
-    & [data-testid="transcript-spacer"] {
-      height: ${TRANSCRIPT_SPACER}px !important;
     }
     & .group\\/approval-dock {
       grid-column: 2;

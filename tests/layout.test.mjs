@@ -127,8 +127,9 @@ test("дочерние правила сетки вложены в её усло
   // Место под кнопки окна — переменная, которую ставит JS по положению панели
   // (примета data-top-left у шапки врёт при открытой боковой панели, гейт 16.09).
   assert.ok(/padding-top:\s*var\(--myclaude-top-clearance, 0px\)/.test(body.body), "место под кнопки окна — переменной от JS");
-  const spacer = grid.children.find(item => item.selector.includes("transcript-spacer"));
-  assert.ok(spacer && /height:\s*\d+px !important/.test(spacer.body), "пустой блок Claude под лентой ужат — «снизу обрезь, а место есть»");
+  // Хвост виртуальной ленты Claude (`transcript-spacer`) не трогаем никогда: его
+  // высоту пишет сам Claude, и правило на неё ломало прокрутку (17.09, #6176).
+  assert.ok(!layoutCss().includes("transcript-spacer"), "хвост виртуальной ленты Claude не трогаем");
   const dock = grid.children.find(item => item.selector === "& .group\\/approval-dock");
   assert.ok(dock && /grid-column:\s*2/.test(dock.body) && /grid-row:\s*2/.test(dock.body), "дока — правая колонка, вторая строка");
   // Поля самой доки не трогаются: их держит sidePadding из claude.json через
