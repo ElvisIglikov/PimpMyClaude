@@ -1,0 +1,20 @@
+{
+  "wf": 67,
+  "plan": "docs/plan-wf67-2026-09-17.md",
+  "branch": "wf67 (тег wf67-start на main)",
+  "orchestrator": "Fable 5.1 xhigh",
+  "status": "идёт",
+  "note": "одобрение вперёд планом (04:30); критик пропущен (простой план, одно правило); кодинг Fable high по слову Элвиса; проверка — Fable high + живой probe",
+  "tasks": [
+    "#6190",
+    "#6178 (свечение тише)"
+  ],
+  "journal": [
+    "04:20–04:50 · разведка: мост LocalSessions.openSessionFileInDefaultApp(chatId, path) → {ok:true}, Chrome открыл макет; карточка — button с пропсом path в волокне; меню — [role=menu][data-cds=ContextMenu] с пунктами Attach as context / Copy / Show in Finder (запись наблюдателем по правому клику Элвиса 04:50)",
+    "04:58 · план, тег wf67-start, ветка wf67, батч A запущен (Fable high)"
+  ],
+  "next_steps": [
+    "батч A → гейт: тесты, живой probe (правый клик Элвиса), проверка Fable high, коммит, слияние",
+    "HTML.md: правило крупного текста записано; макеты WF65/66 — шрифт крупнее"
+  ]
+}
