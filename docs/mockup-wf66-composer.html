@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Поле ввода в широком окне — вложения снизу, текст во всю ширину</title>
+<style>
+  :root { --фон:#16101d; --окно:#251a30; --поле:#3d2b4d; --линия:rgba(255,255,255,.12); --текст:#f1ecf6; --вторичный:#b3a6c2; --акцент:#c9a6ff; --красн:#e06464; --зел:#6ad19a; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:18px 14px 60px; background:var(--фон); color:var(--текст); font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; overflow-x:hidden; }
+  h1 { font-size:clamp(30px,8vw,44px); line-height:1.1; margin:0 0 8px; }
+  h2 { font-size:clamp(28px,7vw,38px); line-height:1.15; margin:44px 0 8px; padding-top:16px; border-top:1px solid var(--линия); }
+  p { max-width:760px; margin:6px 0; }
+  .подпись { color:var(--вторичный); }
+  nav ul { list-style:none; padding:0; margin:12px 0 0; display:flex; flex-wrap:wrap; gap:8px 18px; }
+  nav a { color:var(--акцент); font-size:18px; text-decoration:none; border-bottom:1px dotted var(--акцент); }
+  .ряд { display:flex; gap:22px; overflow-x:auto; padding-bottom:8px; }
+  .кадр { flex:0 0 auto; width:330px; }
+  .кадр-подпись { color:var(--вторичный); margin:6px 0 0; font-size:14px; }
+  .колонка { background:var(--окно); border:1px solid var(--линия); border-radius:12px; height:520px; display:flex; flex-direction:column; font-size:12px; line-height:1.35; overflow:hidden; }
+  .шапка { display:flex; align-items:center; gap:6px; padding:8px 10px 6px; border-bottom:1px solid var(--линия); white-space:nowrap; overflow:hidden; }
+  .чип { background:rgba(255,255,255,.08); border-radius:6px; padding:1px 6px; color:var(--вторичный); }
+  .поле { flex:1; margin:8px 12px; background:var(--поле); border-radius:8px; position:relative; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+  .вложения { display:flex; gap:6px; flex-wrap:wrap; padding:8px; }
+  .плитка { width:44px; height:44px; border-radius:6px; background:linear-gradient(135deg,#5a4470,#8c6bb0); position:relative; flex:0 0 auto; }
+  .плитка i { position:absolute; right:-5px; top:-5px; width:14px; height:14px; border-radius:50%; background:#1a1122; border:1px solid var(--линия); font-style:normal; font-size:9px; display:grid; place-items:center; color:var(--текст); }
+  .текст { flex:1; padding:8px 9px; white-space:pre-wrap; color:var(--текст); position:relative; min-height:0; overflow:hidden; }
+  .текст.с-кнопкой { padding-right:40px; }
+  .скролл { position:absolute; top:6px; bottom:6px; width:6px; border-radius:3px; background:rgba(255,255,255,.28); }
+  .скролл.внутри { right:38px; }
+  .скролл.справа { right:3px; }
+  .кнопка { position:absolute; right:8px; bottom:8px; width:26px; height:24px; border-radius:6px; background:rgba(255,255,255,.14); display:grid; place-items:center; font-size:12px; }
+  .строка-модели { display:flex; gap:8px; padding:0 14px 8px; color:var(--вторичный); font-size:11px; }
+  .строка-модели .м { margin-left:auto; }
+  .метка { position:absolute; background:#f0a04b; color:#1a1006; font-weight:700; font-size:10px; padding:2px 6px; border-radius:4px; z-index:3; }
+  .обрез { position:absolute; left:0; right:0; top:0; height:58px; overflow:hidden; }
+  .обрез .вложения { position:absolute; top:-22px; }
+  .мини-скролл { position:absolute; right:3px; top:4px; width:5px; height:20px; border-radius:3px; background:rgba(255,255,255,.35); }
+  ul.решено { max-width:760px; padding-left:22px; }
+  ul.решено li { margin:6px 0; }
+  .итог { margin-top:30px; padding:14px 16px; border-radius:10px; background:var(--окно); border:1px solid var(--акцент); max-width:760px; font-size:17px; }
+</style>
+</head>
+<body>
+
+<h1>Поле ввода в широком окне</h1>
+<p class="подпись">макет · Fable xhigh · 16.09.2026 · задачи #6187 и #6188</p>
+<p>Две правки правой колонки по твоему слову: вложения переезжают вниз, к кнопке отправки, и показываются целиком без своей прокрутки; текст занимает всю ширину поля, полоса прокрутки прижата к правому краю.</p>
+
+<nav><ul>
+  <li><a href="#кадры">Сейчас и будет</a></li>
+  <li><a href="#решено">Решено</a></li>
+</ul></nav>
+
+<h2 id="кадры">Сейчас и будет</h2>
+<p class="подпись">Нарисовано толще, чем в жизни: правая колонка широкого окна, поле ввода с двумя скриншотами и длинным черновиком.</p>
+<div class="ряд">
+  <div class="кадр">
+    <div class="колонка">
+      <div class="шапка"><span>💻</span><span>Переделка ма…</span><span class="чип">📁 PimpMyClaude</span></div>
+      <div class="поле">
+        <span class="метка" style="right:8px;top:2px">крошечная прокрутка, картинки обрезаны</span>
+        <div class="обрез"><div class="вложения"><div class="плитка"><i>×</i></div><div class="плитка"><i>×</i></div></div><div class="мини-скролл"></div></div>
+        <div class="текст с-кнопкой" style="margin-top:58px">так, здорово. Смотри, видишь, сверху ещё не до самого верха доходит. Сверху, снизу всё нормально, обрезается где надо. А сверху что-то не то с обрезкой. Хотя и снизу тоже, видишь? Там есть ещё куда тексту быть, а оно почему-то там снизу тоже обрезалось. Хочется, чтобы снизу была прямо полная обрезь, если это возможно.
+<span class="скролл внутри"></span></div>
+        <span class="метка" style="right:8px;bottom:40px">пустая колонка справа</span>
+        <div class="кнопка">↵</div>
+      </div>
+      <div class="строка-модели"><span>＋</span><span>🎤 ⌄</span><span>Auto</span><span class="м">Fable 5.1 · Extra</span></div>
+    </div>
+    <p class="кадр-подпись">Сейчас: картинки сверху и режутся, справа от текста пустая полоса под кнопку отправки, прокрутка стоит не у края.</p>
+  </div>
+  <div class="кадр">
+    <div class="колонка">
+      <div class="шапка"><span>💻</span><span>Переделка ма…</span><span class="чип">📁 PimpMyClaude</span></div>
+      <div class="поле">
+        <div class="текст">так, здорово. Смотри, видишь, сверху ещё не до самого верха доходит. Сверху, снизу всё нормально, обрезается где надо. А сверху что-то не то с обрезкой. Хотя и снизу тоже, видишь? Там есть ещё куда тексту быть, а оно почему-то там снизу тоже обрезалось. Хочется, чтобы снизу была прямо полная обрезь, если это возможно. Ну ладно, снизу не так критично.
+<span class="скролл справа"></span></div>
+        <span class="метка" style="left:8px;bottom:64px">вложения снизу, целиком, без прокрутки</span>
+        <div class="вложения" style="padding-right:44px"><div class="плитка"><i>×</i></div><div class="плитка"><i>×</i></div><div class="плитка"><i>×</i></div></div>
+        <div class="кнопка">↵</div>
+      </div>
+      <div class="строка-модели"><span>＋</span><span>🎤 ⌄</span><span>Auto</span><span class="м">Fable 5.1 · Extra</span></div>
+    </div>
+    <p class="кадр-подпись">Будет: текст до правого края, прокрутка у самой кромки, картинки копятся снизу левее кнопки отправки и видны целиком; много картинок — встают в несколько рядов, текст выше ужимается.</p>
+  </div>
+</div>
+
+<h2 id="решено">Решено, не переспрашиваю</h2>
+<ul class="решено">
+  <li>Только в широком окне; в узком поле ввода остаётся как сегодня (там картинки сверху и потолок в четверть окна, чтобы не съедали черновик).</li>
+  <li>Кнопка отправки остаётся на своём месте справа внизу; текст под неё не заходит — последняя строка стоит выше кнопки.</li>
+  <li>Крестик снятия вложения не трогаем: по нему «Обкэшить» считает картинки.</li>
+  <li>Размер текста в поле ввода по колёсику мыши делает Астра — её правка сейчас в работе, я в тот же файл не лезу, пока она не сдаст.</li>
+</ul>
+
+<div class="итог">Если на картинке «будет» всё так, скажи «делай» — начну, как только Астра сдаст свою правку в этом же файле.</div>
+
+</body>
+</html>
