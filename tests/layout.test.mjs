@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { loadInject, loadInner, plain } from "./load.mjs";
 
 const { inner } = loadInner({ title: "Trelvis" });
-const { layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, TITLEBAR_CLEARANCE } = inner;
+const { layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, TITLEBAR_CLEARANCE, WIDE_TILE } = inner;
 
 const WIDE_FLAG = "--myclaude-wide";
 const SIDE_VARIABLE = "--myclaude-side";
@@ -35,7 +35,8 @@ const NAV = 'nav[aria-label="Repository and pull request controls"]';
 const FADES = [".scroll-fade-strip-top", ".scroll-fade-strip-bottom"];
 const CHIP_NAME = "group-data-\\[pills-compact\\]\\/lead\\:hidden";
 // Три приметы проверенной формы разметки: сетка включается только на ней.
-const FORM = [":has(> .epitaxy-titlebar)", ":has(> .contents > .epitaxy-chat-panel-body)", ":has(.group\\/approval-dock)"];
+// Тело ленты — с виртуальной лентой внутри (WF66): домашний экран без неё сетку не получает.
+const FORM = [":has(> .epitaxy-titlebar)", ':has(> .contents > .epitaxy-chat-panel-body [data-testid="epitaxy-virtual-transcript"])', ":has(.group\\/approval-dock)"];
 
 // ---- разбор CSS: дерево блоков по скобкам --------------------------------
 // Правила сетки вложены (`&`), поэтому плоского «селектор { тело }» мало —
@@ -91,7 +92,8 @@ test("сетка и флаг --myclaude-wide живут ТОЛЬКО внутр�
   assert.ok(flag, "флага-оракула внутри блока нет");
   assert.ok(flag.selector.startsWith(".epitaxy-chat-panel"), "флаг ставится на панель чата — его читает wideLayout()");
   // Флаг стоит на панели, поэтому те же три приметы смотрят на шаг глубже.
-  for (const part of [":has(> div > .epitaxy-titlebar)", ":has(> div > .contents > .epitaxy-chat-panel-body)", FORM[2]]) {
+  // Тело ленты — с виртуальной лентой внутри: домашний экран без неё сетку не получает.
+  for (const part of [":has(> div > .epitaxy-titlebar)", ':has(> div > .contents > .epitaxy-chat-panel-body [data-testid="epitaxy-virtual-transcript"])', FORM[2]]) {
     assert.ok(flag.selector.includes(part), `флаг не привязан к примете формы «${part}»`);
   }
   const grid = inside.find(item => /display:\s*grid/.test(item.body));
@@ -131,10 +133,14 @@ test("дочерние правила сетки вложены в её усло
   // высоту пишет сам Claude, и правило на неё ломало прокрутку (17.09, #6176).
   assert.ok(!layoutCss().includes("transcript-spacer"), "хвост виртуальной ленты Claude не трогаем");
   // WF66: вложения после текста без потолка и прокрутки, текст без правого поля под кнопку.
+  const slot = grid.children.find(item => item.selector.endsWith("div:has(> [data-cds-composer-attachments])"));
+  assert.ok(slot && /order:\s*2/.test(slot.body), "слот вложений — последним ребёнком коробки");
   const attachments = grid.children.find(item => item.selector.endsWith("[data-cds-composer-attachments]"));
-  assert.ok(attachments && /order:\s*2/.test(attachments.body) && /max-height:\s*none !important/.test(attachments.body) && /overflow:\s*visible !important/.test(attachments.body),
-    "вложения — последними, целиком, без своей прокрутки");
-  const textWrap = grid.children.find(item => item.selector.includes('div[style*="--cmp-wrap-h"]'));
+  assert.ok(attachments && /max-height:\s*none !important/.test(attachments.body) && /overflow:\s*visible !important/.test(attachments.body),
+    "вложения целиком, без своей прокрутки");
+  // Домашний экран (без виртуальной ленты) сетку не получает.
+  assert.ok(grid.selector.includes('[data-testid="epitaxy-virtual-transcript"]'), "сетка только у страницы с лентой");
+  const textWrap = grid.children.find(item => item.selector === '& [data-cds="ChatComposer"] div[style*="--cmp-wrap-h"]');
   assert.ok(textWrap && /padding-right:\s*0 !important/.test(textWrap.body) && /padding-bottom:\s*\d+px !important/.test(textWrap.body),
     "текст во всю ширину, последняя строка выше кнопки отправки");
   const dock = grid.children.find(item => item.selector === "& .group\\/approval-dock");
@@ -169,9 +175,9 @@ test("поле ввода растёт цепочкой замера, а height:
   const editor = grid.children.find(item => item.selector === chain[3]);
   assert.match(editor.body, /max-height:\s*none !important/, "потолок области текста из attachmentsSheet снят");
   assert.ok(!/(^|[^-])height:\s*100%/.test(css), "height:100% в CSS быть не должно");
-  // Плитка вложений 56×56 — дубль правила WF61 в контейнерном блоке.
+  // Плитка вложений в колонке — мельче узкой (WF66, слово Элвиса: «превьюшки помельче»).
   const tile = grid.children.find(item => item.selector.endsWith("[data-cds-composer-attachments] [data-cds-attachment]"));
-  assert.ok(tile && /width:\s*56px !important/.test(tile.body) && /height:\s*56px !important/.test(tile.body), "плитка вложений в колонке не ужата");
+  assert.ok(tile && new RegExp(`width:\\s*${WIDE_TILE}px !important`).test(tile.body) && new RegExp(`height:\\s*${WIDE_TILE}px !important`).test(tile.body), "плитка вложений в колонке не ужата");
   const down = grid.children.find(item => item.selector.includes('[aria-label="Scroll to bottom"]'));
   assert.ok(down && /right:\s*calc\(100% \+ \d+px\)/.test(down.body) && /bottom:\s*\d+px/.test(down.body),
     "кнопка «вниз» уходит к низу колонки текста");

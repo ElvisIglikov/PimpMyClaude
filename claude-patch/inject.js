@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf66-a-1";
+  const VERSION = "wf66-b-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1123,6 +1123,11 @@ div:has(> .ProseMirror) {
   // области текста из attachmentsSheet снимается `max-height: none !important` —
   // спор двух !important решает порядок таблиц, эта стоит после. Правило плитки
   // 56×56 продублировано: колонка 300–420 ýже порога 560, а @media там по окну.
+  // Широкий вид — только у СТРАНИЦЫ ЧАТА: в теле ленты есть виртуальная лента
+  // `[data-testid="epitaxy-virtual-transcript"]`. На домашнем экране (`/epitaxy`)
+  // форма панели та же, но вместо ленты — список сессий, и сетка ставила
+  // «Welcome back» в левый нижний угол, а поле ввода — вправо с пустым полем
+  // (слово Элвиса 17.09 01:35); там остаётся раскладка Claude.
   const WIDE_PANEL_MIN = 640;
   const WIDE_FLAG = "--myclaude-wide";
   const SIDE_VARIABLE = "--myclaude-side";
@@ -1165,8 +1170,20 @@ div:has(> .ProseMirror) {
   // ушла под кнопку. Обёртка узнаётся по inline-переменной `--cmp-wrap-h`,
   // которую Claude пишет ей сам (замер 16.09). Полоса прокрутки редактора при
   // этом сама встаёт к правой кромке коробки.
+  // Замер 17.09 01:30 с картинкой в поле: коробка `.bg-surface-3` → [слот вложений
+  // `div.grid.grid-rows-[1fr].overflow-hidden.-mt-2` → `[data-cds-composer-attachments]`
+  // → ряд плиток `flex-wrap`] и [обёртка текста `div.relative.w-full.min-w-0` → … →
+  // редактор]; слот появляется ПЕРВЫМ ребёнком коробки, когда есть вложения, и
+  // исчезает без них. Поэтому `order` ставится СЛОТУ и обёртке текста — детям
+  // коробки, а не самим вложениям. Кнопка отправки — `absolute bottom-0 right-0`
+  // в обёртке текста: пока вложений нет, она у низа текста (и текст держит под
+  // неё нижнее поле); есть вложения — обёртка становится `static`, кнопка
+  // переезжает в угол коробки, в один ряд с плитками, а нижнее поле текста
+  // снимается. Плитки в широком виде мельче узких (слово Элвиса 01:20:
+  // «превьюшки можно помельче»): в колонке 300 в ряд встают четыре.
   const ATTACHMENTS_SEND_ROOM = 44;
   const EDITOR_SEND_ROOM = 28;
+  const WIDE_TILE = 40;
   // Пустой блок Claude в конце ленты (`[data-testid="transcript-spacer"]`) НЕ
   // ТРОГАТЬ: это не отступ под затемнение, а хвост виртуальной ленты — Claude
   // пишет ему inline высоту недорисованных строк (замер 17.09 00:10: 7424 px при
@@ -1191,11 +1208,11 @@ nav[aria-label="Repository and pull request controls"] {
   display: inline-block !important;
 }
 @container tile-slot (min-width: ${WIDE_PANEL_MIN}px) {
-  .epitaxy-chat-panel:has(> div > .epitaxy-titlebar):has(> div > .contents > .epitaxy-chat-panel-body):has(.group\\/approval-dock) {
+  .epitaxy-chat-panel:has(> div > .epitaxy-titlebar):has(> div > .contents > .epitaxy-chat-panel-body [data-testid="epitaxy-virtual-transcript"]):has(.group\\/approval-dock) {
     ${WIDE_FLAG}: 1;
     ${SIDE_VARIABLE}: ${SIDE_DEFAULT};
   }
-  .epitaxy-chat-panel > div:has(> .epitaxy-titlebar):has(> .contents > .epitaxy-chat-panel-body):has(.group\\/approval-dock) {
+  .epitaxy-chat-panel > div:has(> .epitaxy-titlebar):has(> .contents > .epitaxy-chat-panel-body [data-testid="epitaxy-virtual-transcript"]):has(.group\\/approval-dock) {
     display: grid !important;
     grid-template-columns: minmax(0, 1fr) clamp(${SIDE_MIN}px, var(${SIDE_VARIABLE}), ${SIDE_MAX_SHARE * 100}%);
     grid-template-rows: auto minmax(0, 1fr);
@@ -1250,20 +1267,31 @@ nav[aria-label="Repository and pull request controls"] {
       max-height: none !important;
     }
     & .group\\/approval-dock [data-cds-composer-attachments] [data-cds-attachment] {
-      width: ${NARROW_TILE}px !important;
-      height: ${NARROW_TILE}px !important;
+      width: ${WIDE_TILE}px !important;
+      height: ${WIDE_TILE}px !important;
       min-width: 0 !important;
       min-height: 0 !important;
     }
-    & [data-cds="ChatComposer"] div:has(> [data-cds-composer-attachments]) > * {
-      order: 1;
-    }
-    & [data-cds="ChatComposer"] [data-cds-composer-attachments] {
+    & [data-cds="ChatComposer"] > div > div:has(> [data-cds-composer-attachments]) {
       order: 2;
       flex: 0 0 auto;
+      margin-top: 0 !important;
+      overflow: visible !important;
+    }
+    & [data-cds="ChatComposer"] > div > div:has(.ProseMirror) {
+      order: 1;
+    }
+    & [data-cds="ChatComposer"] > div:has(> div > [data-cds-composer-attachments]) > div:has(.ProseMirror) {
+      position: static;
+    }
+    & [data-cds="ChatComposer"] > div:has(> div > [data-cds-composer-attachments]) div[style*="--cmp-wrap-h"] {
+      padding-bottom: 0 !important;
+    }
+    & [data-cds="ChatComposer"] [data-cds-composer-attachments] {
       max-height: none !important;
       overflow: visible !important;
       padding-right: ${ATTACHMENTS_SEND_ROOM}px !important;
+      padding-bottom: 0 !important;
     }
     & [data-cds="ChatComposer"] div[style*="--cmp-wrap-h"] {
       padding-right: 0 !important;
@@ -7702,7 +7730,7 @@ nav[aria-label="Repository and pull request controls"] {
   // Ставит её только tests/load.mjs, чтобы дотянуться до чистых функций замыкания.
   // Глушителя ошибок здесь нет намеренно: переименовали функцию — люк обязан кричать, а не отдавать тестам undefined.
   if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ themeCss, epitaxyCss, fontCss, sizeCss,
-    attachmentsCss, layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, PROGRESS_GAP, TITLEBAR_CLEARANCE, TITLEBAR_CLEARANCE_LEFT,
+    attachmentsCss, layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, PROGRESS_GAP, TITLEBAR_CLEARANCE, TITLEBAR_CLEARANCE_LEFT, WIDE_TILE,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     codeCss, codePalette, contrastRatio, readableOn,
     chatKey, chatIdKey, chatTitleKey, chatEntry, migrateChatKey, sameSessionKey, restoreKeyOk, chatsThemes,
