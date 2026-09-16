@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf66-b-1";
+  const VERSION = "wf66-c-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1184,6 +1184,18 @@ div:has(> .ProseMirror) {
   const ATTACHMENTS_SEND_ROOM = 44;
   const EDITOR_SEND_ROOM = 28;
   const WIDE_TILE = 40;
+  // Между последней строкой и плитками — глоток, а не 28 точек (слово Элвиса
+  // 17.09 02:05: «место надо экономить, компактненько»): у Claude слот стоит
+  // с `-mt-2 pt-2` (это оставляем), а вложениям WF62 давал `padding-top: 12px`
+  // под вылет крестика — в широком виде слот не режет (`overflow: visible`),
+  // и хватает четырёх точек.
+  const ATTACHMENTS_TOP_GAP = 4;
+  // Правая колонка подтянута к тексту на 12 точек: справа у ленты своё поле
+  // (sidePadding, USER-стиль), слева у доки — своё; между ними пустовало почти
+  // полсотни точек, и Элвис принял их за ширину рейки («убрать тянулку огромную
+  // и сэкономить место»). Шапка и дока заезжают в это поле отрицательным
+  // margin, текст ленты не задет — его край на 24 левее.
+  const COLUMN_PULL = 12;
   // Пустой блок Claude в конце ленты (`[data-testid="transcript-spacer"]`) НЕ
   // ТРОГАТЬ: это не отступ под затемнение, а хвост виртуальной ленты — Claude
   // пишет ему inline высоту недорисованных строк (замер 17.09 00:10: 7424 px при
@@ -1220,7 +1232,7 @@ nav[aria-label="Repository and pull request controls"] {
       grid-column: 2;
       grid-row: 1;
       min-width: 0;
-      margin-left: 0 !important;
+      margin-left: -${COLUMN_PULL}px !important;
     }
     & > .contents > .epitaxy-chat-panel-body {
       grid-column: 1;
@@ -1234,6 +1246,8 @@ nav[aria-label="Repository and pull request controls"] {
       grid-row: 2;
       min-width: 0;
       min-height: 0;
+      margin-left: -${COLUMN_PULL}px;
+      width: calc(100% + ${COLUMN_PULL}px) !important;
       --myclaude-dock-pad-start: var(--chat-column-gutter-start);
       --myclaude-dock-pad-end: var(--chat-column-gutter-end);
     }
@@ -1275,7 +1289,6 @@ nav[aria-label="Repository and pull request controls"] {
     & [data-cds="ChatComposer"] > div > div:has(> [data-cds-composer-attachments]) {
       order: 2;
       flex: 0 0 auto;
-      margin-top: 0 !important;
       overflow: visible !important;
     }
     & [data-cds="ChatComposer"] > div > div:has(.ProseMirror) {
@@ -1290,6 +1303,7 @@ nav[aria-label="Repository and pull request controls"] {
     & [data-cds="ChatComposer"] [data-cds-composer-attachments] {
       max-height: none !important;
       overflow: visible !important;
+      padding-top: ${ATTACHMENTS_TOP_GAP}px !important;
       padding-right: ${ATTACHMENTS_SEND_ROOM}px !important;
       padding-bottom: 0 !important;
     }
@@ -4083,8 +4097,12 @@ nav[aria-label="Repository and pull request controls"] {
     // Рейка ширины правой колонки (WF65, раздел 2г): прозрачная, при наведении и
     // тяге — акцентом (color ставит placeSideRail), как рейка боковой панели у
     // Claude.
-    `#${SIDE_RAIL_ID}{position:fixed;display:none;width:${SIDE_RAIL_WIDTH}px;padding:0;border:0;background:transparent;cursor:col-resize;user-select:none;-webkit-user-select:none;touch-action:none;z-index:2147483646;transition:background 120ms ease}`,
-    `#${SIDE_RAIL_ID}:hover,#${SIDE_RAIL_ID}[data-dragging="true"]{background:currentColor;opacity:.45}`,
+    // Зона захвата 8 точек невидима; на наведении и тяге в её середине
+    // проявляется линия в 3 точки — как рейка боковой панели у самого Claude
+    // (слово Элвиса 17.09 02:00: «чтобы везде одинаково»).
+    `#${SIDE_RAIL_ID}{position:fixed;display:none;width:${SIDE_RAIL_WIDTH}px;padding:0;border:0;background:transparent;cursor:col-resize;user-select:none;-webkit-user-select:none;touch-action:none;z-index:2147483646}`,
+    `#${SIDE_RAIL_ID}>span{position:absolute;left:50%;top:0;bottom:0;width:3px;margin-left:-1.5px;border-radius:2px;background:currentColor;opacity:0;transition:opacity 120ms ease}`,
+    `#${SIDE_RAIL_ID}:hover>span,#${SIDE_RAIL_ID}[data-dragging="true"]>span{opacity:.9}`,
     // Схлопнутый узел: не display:none, а полоска нулевой высоты — редактор
     // остаётся живым, черновик и фокус переживают сворачивание.
     `[${BLOCK_ATTRIBUTE}="collapsed"]{height:0 !important;min-height:0 !important;max-height:0 !important;padding-top:0 !important;padding-bottom:0 !important;margin-top:0 !important;margin-bottom:0 !important;overflow:hidden !important;opacity:0 !important;pointer-events:none !important}`,
@@ -4140,6 +4158,7 @@ nav[aria-label="Repository and pull request controls"] {
   rail.setAttribute("role", "separator");
   rail.setAttribute("aria-orientation", "vertical");
   rail.setAttribute("aria-label", "Изменить ширину правой колонки");
+  rail.appendChild(document.createElement("span"));
   (document.body ?? document.documentElement).appendChild(rail);
   track(() => rail.remove());
   // Резерв на случай, когда CSP страницы не пустила наш <style>: положение

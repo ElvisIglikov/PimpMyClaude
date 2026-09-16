@@ -121,7 +121,7 @@ test("дочерние правила сетки вложены в её усло
     assert.ok(!/margin-left|padding-left|padding-top/.test(item.body), `«${item.selector}» меняет отступы вне сетки`);
   }
   const titlebar = grid.children.find(item => item.selector === "& > .epitaxy-titlebar");
-  assert.ok(titlebar && /grid-column:\s*2/.test(titlebar.body) && /margin-left:\s*0 !important/.test(titlebar.body),
+  assert.ok(titlebar && /grid-column:\s*2/.test(titlebar.body) && /margin-left:\s*-\d+px !important/.test(titlebar.body),
     "шапка — правая колонка, без места под кнопки окна");
   const body = grid.children.find(item => item.selector === "& > .contents > .epitaxy-chat-panel-body");
   assert.ok(body && /grid-row:\s*1 \/ 3/.test(body.body) && /min-height:\s*0/.test(body.body),
