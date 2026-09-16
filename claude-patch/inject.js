@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf66-g-1";
+  const VERSION = "wf67-b-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -3420,9 +3420,10 @@ nav[aria-label="Repository and pull request controls"] {
       item.fill.style.setProperty("background", paint);
       // Свечение двумя тенями — приём донора: широкий мягкий ореол и второй
       // проход по той же тени, отчего свет плотнее у самой линии. Пустому
-      // сегменту светиться нечем. Радиусы вдвое меньше прежних 18/6 и 18/10:
-      // «свечение сделать чуть менее ярким» (слово Элвиса 16.09, #6178).
-      item.fill.style.setProperty("box-shadow", share > 0 ? `0 0 9px ${paint},0 0 3px ${paint}` : "none");
+      // сегменту светиться нечем. Радиусы ужаты дважды: 18/6 и 18/10 → 9/3 и
+      // 9/5 («свечение сделать чуть менее ярким», слово Элвиса 16.09, #6178),
+      // потом → 6/2 и 6/3 («самую малость подубавить… а то перебор», 17.09, WF67).
+      item.fill.style.setProperty("box-shadow", share > 0 ? `0 0 6px ${paint},0 0 2px ${paint}` : "none");
       // Дышит только идущий этап и вся зелёная полоса «готово»: ждёт (жёлтый) и
       // упал (красный) стоят на месте — движение там значило бы «работа идёт».
       item.pulse = share > 0 && Boolean(info) &&
@@ -3434,7 +3435,7 @@ nav[aria-label="Repository and pull request controls"] {
       // такого огрызка глазами не читается — технически пульс шёл, а видно его
       // не было. Дышит кусочек, который сейчас в работе, целиком.
       item.glow.style.setProperty("width", item.pulse ? "100%" : `${share}%`);
-      item.glow.style.setProperty("box-shadow", share > 0 ? `0 0 9px ${paint},0 0 5px ${paint}` : "none");
+      item.glow.style.setProperty("box-shadow", share > 0 ? `0 0 6px ${paint},0 0 3px ${paint}` : "none");
       progressPulse(item, item.glow, item.pulse, PROGRESS_GLOW_FRAMES, "0");
       // Контур в одну точку — «сюда марафон ещё не дошёл».
       item.track.style.setProperty("box-shadow", `inset 0 0 0 1px ${accent}`);
@@ -7209,6 +7210,205 @@ nav[aria-label="Repository and pull request controls"] {
     }
   };
 
+  // ---- 12г. Открыть в Chrome (WF67, #6190) ---------------------------------
+  // Слово Элвиса 17.09: «правой кнопкой открываю, а здесь не вижу до сих пор
+  // открыть в Хром… приходится через Файндер идти». У Claude в контекстном меню
+  // карточки файла есть «Show in Finder», а открыть файл браузером негде.
+  //
+  // Мост есть у самого Claude (разведка WF67):
+  //   window["claude.web"].LocalSessions.openSessionFileInDefaultApp(sessionId, path)
+  // — имя свойства окна с точкой, доступ только скобками; аргументы ПОЗИЦИОННЫЕ
+  // (объект `{sessionId, path}` — ошибка «Argument sessionId at position 0»);
+  // sessionId — id чата `local_<uuid>`, тот же, что даёт myChatId() раздела 12в.
+  // `FileSystem.openLocalFile` НЕ годится: это сессии Cowork, ответ INVALID_SESSION.
+  //
+  // Устройство: `contextmenu` на захвате НИЧЕГО не отменяет — меню Claude
+  // открывается само. Мы только запоминаем путь файла (из React-волокна
+  // карточки: пропс `path`) и на 1,5 с ставим наблюдателя за body: появилось
+  // меню с пунктом «Show in Finder» — ставим в него ПЕРВЫМ свой пункт (клон
+  // «Show in Finder» без React-обработчиков и без id) и клон разделителя.
+  // Постоянного наблюдателя нет: правый клик по тексту меню не трогает вовсе.
+  const OPEN_CHROME_ATTRIBUTE = "data-myclaude-open-chrome";
+  const OPEN_CHROME_LABEL = "🌐 Открыть в Chrome";
+  const OPEN_CHROME_MENU_SELECTOR = '[role="menu"][data-cds="ContextMenu"]';
+  const OPEN_CHROME_ITEM_SELECTOR = '[role="menuitem"]';
+  const OPEN_CHROME_SEPARATOR_SELECTOR = '[role="separator"]';
+  // Пункт Claude, рядом с которым наш уместен: имя зависит от системы.
+  const OPEN_CHROME_FINDER_RE = /^(Show in Finder|Show in folder|Show in Explorer|Show in file manager)$/i;
+  const OPEN_CHROME_WAIT_MS = 1500;
+  // Глубина обхода: предков DOM от цели клика и волокон вверх по `return`.
+  const OPEN_CHROME_DEPTH = 12;
+  const OPEN_CHROME_ERROR_MAX = 120;
+  const OPEN_CHROME_NOTE_NO_CHAT = "Не знаю, какой это чат — открой через Finder";
+  const OPEN_CHROME_NOTE_NO_BRIDGE = "Claude не даёт открыть файл";
+  const openState = { pending: null, observer: null, timer: 0, inserted: 0, last: null };
+
+  // Путь файла из пропсов карточки. Пропс `path` — абсолютный путь или
+  // `computer://<путь>` (префикс снимается); `name` — имя файла, для плашки.
+  // Только страницы (.html/.htm): мост открывает файл в программе ПО УМОЛЧАНИЮ
+  // для его типа — у html это Chrome, а .md на Маке Элвиса уехал в Xcode (гейт
+  // 17.09 05:20, два раза). Пункт называется «Открыть в Chrome» и обещает
+  // именно это, поэтому у прочих файлов его нет вовсе.
+  const OPEN_CHROME_FILE_RE = /\.html?$/i;
+  const openChromePathOf = props => {
+    const raw = props?.path;
+    if (typeof raw !== "string") return null;
+    const path = raw.startsWith("computer://") ? raw.slice("computer://".length) : raw;
+    if (!path.startsWith("/") || !OPEN_CHROME_FILE_RE.test(path)) return null;
+    return { path, name: typeof props.name === "string" ? props.name : "" };
+  };
+  const openChromeFiber = node => {
+    try {
+      for (const key of Object.keys(node)) {
+        if (key.startsWith("__reactFiber$")) return node[key];
+      }
+    } catch {}
+    return null;
+  };
+  // От цели клика вверх по DOM (не дальше OPEN_CHROME_DEPTH предков), у первого
+  // узла с волокном — вверх по `return` на ту же глубину: карточка файла —
+  // это кнопка, а её пропсы лежат у компонента над ней.
+  const openChromePath = target => {
+    let node = target;
+    for (let depth = 0; node && depth <= OPEN_CHROME_DEPTH; depth += 1, node = node.parentElement) {
+      if (node.nodeType !== 1) continue;
+      let fiber = openChromeFiber(node);
+      for (let hop = 0; fiber && hop <= OPEN_CHROME_DEPTH; hop += 1, fiber = fiber.return) {
+        const found = openChromePathOf(fiber.memoizedProps);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const openChromeStop = () => {
+    if (openState.observer) { try { openState.observer.disconnect(); } catch {} openState.observer = null; }
+    if (openState.timer) { clearTimeout(openState.timer); openState.timer = 0; }
+  };
+  // Меню среди добавленных узлов: сам узел или его потомок.
+  const openChromeMenuIn = node => {
+    if (!node || node.nodeType !== 1) return null;
+    try {
+      if (node.matches(OPEN_CHROME_MENU_SELECTOR)) return node;
+      return node.querySelector(OPEN_CHROME_MENU_SELECTOR);
+    } catch { return null; }
+  };
+  // Свой пункт в меню Claude. Возвращает true, когда пункт встал; в меню без
+  // «Show in Finder» (чужое меню) и в меню с уже стоящим пунктом — false.
+  const openChromeInsert = (menu, found) => {
+    if (!menu || !found) return false;
+    if (menu.querySelector(`[${OPEN_CHROME_ATTRIBUTE}]`)) return false;
+    const items = [...menu.querySelectorAll(OPEN_CHROME_ITEM_SELECTOR)];
+    const finder = items.find(item => OPEN_CHROME_FINDER_RE.test(String(item.textContent ?? "").trim()));
+    const list = finder?.parentNode;
+    if (!list) return false;
+    const item = finder.cloneNode(true);
+    // Клон без React-обработчиков (их у клона нет по устройству), без id и без
+    // чужой подсветки; метка — чтобы второй раз в то же меню не встать.
+    item.removeAttribute("id");
+    for (const kid of item.querySelectorAll("[id]")) kid.removeAttribute("id");
+    item.removeAttribute("data-highlighted");
+    item.setAttribute(OPEN_CHROME_ATTRIBUTE, "");
+    const label = [...item.querySelectorAll("span")]
+      .find(span => OPEN_CHROME_FINDER_RE.test(String(span.textContent ?? "").trim())) ?? item;
+    label.textContent = OPEN_CHROME_LABEL;
+    // «Жирненькая, выделенная» — слово Элвиса.
+    item.style.setProperty("font-weight", "600");
+    // Подсветку base-ui ставит атрибутом data-highlighted, а класс Claude
+    // рисует по нему фон; нашему клону атрибут ставим сами.
+    item.addEventListener("pointerenter", () => { try { item.setAttribute("data-highlighted", ""); } catch {} });
+    item.addEventListener("pointerleave", () => { try { item.removeAttribute("data-highlighted"); } catch {} });
+    const path = found.path;
+    item.addEventListener("click", event => {
+      // Не всплывает в меню Claude: делегированные обработчики React живут у
+      // корня, и клик по клону им не достаётся.
+      try { event.stopPropagation(); } catch {}
+      openChromeOpen(path);
+    });
+    const first = list.firstElementChild;
+    list.insertBefore(item, first);
+    const separator = menu.querySelector(OPEN_CHROME_SEPARATOR_SELECTOR);
+    if (separator) {
+      const line = separator.cloneNode(true);
+      line.removeAttribute("id");
+      line.setAttribute(OPEN_CHROME_ATTRIBUTE, "");
+      list.insertBefore(line, first);
+    }
+    openState.inserted += 1;
+    return true;
+  };
+  const openChromeWatch = found => {
+    openChromeStop();
+    if (typeof MutationObserver !== "function") return;
+    const host = document.body ?? document.documentElement;
+    if (!host) return;
+    const observer = new MutationObserver(records => {
+      for (const record of records) {
+        for (const node of record.addedNodes ?? []) {
+          const menu = openChromeMenuIn(node);
+          if (menu && openChromeInsert(menu, found)) { openChromeStop(); return; }
+        }
+      }
+    });
+    observer.observe(host, { childList: true, subtree: true });
+    openState.observer = observer;
+    openState.timer = setTimeout(() => { openState.timer = 0; openChromeStop(); }, OPEN_CHROME_WAIT_MS);
+  };
+  const onOpenChromeMenu = event => {
+    let found = null;
+    try { found = openChromePath(event.target); } catch { found = null; }
+    if (!found) { openChromeStop(); openState.pending = null; return; }
+    openState.pending = { path: found.path, name: found.name, at: Date.now() };
+    openChromeWatch(found);
+  };
+
+  // Меню закрывается Escape ПОСЛЕ вызова моста — так же его закрыл бы сам
+  // Claude по своему пункту.
+  const openChromeClose = () => {
+    try { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); } catch {}
+  };
+  const openChromeFail = (path, error) => {
+    const text = String(error?.message ?? error ?? "").slice(0, OPEN_CHROME_ERROR_MAX);
+    openState.last = { path, ok: false, error: text };
+    try { newWindowNote(text || OPEN_CHROME_NOTE_NO_BRIDGE); } catch {}
+  };
+  const openChromeOpen = path => {
+    const chat = myChatId();
+    if (!chat) {
+      openState.last = { path, ok: false, error: "no-chat" };
+      try { newWindowNote(OPEN_CHROME_NOTE_NO_CHAT); } catch {}
+      openChromeClose();
+      return;
+    }
+    let sessions = null;
+    try { sessions = window["claude.web"]?.LocalSessions ?? null; } catch { sessions = null; }
+    const bridge = sessions?.openSessionFileInDefaultApp;
+    if (typeof bridge !== "function") {
+      openState.last = { path, ok: false, error: "no-bridge" };
+      try { newWindowNote(OPEN_CHROME_NOTE_NO_BRIDGE); } catch {}
+      openChromeClose();
+      return;
+    }
+    let result;
+    try { result = bridge.call(sessions, chat, path); } catch (error) {
+      openChromeFail(path, error);
+      openChromeClose();
+      return;
+    }
+    openChromeClose();
+    // Мост отвечает промисом `{ok}`; ответ без промиса тоже разбираем.
+    Promise.resolve(result).then(value => {
+      if (value && value.ok === false) { openChromeFail(path, value.error ?? OPEN_CHROME_NOTE_NO_BRIDGE); return; }
+      openState.last = { path, ok: true, error: "" };
+    }, error => openChromeFail(path, error));
+  };
+  // Снятие экземпляра: наблюдатель, таймер и уже вставленные пункты (меню
+  // Claude живёт своей жизнью, но наш узел в нём — наш).
+  track(() => {
+    openChromeStop();
+    try { for (const node of document.querySelectorAll(`[${OPEN_CHROME_ATTRIBUTE}]`)) node.remove(); } catch {}
+  });
+
   // ---- 13. Прокрутка ленты ------------------------------------------------
   // Команда «Прокрутить»: поставить ленту разговора на последнее сообщение.
   // В отличие от collapse/expand она адресована ВСЕМ окнам сразу, поэтому
@@ -7484,6 +7684,9 @@ nav[aria-label="Repository and pull request controls"] {
   if (themable) {
     on(document, "keydown", onPasteKey, true);
     on(document, "paste", onPasteAnywhere, true);
+    // «Открыть в Chrome» (раздел 12г, WF67): правый клик по карточке файла
+    // запоминает путь и ждёт меню Claude; само событие не отменяется.
+    on(document, "contextmenu", onOpenChromeMenu, true);
   }
   // Escape не должен останавливать выполнение (слово Элвиса 03.09 14:00: F1/F2 рядом,
   // «постоянно боюсь нажать Escape»). Глотаем Escape на захвате, но только когда на
@@ -7675,6 +7878,14 @@ nav[aria-label="Repository and pull request controls"] {
         try { width = panel ? Math.round(panel.getBoundingClientRect().width) : null; } catch {}
         return { wide, panel: width, side: wide ? sideWidth(panel) : null };
       })(),
+      // «Открыть в Chrome» (раздел 12г, WF67): ждём ли меню после правого клика,
+      // какой путь нашли, сколько пунктов вставили, чем кончился последний вызов.
+      openInChrome: {
+        pending: Boolean(openState.observer),
+        path: openState.pending?.path ?? null,
+        inserted: openState.inserted,
+        last: openState.last,
+      },
       layoutRuns: state.layoutRuns,
       mutationBatches: state.mutationBatches,
       mutationSkipped: state.mutationSkipped,
@@ -7825,7 +8036,8 @@ nav[aria-label="Repository and pull request controls"] {
     cashoutHaul, cashoutUniqueName, cashoutCarry, cashoutTake, cashoutHome,
     cashoutPillNames, cashoutSweep,
     chatKind, chatPath, chatRowId, myChatId, readChatId, writeChatId, chatsMap, chatsScan, chatsFolder,
-    popoutChat, chats });
+    popoutChat, chats,
+    openChromePath, openChromeInsert, openChromeOpen });
 
   // Всё, что ниже, трогает живую страницу и может бросить на неготовой
   // разметке. Такое падение не должно оставлять в окне зомби: установка
