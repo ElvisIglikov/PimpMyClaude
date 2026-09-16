@@ -1,0 +1,41 @@
+{
+  "wf": 65,
+  "plan": "docs/plan-wf65-2026-09-16.md",
+  "mockup": "docs/mockup-wf65-wide.html",
+  "branch": "main (ветка wf65 и тег wf65-start — перед кодингом)",
+  "base": "cbe342c",
+  "orchestrator": "Fable 5.1 xhigh",
+  "effort_chat": "xhigh",
+  "status": "план",
+  "critic": {
+    "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/af4eac0e-d36c-411c-9bc7-9cf603ab0d17/workflows/scripts/wf65-critic-wf_e9be3824-e3f.js",
+    "run_id": "wf_e9be3824-e3f",
+    "model": "Opus max",
+    "verdict": "годен с правками (6 стопов, 14 замечаний), 35 мин"
+  },
+  "script_path": null,
+  "run_id": null,
+  "resumes": 0,
+  "tasks": [
+    "#6176",
+    "#6177",
+    "#6178",
+    "#6179"
+  ],
+  "next_steps": [
+    "ответы Элвиса на три вопроса макета и одобрение плана",
+    "ветка wf65 + тег wf65-start, крон-сторож",
+    "батч A (Opus max, inject.js + tests/layout.test.mjs + stage.test.mjs)",
+    "гейт: tools/test.sh, живой probe в главном окне и попапе, проверка Fable high, коммит",
+    "батч B: документы, живой inject.js; выпуск команде — не в этом прогоне"
+  ],
+  "journal": [
+    "19:42 · Элвис описал широкий режим; задача #6176",
+    "19:50 · подтвердил понимание, добавил #6177 (имя папки), #6178 (полоска), #6179 (Create PR); «погнали в Workflow»",
+    "19:56–19:59 · два probe живого DOM главного окна (probe.js удалён 20:03)",
+    "20:05 · макет docs/mockup-wf65-wide.html отправлен Элвису",
+    "20:08 · план docs/plan-wf65-2026-09-16.md; критик Opus max запущен (wf_e9be3824-e3f)",
+    "20:19 · третий probe: цепочка композера в главном окне и попапе, контейнер tile-slot, ступени; probe.js удалён 20:20",
+    "20:29 · критик вернулся: годен с правками — план переписан (редакция 2)"
+  ]
+}
