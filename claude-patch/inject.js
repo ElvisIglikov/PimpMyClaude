@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf65-c-1";
+  const VERSION = "wf66-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1154,6 +1154,19 @@ div:has(> .ProseMirror) {
   const TITLEBAR_CLEARANCE = 36;
   // Левее этой точки панели стоят кнопки окна (до ~70) и «Show sidebar» (82–110).
   const TITLEBAR_CLEARANCE_LEFT = 120;
+  // Поле ввода в широком виде (WF66, #6187, #6188). Вложения — ПОСЛЕ текста,
+  // внизу коробки, целиком и без своей прокрутки: их родитель в широком виде уже
+  // flex-колонка (цепочка выше), поэтому хватает `order`; потолок WF62 снимается
+  // только здесь — в узком окне он спасает черновик от пяти скриншотов. Справа у
+  // вложений место под кнопку отправки (она `absolute bottom-0 right-0` в той же
+  // коробке). Текст — во всю ширину: Claude держит у обёртки редактора
+  // `padding-right: var(--cmp-trail-w)` (30 px под ту же кнопку) и анимирует его,
+  // отсюда `!important`; вместо правого поля — нижнее, чтобы последняя строка не
+  // ушла под кнопку. Обёртка узнаётся по inline-переменной `--cmp-wrap-h`,
+  // которую Claude пишет ей сам (замер 16.09). Полоса прокрутки редактора при
+  // этом сама встаёт к правой кромке коробки.
+  const ATTACHMENTS_SEND_ROOM = 44;
+  const EDITOR_SEND_ROOM = 28;
   // Пустой блок Claude в конце ленты (`[data-testid="transcript-spacer"]`) НЕ
   // ТРОГАТЬ: это не отступ под затемнение, а хвост виртуальной ленты — Claude
   // пишет ему inline высоту недорисованных строк (замер 17.09 00:10: 7424 px при
@@ -1241,6 +1254,20 @@ nav[aria-label="Repository and pull request controls"] {
       height: ${NARROW_TILE}px !important;
       min-width: 0 !important;
       min-height: 0 !important;
+    }
+    & [data-cds="ChatComposer"] div:has(> [data-cds-composer-attachments]) > * {
+      order: 1;
+    }
+    & [data-cds="ChatComposer"] [data-cds-composer-attachments] {
+      order: 2;
+      flex: 0 0 auto;
+      max-height: none !important;
+      overflow: visible !important;
+      padding-right: ${ATTACHMENTS_SEND_ROOM}px !important;
+    }
+    & [data-cds="ChatComposer"] div[style*="--cmp-wrap-h"] {
+      padding-right: 0 !important;
+      padding-bottom: ${EDITOR_SEND_ROOM}px !important;
     }
   }
 }

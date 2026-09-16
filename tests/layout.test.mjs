@@ -130,6 +130,13 @@ test("дочерние правила сетки вложены в её усло
   // Хвост виртуальной ленты Claude (`transcript-spacer`) не трогаем никогда: его
   // высоту пишет сам Claude, и правило на неё ломало прокрутку (17.09, #6176).
   assert.ok(!layoutCss().includes("transcript-spacer"), "хвост виртуальной ленты Claude не трогаем");
+  // WF66: вложения после текста без потолка и прокрутки, текст без правого поля под кнопку.
+  const attachments = grid.children.find(item => item.selector.endsWith("[data-cds-composer-attachments]"));
+  assert.ok(attachments && /order:\s*2/.test(attachments.body) && /max-height:\s*none !important/.test(attachments.body) && /overflow:\s*visible !important/.test(attachments.body),
+    "вложения — последними, целиком, без своей прокрутки");
+  const textWrap = grid.children.find(item => item.selector.includes('div[style*="--cmp-wrap-h"]'));
+  assert.ok(textWrap && /padding-right:\s*0 !important/.test(textWrap.body) && /padding-bottom:\s*\d+px !important/.test(textWrap.body),
+    "текст во всю ширину, последняя строка выше кнопки отправки");
   const dock = grid.children.find(item => item.selector === "& .group\\/approval-dock");
   assert.ok(dock && /grid-column:\s*2/.test(dock.body) && /grid-row:\s*2/.test(dock.body), "дока — правая колонка, вторая строка");
   // Поля самой доки не трогаются: их держит sidePadding из claude.json через
