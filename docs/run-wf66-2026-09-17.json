@@ -1,0 +1,22 @@
+{
+  "wf": 66,
+  "plan": "docs/plan-wf66-2026-09-16.md",
+  "mockup": "docs/mockup-wf66-composer.html",
+  "branch": "wf66 (тег wf66-start на main = d37f1ea)",
+  "orchestrator": "Fable 5.1 xhigh",
+  "status": "идёт",
+  "note": "мелкая правка CSS в одном файле — оркестратор сам, без критика и агента кодинга (WORKFLOW.md: мелкая правка мимо конвейера); проверка — тесты + живой probe",
+  "tasks": [
+    "#6187",
+    "#6188"
+  ],
+  "journal": [
+    "17.09 00:22 · Элвис: «можешь это всё тоже исправить» = делай; Астра сдала (52c13dd), дерево чистое",
+    "00:30 · тег wf66-start, ветка wf66; layoutCss: вложения order:2 без потолка и прокрутки с полем под кнопку, обёртка текста padding-right 0 / padding-bottom 28 (по inline --cmp-wrap-h); VERSION wf66-a-1; node --test зелёный",
+    "00:40 · живой inject.js подменён, probe обёртки текста"
+  ],
+  "next_steps": [
+    "Элвис кладёт два скриншота в поле → probe вложений (order, без прокрутки, целиком)",
+    "tools/test.sh --js, коммит, слияние в main, HANDOFF/status"
+  ]
+}
