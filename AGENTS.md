@@ -437,6 +437,18 @@
   блока, ореол 9/3 и 9/5 вместо 18/6 и 18/10. Диагностика — `status().layout = {wide, panel, side}`.
   Выпуск команде (версия, сборка) с этим прогоном НЕ делался: у Элвиса живой `inject.js`, команда получит
   раскладку со следующей сборкой.
+- **«Открыть в Chrome» (17.09.2026, WF67, #6190)** — раздел 12г `inject.js`. Правый клик по карточке
+  файла в ленте: путь берётся из React-волокна карточки (`__reactFiber$…` → `memoizedProps.path`, обход ≤12
+  предков DOM и ≤12 шагов `return`; префикс `computer://` снимается) — ТОЛЬКО для `.html`/`.htm`: мост Claude
+  открывает файл в программе по умолчанию для его типа, у html это Chrome, а `.md` на Маке Элвиса уезжает в
+  Xcode. Найден путь → на 1,5 с ставится `MutationObserver` за `body`, который ловит меню
+  `[role="menu"][data-cds="ContextMenu"]` с пунктом «Show in Finder» и вставляет ПЕРВЫМ пунктом клон этого пункта
+  (`data-myclaude-open-chrome`, «🌐 Открыть в Chrome», `font-weight: 600`) плюс клон разделителя; чужие меню не
+  трогаются, повтора нет. Клик → `window["claude.web"].LocalSessions.openSessionFileInDefaultApp(myChatId(), path)`
+  (имя свойства окна с точкой — доступ только скобками; `FileSystem.openLocalFile` НЕ годится: `INVALID_SESSION`,
+  это сессии Cowork), потом Escape на `document` — меню base-ui закрывается (проверено живьём). Нет чата/моста
+  или `{ok:false}` — плашка `newWindowNote`. Диагностика — `status().openInChrome = {pending, path, inserted, last}`
+  (`last` заполняется по ответу моста, обычно через ~1 с). Всё снимается по `dispose()`.
 - Старые: `collapse`, `expand`, `scroll`.
 - Хранилище тем на странице: localStorage `myclaude-themes-v1` — карта `{ключ: {theme, font, size, frame}}`, ключи
   **`id:<id чата>`** (главный ключ чата, WF35), `chat:<заголовок>` (тень — по ней живут окна, которые своего id ещё

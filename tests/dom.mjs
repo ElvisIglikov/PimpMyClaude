@@ -334,6 +334,22 @@ export const createDom = ({
         return false;
       },
       matches(selector) { return selectorHit(node, selector); },
+      // Клон, как у браузера: атрибуты, текст, стили и (при deep) дети — да;
+      // слушатели и свойства-расширения (React-волокно) — нет. Им живёт
+      // «Открыть в Chrome» (раздел 12г, WF67): клон пункта меню Claude.
+      cloneNode(deep = false) {
+        const copy = makeNode(node.tagName);
+        for (const [name, value] of attributes) copy.setAttribute(name, value);
+        copy.__text = node.__text;
+        for (const [name, value] of node.style._map) copy.style.setProperty(name, value);
+        copy.rect = { ...node.rect };
+        copy.computed = { ...node.computed };
+        if (deep) for (const kid of node.childNodes) {
+          if (kid.nodeType === 1) copy.appendChild(kid.cloneNode(true));
+          else copy.childNodes.push({ ...kid, parentNode: copy });
+        }
+        return copy;
+      },
       closest(selector) {
         let current = node;
         while (current) {
