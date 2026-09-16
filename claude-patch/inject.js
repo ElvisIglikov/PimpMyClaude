@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf65-a-1";
+  const VERSION = "wf65-b-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1144,9 +1144,20 @@ div:has(> .ProseMirror) {
   // замер 21:05), поэтому дока переписывает её в свою, наследуемую
   // `--myclaude-dock-pad-*`, и уже её читает поле.
   const DOCK_PAD = 12;
-  // Место под кнопки окна над лентой — по примете самой шапки (data-top-left),
-  // на НЕпрокручиваемом теле ленты: уезжать при прокрутке ему нечем.
+  // Место под кнопки окна над лентой — на НЕпрокручиваемом теле ленты (уезжать
+  // при прокрутке ему нечем), через переменную `--myclaude-top-clearance`, которую
+  // ставит JS (раздел 2г, applyTopClearance): нужна она, только когда панель
+  // начинается у левого края окна — под кнопками окна и «Show sidebar». Примета
+  // `data-top-left` у шапки для этого не годится: Claude держит её «true» и при
+  // открытой боковой панели, когда кнопки окна висят над панелью, а не над лентой
+  // (гейт 16.09 21:30: 36 px пустоты над текстом — «сверху не используется место»).
   const TITLEBAR_CLEARANCE = 36;
+  // Левее этой точки панели стоят кнопки окна (до ~70) и «Show sidebar» (82–110).
+  const TITLEBAR_CLEARANCE_LEFT = 120;
+  // Пустой блок Claude в конце ленты (`transcript-spacer`, inline `height: 48px`)
+  // держал место под нижнее затемнение; затемнения нет — в широком виде хватит
+  // глотка воздуха, иначе под последней строкой «обрезь, а место есть».
+  const TRANSCRIPT_SPACER = 8;
   const layoutCss = () => `/* PimpMyClaude · широкий вид окна (WF65) */
 nav[aria-label="Repository and pull request controls"] {
   display: none !important;
@@ -1178,9 +1189,10 @@ nav[aria-label="Repository and pull request controls"] {
       grid-row: 1 / 3;
       min-width: 0;
       min-height: 0;
+      padding-top: var(--myclaude-top-clearance, 0px);
     }
-    & > .epitaxy-titlebar[data-top-left="true"] + .contents > .epitaxy-chat-panel-body {
-      padding-top: ${TITLEBAR_CLEARANCE}px;
+    & [data-testid="transcript-spacer"] {
+      height: ${TRANSCRIPT_SPACER}px !important;
     }
     & .group\\/approval-dock {
       grid-column: 2;
@@ -3858,11 +3870,24 @@ nav[aria-label="Repository and pull request controls"] {
     } catch {}
   };
   const wideState = { on: false, panel: null, dragging: false };
-  // Инлайн-переменная на чужом узле снимается вместе с экземпляром; следующий
-  // прогон вернёт её из хранилища на первом же проходе.
+  const TOP_CLEARANCE_VARIABLE = "--myclaude-top-clearance";
+  // Инлайн-переменные на чужом узле снимаются вместе с экземпляром; следующий
+  // прогон вернёт их на первом же проходе (ширину — из хранилища).
   track(() => {
     try { wideState.panel?.style?.removeProperty(SIDE_VARIABLE); } catch {}
+    try { wideState.panel?.style?.removeProperty(TOP_CLEARANCE_VARIABLE); } catch {}
   });
+  // Место под кнопки окна над лентой: только когда панель начинается у левого
+  // края окна (главное окно со свёрнутой боковой панелью, любой попап); с открытой
+  // боковой панелью кнопки висят над ней, и лента идёт от самого верха.
+  const applyTopClearance = (panel, wide) => {
+    if (!panel) return;
+    wideState.panel = panel;
+    if (!wide) { panel.style.removeProperty(TOP_CLEARANCE_VARIABLE); return; }
+    const need = panel.getBoundingClientRect().left < TITLEBAR_CLEARANCE_LEFT;
+    const value = need ? `${TITLEBAR_CLEARANCE}px` : "0px";
+    if (panel.style.getPropertyValue(TOP_CLEARANCE_VARIABLE) !== value) panel.style.setProperty(TOP_CLEARANCE_VARIABLE, value);
+  };
   const applySide = (panel, value) => {
     if (!panel) return;
     wideState.panel = panel;
@@ -4534,6 +4559,7 @@ nav[aria-label="Repository and pull request controls"] {
     const panel = layoutPanel(editor);
     const wide = wideLayout(panel);
     syncWide(wide);
+    applyTopClearance(panel, wide);
     placeSideRail(panel, wide);
     applyCollapse();
     if (!state.shell?.isConnected) { handle.style.display = "none"; return; }
@@ -7566,7 +7592,7 @@ nav[aria-label="Repository and pull request controls"] {
   // Ставит её только tests/load.mjs, чтобы дотянуться до чистых функций замыкания.
   // Глушителя ошибок здесь нет намеренно: переименовали функцию — люк обязан кричать, а не отдавать тестам undefined.
   if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ themeCss, epitaxyCss, fontCss, sizeCss,
-    attachmentsCss, layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, PROGRESS_GAP,
+    attachmentsCss, layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, PROGRESS_GAP, TITLEBAR_CLEARANCE, TITLEBAR_CLEARANCE_LEFT,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     codeCss, codePalette, contrastRatio, readableOn,
     chatKey, chatIdKey, chatTitleKey, chatEntry, migrateChatKey, sameSessionKey, restoreKeyOk, chatsThemes,
