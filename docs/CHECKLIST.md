@@ -217,6 +217,32 @@ python3 -c "import json;print(json.load(open('$SUP/probe-result.json'))['at'])"
       до тех пор, пока приговор не протух вместе со своей записью, `files.done` = сколько карточек доехало;
       `statusText` показывает `chats=own/<страниц>/<опознано>` (свой `probe.js` убран).
 
+### 1.4г. Широкий вид окна (WF65)
+
+Порог — ширина ПЛИТКИ чата (`.epitaxy-chat-panel`) от 640 CSS px, не окна: с открытой рядом плиткой
+терминала/браузера чат сужается и возвращается в узкий вид — это ожидаемо. При зуме Элвиса ≈1,2 окно на
+две трети экрана с открытой панелью чатов уже широкое.
+
+```bash
+SUP=~/Library/Application\ Support/MyClaude
+printf '%s\n' '(() => { const s = window.__myclaude.status(); const q = x => document.querySelector(x); const r = e => e && [...e.getBoundingClientRect().toJSON && Object.values(e.getBoundingClientRect().toJSON()).slice(0,4).map(Math.round)]; return { version: s.version, layout: s.layout, stage: s.stage, grid: q(".epitaxy-chat-panel > div") && getComputedStyle(q(".epitaxy-chat-panel > div")).display, titlebar: r(q(".epitaxy-titlebar")), body: r(q(".epitaxy-chat-panel-body")), dock: r(q("[class~=\"group/approval-dock\"]")), pm: r(q(".ProseMirror")), handle: getComputedStyle(q("#myclaude-input-handle")).display, rail: getComputedStyle(q("#myclaude-side-rail")).display, nav: q("nav[aria-label=\"Repository and pull request controls\"]") && getComputedStyle(q("nav[aria-label=\"Repository and pull request controls\"]")).display, fade: q(".scroll-fade-strip-top") && getComputedStyle(q(".scroll-fade-strip-top")).display }; })()' > "$SUP/probe.js"
+sleep 3; python3 -m json.tool "$SUP/probe-result.json" | head -80; rm "$SUP/probe.js"
+```
+
+- [ ] Главное окно с плиткой ≥ 640: `layout.wide === true`, `grid === "grid"`, шапка и дока справа
+      (`titlebar.left ≈ dock.left = panel.right − side`), лента `body` от верха до низа панели, `.ProseMirror`
+      шириной ≥ 200 и высотой в сотни точек, `handle === "none"`, `rail === "block"`, `stage === 1`.
+- [ ] Попап 292 px: `layout.wide === false`, ступень поля та же, что была (`stage` 2 у растянутого поля),
+      ручка `flex`, рейка `none`; имя папки в шапке читается целиком при `data-pills-compact`.
+- [ ] В обоих окнах `nav === "none"` и `fade === "none"` (строки Create PR и затемнений нет).
+- [ ] Рейка тянется мышью (колонка 300 … 60 % панели), двойной клик возвращает треть; после тяги
+      `status().layout.side` совпадает с шириной доки, в localStorage `myclaude-wide-side-v1` число.
+- [ ] Меню модели и «Effort» в широком виде открываются правее рейки (рейка 8 px у левой кромки доки,
+      `z-index` выше меню — заезд был бы виден подсветкой полоски при наведении на меню).
+- [ ] Сузить окно ниже порога с текстом в поле — вид прежний, ступени ходят, поле не схлопнуто;
+      расширить обратно — три колонки, поле во всю высоту.
+- [ ] Полоса прогресса в обоих видах на 2 px ниже низа рамки (`bar.top = dock.bottom + 2`), ореол мягче.
+
 ### 1.5. Живой двойной инжект (обязательно, тестами не заменяется)
 
 Лоадер гоняет файл заново при каждом изменении — то есть в одном окне он выполняется десятки раз за день.
