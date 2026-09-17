@@ -1,0 +1,18 @@
+{
+  "plan": "docs/plan-wf70-2026-09-17.md",
+  "branch": "wf70",
+  "tag": "wf70-start",
+  "status": "идёт",
+  "orchestrator": "Opus 5 max (эффорт чата; норма Fable xhigh — баланс Fable, чат открыт на Opus)",
+  "roles": {"critic": "Fable xhigh (сделано 13:50–14:02)", "mockup": "оркестратор Opus max (отступление от таблицы: макет Fable high)", "coding": "Opus max ×2", "verify": "Fable high"},
+  "script_path": null,
+  "run_id": null,
+  "resumes": 0,
+  "next_steps": ["волна: батч A (карточка, inject.js) + батч B (меню, Swift) параллельно", "проверка Fable high по диффу", "гейт: tools/test.sh, bundle, подмена приложения, живой inject.js, документы", "слияние wf70 в main --no-ff"],
+  "journal": [
+    "13:00 · план написан",
+    "14:02 · критик Fable xhigh: годен с правками, 7 блокеров + 10 замечаний — внесены",
+    "14:15 · макет отдан Элвису; 14:20–14:30 — его слово, поправки внесены, одобрено",
+    "14:40 · тег wf70-start, ветка wf70, старт волны"
+  ]
+}
