@@ -386,7 +386,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
         windowThemes.beginGeneration()
         // Каталог канала «Пимп»: по нему CLI видит, что приложение вообще есть (план WF36).
         pimp.start()
-        copyRelay.onCopied = { [weak self] name in self?.hud.show("📋 Файл в буфере: \(name) — вставляй", seconds: 2.5) }
+        // Без имени файла (слово Элвиса 17.09 12:50: «там слишком много текста — просто „файл в буфере
+        // обмена, вставляй“»); имя остаётся в CopyFileRelay для диагностики.
+        copyRelay.onCopied = { [weak self] _ in self?.hud.show("📋 Файл в буфере обмена — вставляй", seconds: 2.5) }
         copyRelay.onMissing = { [weak self] path in
             self?.hud.show("📋 Файла нет на диске: \((path as NSString).lastPathComponent)", seconds: 3)
         }
