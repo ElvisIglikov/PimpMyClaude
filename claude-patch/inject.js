@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf70-a-1";
+  const VERSION = "wf70-b-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -4669,6 +4669,145 @@ nav[aria-label="Repository and pull request controls"] {
     button.setAttribute("id", COMPOSER_IMAGE_UNDO_ID);
   };
   track(clearComposerImageUndo);
+
+  // ---- 5в. Только метаданные вложений для Dictator -----------------------
+  // AXDescription содержит JSON; текста, имён, URL и файлов здесь нет.
+  // Отсутствующая метка означает unknown, а не пустое поле. Число относится
+  // только к карточкам текущего composer, не к серверному лимиту Claude.
+  const COMPOSER_ATTACHMENTS_ID = "myclaude-composer-attachments-v1";
+  const attachmentSession = globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  let attachmentGeneration = 0;
+  let attachmentRevision = 0;
+  let attachmentNextID = 0;
+  let attachmentIDs = new WeakMap();
+  let attachmentContext = null;
+  let attachmentMembers = [];
+  let attachmentMarker = null;
+  let attachmentObserver = null;
+  const clearAttachmentMarker = () => {
+    attachmentMarker?.remove();
+    attachmentMarker = null;
+  };
+  const invalidateAttachments = () => {
+    clearAttachmentMarker();
+    attachmentGeneration += 1;
+    attachmentRevision = 0;
+    attachmentMembers = [];
+    attachmentIDs = new WeakMap();
+  };
+  const attachmentRoute = () => {
+    const chat = myChatId();
+    // Не угадываем попап по заголовку; используем существующее опознание Pimp.
+    // У нового чата ещё нет id: DOM + маршрут + поколение задают его жизнь.
+    const fresh = isMainWindow() && /^\/(?:epitaxy|new)\/?$/.test(location.pathname);
+    // myChatId знает локальные чаты; обычный веб-чат опознаём отдельно.
+    // Сам маршрут остаётся внутри замыкания, AX получает только поколение.
+    const webChat = isMainWindow() && /^\/chat\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/?$/i.test(location.pathname);
+    if (!chat && !fresh && !webChat) return null;
+    return `${location.pathname}\n${location.search}\n${location.hash}\n${chat ?? "new"}`;
+  };
+  const attachmentCardReady = card => {
+    if (!["MessageAttachmentsImage", "MessageAttachmentsFile"].includes(card.getAttribute("data-cds")) ||
+        !composerImageUndoVisible(card) || card.querySelector('[data-cds-attachment]') ||
+        card.matches('[aria-busy="true"],[data-state="loading"],[data-status="uploading"],[data-status="error"]') ||
+        card.querySelector('[role="progressbar"],[role="alert"],[aria-busy="true"],[data-state="loading"],[data-status="uploading"],[data-status="error"]')) return false;
+    if (card.getAttribute("data-cds") === "MessageAttachmentsImage") {
+      const images = [...card.querySelectorAll("img")];
+      if (images.length !== 1 || !images[0].complete || !(images[0].naturalWidth > 0)) return false;
+    }
+    const remove = [...card.querySelectorAll('button[aria-label]')].filter(button =>
+      /^remove(?:\s|$)/i.test(button.getAttribute("aria-label") ?? "") &&
+      !/queue/i.test(button.getAttribute("aria-label") ?? ""));
+    return remove.length === 1 && !remove[0].disabled && !remove[0].hasAttribute("disabled") &&
+      remove[0].getAttribute("aria-disabled") !== "true" && composerImageUndoVisible(remove[0]);
+  };
+  const syncComposerAttachments = () => {
+    const composer = composerImageUndoScope();
+    const route = attachmentRoute();
+    const editor = state.editor;
+    if (!composer || !route || composer.getAttribute("id") !== COMPOSER_IMAGE_UNDO_SCOPE_ID) {
+      if (attachmentContext) invalidateAttachments();
+      attachmentContext = null;
+      attachmentObserver?.disconnect();
+      return;
+    }
+    if (attachmentContext?.composer !== composer || attachmentContext?.editor !== editor ||
+        attachmentContext?.route !== route) {
+      invalidateAttachments();
+      attachmentContext = { composer, editor, route };
+      attachmentObserver?.disconnect();
+      attachmentObserver ??= new MutationObserver(records => {
+        const relevant = records.filter(record => {
+          if (record.target === attachmentMarker) return false;
+          const nodes = [...(record.addedNodes ?? []), ...(record.removedNodes ?? [])];
+          return record.type !== "childList" || !nodes.length ||
+            !nodes.every(node => node.id === COMPOSER_ATTACHMENTS_ID);
+        });
+        if (!relevant.length) return;
+        // Полная замена содержимого редактора — возможный submit/reset.
+        // Текст не читаем; лучше новый ticket, чем вставка в новое сообщение.
+        if (relevant.some(record => record.target === attachmentContext?.editor &&
+            (record.removedNodes?.length ?? 0) > 0)) invalidateAttachments();
+        syncComposerAttachments();
+      });
+      attachmentObserver.observe(composer, { childList: true, subtree: true, attributes: true,
+        attributeFilter: ["aria-busy", "aria-disabled", "disabled", "data-state", "data-status", "data-cds", "data-cds-attachment", "hidden", "inert", "aria-hidden", "contenteditable"] });
+    }
+    const boxes = [...composer.querySelectorAll('[data-cds-composer-attachments]')];
+    const cards = boxes.length === 1 ? [...boxes[0].querySelectorAll('[data-cds-attachment]')] : [];
+    // Ноль коробок в опознанном composer — нормальное состояние до первого
+    // вложения. Чужие карточки без штатной коробки и неизвестная разметка — нет.
+    if (boxes.length > 1 || cards.length > 100 ||
+        (boxes.length === 1 && [...boxes[0].children].some(child => !child.matches('[data-cds-attachment]'))) ||
+        composer.querySelectorAll('[data-cds-attachment]').length !== cards.length ||
+        composer.matches('[aria-busy="true"]') ||
+        composer.querySelector('[role="progressbar"],[aria-busy="true"]') ||
+        !cards.every(attachmentCardReady)) { clearAttachmentMarker(); return; }
+    const members = cards.map(card => {
+      if (!attachmentIDs.has(card)) attachmentIDs.set(card, `m${++attachmentNextID}`);
+      return attachmentIDs.get(card);
+    }).sort();
+    // Удаление/замена прежней карточки не подтверждает наш paste и закрывает
+    // прошлый ticket, даже если общее количество осталось прежним.
+    if (attachmentMembers.some(id => !members.includes(id))) {
+      invalidateAttachments();
+      syncComposerAttachments();
+      return;
+    }
+    if (members.join(",") !== attachmentMembers.join(",")) {
+      attachmentRevision += 1;
+      attachmentMembers = members;
+    }
+    if (attachmentMarker && attachmentMarker.parentElement !== composer) clearAttachmentMarker();
+    if (!attachmentMarker) {
+      if (document.getElementById(COMPOSER_ATTACHMENTS_ID)) return;
+      attachmentMarker = document.createElement("span");
+      attachmentMarker.id = COMPOSER_ATTACHMENTS_ID;
+      attachmentMarker.setAttribute("role", "img");
+      Object.assign(attachmentMarker.style, { position: "absolute", width: "1px", height: "1px",
+        overflow: "hidden", clipPath: "inset(50%)", pointerEvents: "none" });
+      composer.appendChild(attachmentMarker);
+    }
+    const payload = JSON.stringify({ v: 1, session: attachmentSession, generation: attachmentGeneration,
+      revision: attachmentRevision, count: members.length, members });
+    if (attachmentMarker.getAttribute("aria-label") !== payload) attachmentMarker.setAttribute("aria-label", payload);
+  };
+  const onAttachmentBoundary = event => {
+    const context = attachmentContext;
+    if (!context) return;
+    const target = event.target;
+    const inside = context.composer.contains(target) || target?.contains?.(context.editor);
+    const sendKey = event.type === "keydown" && event.key === "Enter" && !event.shiftKey &&
+      !event.isComposing && context.editor.contains(target);
+    const sendClick = event.type === "click" && (target?.closest?.('[data-testid="code-prompt-send"]') ||
+      (inside && target?.closest?.('button[type="submit"]')));
+    if (sendKey || sendClick || (inside && ["submit", "reset"].includes(event.type))) {
+      invalidateAttachments();
+      scheduleLayout();
+    }
+  };
+  track(() => { attachmentObserver?.disconnect(); clearAttachmentMarker(); attachmentContext = null; });
   // Скролл-контейнер редактора: высотой управляет он, поэтому кнопки composer
   // остаются на месте, а текст внутри прокручивается штатно.
   const findEditorRoot = editor => {
@@ -5051,7 +5190,7 @@ nav[aria-label="Repository and pull request controls"] {
     // сбрасываем, пока жив хоть один схлопнутый узел.
     const keepCollapsed = !editor && state.stage === STAGE_COLLAPSED &&
       state.collapsedNodes.some(node => node.isConnected);
-    if (keepCollapsed) { clearComposerImageUndo(); placeCollapsedHandle(); return; }
+    if (keepCollapsed) { clearComposerImageUndo(); invalidateAttachments(); placeCollapsedHandle(); return; }
     if (editor !== state.editor) {
       clearComposerFont();
       clearResizer();
@@ -5060,6 +5199,7 @@ nav[aria-label="Repository and pull request controls"] {
       state.shell = editor ? findShell(editor, state.editorRoot) : null;
     }
     syncComposerImageUndo();
+    syncComposerAttachments();
     if (!editor) { handle.style.display = "none"; placeSideRail(null, false); return; }
     noteEditorFound();
     applyComposerFont(editor);
@@ -5163,6 +5303,8 @@ nav[aria-label="Repository and pull request controls"] {
       if (!affectsComposer(record.target)) continue;
       // До отложенной раскладки прежняя кнопка уже может быть не последней.
       clearComposerImageUndo();
+      syncComposerImageUndo();
+      syncComposerAttachments();
       scheduleLayout();
       return;
     }
@@ -5738,6 +5880,7 @@ nav[aria-label="Repository and pull request controls"] {
   // раскладки не зависит; так же (обеими приметами) в этом файле выставляются
   // все синтетические клавиши.
   const onPasteKey = event => {
+    onAttachmentBoundary(event);
     try {
       if (!event?.metaKey) return;
       const isV = String(event.key ?? "").toLowerCase() === "v" || event.code === "KeyV";
@@ -8058,6 +8201,29 @@ nav[aria-label="Repository and pull request controls"] {
   // поле уже развёрнуто (#5870) — иначе вложение приехало бы в схлопнутую рамку
   // и Элвис снова решил бы, что скриншот «не вставился».
   if (themable) {
+    for (const type of ["click", "submit", "reset"]) {
+      on(document, type, onAttachmentBoundary, true);
+    }
+    const routeChanged = () => {
+      if (attachmentContext && attachmentRoute() !== attachmentContext.route) {
+        invalidateAttachments();
+        scheduleLayout();
+      }
+    };
+    on(window, "popstate", routeChanged);
+    on(window, "hashchange", routeChanged);
+    // push/replace не посылают popstate. Только наблюдение: оригинальные
+    // аргументы, this, результат и исключение; dispose снимает только своё.
+    for (const name of ["pushState", "replaceState"]) {
+      const previous = history[name];
+      const wrapped = function (...args) {
+        const result = previous.apply(this, args);
+        routeChanged();
+        return result;
+      };
+      history[name] = wrapped;
+      track(() => { if (history[name] === wrapped) history[name] = previous; });
+    }
     on(document, "keydown", onPasteKey, true);
     on(document, "paste", onPasteAnywhere, true);
     // «Открыть в Chrome» (раздел 12г, WF67): правый клик по карточке файла
