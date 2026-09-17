@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf67-b-1";
+  const VERSION = "wf68-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1131,11 +1131,37 @@ div:has(> .ProseMirror) {
   const WIDE_PANEL_MIN = 640;
   const WIDE_FLAG = "--myclaude-wide";
   const SIDE_VARIABLE = "--myclaude-side";
-  // Правая колонка: не уже 300 (300 − 98 = 202 ≥ narrowLimit — редактор остаётся
-  // «полем»), не шире 60 % панели; умолчание — доля панели с обеими границами.
-  const SIDE_DEFAULT = "clamp(300px, 36%, 420px)";
+  // Правая колонка: не шире 60 % панели, умолчание — доля панели с обеими
+  // границами. Нижняя граница с WF68 (#6212) не число, а ЗАМЕР строки модели
+  // под полем ввода (слово Элвиса 17.09 09:41: «между Auto и Fable 5.1 ещё есть
+  // место — поджать, чтобы сошлись, и поле станет поуже»): JS (applySideMin,
+  // раздел 2г) кладёт её инлайн-переменной `--myclaude-side-min` на панель, CSS
+  // берёт её нижней границей clamp; переменной нет (строка не нашлась, чужая
+  // сборка, стенд) — SIDE_MIN, как было. Абсолютный пол SIDE_FLOOR: редактор =
+  // колонка − 40 (замер 17.09: колонка 300 → редактор 260; WF66 сняла у обёртки
+  // правое поле под кнопку), а поле узнаётся от narrowLimit = 200 — на полу
+  // редактору остаётся 208, запас 8 на любое поле Claude (ровно 200 держалось бы
+  // только на `>=`, и потерянное поле уносит с собой рейку — расширить колонку
+  // мышью было бы нечем).
+  const SIDE_MIN_VARIABLE = "--myclaude-side-min";
   const SIDE_MIN = 300;
+  const SIDE_FLOOR = 248;
+  const SIDE_DEFAULT = `clamp(var(${SIDE_MIN_VARIABLE}, ${SIDE_MIN}px), 36%, 420px)`;
   const SIDE_MAX_SHARE = 0.6;
+  // Зазор между группами строки модели («+ 🎤 ⌄ Auto» и «Fable 5.1 · Extra ·
+  // ◑») на нижней границе: у правой группы своё поле слева (8), у кнопок —
+  // свои (6), так что визуально между словами остаётся ~20.
+  const SIDE_CHIN_GAP = 4;
+  // Строка модели — та, у которой Claude держит боковые поля переменными
+  // `--cmp-chin-*` (класс `ps-[var(--cmp-chin-start)]`, замер 17.09; по этой же
+  // примете «обёртка по инлайн-переменной» ниже узнаётся `--cmp-wrap-h`); её два
+  // ребёнка — левая и правая группы. В широком виде группы НЕ ужимаются
+  // (flex-shrink: 0 в layoutCss): нижняя граница колонки считается по их
+  // ширине, и ужатая строка мерилась бы ужатой — граница застряла бы на старой,
+  // когда имя модели стало длиннее. И JS, и правило CSS смотрят только в доку:
+  // композер правки сообщения в ленте несёт ту же разметку, а там строке
+  // ужиматься можно, как у Claude.
+  const CHIN_ROW_SELECTOR = '[data-cds="ChatComposerChin"] div[class*="--cmp-chin-start"]';
   // Отступ поля ввода от краёв колонки (было 24): «отступы не должны быть такими
   // большими». Поля самой доки НЕ трогаем: их держит `sidePadding` из
   // claude.json — блок `PimpMyClaude:auto` в claude.css ставит их с !important
@@ -1253,7 +1279,7 @@ nav[aria-label="Repository and pull request controls"] {
   }
   .epitaxy-chat-panel > div:has(> .epitaxy-titlebar):has(> .contents > .epitaxy-chat-panel-body [data-testid="epitaxy-virtual-transcript"]):has(.group\\/approval-dock) {
     display: grid !important;
-    grid-template-columns: minmax(0, 1fr) clamp(${SIDE_MIN}px, var(${SIDE_VARIABLE}), ${SIDE_MAX_SHARE * 100}%);
+    grid-template-columns: minmax(0, 1fr) clamp(var(${SIDE_MIN_VARIABLE}, ${SIDE_MIN}px), var(${SIDE_VARIABLE}), ${SIDE_MAX_SHARE * 100}%);
     grid-template-rows: auto minmax(0, 1fr);
     & > .epitaxy-titlebar {
       grid-column: 2;
@@ -1293,6 +1319,9 @@ nav[aria-label="Repository and pull request controls"] {
       top: auto;
       right: calc(100% + ${DOCK_PAD}px);
       bottom: ${DOCK_PAD}px;
+    }
+    & .group\\/approval-dock ${CHIN_ROW_SELECTOR} > * {
+      flex-shrink: 0;
     }
     & .epitaxy-prompt {
       display: flex;
@@ -3951,8 +3980,10 @@ nav[aria-label="Repository and pull request controls"] {
   // подсказок системы: случайный проезд курсора её не зажигает.
   const SIDE_RAIL_REVEAL_MS = 400;
   // Ширина колонки, выбранная мышью: localStorage — окна Claude делят её, как и
-  // ширину боковой панели у самого Claude.
-  const SIDE_STORAGE_KEY = "myclaude-wide-side-v1";
+  // ширину боковой панели у самого Claude. v2 с WF68: под v1 у Элвиса лежало
+  // ровно 300 — тяга упёрлась в прежний минимум, и новая, узкая граница осталась
+  // бы за этим числом невидимой; ширины v1 не читаются и не переносятся.
+  const SIDE_STORAGE_KEY = "myclaude-wide-side-v2";
   const layoutPanel = editor => {
     try {
       return editor?.closest?.(".epitaxy-chat-panel") ?? document.querySelector(".epitaxy-chat-panel");
@@ -3978,8 +4009,39 @@ nav[aria-label="Repository and pull request controls"] {
   const readStoredSide = () => {
     try {
       const stored = Number(localStorage.getItem(SIDE_STORAGE_KEY));
-      return Number.isFinite(stored) && stored >= SIDE_MIN ? Math.round(stored) : null;
+      return Number.isFinite(stored) && stored >= SIDE_FLOOR ? Math.round(stored) : null;
     } catch { return null; }
+  };
+  const chinRow = panel => {
+    try { return sideDock(panel)?.querySelector?.(CHIN_ROW_SELECTOR) ?? null; } catch { return null; }
+  };
+  // Нижняя граница колонки по строке модели (WF68, #6212): натуральная ширина
+  // строки — обе группы плюс её собственные поля — плюс зазор между группами
+  // плюс обвязка колонки вокруг строки. Обвязка — замер, не константа: ширина
+  // колонки (дока минус COLUMN_PULL, на который она выезжает влево) минус ширина
+  // строки; сегодня это 12, но держится оно на трёх правилах layoutCss разом.
+  // Строки нет или она пуста — SIDE_MIN, как до WF68. Ниже SIDE_FLOOR не
+  // опускаемся, сверху режет clamp CSS долей панели.
+  const sideMinFor = panel => {
+    const row = chinRow(panel);
+    const dock = sideDock(panel);
+    if (!row?.isConnected || row.children.length < 2 || !dock?.isConnected) return SIDE_MIN;
+    const rowBox = row.getBoundingClientRect();
+    const dockBox = dock.getBoundingClientRect();
+    if (rowBox.width <= 0 || dockBox.width <= 0) return SIDE_MIN;
+    let content = 0;
+    for (const group of row.children) content += group.getBoundingClientRect().width;
+    if (content <= 0) return SIDE_MIN;
+    const computed = getComputedStyle(row);
+    const padding = (Number.parseFloat(computed.getPropertyValue("padding-left")) || 0) +
+      (Number.parseFloat(computed.getPropertyValue("padding-right")) || 0);
+    const chrome = dockBox.width - COLUMN_PULL - rowBox.width;
+    return Math.max(SIDE_FLOOR, Math.round(content + padding + SIDE_CHIN_GAP + chrome));
+  };
+  // Действующая нижняя граница — та, что лежит на панели: по ней и CSS, и рейка.
+  const sideMinOf = panel => {
+    const value = Number.parseFloat(panel?.style?.getPropertyValue(SIDE_MIN_VARIABLE) ?? "");
+    return Number.isFinite(value) && value >= SIDE_FLOOR ? value : SIDE_MIN;
   };
   const storeSide = value => {
     try {
@@ -3992,6 +4054,7 @@ nav[aria-label="Repository and pull request controls"] {
   // следующий прогон вернёт их на первом же проходе (ширину — из хранилища).
   track(() => {
     try { wideState.panel?.style?.removeProperty(SIDE_VARIABLE); } catch {}
+    try { wideState.panel?.style?.removeProperty(SIDE_MIN_VARIABLE); } catch {}
     try { wideState.panel?.style?.removeProperty(TITLE_INSET_VARIABLE); } catch {}
     try { wideState.panel?.removeAttribute(TITLE_SIDE_ATTRIBUTE); } catch {}
   });
@@ -4016,6 +4079,20 @@ nav[aria-label="Repository and pull request controls"] {
     wideState.panel = panel;
     if (value == null) panel.style.removeProperty(SIDE_VARIABLE);
     else panel.style.setProperty(SIDE_VARIABLE, `${Math.round(value)}px`);
+  };
+  // Нижняя граница пересчитывается каждый проход: строка модели меняется со
+  // сменой модели и эффорта, и колонка обязана следовать за ней в обе стороны.
+  // Первый широкий проход меряет строку ещё при границе CSS по умолчанию (300),
+  // второй — уже при своей; сходится сразу: группы не ужимаются, обвязка та же.
+  const applySideMin = (panel, wide) => {
+    if (!panel) return;
+    wideState.panel = panel;
+    if (!wide) {
+      if (panel.style.getPropertyValue(SIDE_MIN_VARIABLE)) panel.style.removeProperty(SIDE_MIN_VARIABLE);
+      return;
+    }
+    const value = `${sideMinFor(panel)}px`;
+    if (panel.style.getPropertyValue(SIDE_MIN_VARIABLE) !== value) panel.style.setProperty(SIDE_MIN_VARIABLE, value);
   };
   // Ступени в широком виде выключены: поле стоит на обычной высоте и растёт само
   // вместе с колонкой, ручки нет — свёрнутое поле тут исчезло бы навсегда.
@@ -4069,14 +4146,14 @@ nav[aria-label="Repository and pull request controls"] {
     rail.style.setProperty("color", progressAccent());
   };
   // Тяга: ширина колонки = правый край панели − курсор, в границах
-  // [SIDE_MIN, 60 % панели]. Значение уходит инлайн-переменной на панель, сетка
+  // [нижняя граница панели, 60 % панели]. Значение уходит инлайн-переменной на панель, сетка
   // пересчитывается сама; отпустили — в хранилище. Двойной клик — умолчание.
   // Рейка стоит не на кромке колонки, а над полосой прокрутки левее её: чтобы
   // колонка не прыгала на первом же движении, запоминаем зазор между курсором
   // и кромкой доки в момент захвата и тянем кромку, а не курсор.
   const railSide = (panel, x) => {
     const frame = panel.getBoundingClientRect();
-    return Math.round(Math.min(frame.width * SIDE_MAX_SHARE, Math.max(SIDE_MIN, frame.right - (x + wideState.grip))));
+    return Math.round(Math.min(frame.width * SIDE_MAX_SHARE, Math.max(sideMinOf(panel), frame.right - (x + wideState.grip))));
   };
   const onRailDown = event => {
     if (event.button !== 0) return;
@@ -4779,6 +4856,7 @@ nav[aria-label="Repository and pull request controls"] {
     const wide = wideLayout(panel);
     syncWide(wide);
     applyTitleSide(panel, wide);
+    applySideMin(panel, wide);
     placeSideRail(panel, wide);
     applyCollapse();
     if (!state.shell?.isConnected) { handle.style.display = "none"; return; }
@@ -7870,13 +7948,14 @@ nav[aria-label="Repository and pull request controls"] {
       handleVisible: handle.style.display !== "none",
       handleCovered: state.handleCovered,
       // Широкий вид (раздел 2г, WF65): включён ли, ширина панели чата и правой
-      // колонки в точках (в узком виде колонки нет — null).
+      // колонки в точках (в узком виде колонки нет — null); sideMin (WF68) —
+      // действующая нижняя граница колонки по строке модели.
       layout: (() => {
         const panel = layoutPanel(state.editor);
         const wide = wideLayout(panel);
         let width = null;
         try { width = panel ? Math.round(panel.getBoundingClientRect().width) : null; } catch {}
-        return { wide, panel: width, side: wide ? sideWidth(panel) : null };
+        return { wide, panel: width, side: wide ? sideWidth(panel) : null, sideMin: wide ? sideMinOf(panel) : null };
       })(),
       // «Открыть в Chrome» (раздел 12г, WF67): ждём ли меню после правого клика,
       // какой путь нашли, сколько пунктов вставили, чем кончился последний вызов.
@@ -8022,7 +8101,7 @@ nav[aria-label="Repository and pull request controls"] {
   // Ставит её только tests/load.mjs, чтобы дотянуться до чистых функций замыкания.
   // Глушителя ошибок здесь нет намеренно: переименовали функцию — люк обязан кричать, а не отдавать тестам undefined.
   if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ themeCss, epitaxyCss, fontCss, sizeCss,
-    attachmentsCss, layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, PROGRESS_GAP, TITLE_SIDE_ATTRIBUTE, TITLEBAR_CLEARANCE_LEFT, WIDE_TILE,
+    attachmentsCss, layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_FLOOR, SIDE_CHIN_GAP, CHIN_ROW_SELECTOR, SIDE_MAX_SHARE, PROGRESS_GAP, TITLE_SIDE_ATTRIBUTE, TITLEBAR_CLEARANCE_LEFT, WIDE_TILE,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     codeCss, codePalette, contrastRatio, readableOn,
     chatKey, chatIdKey, chatTitleKey, chatEntry, migrateChatKey, sameSessionKey, restoreKeyOk, chatsThemes,

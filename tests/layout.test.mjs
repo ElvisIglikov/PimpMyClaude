@@ -19,11 +19,16 @@ import assert from "node:assert/strict";
 import { loadInject, loadInner, plain } from "./load.mjs";
 
 const { inner } = loadInner({ title: "Trelvis" });
-const { layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_MAX_SHARE, TITLE_SIDE_ATTRIBUTE, WIDE_TILE } = inner;
+const { layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_FLOOR, SIDE_CHIN_GAP, CHIN_ROW_SELECTOR, SIDE_MAX_SHARE, TITLE_SIDE_ATTRIBUTE, WIDE_TILE } = inner;
 
 const WIDE_FLAG = "--myclaude-wide";
 const SIDE_VARIABLE = "--myclaude-side";
-const SIDE_KEY = "myclaude-wide-side-v1";
+// Нижняя граница колонки по строке модели (WF68, #6212): JS кладёт её на панель
+// этой переменной, CSS берёт её в clamp; без неё — SIDE_MIN.
+const SIDE_MIN_VARIABLE = "--myclaude-side-min";
+// v2 с WF68: ширины v1 (у Элвиса лежало ровно 300 — старый минимум) не читаются.
+const SIDE_KEY = "myclaude-wide-side-v2";
+const SIDE_KEY_V1 = "myclaude-wide-side-v1";
 const STAGE_KEY = "myclaude-input-stage-v1";
 const HEIGHT_VARIABLE = "--myclaude-input-height";
 const RAIL_ID = "myclaude-side-rail";
@@ -100,8 +105,15 @@ test("сетка и флаг --myclaude-wide живут ТОЛЬКО внутр�
   assert.ok(grid, "правила сетки внутри блока нет");
   for (const part of FORM) assert.ok(grid.selector.includes(part), `сетка не проверяет форму «${part}»`);
   assert.match(grid.body, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+clamp\(/, "левая колонка — minmax(0,1fr), правая — clamp");
-  assert.ok(grid.body.includes(`clamp(${SIDE_MIN}px, var(${SIDE_VARIABLE}), ${SIDE_MAX_SHARE * 100}%)`),
+  // Нижняя граница — переменная от JS (замер строки модели), без неё SIDE_MIN;
+  // верхняя — доля панели, та же, что у рейки.
+  assert.ok(grid.body.includes(`clamp(var(${SIDE_MIN_VARIABLE}, ${SIDE_MIN}px), var(${SIDE_VARIABLE}), ${SIDE_MAX_SHARE * 100}%)`),
     "границы правой колонки в CSS — те же, что у рейки в JS");
+  // Группы строки модели в широком виде не ужимаются: по их ширине считается
+  // нижняя граница, и ужатая строка мерилась бы ужатой (граница застряла бы).
+  // Правило — только в доке, куда смотрит и JS (chinRow → sideDock).
+  const chin = grid.children.find(item => item.selector === `& .group\\/approval-dock ${CHIN_ROW_SELECTOR} > *`);
+  assert.ok(chin && /flex-shrink:\s*0/.test(chin.body), "группы строки модели в доке должны держать натуральную ширину");
   // Снаружи блока ни сетки, ни флага: в узком окне раскладка Claude не трогается.
   for (const item of outside) {
     assert.ok(!/display:\s*grid/.test(item.body), `сетка снаружи блока: «${item.selector}»`);
@@ -226,7 +238,7 @@ test("в артефакте таблицы нет вовсе", () => {
 // доки. Геометрия — правая колонка 320 из панели 900, экран 1200×800.
 const PANEL = { left: 200, top: 0, width: 900, height: 800 };
 const DOCK = { left: 780, top: 32, width: 320, height: 768 };
-const panelStand = ({ wide = true } = {}) => dom => {
+const panelStand = ({ wide = true, chin = true } = {}) => dom => {
   const panel = dom.document.body.add("div", {
     class: "epitaxy-chat-panel", rect: PANEL, computed: wide ? { [WIDE_FLAG]: "1" } : {},
   });
@@ -253,9 +265,29 @@ const panelStand = ({ wide = true } = {}) => dom => {
   const editor = root.add("div", {
     class: "ProseMirror", attrs: { contenteditable: "true" }, rect: { left: 802, top: 110, width: 276, height: 640 },
   });
-  const modelRow = block.add("div", { class: "model-row", rect: { left: 792, top: 770, width: 296, height: 20 } });
-  return { panel, grid, titlebar, panelBody, dock, prompt, block, shell, root, editor, modelRow };
+  // Строка модели — в форме замера 17.09 (WF68): ChatComposerChin → обёртка →
+  // строка с полями --cmp-chin-* и двумя группами: «+ 🎤 ⌄ Auto» (98) и
+  // «Fable 5.1 · Extra · ◑» (137, своё поле слева внутри). Поля строки 7 и 10,
+  // как в бою; строка во всю ширину поля (296 при колонке 308 = дока 320 − 12).
+  const modelRow = block.add("div", { class: "model-row", attrs: chin ? { "data-cds": "ChatComposerChin" } : {}, rect: { left: 792, top: 770, width: 296, height: 20 } });
+  let chinRow = null, chinLeft = null, chinRight = null;
+  if (chin) {
+    const wrap = modelRow.add("div", { class: "min-h-0", rect: { left: 792, top: 770, width: 296, height: 20 } });
+    chinRow = wrap.add("div", {
+      class: "flex min-h-control items-center gap-0 text-footnote ps-[var(--cmp-chin-start)] pe-[var(--cmp-chin-end)] justify-between",
+      rect: { left: 792, top: 770, width: 296, height: 20 },
+      computed: { "padding-left": "7px", "padding-right": "10px" },
+    });
+    chinLeft = chinRow.add("div", { class: "flex items-center self-start", rect: { left: 799, top: 770, width: CHIN_LEFT, height: 20 } });
+    chinRight = chinRow.add("div", { class: "ms-auto flex min-w-0 items-center gap-1 ps-2", rect: { left: 1078 - CHIN_RIGHT, top: 770, width: CHIN_RIGHT, height: 20 } });
+  }
+  return { panel, grid, titlebar, panelBody, dock, prompt, block, shell, root, editor, modelRow, chinRow, chinLeft, chinRight };
 };
+const CHIN_LEFT = 98;
+const CHIN_RIGHT = 137;
+// Ожидаемая нижняя граница стенда: группы + поля строки (17) + зазор + обвязка
+// (колонка 308 − строка 296 = 12).
+const CHIN_MIN = CHIN_LEFT + CHIN_RIGHT + 17 + SIDE_CHIN_GAP + (DOCK.width - 12 - 296);
 const open = (options = {}) => loadInject({ html: panelStand(options.stand ?? {}), title: "Trelvis", ...options });
 const rail = loaded => loaded.dom.query(`#${RAIL_ID}`);
 const handle = loaded => loaded.dom.query(`#${HANDLE_ID}`);
@@ -269,12 +301,13 @@ const settle = loaded => {
 test("стенд 1200 без флага остаётся узким: status().layout честный, ручка на месте, ступени ходят", () => {
   // Композер без панели вовсе (стенд всех остальных наборов).
   const bare = loadInject({ html: "composer", title: "Trelvis", geometry: { viewport: { width: 1200, height: 800 } } });
-  assert.deepEqual(plain(bare.api.status().layout), { wide: false, panel: null, side: null });
+  assert.deepEqual(plain(bare.api.status().layout), { wide: false, panel: null, side: null, sideMin: null });
   assert.equal(handle(bare).style.getPropertyValue("display"), "flex", "ручка видна");
   assert.equal(rail(bare).style.getPropertyValue("display"), "none", "рейки в узком виде нет");
   // Панель есть, флага нет — окно ýже порога: вид узкий, ширина панели известна.
   const narrow = open({ stand: { wide: false } });
-  assert.deepEqual(plain(narrow.api.status().layout), { wide: false, panel: PANEL.width, side: null });
+  assert.deepEqual(plain(narrow.api.status().layout), { wide: false, panel: PANEL.width, side: null, sideMin: null });
+  assert.equal(narrow.parts.panel.style.getPropertyValue(SIDE_MIN_VARIABLE), "", "в узком виде нижней границы на панели нет");
   assert.equal(handle(narrow).style.getPropertyValue("display"), "flex");
   narrow.api.setStage(COLLAPSED);
   assert.equal(narrow.api.status().stage, COLLAPSED, "ступени в узком виде работают");
@@ -286,7 +319,7 @@ test("широкий вид: ступень обычная, замера natural
   // открыться — ручки, которая вернула бы его, там нет.
   const loaded = open({ storage: { session: { [STAGE_KEY]: String(COLLAPSED) } } });
   assert.equal(loaded.error, null);
-  assert.deepEqual(plain(loaded.api.status().layout), { wide: true, panel: PANEL.width, side: DOCK.width });
+  assert.deepEqual(plain(loaded.api.status().layout), { wide: true, panel: PANEL.width, side: DOCK.width, sideMin: CHIN_MIN });
   assert.equal(loaded.api.status().stage, NORMAL, "в широком виде ступень одна — обычная");
   assert.equal(loaded.win.sessionStorage.getItem(STAGE_KEY), String(COLLAPSED), "хранилище ступени не переписано");
   assert.equal(loaded.api.status().natural, null, "обычная высота в широком виде не меряется");
@@ -338,9 +371,9 @@ test("рейка: тяга меняет --myclaude-side в границах, о�
   assert.equal(bar.dataset.dragging, "false");
   assert.equal(loaded.document.documentElement.style.cursor, "");
   assert.equal(loaded.win.localStorage.getItem(SIDE_KEY), "400", "отпустили — ширина в хранилище");
-  // Границы: не уже SIDE_MIN, не шире доли панели.
+  // Границы: не уже нижней границы по строке модели, не шире доли панели.
   drag(700, 1050); drop(1050);
-  assert.equal(panel.style.getPropertyValue(SIDE_VARIABLE), `${SIDE_MIN}px`, "уже минимума не даём");
+  assert.equal(panel.style.getPropertyValue(SIDE_VARIABLE), `${CHIN_MIN}px`, "уже нижней границы по строке модели не даём");
   drag(800, 100); drop(100);
   assert.equal(panel.style.getPropertyValue(SIDE_VARIABLE), `${Math.round(PANEL.width * SIDE_MAX_SHARE)}px`, "шире доли панели не даём");
   bar.dispatchEvent({ type: "dblclick" });
@@ -351,11 +384,60 @@ test("рейка: тяга меняет --myclaude-side в границах, о�
 test("сохранённая ширина ставится при инжекте, а dispose снимает её с чужого узла", () => {
   const loaded = open({ storage: { local: { [SIDE_KEY]: "380" } } });
   assert.equal(loaded.parts.panel.style.getPropertyValue(SIDE_VARIABLE), "380px", "ширина из хранилища на панели");
+  assert.equal(loaded.parts.panel.style.getPropertyValue(SIDE_MIN_VARIABLE), `${CHIN_MIN}px`, "нижняя граница на панели");
   loaded.api.dispose();
   assert.equal(loaded.parts.panel.style.getPropertyValue(SIDE_VARIABLE), "", "после dispose на панели нашего нет");
+  assert.equal(loaded.parts.panel.style.getPropertyValue(SIDE_MIN_VARIABLE), "", "и нижней границы тоже");
   assert.equal(loaded.dom.queryAll(`#${RAIL_ID}`).length, 0, "рейка снята");
   assert.equal(loaded.win.localStorage.getItem(SIDE_KEY), "380", "хранилище dispose не трогает");
-  // Мусор в хранилище (меньше минимума, не число) — умолчание CSS.
+  // Мусор в хранилище (ниже пола, не число) — умолчание CSS; ширина между полом
+  // и запасным минимумом — годная: нижнюю границу по строке модели дорежет clamp.
   const junk = open({ storage: { local: { [SIDE_KEY]: "12" } } });
   assert.equal(junk.parts.panel.style.getPropertyValue(SIDE_VARIABLE), "", "негодная ширина не ставится");
+  const low = open({ storage: { local: { [SIDE_KEY]: String(SIDE_FLOOR + 10) } } });
+  assert.equal(low.parts.panel.style.getPropertyValue(SIDE_VARIABLE), `${SIDE_FLOOR + 10}px`, "ширина не ниже пола ставится");
+  // Ширины v1 не читаются: под ними лежал старый минимум 300, и новая граница
+  // осталась бы за ним невидимой (WF68).
+  const stale = open({ storage: { local: { [SIDE_KEY_V1]: "300" } } });
+  assert.equal(stale.parts.panel.style.getPropertyValue(SIDE_VARIABLE), "", "ширина v1 не переносится");
+  assert.equal(stale.win.localStorage.getItem(SIDE_KEY), null, "и в v2 не переписывается");
+});
+
+test("нижняя граница колонки — по строке модели: считается из групп, следует за ними, без строки — запасной минимум", () => {
+  const loaded = open();
+  const { panel, chinRow, chinLeft, chinRight } = loaded.parts;
+  assert.equal(panel.style.getPropertyValue(SIDE_MIN_VARIABLE), `${CHIN_MIN}px`, "граница = группы + поля строки + зазор + обвязка");
+  assert.ok(CHIN_MIN < SIDE_MIN, `стенд обязан показать границу ниже 300, а вышло ${CHIN_MIN}`);
+  assert.equal(loaded.api.status().layout.sideMin, CHIN_MIN);
+  // Имя модели стало длиннее (Fable 5.1 → Sonnet 5.1 Medium): правая группа
+  // шире на 20, граница выше на 20 — в обе стороны, каждый проход.
+  chinRight.rect = { ...chinRight.rect, width: CHIN_RIGHT + 20 };
+  settle(loaded);
+  assert.equal(panel.style.getPropertyValue(SIDE_MIN_VARIABLE), `${CHIN_MIN + 20}px`, "граница выросла за строкой");
+  chinRight.rect = { ...chinRight.rect, width: CHIN_RIGHT };
+  settle(loaded);
+  assert.equal(panel.style.getPropertyValue(SIDE_MIN_VARIABLE), `${CHIN_MIN}px`, "и вернулась");
+  // Рейка упирается в ту же границу, что и CSS.
+  const bar = rail(loaded);
+  bar.dispatchEvent({ type: "pointerdown", button: 0, clientX: DOCK.left, pointerId: 1 });
+  loaded.document.dispatchEvent({ type: "pointermove", clientX: 1090, pointerId: 1 });
+  loaded.document.dispatchEvent({ type: "pointerup", clientX: 1090, pointerId: 1 });
+  assert.equal(panel.style.getPropertyValue(SIDE_VARIABLE), `${CHIN_MIN}px`, "тяга не уводит ниже границы по строке");
+  // Совсем короткая строка не роняет колонку ниже пола: редактору нужны narrowLimit.
+  chinLeft.rect = { ...chinLeft.rect, width: 40 };
+  chinRight.rect = { ...chinRight.rect, width: 40 };
+  settle(loaded);
+  assert.equal(panel.style.getPropertyValue(SIDE_MIN_VARIABLE), `${SIDE_FLOOR}px`, "ниже пола не опускаемся");
+  // Строка пропала (Claude перерисовал низ) — запасной минимум, а не мусор.
+  chinRow.remove();
+  settle(loaded);
+  assert.equal(panel.style.getPropertyValue(SIDE_MIN_VARIABLE), `${SIDE_MIN}px`, "без строки модели — запасной минимум");
+  // Узкий вид снимает границу с панели.
+  panel.computed = {};
+  settle(loaded);
+  assert.equal(panel.style.getPropertyValue(SIDE_MIN_VARIABLE), "", "в узком виде переменной нет");
+  // Стенд без строки модели вовсе (чужая сборка): как до WF68.
+  const bare = open({ stand: { chin: false } });
+  assert.equal(bare.parts.panel.style.getPropertyValue(SIDE_MIN_VARIABLE), `${SIDE_MIN}px`);
+  assert.equal(bare.api.status().layout.sideMin, SIDE_MIN);
 });
