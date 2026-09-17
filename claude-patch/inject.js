@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf69-c-1";
+  const VERSION = "wf70-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -2378,9 +2378,31 @@ nav[aria-label="Repository and pull request controls"] {
   // где-то в сводке это слово могли записать сразу так — без него «Fable Extra»
   // перестало бы читаться как модель с эффортом вовсе.
   const STATUS_EFFORT_RE = /\s(low|medium|high|xhigh|extra|max)$/i;
-  // Шапка сводки — три строки счёта («41 воркфлоу», «26 готово», «39 ч»): они
-  // уходят в подвал карточки.
-  const STATUS_HEAD_LINES = 3;
+  // Строка «обновлено 12:40» под заголовком сводки — единственная дата в
+  // файле (AGENTS.md: не сегодня — «вчера 03:10» или число «15.09»). По ней
+  // карточка решает, можно ли сказать «15 мин назад» (progressWhen, WF70):
+  // относительные слова честны только у сегодняшнего файла. Шапка счёта
+  // («4 воркфлоу», «2 готово», «1,4 ч») больше не читается: подвал с ней
+  // Элвис убрал (#6247) — он путал, цифры про проект стояли под карточкой
+  // одного воркфлоу.
+  const STATUS_UPDATED_RE = /^обновлено:?\s+(.+)$/iu;
+  const STATUS_UPDATED_DATE_RE = /^(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)/;
+  const STATUS_UPDATED_CLOCK_RE = /^\d{1,2}:\d{2}(?![\d:])/;
+  // «12:40» и «сегодня 12:40» → сегодня, «вчера 03:10» → вчера, «15.09» → дата;
+  // ничего из этого не разобрали — null, и карточка говорит абсолютным временем.
+  // Границу слова даёт взгляд вперёд: `\b` кириллицы не знает.
+  const statusUpdated = (text) => {
+    const tail = String(text ?? "").trim();
+    const yesterday = tail.match(/^вчера(?![\p{L}])\s*(.*)$/iu);
+    if (yesterday) return { kind: "yesterday", time: yesterday[1].trim() };
+    const today = tail.match(/^сегодня(?![\p{L}])\s*(.*)$/iu);
+    if (today) return { kind: "today", time: today[1].trim() };
+    const date = tail.match(STATUS_UPDATED_DATE_RE);
+    if (date) return { kind: "date", time: date[1] };
+    const clock = tail.match(STATUS_UPDATED_CLOCK_RE);
+    if (clock) return { kind: "today", time: clock[0] };
+    return null;
+  };
   const statusFeed = { at: 0, projects: new Map() };
 
   // Строка подсказки из блока. Вид её закреплён тестами знак в знак: разбор
@@ -2431,11 +2453,12 @@ nav[aria-label="Repository and pull request controls"] {
   // заголовок блока даёт номер и значок, первый пункт — «о чём», пункты с
   // разделителем и словом впереди — роли, «шаги N из M» и время — свои поля.
   // Разбор ОДИН на три читателя (WF22): строки подсказки, объекты блоков для
-  // карточки и заливки, шапка проекта. Порядок проверок внутри цикла менять
-  // нельзя — на нём стоят строки подсказки знак в знак.
+  // карточки и заливки, дата обновления файла (updated, WF70). Порядок
+  // проверок внутри цикла менять нельзя — на нём стоят строки подсказки знак
+  // в знак.
   const statusParse = (text) => {
-    const head = [];
     const blocks = [];
+    let updated = null;
     let current = null;
     const flush = () => { if (current) blocks.push(current); current = null; };
     for (const raw of String(text ?? "").split("\n")) {
@@ -2452,8 +2475,9 @@ nav[aria-label="Repository and pull request controls"] {
         continue;
       }
       if (!current) {
-        // Шапка: три строки счёта, каждая начинается с числа.
-        if (head.length < STATUS_HEAD_LINES && /^[-*]?\s*\d/.test(line)) head.push(line.replace(/^[-*]\s*/, ""));
+        // До первого блока — строка «обновлено …», первая и единственная.
+        const stamp = updated ? null : line.match(STATUS_UPDATED_RE);
+        if (stamp) updated = statusUpdated(stamp[1]);
         continue;
       }
       if (!/^[-*]\s/.test(line)) continue;
@@ -2484,7 +2508,7 @@ nav[aria-label="Repository and pull request controls"] {
     }
     flush();
     // Подсказка не должна вырастать в простыню: последние двенадцать воркфлоу.
-    return { head, blocks, lines: blocks.map(statusLine).slice(-STATUS_MAX_LINES) };
+    return { blocks, updated, lines: blocks.map(statusLine).slice(-STATUS_MAX_LINES) };
   };
   const statusBlocks = (text) => statusParse(text).blocks;
   const statusLines = (text) => statusParse(text).lines;
@@ -2543,7 +2567,7 @@ nav[aria-label="Repository and pull request controls"] {
     frame: null, shell: null, segments: [], box: null, hovering: false,
     // Подсказка: какой сегмент открыт кликом и открыта ли она вообще. Наведение
     // подсказку не показывает — только клик (план WF12, п. 3).
-    tipSegment: null, tipOpen: false,
+    tipSegment: null, tipOpen: false, tipTick: 0,
     // Карточка сегмента (WF22): что на ней написано сейчас, дышит ли значок
     // состояния и сама анимация значка.
     cardText: "", cardPulse: false, anim: null,
@@ -2596,10 +2620,11 @@ nav[aria-label="Repository and pull request controls"] {
   (document.body ?? document.documentElement).appendChild(progressTip);
   track(() => progressTip.remove());
 
-  // Карточка сегмента (WF22, вариант 3A макета): «Workflow N · состояние», о чём,
-  // время и шаги, четыре этапа со своим «кто», подвал со счётом проекта. Узлы
-  // строим один раз и потом только переписываем текст — карточка открывается по
-  // клику, и пересобирать её дерево на каждый показ незачем.
+  // Карточка сегмента (WF22, вариант 3A макета): «Воркфлоу N · состояние», о чём,
+  // четыре этапа со своим «кто», внизу строка «когда» про этот воркфлоу
+  // (WF70). Узлы строим один раз и потом только переписываем текст —
+  // карточка открывается по клику, и пересобирать её дерево на каждый показ
+  // незачем.
   const progressCard = document.createElement("div");
   progressCard.id = PROGRESS_CARD_ID;
   // Свой aria-hidden и никаких role/data-state: и раздел 16 (Escape), и
@@ -2623,11 +2648,13 @@ nav[aria-label="Repository and pull request controls"] {
   });
   // «О чём» — не длиннее PROGRESS_CARD_ABOUT_MAX знаков (progressClip) и двух
   // строк (line-clamp): длинная строка в узком окне иначе съедает всю карточку.
+  // Строки «09:45 → 10:35 · 50 мин · шаги 1 из 1» под ней больше нет (WF70,
+  // #6247: «я тоже не понимаю эту хуйню») — время ушло в строку «когда» внизу,
+  // а «шаги» живут только в заливке сегмента (progressBlockFill).
   const progressCardAbout = cardNode(progressCard, {
     "margin-top": "5px", display: "-webkit-box", "-webkit-line-clamp": "2",
     "-webkit-box-orient": "vertical", overflow: "hidden",
   });
-  const progressCardMeta = cardNode(progressCard, { "margin-top": "4px", "font-size": "12px" });
   const progressCardStages = cardNode(progressCard, { "margin-top": "7px" });
   const progressCardRows = STATUS_STAGES.map(() => {
     const row = cardNode(progressCardStages, {
@@ -2641,16 +2668,19 @@ nav[aria-label="Repository and pull request controls"] {
       who: cardNode(row, { "font-size": "12px", "min-width": "0" }),
     };
   });
-  // Подвал — ДВЕ строки с переносом, а не одна с обрезкой (#5910): в окне 280 под
-  // текст подвала остаётся 228 точек, а даже короткая фраза «VkusnoffKz · 1
-  // воркфлоу, 0 готово · 45 мин» занимает 243 — одной строкой она обрывалась на
-  // полуслове. Показ (display) переписывается при каждой смене текста: атрибут
-  // hidden прячет узел правилом `[hidden]{display:none}`, а оно слабее
-  // объявления в самом узле — подвал без текста остался бы на экране пустой
-  // чертой.
-  const progressCardFoot = cardNode(progressCard, {
+  // «Когда» — одна человеческая строка про ЭТОТ воркфлоу («Завершился 15 мин
+  // назад · занял 50 мин», progressWhen), на месте прежнего подвала со счётом
+  // проекта (WF70, #6247: «оно путает — мы смотрим инфу об этом текущем
+  // Workflow»). Полужирная и цветом текста, как в макете
+  // docs/mockup-wf70-menu-card.html. ДВЕ строки с переносом: в окне 280 под
+  // текст остаётся 228 точек, и «Завершился 15 мин назад · занял 50 мин»
+  // одной строкой обрывалась бы на полуслове. Показ (display) переписывается
+  // при каждой смене текста: атрибут hidden прячет узел правилом
+  // `[hidden]{display:none}`, а оно слабее объявления в самом узле — строка без
+  // текста осталась бы на экране пустой чертой.
+  const progressCardWhen = cardNode(progressCard, {
     "margin-top": "7px", "padding-top": "5px", "border-top-width": "1px", "border-top-style": "solid",
-    "font-size": "12px", display: "-webkit-box", "-webkit-line-clamp": "2",
+    "font-weight": "600", display: "-webkit-box", "-webkit-line-clamp": "2",
     "-webkit-box-orient": "vertical", overflow: "hidden",
   });
   progressTip.appendChild(progressCard);
@@ -2736,15 +2766,20 @@ nav[aria-label="Repository and pull request controls"] {
     return false;
   };
 
-  // ---- сегмент ↔ блок сводки (WF22) ----------------------------------------
-  // Соединяем по ЗНАЧКУ, а не по номеру: «WF N из M» считает воркфлоу ЭТОГО
-  // чата, а status.md нумерует их по проекту (решение Элвиса 05.09,
-  // docs/PROGRESS.md) — совпадение номеров было бы случайностью, и клик по
-  // седьмому сегменту показывал чужой воркфлоу.
+  // ---- сегмент ↔ блок сводки (WF22, по номеру с WF70) ------------------------
+  // Сперва ПО НОМЕРУ: с 15.09 status.md держит воркфлоу только ЭТОГО чата и
+  // нумерует их с единицы (AGENTS.md), так что номер сегмента «WF N из M» и
+  // номер блока — один и тот же счёт. Пока сводка нумеровала по проекту,
+  // соединяли по значку, и готовый или запланированный сегмент часто
+  // оставался без блока: карточка писала «ещё не расписан», хотя в status.md
+  // всё есть (#6130, #5884). Блока с таким номером нет (старые и архивные
+  // сводки) — прежний путь по значку.
   const progressBlockAt = (info, number) => {
     if (!info) return null;
     const blocks = statusFeedProject(info.project)?.blocks ?? [];
     if (blocks.length === 0) return null;
+    const own = blocks.find(block => block.number === number);
+    if (own) return own;
     // Идущий блок — ПОСЛЕДНИЙ с 💭 в заголовке: в сводке рядом легко висит
     // недописанный старый.
     let runAt = -1;
@@ -2787,7 +2822,7 @@ nav[aria-label="Repository and pull request controls"] {
   // узком (слово Элвиса 07.09 22:50).
   const PROGRESS_CARD_MAX_WIDTH = 400;
   // Поля карточки короткие, по числу знаков (слово Элвиса 08.09): «о чём» не
-  // длиннее двух строк, чтобы время, шаги и четыре этапа влезали всегда.
+  // длиннее двух строк, чтобы четыре этапа и строка «когда» влезали всегда.
   const PROGRESS_CARD_ABOUT_MAX = 90;
   const progressClip = (text, max) => {
     const line = String(text ?? "").replace(/\s+/g, " ").trim();
@@ -3016,6 +3051,7 @@ nav[aria-label="Repository and pull request controls"] {
   const progressTipHide = () => {
     progressState.tipOpen = false;
     progressState.tipSegment = null;
+    progressTipTickStop();
     if (progressState.cardPulse) {
       progressState.cardPulse = false;
       progressPulse(progressState, progressCardPill, false, PROGRESS_PILL_FRAMES, "1");
@@ -3037,11 +3073,31 @@ nav[aria-label="Repository and pull request controls"] {
   };
   // Состояние ОДНОГО воркфлоу словом: до текущего — готов, после — запланирован,
   // сам текущий — по значку строки состояния. ✅ у всего марафона закрывает всё.
-  const PROGRESS_WORDS = { done: "готов", run: "идёт", wait: "ждёт", fail: "упал" };
+  // Так считается, когда блока сводки на сегмент нет; нашёлся — состояние даёт
+  // блок (progressBlockState).
+  const PROGRESS_WORDS = { done: "готов", run: "идёт", wait: "ждёт", fail: "упал", todo: "запланирован" };
   const progressWord = (info, number) => {
     if (info.state === "done" || number < info.wf) return "готов";
     if (number > info.wf) return "запланирован";
     return PROGRESS_WORDS[info.state] ?? "идёт";
+  };
+  // Состояние найденного блока — из ЕГО заголовка, а не из счёта чата (WF70):
+  // у VkusnoffKz три блока 💭 при строке «WF 1 из 3», и второй сегмент по счёту
+  // выходил «запланирован», хотя в сводке он идёт. Одно исключение — текущий
+  // сегмент при ⚠️/🛑 в строке состояния: в сводке таких значков нет, чат ждёт
+  // Элвиса или упал на том же блоке, что помечен 💭, и бейдж обязан сказать
+  // «ждёт тебя» (слово Элвиса 07.09 22:50).
+  const progressBlockState = (block, info, number) => {
+    if (block.state === "run" && number === info.wf && (info.state === "wait" || info.state === "fail")) {
+      return info.state;
+    }
+    // Строка чата уже говорит 💭/⚠️/🛑 на этом воркфлоу, а заголовок блока ещё ⬜
+    // (оркестратор не переписал) — верим строке: иначе полоса пульсирует «идёт», а
+    // карточка на том же сегменте твердит «Ещё не начат» (проверка WF70).
+    if (block.state === "todo" && number === info.wf && ["run", "wait", "fail"].includes(info.state)) {
+      return info.state;
+    }
+    return block.state;
   };
   // Номер воркфлоу по сегменту: обычно это его порядок, а в слитой полосе
   // (узкое окно, сегмент один на весь марафон) — текущий воркфлоу.
@@ -3163,46 +3219,112 @@ nav[aria-label="Repository and pull request controls"] {
     // N» — и жирной строки быть не должно, иначе непонятно, за что она жирная.
     return { text: text || "—", fable: models.slice(0, PROGRESS_WHO_MODELS).some(item => item.fable) };
   };
-  // Время на карточке: «21:15 → закончит примерно в 23:30 · идёт 45 мин». Слово
+  // Строка времени блока: «21:15 → закончит примерно в 23:30 · идёт 45 мин». Слово
   // «примерно» Элвис попросил убрать (#5909) — в шаблоне правил его больше нет,
   // но в десятках уже написанных сводок оно осталось, поэтому чистим на показе.
   // Границу слова тут даёт взгляд вперёд, а не `\b`: `\b` в JS считает словом
   // только латиницу с цифрами, и у кириллицы он не срабатывает вовсе.
   const progressTime = (text) => String(text ?? "")
     .replace(/\s*примерно(?![\p{L}\p{N}])/giu, "").replace(/\s+/g, " ").trim();
-  // Счёт проекта в подвале. Шапку status.md пишут разные агенты и вразнобой:
-  // «1 воркфлоу этого чата», «7 воркфлоу в этом чате», «0 готово», «45 мин
-  // потрачено», «4,2 ч учтено», «1,5 суток потрачено». Три такие строки ехали в
-  // подвал дословно, склеивались в невнятицу и обрывались на середине (#5910).
-  // Теперь берём из них числа, а фразу пишем свою — и слово «воркфлоу» тоже
-  // своё, одно на всю карточку (#5911). Строку, из которой числа не достали,
-  // показываем как есть: терять из подвала нельзя ничего.
-  const PROGRESS_FOOT_WF_RE = /^(\d+)\s*воркфлоу/i;
-  const PROGRESS_FOOT_DONE_RE = /^(\d+)\s*готов/i;
-  // Единица времени — целым словом, как её написали («мин», «минут», «ч»,
-  // «часа», «суток»): хвост вроде «потрачено» и «учтено» отбрасываем. Длинные
-  // слова стоят перед короткими, иначе «3 часа» прочиталось бы как «3 ч».
-  // Границу слова снова даёт взгляд вперёд — `\b` кириллицы не видит.
-  const PROGRESS_FOOT_TIME_RE = /^(\d+(?:[.,]\d+)?)\s*(мин\S*|час\S*|сут\S*|дн\S*|день|ч)(?![\p{L}\p{N}])/iu;
-  const progressFoot = (project, head) => {
-    let count = null;
-    let done = null;
-    let time = "";
-    const rest = [];
-    for (const raw of Array.isArray(head) ? head : []) {
-      const line = String(raw ?? "").replace(/\s+/g, " ").trim();
-      if (!line) continue;
-      const wf = line.match(PROGRESS_FOOT_WF_RE);
-      if (wf && count === null) { count = wf[1]; continue; }
-      const ready = line.match(PROGRESS_FOOT_DONE_RE);
-      if (ready && done === null) { done = ready[1]; continue; }
-      const spent = line.match(PROGRESS_FOOT_TIME_RE);
-      if (spent && !time) { time = `${spent[1]} ${spent[2]}`; continue; }
-      rest.push(line);
+  // ---- строка «когда» (WF70, #6247) ------------------------------------------
+  // Внизу карточки — одна человеческая строка про ЭТОТ воркфлоу: «Завершился
+  // 15 мин назад · занял 50 мин», «Идёт 25 мин · начался в 13:05 · закончит в
+  // 13:50», «Ждёт тебя · идёт 40 мин», «Ещё не начат». Стояли счёт проекта
+  // («2 воркфлоу, 2 готово · 1,4 ч» — цифры про весь проект под карточкой одного
+  // воркфлоу) и «09:45 → 10:35 · 50 мин · шаги 1 из 1» — Элвис: «оно путает»,
+  // «я тоже не понимаю эту хуйню». Часы «сейчас» функция получает снаружи и
+  // сама их не спрашивает — чистая, тесты ставят любое «сейчас».
+  //
+  // Относительные слова («только что», «15 мин назад», «идёт 25 мин») — ТОЛЬКО
+  // когда сводка обновлена сегодня (updated.kind === "today", строка «обновлено
+  // 12:40» без даты) и отметка блока не позже «сейчас»; иначе честно абсолютом:
+  // «Завершился вчера в 10:35», «Идёт · начался в 13:05». Отметка позже
+  // «сейчас» у сегодняшнего файла — часы в сводке чужие (файл от вчера, который
+  // не переписали), и считать от них назад нельзя.
+  const PROGRESS_CLOCK_RE = /(\d{1,2})\s*:\s*(\d{2})/;
+  // Часы «10:35» → минуты от полуночи и текст как написан; часов нет — null.
+  const progressClock = (text) => {
+    const hit = String(text ?? "").match(PROGRESS_CLOCK_RE);
+    if (!hit) return null;
+    const hours = Number(hit[1]);
+    const minutes = Number(hit[2]);
+    if (hours > 23 || minutes > 59) return null;
+    return { at: hours * 60 + minutes, text: `${hit[1]}:${hit[2]}` };
+  };
+  // Длительность словами сводки (AGENTS.md): минуты до часа, дальше часы с
+  // одним знаком и запятой — «50 мин», «1,5 ч», «2 ч».
+  const progressSpan = (minutes) => {
+    const whole = Math.max(0, Math.round(minutes));
+    if (whole < 60) return `${whole} мин`;
+    return `${String(Math.round(whole / 6) / 10).replace(".", ",")} ч`;
+  };
+  // Части строки времени: начало — часы слева от стрелки; справа либо конец
+  // («10:35»), либо срок («закончит в 16:00»); хвост после последнего « · » —
+  // длительность, как её записали («50 мин», «идёт 1,8 ч»).
+  const progressTimeParts = (text) => {
+    const line = progressTime(text);
+    const arrow = line.indexOf("→");
+    const dot = line.lastIndexOf("·");
+    const body = dot >= 0 ? line.slice(0, dot) : line;
+    const left = arrow >= 0 ? body.slice(0, arrow) : body;
+    const right = arrow >= 0 ? body.slice(arrow + 1) : "";
+    const finish = /закончит/iu.test(right);
+    return {
+      start: progressClock(left),
+      end: finish ? null : progressClock(right),
+      until: finish ? progressClock(right) : null,
+      tail: dot >= 0 ? line.slice(dot + 1).trim() : "",
+    };
+  };
+  // Когда файл не сегодняшний, «Завершился в 10:35» получает день: «вчера в
+  // 10:35», «15.09 в 10:35».
+  const progressDay = (updated) => {
+    if (updated?.kind === "yesterday") return "вчера ";
+    if (updated?.kind === "date" && updated.time) return `${updated.time} `;
+    return "";
+  };
+  // «17.09», «17.09.2026», «17.09.26» — это дата `at`? Год без цифр — считаем этот.
+  const progressDateIsToday = (text, at) => {
+    const m = String(text ?? "").match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?/);
+    if (!m) return false;
+    const year = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : at.getFullYear();
+    return Number(m[1]) === at.getDate() && Number(m[2]) === at.getMonth() + 1 && year === at.getFullYear();
+  };
+  const progressWhen = (block, now, updated) => {
+    if (!block) return "";
+    if (block.state === "todo") return "Ещё не начат";
+    const { start, end, until, tail } = progressTimeParts(block.time);
+    const at = new Date(now);
+    // «обновлено 17.09.2026» сегодняшним числом — тоже сегодня (проверка WF70):
+    // Dictator и NightWolf пишут в шапку дату, а не часы.
+    const today = Number.isFinite(at.getTime())
+      && (updated?.kind === "today" || (updated?.kind === "date" && progressDateIsToday(updated.time, at)));
+    const nowAt = at.getHours() * 60 + at.getMinutes();
+    // Сколько минут прошло от отметки до «сейчас»; нельзя сказать — null.
+    const since = (clock) => (today && clock && clock.at <= nowAt ? nowAt - clock.at : null);
+    if (block.state === "done") {
+      const gone = since(end);
+      const head = gone === null
+        ? (end ? `Завершился ${progressDay(updated)}в ${end.text}` : "Завершился")
+        : (gone < 1 ? "Завершился только что" : `Завершился ${progressSpan(gone)} назад`);
+      // «занял» — хвост строки, если это длительность («50 мин»); хвоста нет или
+      // он не про то («идёт 1,8 ч» у блока, который закрыли, не переписав
+      // время) — разница часов, через полночь с добавкой суток.
+      const took = /^\d/.test(tail) ? tail
+        : (start && end ? progressSpan((end.at - start.at + 1440) % 1440) : "");
+      return took ? `${head} · занял ${took}` : head;
     }
-    const score = [count === null ? "" : `${count} воркфлоу`, done === null ? "" : `${done} готово`]
-      .filter(Boolean).join(", ");
-    return [project, score, time, ...rest].filter(Boolean).join(" · ");
+    const gone = since(start);
+    if (block.state === "run") {
+      const head = gone === null
+        ? (start ? `Идёт · начался в ${start.text}` : "Идёт")
+        : (gone < 1 ? "Начался только что" : `Идёт ${progressSpan(gone)} · начался в ${start.text}`);
+      return until ? `${head} · закончит в ${until.text}` : head;
+    }
+    if (block.state === "fail") return start ? `Упал · начался в ${start.text}` : "Упал";
+    // Ждёт Элвиса: срок «закончит» тут ни о чём — работа стоит.
+    if (gone !== null) return `Ждёт тебя · идёт ${progressSpan(Math.max(1, gone))}`;
+    return start ? `Ждёт тебя · начался в ${start.text}` : "Ждёт тебя";
   };
   const progressTipShow = () => {
     const info = progressState.info;
@@ -3212,18 +3334,19 @@ nav[aria-label="Repository and pull request controls"] {
     const count = progressState.segments.length || 1;
     const index = Math.min(count - 1, Math.max(0, segment));
     const number = progressNumberAt(index);
-    const word = progressWord(info, number);
-    // Блок сводки ищем по значку, а не по номеру (progressBlockAt): номера
-    // марафона и проекта — разные счёты. Нашёлся — карточка называет СВОЙ номер
-    // из сводки, и подмена не врёт.
+    // Блок сводки — по номеру, а старым сводкам по значку (progressBlockAt).
+    // Нашёлся — состояние, слово и цвет бейджа берёт он сам, и карточка называет
+    // ЕГО номер; нет — слово из счёта чата.
     const feed = statusFeedProject(info.project);
     const block = progressBlockAt(info, number);
+    const blockState = block ? progressBlockState(block, info, number) : null;
+    const word = block ? (PROGRESS_WORDS[blockState] ?? "идёт") : progressWord(info, number);
     const stages = progressStages(block);
     const skin = PROGRESS_CARD_SKIN[progressDark() ? "dark" : "light"];
     const tone = skin[PROGRESS_CARD_TONES[word] ?? "run"];
     // Слово одно на всю карточку — русское (#5911): заголовок писался то
-    // «Workflow 1», то «Воркфлоу 1», а подвал всегда кириллицей, и разнобой
-    // бросился Элвису в глаза.
+    // «Workflow 1», то «Воркфлоу 1», а прежний подвал всегда кириллицей, и
+    // разнобой бросился Элвису в глаза.
     const title = `Воркфлоу ${block ? (block.number ?? number) : number}`;
     // «В проекте» на карточке не пишется (слово Элвиса 08.09): номер из сводки
     // говорит сам за себя, подпись остаётся только у чата без сводки. Раньше
@@ -3232,11 +3355,14 @@ nav[aria-label="Repository and pull request controls"] {
     const about = block
       ? progressClip(block.about || "—", PROGRESS_CARD_ABOUT_MAX)
       : (PROGRESS_CARD_BLANK[word] ?? PROGRESS_CARD_BLANK_ANY);
-    const meta = block
-      ? [progressTime(block.time), block.steps ? `шаги ${block.steps.done} из ${block.steps.total}` : ""]
-        .filter(Boolean).join(" · ")
+    // «Когда» — по состоянию блока; ⚠️/🛑 из строки состояния (progressBlockState)
+    // и здесь сильнее его 💭: «Ждёт тебя · идёт 40 мин», а не «Идёт 40 мин».
+    // Часы — текущие: пока карточка открыта, показ повторяется раз в минуту
+    // своим тиком (progressTipTickStart), поэтому на гейте строку сверяют по
+    // краям, не побайтно.
+    const when = block
+      ? progressWhen(blockState === block.state ? block : { ...block, state: blockState }, Date.now(), feed?.updated)
       : "";
-    const foot = progressFoot(info.project, feed?.head);
     const rows = stages.rows.map((row, order) => {
       const state = block?.state === "done"
         ? (row.role ? "done" : "todo")
@@ -3247,9 +3373,10 @@ nav[aria-label="Repository and pull request controls"] {
     });
     // Пишем только когда содержимое поменялось: карточка живёт открытой, а
     // команда status приходит раз в две секунды.
-    // Ключ смены — он же читаемый слепок карточки для гейта (status().progress.tip.card).
-    const key = [title, where, word, about, meta,
-      ...rows.map(row => `${row.label} ${row.state} ${row.who.text}`), foot].filter(Boolean).join(" · ");
+    // Ключ смены — он же читаемый слепок карточки для гейта (status().progress.tip.card):
+    // последним стоит «когда».
+    const key = [title, where, word, about,
+      ...rows.map(row => `${row.label} ${row.state} ${row.who.text}`), when].filter(Boolean).join(" · ");
     if (progressState.cardText !== key) {
       progressState.cardText = key;
       // Только textContent: сводка приходит снаружи, и разметки в ней быть не должно.
@@ -3261,13 +3388,11 @@ nav[aria-label="Repository and pull request controls"] {
         : (word === "ждёт" ? "ждёт тебя" : word);
       progressCardPill.textContent = `${PROGRESS_CARD_ICONS[word] ?? "💭"} ${pill}`;
       progressCardAbout.textContent = about;
-      progressCardMeta.textContent = meta;
-      progressCardMeta.hidden = meta === "";
-      progressCardFoot.textContent = foot;
-      progressCardFoot.hidden = foot === "";
-      // Показ пишем в самом узле: у подвала стоит своё объявление display (две
+      progressCardWhen.textContent = when;
+      progressCardWhen.hidden = when === "";
+      // Показ пишем в самом узле: у строки стоит своё объявление display (две
       // строки с переносом), и правило `[hidden]{display:none}` его не пересилит.
-      progressCardFoot.style.setProperty("display", foot === "" ? "none" : "-webkit-box");
+      progressCardWhen.style.setProperty("display", when === "" ? "none" : "-webkit-box");
       progressCardStages.hidden = !block;
       for (let order = 0; order < progressCardRows.length; order += 1) {
         const node = progressCardRows[order];
@@ -3291,9 +3416,8 @@ nav[aria-label="Repository and pull request controls"] {
       ? { "border-left": `4px solid rgb(${tone})`, "padding-left": "12px" }
       : { "border-left": "0", "padding-left": "0" })) progressCard.style.setProperty(name, value);
     progressCardWhere.style.setProperty("color", skin.dim);
-    progressCardMeta.style.setProperty("color", skin.dim);
-    progressCardFoot.style.setProperty("color", skin.dim);
-    progressCardFoot.style.setProperty("border-top-color", skin.line);
+    progressCardWhen.style.setProperty("color", skin.text);
+    progressCardWhen.style.setProperty("border-top-color", skin.line);
     for (const [name, value] of Object.entries({
       color: `rgb(${tone})`, background: `rgba(${tone},.14)`, "border-color": `rgba(${tone},.4)`,
     })) progressCardPill.style.setProperty(name, value);
@@ -3322,6 +3446,23 @@ nav[aria-label="Repository and pull request controls"] {
     progressTip.style.setProperty("left", `${Math.round(left)}px`);
     progressTip.style.setProperty("top", `${Math.round(top)}px`);
   };
+  // Строка «когда» на открытой карточке считает минуты от часов, а перерисовка
+  // приходит только с командой status — та едет лишь когда сводка изменилась
+  // (StatusFeed шлёт по смене digest). Открытая карточка говорила бы «15 мин
+  // назад» и через час. Поэтому пока карточка открыта — свой тик раз в минуту
+  // (проверка WF70); закрылась — тика нет.
+  const PROGRESS_TIP_TICK_MS = 60000;
+  const progressTipTickStop = () => {
+    if (progressState.tipTick) { clearInterval(progressState.tipTick); progressState.tipTick = 0; }
+  };
+  const progressTipTickStart = () => {
+    if (progressState.tipTick) return;
+    progressState.tipTick = setInterval(() => {
+      if (!progressState.tipOpen) { progressTipTickStop(); return; }
+      try { progressTipShow(); } catch {}
+    }, PROGRESS_TIP_TICK_MS);
+  };
+  track(progressTipTickStop);
   // Закрыть = погасить: выбор снимает сам progressTipHide.
   const progressTipClose = () => { progressTipHide(); };
   // Клик по полосе: по тому же сегменту — закрыть, по другому — переключить.
@@ -3332,6 +3473,7 @@ nav[aria-label="Repository and pull request controls"] {
     progressState.tipSegment = segment;
     progressState.tipOpen = true;
     progressTipShow();
+    progressTipTickStart();
   };
   // Попадание в открытую карточку. Своя проверка нужна потому, что узел
   // прозрачен для мыши (pointer-events:none, чтобы не съедать клики по полю
@@ -8159,6 +8301,9 @@ nav[aria-label="Repository and pull request controls"] {
         reason: progressState.reason,
         // Карточка сегмента: какой сегмент открыт кликом (с нуля), открыта ли
         // она, каким вариантом макета нарисована и дышит ли значок состояния.
+        // card — её слепок через « · »: заголовок, слово, «о чём», четыре этапа,
+        // последней — строка «когда» (WF70); она тикает с часами, на гейте
+        // сверять по краям («Завершился … · занял 50 мин»).
         tip: {
           segment: progressState.tipSegment, open: progressState.tipOpen,
           variant: PROGRESS_CARD_VARIANT, pulse: progressState.cardPulse,
@@ -8275,8 +8420,8 @@ nav[aria-label="Repository and pull request controls"] {
     chatKey, chatIdKey, chatTitleKey, chatEntry, migrateChatKey, sameSessionKey, restoreKeyOk, chatsThemes,
     sessionKey, themeKey, legacyKey, mapEntry, entryLayer, storedLayer, readThemeMap, writeThemeMap,
     liveRing, livePalette, setStage, collapseTargets, clampHeight,
-    parseProgressText, progressShares, progressFill, progressBlockAt, progressStages,
-    statusLines, statusBlocks, statusLineNumber, statusFeedLines, statusKey, runWorkflowCommand, newWindowSegment,
+    parseProgressText, progressShares, progressFill, progressBlockAt, progressStages, progressWhen,
+    statusLines, statusBlocks, statusParse, statusLineNumber, statusFeedLines, statusKey, runWorkflowCommand, newWindowSegment,
     newWindowSessionId, newWindowAtHome, newWindowStoreOk, setModuleImporter, newWindowScanStores,
     readCashout, runCashout, tryPasteCashout, cashoutStamp, cashoutMine,
     cashoutState, cashoutArrived, cashoutHeadHit, cashoutNorm, cashoutRemember, cashoutPills,

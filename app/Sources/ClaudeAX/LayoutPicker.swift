@@ -1,7 +1,8 @@
 import AppKit
 
-/// Полоса раскладок — первый пункт меню на жёлтой кнопке (план WF21, слово Элвиса 08.09:
-/// «раскладку выбираем картинками прямо в меню»). Плитки в порядке макета: «4 в ряд»,
+/// Полоса раскладок — первый пункт «⋯ Ещё ▸» меню на жёлтой кнопке (план WF21, слово Элвиса
+/// 08.09: «раскладку выбираем картинками прямо в меню»; до WF71 стояла первой во всём меню,
+/// верх которого теперь занимает оформление). Плитки в порядке макета: «4 в ряд»,
 /// «5 в ряд», «5 × 2» и «как сейчас» (лента); мини-схема столбиками, подпись под ней,
 /// выбранная — акцентом. ⌥⌘A повторяет последнюю выбранную.
 ///
@@ -302,14 +303,23 @@ final class LayoutPickerView: NSView {
     /// окна; последняя клетка — «💾 сохранить», она тем же ходом спрашивает имя раскладки.
     func pick(_ index: Int) {
         if index == saveIndex {
-            enclosingMenuItem?.menu?.cancelTracking()
+            closeMenu()
             DispatchQueue.main.async { [onSave] in onSave() }
             return
         }
         guard tiles.indices.contains(index), tiles[index].isEnabled else { return }
         let mode = tiles[index].mode
-        enclosingMenuItem?.menu?.cancelTracking()
+        closeMenu()
         DispatchQueue.main.async { [onPick] in onPick(mode) }
+    }
+
+    /// Закрыть ВСЁ меню, а не одно подменю: с WF71 полоса живёт в «⋯ Ещё ▸», и
+    /// `cancelTracking` у своего меню оставил бы корень открытым над уезжающими окнами —
+    /// поднимаемся по `supermenu` до корня.
+    private func closeMenu() {
+        var menu = enclosingMenuItem?.menu
+        while let parent = menu?.supermenu { menu = parent }
+        menu?.cancelTracking()
     }
 }
 

@@ -507,6 +507,32 @@ final class ProjectPaint {
                digest: wanted.digest)
     }
 
+    // MARK: - «🗂 <Проект>» в меню (план WF71 п. 3)
+
+    /// Тема проекта окна под кнопкой: имя папки, тема (из `.pimpmyclaude.json`, а без файла —
+    /// авто-цвет по имени папки) и стоит ли она на окне сейчас — отпечаток сошёлся с видом.
+    /// nil — папку окна не знаем или вид проекта тему не задаёт: пункта в меню нет.
+    /// Папка — строго как у записи ручного выбора (`writableFolder`): `target(for:)` чужому
+    /// попапу подставляет главное окно, и его проект уехал бы в меню чужого чата (та же
+    /// находка 2 проверки WF20).
+    func projectTheme(forTitle title: String) -> (name: String, theme: Theme, current: Bool)? {
+        // Тумблер «🗂 Цвет по проекту» выключен — пунктов проекта в меню нет вовсе (проверка
+        // WF71): иначе «Окнам проекта» обещал бы проект, а `noteManualChoice` при `!enabled`
+        // молча вышел бы — окно одно, файла нет, плашки нет.
+        guard enabled, let folder = writableFolder(for: title), let target = target(for: title),
+              let wanted = wanted(in: folder), let theme = wanted.settings.theme.value else { return nil }
+        return (folder.lastPathComponent, theme, marks[target.key]?.digest == wanted.digest)
+    }
+
+    /// Клик по «🗂 <Проект>»: вернуть окну вид проекта БЕЗ записи в файл и мимо `remember` —
+    /// иначе авто-цвет молча превратился бы в `.pimpmyclaude.json` (решение 3.1 плана WF20).
+    /// Та же покраска, что после удаления файла: слои вида плюс снятие того, что ставил
+    /// прошлый проект. Папку не знаем — молчим (сито то же, что у `projectTheme`).
+    func repaintProject(forTitle title: String) {
+        guard enabled, writableFolder(for: title) != nil, let target = target(for: title) else { return }
+        repaint(target)
+    }
+
     /// Слой файла после ручного выбора: `.set` — записать, `.reset` («Как у Claude») — убрать
     /// слой из файла, `.keep` — не трогать. `null` от ручного выбора в файл не пишем: «в этом
     /// проекте как у Claude» — это и есть отсутствие ключа (решение 3.3 плана WF20).
