@@ -2,17 +2,27 @@
   "plan": "docs/plan-wf70-2026-09-17.md",
   "branch": "wf70",
   "tag": "wf70-start",
-  "status": "идёт",
+  "status": "финиш",
   "orchestrator": "Opus 5 max (эффорт чата; норма Fable xhigh — баланс Fable, чат открыт на Opus)",
-  "roles": {"critic": "Fable xhigh (сделано 13:50–14:02)", "mockup": "оркестратор Opus max (отступление от таблицы: макет Fable high)", "coding": "Opus max ×2", "verify": "Fable high"},
-  "script_path": null,
-  "run_id": null,
+  "roles": {
+    "critic": "Fable xhigh (сделано 13:50–14:02)",
+    "mockup": "оркестратор Opus max (отступление от таблицы: макет Fable high)",
+    "coding": "Opus max ×2",
+    "verify": "Fable high"
+  },
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/be8ffff9-0d83-4401-9556-e956f887101a/workflows/scripts/wf70-wave-wf_78dc037d-6c1.js",
+  "run_id": "wf_78dc037d-6c1",
   "resumes": 0,
-  "next_steps": ["волна: батч A (карточка, inject.js) + батч B (меню, Swift) параллельно", "проверка Fable high по диффу", "гейт: tools/test.sh, bundle, подмена приложения, живой inject.js, документы", "слияние wf70 в main --no-ff"],
+  "next_steps": [],
   "journal": [
     "13:00 · план написан",
     "14:02 · критик Fable xhigh: годен с правками, 7 блокеров + 10 замечаний — внесены",
     "14:15 · макет отдан Элвису; 14:20–14:30 — его слово, поправки внесены, одобрено",
-    "14:40 · тег wf70-start, ветка wf70, старт волны"
-  ]
+    "14:40 · тег wf70-start, ветка wf70, старт волны",
+    "14:45 · волна запущена: code:card (Opus max) + code:menu (Opus max) → verify:A/B (Fable high)",
+    "15:25 · волна кончилась: A и B «сделано как описано», по 6–7 замечаний без блокеров",
+    "15:40 · гейт: три правки страницы (тик карточки, сегодняшняя дата, ⬜ на 💭 сегменте) + три Swift (пункты проекта по тумблеру, previewOrigin, ползунок 64); tools/test.sh — JS 390, CLI 42, Swift 267 зелёные; bundle → /Applications; живой inject wf70-a-1; probe карточки: «Завершился 5,5 ч назад · занял 50 мин», «Идёт 3,1 ч · начался в 13:00 · закончит в 16:00», 208 px из 461",
+    "15:50 · коммиты 680618e, 1e7c272, d59492b; документы; слияние wf70 → main"
+  ],
+  "cron": "776f4eba (каждый час в :23)"
 }
