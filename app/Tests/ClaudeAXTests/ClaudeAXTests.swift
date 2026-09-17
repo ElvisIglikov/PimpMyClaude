@@ -1228,8 +1228,18 @@ final class ClaudeAXTests: XCTestCase {
 
         // MARK: верхний уровень — оформление; окно проектом не опознано, «🗂 Проекта» нет
         XCTAssertEqual(menu.items.map { $0.isSeparatorItem ? "—" : $0.title },
-                       ["Моя тёплая", "Сохранить тему", "—", "Цвет", "Шрифт", "Размер шрифта",
+                       ["Как у Claude", "Моя тёплая", "Сохранить тему", "—", "Цвет", "Шрифт", "Размер шрифта",
                         "Неоновая рамка", "Поля", "—", "Всё как у Claude", "—", "Ещё"])
+        // «Как у Claude» первым — тема по умолчанию (слово Элвиса 17.09 16:10): снимает только цвет.
+        let claude = try XCTUnwrap(menu.items.first)
+        XCTAssertNotNil(claude.image)
+        XCTAssertFalse(claude.hasSubmenu)
+        applied.removeAll()
+        click(claude)
+        XCTAssertEqual(applied.map { $0.scope }, ["window"])
+        XCTAssertEqual(applied.map { $0.keep }, ["fsr"], "«Как у Claude» наверху трогает только цвет")
+        XCTAssertNil(applied.first?.theme)
+        applied.removeAll()
         // Подменю — у своей темы, у трёх списков и у «Ещё»; «Оформление ▸» и «Всем окнам ▸»
         // наверху больше нет, «Размер вопросов ▸» и «Своя тема…» — нигде (#6252, слово Элвиса).
         XCTAssertEqual(menu.items.filter { $0.hasSubmenu }.map { $0.title },
@@ -1376,14 +1386,14 @@ final class ClaudeAXTests: XCTestCase {
         without.myThemes = []
         let plain = MinimizeMenu.build(config: without)
         XCTAssertEqual(plain.items.map { $0.isSeparatorItem ? "—" : $0.title },
-                       ["Сохранить тему", "—", "Цвет", "Шрифт", "Размер шрифта", "Неоновая рамка",
+                       ["Как у Claude", "Сохранить тему", "—", "Цвет", "Шрифт", "Размер шрифта", "Неоновая рамка",
                         "Поля", "—", "Всё как у Claude", "—", "Ещё"])
 
         // Каталога нет — «Цвет» и «Шрифт» пропадают, остальное оформление на месте, а
         // «Раскрасить по кругу» палитры считает само и в themes.json не заглядывает (критик В10).
         let bare = MinimizeMenu.build(config: MinimizeMenu.MenuConfig())
         XCTAssertEqual(bare.items.map { $0.isSeparatorItem ? "—" : $0.title },
-                       ["Сохранить тему", "—", "Размер шрифта", "Неоновая рамка", "Поля", "—",
+                       ["Как у Claude", "Сохранить тему", "—", "Размер шрифта", "Неоновая рамка", "Поля", "—",
                         "Всё как у Claude", "—", "Ещё"])
         XCTAssertEqual(bare.items.filter { $0.hasSubmenu }.map { $0.title },
                        ["Размер шрифта", "Ещё"])
@@ -1410,13 +1420,15 @@ final class ClaudeAXTests: XCTestCase {
         config.applyMyTheme = { scope, my in applied.append((scope: scope, id: my.id)) }
         let menu = MinimizeMenu.build(config: config)
 
-        XCTAssertEqual(menu.items.prefix(3).map { $0.title },
-                       ["PimpMyClaude", "Моя тёплая", "Сохранить тему"])
-        let project = try XCTUnwrap(menu.items.first)
-        XCTAssertNotNil(project.image) // 🗂
+        XCTAssertEqual(menu.items.prefix(4).map { $0.title },
+                       ["Как у Claude", "Тема проекта PimpMyClaude", "Моя тёплая", "Сохранить тему"])
+        let project = try XCTUnwrap(menu.items[1])
+        XCTAssertNotNil(project.image) // кружок палитры проекта, не папка (слово Элвиса 17.09 16:10)
         XCTAssertFalse(project.hasSubmenu)
         XCTAssertEqual(project.toolTip, auto.name)
         XCTAssertEqual(project.state, .on, "вид проекта стоит на окне")
+        // Цвет на окне — проектный: «Как у Claude» без галки, хотя память окна пуста.
+        XCTAssertEqual(try XCTUnwrap(menu.items.first).state, .off)
         click(project)
         XCTAssertEqual(repainted, 1)
         highlight(menu, project)
@@ -1434,19 +1446,22 @@ final class ClaudeAXTests: XCTestCase {
         // окну» отпечаток не меняет) — галки у проекта нет, она у своей темы.
         config.windowThemeID = "user-1756900000000"
         let foreign = MinimizeMenu.build(config: config)
-        XCTAssertEqual(try XCTUnwrap(foreign.items.first).state, .off)
+        XCTAssertEqual(try XCTUnwrap(foreign.items[1]).state, .off)
         XCTAssertEqual(try XCTUnwrap(foreign.items.first { $0.title == "Моя тёплая" }).state, .on)
         // Память держит саму тему проекта (ручной выбор в окне проекта) — галка стоит.
         config.windowThemeID = auto.id
-        XCTAssertEqual(try XCTUnwrap(MinimizeMenu.build(config: config).items.first).state, .on)
+        XCTAssertEqual(try XCTUnwrap(MinimizeMenu.build(config: config).items[1]).state, .on)
         // Отпечаток разошёлся — не стоит.
         config.projectTheme = (name: "PimpMyClaude", theme: auto, current: false)
-        XCTAssertEqual(try XCTUnwrap(MinimizeMenu.build(config: config).items.first).state, .off)
+        XCTAssertEqual(try XCTUnwrap(MinimizeMenu.build(config: config).items[1]).state, .off)
 
-        // Окно проектом не опознано — ни пункта, ни адресата «Окнам проекта …».
+        // Окно проектом не опознано — ни пункта, ни адресата «Окнам проекта …»; цвета на окне
+        // нет вовсе — галка у «Как у Claude».
         config.projectTheme = nil
+        config.windowThemeID = nil
         let plain = MinimizeMenu.build(config: config)
-        XCTAssertEqual(plain.items.first?.title, "Моя тёплая")
+        XCTAssertEqual(plain.items.prefix(2).map { $0.title }, ["Как у Claude", "Моя тёплая"])
+        XCTAssertEqual(try XCTUnwrap(plain.items.first).state, .on)
         XCTAssertEqual(try XCTUnwrap(try myThemeMenu(in: plain, "Моя тёплая").items.first?.submenu)
                         .items.map { $0.title }, ["Только этому окну", "Всем окнам"])
     }

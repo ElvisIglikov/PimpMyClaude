@@ -1152,7 +1152,7 @@ final class ProjectTests: XCTestCase {
         XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude")])
     }
 
-    func testResetInProjectWindowRemovesProjectSettings() throws {
+    func testResetInProjectWindowKeepsNullThemeInProjectSettings() throws {
         let rig = makeRig()
         let pimp = rig.folder("PimpMyClaude")
         rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle,
@@ -1170,18 +1170,25 @@ final class ProjectTests: XCTestCase {
             .contains("\"font\""))
         XCTAssertTrue(rig.sent.isEmpty)
 
-        // «🧹 Всё как у Claude» — ушёл последний слой: файл удалён, а окно тут же получило
-        // авто-цвет, а не голого Claude.
+        // «🧹 Всё как у Claude» — цвет остаётся в файле как `"theme": null` (слово Элвиса
+        // 17.09: «поставил всё как у Клауда, а он бирюзового цвета стал»): файл не удаляется,
+        // авто-цвет не возвращается, окну-инициатору слать нечего — голый Claude на нём уже стоит.
         rig.paint.noteManualChoice(title: ProjectPaint.mainWindowTitle, theme: .reset, font: .reset,
                                    size: .reset, frame: .reset)
-        XCTAssertNil(rig.store.settings(in: pimp))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: rig.store.url(in: pimp).path))
-        XCTAssertEqual(rig.sent.count, 1)
-        let auto = try XCTUnwrap(rig.sent.first)
-        XCTAssertEqual(auto.key, "main")
-        XCTAssertEqual(auto.match, "/epitaxy/local_a1")
-        XCTAssertEqual(PaintRig.layers(auto), "t")
-        XCTAssertEqual(auto.theme.value?.id, "project-199")
+        let bare = try XCTUnwrap(rig.store.settings(in: pimp))
+        XCTAssertEqual(bare.theme, .reset, "«как у Claude» для цвета — null в файле, а не отсутствие ключа")
+        XCTAssertTrue(bare.font.isKeep && bare.size.isKeep && bare.frame.isKeep)
+        XCTAssertTrue(try String(contentsOf: rig.store.url(in: pimp), encoding: .utf8).contains("\"theme\": null"))
+        XCTAssertTrue(rig.sent.isEmpty, "окно-инициатор уже голое, авто-цвет слать нельзя")
+        XCTAssertNil(rig.paint.projectTheme(forTitle: ProjectPaint.mainWindowTitle),
+                     "цвета у проекта нет — пункта «Тема проекта» в меню нет")
+        // Соседнее окно проекта на ближайшем тике получает снятие цвета, а не авто-цвет.
+        rig.clock.advance()
+        rig.paint.forget()
+        rig.paint.tick()
+        let sent = try XCTUnwrap(rig.sent.last)
+        XCTAssertEqual(sent.key, "main")
+        if case .reset = sent.theme {} else { XCTFail("в окно едет не снятие цвета: \(String(describing: sent.theme.value?.id))") }
 
         // Ближайший тик то же самое второй раз не шлёт.
         rig.clock.advance()

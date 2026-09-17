@@ -614,9 +614,12 @@ final class MinimizeMenu: NSObject {
         // наведение на тему наверху не красило бы ничего.
         menu.delegate = PreviewMenuDelegate.shared
 
-        // Раздел своих тем: тема проекта первой (её нет — окно проектом не опознано), у каждой
-        // своей темы подменю, замыкает раздел «💾 Сохранить тему» — он есть всегда, поэтому
-        // и разделитель за ним стоит всегда.
+        // Раздел тем: первым «Как у Claude» — тема по умолчанию (слово Элвиса 17.09 16:10:
+        // «всё как у Клауда — это же по сути тема Клауда, значит должно идти первое»), потом
+        // тема проекта (её нет — окно проектом не опознано), у каждой своей темы подменю,
+        // замыкает раздел «💾 Сохранить тему» — он есть всегда, поэтому и разделитель за ним
+        // стоит всегда.
+        menu.addItem(claudeThemeItem(config))
         if let project = config.projectTheme { menu.addItem(projectThemeItem(config, project)) }
         for my in config.myThemes { menu.addItem(myThemeMenuItem(config, my)) }
         let save = BlockMenuItem(title: MenuModel.saveMyThemeTitle) { config.saveMyTheme() }
@@ -776,10 +779,28 @@ final class MinimizeMenu: NSObject {
     /// выбора не держит чужой id. Одного отпечатка мало: после «Применить ▸ Только этому окну»
     /// он нарочно не меняется (иначе ближайший тик перекрасил бы окно обратно), и по нему
     /// одному галка стояла бы и у проекта, и у своей темы разом.
+    /// «Как у Claude» первым пунктом — тема по умолчанию: снимает только цвет (шрифт, размер и
+    /// рамку не трогает, как тот же пункт в «🎨 Цвет ▸»), в окне проекта записывает в
+    /// `.pimpmyclaude.json` `"theme": null`, чтобы авто-цвет не вернулся (см. `ProjectPaint`).
+    /// Галка — когда цвета на окне нет ни своего, ни проектного; пустой кружок вместо палитры.
+    static func claudeThemeItem(_ config: MenuConfig) -> NSMenuItem {
+        let window = MenuModel.themeScopeWindow
+        let item = BlockMenuItem(title: MenuModel.themeResetTitle) {
+            config.apply(window, .reset, .keep, .keep, .keep)
+        }
+        item.image = claudeSwatch()
+        item.preview = { config.previewTheme(nil) }
+        let bare = resetState(config, all: false, windowEmpty: config.windowThemeID == nil,
+                              allEmpty: config.allThemeID == nil) == .on
+        item.state = bare && !(config.projectTheme?.current ?? false) ? .on : .off
+        return item
+    }
+
     static func projectThemeItem(_ config: MenuConfig,
                                  _ project: (name: String, theme: Theme, current: Bool)) -> NSMenuItem {
-        let item = BlockMenuItem(title: project.name) { config.repaintProject() }
-        item.image = icon(MenuModel.projectIcon)
+        let item = BlockMenuItem(title: MenuModel.projectThemeTitle(project.name)) { config.repaintProject() }
+        // Кружок палитры проекта, а не папка: с папкой пункт читался как «открыть папку».
+        item.image = swatch(palette: project.theme.palette)
         item.toolTip = project.theme.name
         item.preview = { config.previewTheme(project.theme) }
         let foreign = config.windowThemeID != nil && config.windowThemeID != project.theme.id
@@ -1222,6 +1243,19 @@ final class MinimizeMenu: NSObject {
 
     /// Кружок темы 14 px: заливка background, ободок accent. Не `icon()` — там эмодзи текстом,
     /// а тут нужна цветная картинка (`isTemplate = false`, иначе macOS перекрасит её в цвет метки).
+    /// Пустой кружок «Как у Claude»: контур без заливки — цвета на окне нет.
+    static func claudeSwatch(size: CGFloat = 14) -> NSImage {
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            let path = NSBezierPath(ovalIn: rect.insetBy(dx: 1.5, dy: 1.5))
+            NSColor.secondaryLabelColor.setStroke()
+            path.lineWidth = 1.2
+            path.stroke()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+
     static func swatch(palette: [String: String], size: CGFloat = 14) -> NSImage {
         let fill = color(palette["background"]) ?? .windowBackgroundColor
         let ring = color(palette["accent"]) ?? .labelColor

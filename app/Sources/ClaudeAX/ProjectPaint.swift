@@ -453,7 +453,7 @@ final class ProjectPaint {
         let name = folder.lastPathComponent
         let path = folder.standardizedFileURL.path
         let settings = ProjectSettings(name: name,
-                                       theme: ProjectPaint.merged(old.theme, theme),
+                                       theme: ProjectPaint.mergedTheme(old.theme, theme),
                                        font: ProjectPaint.merged(old.font, font),
                                        size: ProjectPaint.merged(old.size, size),
                                        frame: ProjectPaint.merged(old.frame, frame))
@@ -467,19 +467,19 @@ final class ProjectPaint {
             return Mark(match: mark.match, chat: mark.chat, title: mark.title, folder: mark.folder,
                         digest: "", layers: mark.layers)
         }
-        if settings.isEmpty {
-            // Битый файл не удаляем (находка 1 проверки WF20): разобрать его мы не смогли,
-            // а в нём чужие ключи. Говорим об этом плашкой и выходим тем же путём, что и
-            // неудачная запись, — выбор остаётся местным.
-            if store.isBroken(in: folder) {
-                notice(MenuModel.projectBroken(name), folder: path, broken: true)
-            } else {
-                store.remove(from: folder)
-                // Файла больше нет — у проекта снова авто-цвет, и окно-инициатор берёт его сразу,
-                // иначе оно две секунды стояло бы голым Claude.
-                if let target = target(for: title) { repaint(target) }
-                return
-            }
+        // Битый файл не удаляем и не перезаписываем (находка 1 проверки WF20): разобрать его
+        // мы не смогли, а в нём чужие ключи. Говорим об этом плашкой и выходим тем же путём,
+        // что и неудачная запись, — выбор остаётся местным. Проверка стоит ДО развилки: с
+        // `"theme": null` (17.09) сброс цвета — уже запись, а не удаление, и файл, который не
+        // читается как UTF-8, магазин принял бы за «файла нет» и переписал.
+        if store.isBroken(in: folder) {
+            notice(MenuModel.projectBroken(name), folder: path, broken: true)
+        } else if settings.isEmpty {
+            store.remove(from: folder)
+            // Файла больше нет — у проекта снова авто-цвет, и окно-инициатор берёт его сразу,
+            // иначе оно две секунды стояло бы голым Claude.
+            if let target = target(for: title) { repaint(target) }
+            return
         } else {
             switch store.write(settings, to: folder) {
             case .written: notice(MenuModel.projectWritten(name), folder: path)
@@ -533,9 +533,20 @@ final class ProjectPaint {
         repaint(target)
     }
 
+    /// Цвет — единственный слой, у которого «Как у Claude» пишется в файл как `"theme": null`
+    /// (слово Элвиса 17.09 16:10: «поставил всё как у Клауда, а он бирюзового цвета стал»).
+    /// Отсутствие ключа для цвета значит авто-цвет (папка без вида красится по имени), и
+    /// снятый по-старому цвет тут же возвращался авто-цветом. `null` — «в этом проекте цвета
+    /// нет», и авто-цвет на такой файл не приходит (`wanted(in:)`: файл не пуст).
+    static func mergedTheme(_ old: Layer<Theme>, _ change: Layer<Theme>) -> Layer<Theme> {
+        if case .reset = change { return .reset }
+        return merged(old, change)
+    }
+
     /// Слой файла после ручного выбора: `.set` — записать, `.reset` («Как у Claude») — убрать
     /// слой из файла, `.keep` — не трогать. `null` от ручного выбора в файл не пишем: «в этом
-    /// проекте как у Claude» — это и есть отсутствие ключа (решение 3.3 плана WF20).
+    /// проекте как у Claude» — это и есть отсутствие ключа (решение 3.3 плана WF20; для
+    /// цвета с 17.09 иначе — `mergedTheme`).
     static func merged<Value>(_ old: Layer<Value>, _ change: Layer<Value>) -> Layer<Value> {
         switch change {
         case .keep: return old
