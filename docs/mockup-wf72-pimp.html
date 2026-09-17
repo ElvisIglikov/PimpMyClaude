@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Макет — Пимп: значок, одно меню, статистика, отчёты</title>
+<style>
+  :root { --bg:#141416; --panel:#1d1e22; --line:#2c2e34; --ink:#f0eee9; --muted:#9a9a9a; --accent:#e0855a;
+          --green:#39c26b; --red:#e5484d; --p1:#e0855a; --p2:#5aa8e0; --p3:#8ad06b; --p4:#c98ae0; --p5:#e0c25a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:20px/1.5 -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  main { padding:24px 28px 80px; }
+  h1 { font-size:2.6rem; line-height:1.1; margin:0 0 6px; }
+  .who { color:var(--muted); font-size:18px; margin:0 0 18px; }
+  nav.toc { font-size:19px; color:var(--muted); margin:0 0 34px; line-height:1.8; }
+  nav.toc a { color:var(--ink); text-decoration:none; border-bottom:1px solid var(--line); }
+  h2 { font-size:3rem; line-height:1.05; margin:56px 0 18px; letter-spacing:-.01em; }
+  h3 { font-size:1.6rem; margin:30px 0 10px; }
+  p { max-width:78ch; margin:0 0 14px; }
+  ul { max-width:78ch; padding-left:1.2em; }
+  li { margin:0 0 8px; }
+  .row { display:flex; flex-wrap:wrap; gap:22px; align-items:flex-start; margin:14px 0 8px; }
+  .frame { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .cap { color:var(--muted); font-size:18px; margin:8px 0 0; }
+  .rec { color:var(--green); font-weight:700; }
+  .minus { color:var(--muted); }
+  /* строка меню */
+  .menubar { display:flex; align-items:center; gap:18px; height:34px; padding:0 14px; border-radius:8px; font-size:15px; }
+  .menubar.dark { background:#0f0f11; color:#e8e8e8; }
+  .menubar.light { background:#e9e9ec; color:#111; }
+  .menubar svg { display:block; }
+  /* нарисованное меню */
+  .menu { width:300px; background:#1b1b1f; border:1px solid #33353b; border-radius:10px; padding:6px; font-size:15px; box-shadow:0 12px 30px rgba(0,0,0,.5); }
+  .menu .it { display:flex; align-items:center; gap:10px; padding:5px 10px; border-radius:6px; }
+  .menu .it.sub::after { content:"›"; margin-left:auto; color:#888; }
+  .menu .it.on { background:#2f6fdb; color:#fff; }
+  .menu .sep { height:1px; background:#33353b; margin:5px 4px; }
+  .menu .dis { color:#7b7b80; }
+  .menu .dot { width:14px; height:14px; border-radius:50%; border:2px solid #aaa; display:inline-block; }
+  .menu .dot.f { background:#2ecc71; border-color:#2ecc71; }
+  .menu .dot.p { background:#f3c7d6; border-color:#f3c7d6; }
+  .menu .dot.pr { background:#5aa8e0; border-color:#5aa8e0; }
+  .menu .k { margin-left:auto; color:#8a8a90; }
+  .menu .ic { width:20px; text-align:center; }
+  .note { border-left:3px solid var(--accent); padding:6px 14px; color:var(--ink); background:#1a1a1e; border-radius:0 10px 10px 0; max-width:78ch; }
+  /* окно Пимпа */
+  .win { width:min(100%, 560px); background:#1a1b1f; border:1px solid #34363c; border-radius:12px; overflow:hidden; font-size:15px; }
+  .win .title { display:flex; align-items:center; gap:8px; height:34px; padding:0 12px; background:#232429; color:#cfcfd4; border-bottom:1px solid #34363c; }
+  .win .title .b { width:12px; height:12px; border-radius:50%; }
+  .tabs { display:flex; gap:6px; padding:10px 12px 0; }
+  .tab { padding:6px 12px; border-radius:8px; background:#26272d; color:#bbb; }
+  .tab.on { background:#3a3b42; color:#fff; }
+  .periods { display:flex; gap:6px; padding:12px 12px 0; }
+  .periods span { padding:4px 10px; border-radius:999px; background:#26272d; color:#bbb; font-size:14px; }
+  .periods span.on { background:var(--accent); color:#111; }
+  .big { padding:12px 12px 0; }
+  .big .n { font-size:30px; font-weight:800; line-height:1.1; }
+  .big .s { color:#9a9a9a; margin-top:4px; }
+  .share { display:flex; height:26px; margin:12px 12px 0; border-radius:7px; overflow:hidden; font-size:13px; font-weight:700; color:#111; }
+  .share div { display:flex; align-items:center; padding-left:8px; overflow:hidden; white-space:nowrap; }
+  .facts { padding:8px 12px 0; color:#9a9a9a; font-size:14px; }
+  .top3 { display:flex; gap:12px; align-items:flex-end; height:120px; padding:14px 12px 0; }
+  .top3 .col { width:80px; border-radius:6px 6px 0 0; position:relative; text-align:center; font-weight:700; color:#111; font-size:13px; }
+  .top3 .col span { position:absolute; left:0; right:0; bottom:-22px; color:#ddd; font-weight:400; font-size:13px; }
+  .days { display:flex; gap:6px; align-items:flex-end; height:130px; padding:34px 12px 0; }
+  .days .d { flex:1; display:flex; flex-direction:column; justify-content:flex-end; position:relative; }
+  .days .d i { display:block; }
+  .days .d b { position:absolute; top:-20px; left:0; right:0; text-align:center; font-size:12px; color:#ddd; font-weight:400; }
+  .days .d small { position:absolute; bottom:-20px; left:0; right:0; text-align:center; font-size:12px; color:#9a9a9a; }
+  .list { padding:30px 12px 12px; }
+  .list .r { display:grid; grid-template-columns:14px 1fr 64px 46px 90px 70px; gap:8px; align-items:center; padding:6px 0; border-top:1px solid #2a2b30; font-size:14px; }
+  .list .r .pd { width:12px; height:12px; border-radius:50%; }
+  .list .bar { height:6px; border-radius:3px; background:#2a2b30; overflow:hidden; }
+  .list .bar i { display:block; height:100%; }
+  .foot { padding:8px 12px 12px; color:#7b7b80; font-size:13px; }
+  /* отчёты */
+  .split { display:grid; grid-template-columns:230px 1fr; min-height:360px; }
+  .rl { border-right:1px solid #34363c; display:flex; flex-direction:column; }
+  .rl .h { color:#9a9a9a; font-size:12px; padding:10px 12px 4px; text-transform:uppercase; letter-spacing:.06em; }
+  .rl .f { display:flex; align-items:center; gap:8px; padding:7px 12px; font-size:14px; }
+  .rl .f.on { background:#2f6fdb; color:#fff; }
+  .rl .f .pd { width:9px; height:9px; border-radius:50%; flex:none; }
+  .rl .f .t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .rl .f .tm { margin-left:auto; color:#9a9a9a; font-size:12px; }
+  .rl .how { margin-top:auto; padding:10px 12px; border-top:1px solid #34363c; color:#ddd; font-size:14px; }
+  .rr { display:flex; flex-direction:column; }
+  .rr .bar2 { display:flex; gap:8px; padding:8px 12px; border-bottom:1px solid #34363c; font-size:13px; color:#ddd; }
+  .rr .bar2 span { background:#26272d; padding:3px 9px; border-radius:6px; }
+  .rr .doc { padding:14px; color:#ddd; }
+  .rr .doc h4 { margin:0 0 8px; font-size:22px; }
+  .rr .doc p { font-size:14px; color:#bbb; margin:0 0 8px; }
+  .prompt { background:#0f0f11; border:1px solid #34363c; border-radius:8px; padding:10px; font-size:13px; color:#ccc; }
+  .btn { display:inline-block; background:var(--accent); color:#111; padding:5px 12px; border-radius:7px; font-weight:700; font-size:13px; margin-top:8px; }
+  /* карточка */
+  .card { width:300px; background:#1b1b1f; border:1px solid #33353b; border-radius:10px; padding:12px; font-size:14px; box-shadow:0 12px 30px rgba(0,0,0,.5); }
+  .card .h { display:flex; justify-content:space-between; align-items:center; font-weight:700; }
+  .card .badge { background:#2ecc71; color:#111; border-radius:999px; padding:1px 9px; font-size:12px; }
+  .card .st { margin-top:6px; color:#ddd; }
+  .card .stages { margin-top:8px; display:grid; grid-template-columns:1fr auto; gap:3px 10px; color:#bbb; font-size:13px; }
+  .card .when { margin-top:8px; color:#9a9a9a; font-size:13px; }
+  .card .cost { margin-top:3px; color:#9a9a9a; font-size:13px; }
+  .card .cost b { color:#ddd; }
+  @media (max-width: 720px) { body { font-size:18px; } h2 { font-size:2.5rem; } main { padding:18px 14px 60px; } .split { grid-template-columns:1fr; } .rl { border-right:0; border-bottom:1px solid #34363c; } }
+</style>
+</head>
+<body>
+<main>
+<h1>Пимп: значок, одно меню, статистика, отчёты</h1>
+<p class="who">макет · Opus 5 max · 17.09.2026 · задачи #6366 #6367 #6368 #6282</p>
+<nav class="toc"><a href="#pics">Картинки</a> · <a href="#done">Что решено</a> · <a href="#q1">Вопрос про SkilZZZ</a> · <a href="#q2">Вопрос про деньги</a> · <a href="#out">Что не входит</a></nav>
+
+<h2 id="pics">Картинки</h2>
+
+<h3>Значок в строке меню</h3>
+<div class="row">
+  <div class="frame">
+    <div class="menubar dark">
+      <span>ᯤ</span><span>🔊</span>
+      <svg width="18" height="18" viewBox="0 0 18 18"><g fill="#e8e8e8"><rect x="8" y="1" width="2.2" height="7.5" rx="1.1" transform="rotate(0 9 9)"/><rect x="8" y="2.6" width="2.2" height="5.9" rx="1.1" transform="rotate(40 9 9)"/><rect x="8" y="1.6" width="2.2" height="6.9" rx="1.1" transform="rotate(80 9 9)"/><rect x="8" y="3.2" width="2.2" height="5.3" rx="1.1" transform="rotate(120 9 9)"/><rect x="8" y="1" width="2.2" height="7.5" rx="1.1" transform="rotate(160 9 9)"/><rect x="8" y="2.5" width="2.2" height="6" rx="1.1" transform="rotate(200 9 9)"/><rect x="8" y="1.9" width="2.2" height="6.6" rx="1.1" transform="rotate(240 9 9)"/><rect x="8" y="3.1" width="2.2" height="5.4" rx="1.1" transform="rotate(280 9 9)"/><rect x="8" y="1.4" width="2.2" height="7.1" rx="1.1" transform="rotate(320 9 9)"/></g><circle cx="14.2" cy="14.4" r="3" fill="#39c26b"/></svg>
+      <span>🔋</span><span>Чт 17 сент. 22:10</span>
+    </div>
+    <p class="cap">Патч стоит — зелёная точка. Звезда своя, по мотивам Claude, пока нарисована кодом; картинка Астры встанет на её место (промт ей готов).</p>
+  </div>
+  <div class="frame">
+    <div class="menubar light">
+      <span>ᯤ</span><span>🔊</span>
+      <svg width="18" height="18" viewBox="0 0 18 18"><g fill="#111"><rect x="8" y="1" width="2.2" height="7.5" rx="1.1"/><rect x="8" y="2.6" width="2.2" height="5.9" rx="1.1" transform="rotate(40 9 9)"/><rect x="8" y="1.6" width="2.2" height="6.9" rx="1.1" transform="rotate(80 9 9)"/><rect x="8" y="3.2" width="2.2" height="5.3" rx="1.1" transform="rotate(120 9 9)"/><rect x="8" y="1" width="2.2" height="7.5" rx="1.1" transform="rotate(160 9 9)"/><rect x="8" y="2.5" width="2.2" height="6" rx="1.1" transform="rotate(200 9 9)"/><rect x="8" y="1.9" width="2.2" height="6.6" rx="1.1" transform="rotate(240 9 9)"/><rect x="8" y="3.1" width="2.2" height="5.4" rx="1.1" transform="rotate(280 9 9)"/><rect x="8" y="1.4" width="2.2" height="7.1" rx="1.1" transform="rotate(320 9 9)"/></g><circle cx="14.2" cy="14.4" r="3" fill="#e5484d"/></svg>
+      <span>🔋</span><span>Чт 17 сент. 22:10</span>
+    </div>
+    <p class="cap">Патч слетел — красная точка (и уведомление, как сейчас). Не стоит — серая точка; Claude не найден — звезда вполсилы без точки.</p>
+  </div>
+  <div class="frame" style="display:flex;gap:18px;align-items:center">
+    <svg width="120" height="120" viewBox="0 0 18 18"><g fill="#e8e8e8"><rect x="8" y="1" width="2.2" height="7.5" rx="1.1"/><rect x="8" y="2.6" width="2.2" height="5.9" rx="1.1" transform="rotate(40 9 9)"/><rect x="8" y="1.6" width="2.2" height="6.9" rx="1.1" transform="rotate(80 9 9)"/><rect x="8" y="3.2" width="2.2" height="5.3" rx="1.1" transform="rotate(120 9 9)"/><rect x="8" y="1" width="2.2" height="7.5" rx="1.1" transform="rotate(160 9 9)"/><rect x="8" y="2.5" width="2.2" height="6" rx="1.1" transform="rotate(200 9 9)"/><rect x="8" y="1.9" width="2.2" height="6.6" rx="1.1" transform="rotate(240 9 9)"/><rect x="8" y="3.1" width="2.2" height="5.4" rx="1.1" transform="rotate(280 9 9)"/><rect x="8" y="1.4" width="2.2" height="7.1" rx="1.1" transform="rotate(320 9 9)"/></g><circle cx="14.2" cy="14.4" r="3" fill="#39c26b"/></svg>
+    <p class="cap" style="max-width:260px">Та же звезда крупно: девять лучей разной длины, десятый луч уступил место точке состояния. Астра нарисует свою — эта пока от кода.</p>
+  </div>
+</div>
+
+<h3>Меню — одно и то же на значке и на жёлтой кнопке</h3>
+<div class="row">
+  <div class="menu">
+    <div class="it"><span class="dot"></span> Как у Claude</div>
+    <div class="it"><span class="dot pr"></span> Тема проекта PimpMyClaude</div>
+    <div class="it sub"><span class="dot f"></span> Матрица</div>
+    <div class="it sub"><span class="dot p"></span> Пудра</div>
+    <div class="it"><span class="ic">💾</span> Сохранить тему</div>
+    <div class="sep"></div>
+    <div class="it sub"><span class="ic">🎨</span> Цвет</div>
+    <div class="it sub"><span class="ic">🔤</span> Шрифт</div>
+    <div class="it sub"><span class="ic">🔠</span> Размер шрифта</div>
+    <div class="it"><span class="ic">✨</span> Неоновая рамка</div>
+    <div class="it"><span class="ic">↔️</span> Поля <span class="k">▬▬▬●▬ 20</span></div>
+    <div class="sep"></div>
+    <div class="it"><span class="ic">🧹</span> Всё как у Claude</div>
+    <div class="sep"></div>
+    <div class="it"><span class="ic">📊</span> Статистика</div>
+    <div class="it"><span class="ic">📄</span> Отчёты</div>
+    <div class="sep"></div>
+    <div class="it sub"><span class="ic">⋯</span> Ещё</div>
+    <div class="it sub on"><span class="ic">⚙️</span> Пимп</div>
+  </div>
+  <div class="menu">
+    <div class="it dis">Патч стоит · v7 · Claude 1.46388.1</div>
+    <div class="sep"></div>
+    <div class="it">Поставить…</div>
+    <div class="it">Снять…</div>
+    <div class="it">Статус…</div>
+    <div class="sep"></div>
+    <div class="it">✓ Авто-Allow</div>
+    <div class="it">✓ Меню на жёлтой кнопке</div>
+    <div class="it">✓ ⌘Q не закрывает Claude</div>
+    <div class="it">✓ Запускать при входе</div>
+    <div class="sep"></div>
+    <div class="it">Настроить разрешения…</div>
+    <div class="it">История авто-Allow…</div>
+    <div class="it">О программе</div>
+    <div class="sep"></div>
+    <div class="it">Выйти из PimpMyClaude <span class="k">⌘Q</span></div>
+  </div>
+  <div class="note" style="max-width:360px">Слева — меню целиком, как оно откроется и по клику на значок у часов, и по жёлтой кнопке окна. Новое: «📊 Статистика», «📄 Отчёты» и внизу «⚙️ Пимп ▸» — всё служебное уехало туда (справа). «Блок ⌘Q» переименован в «⌘Q не закрывает Claude». Claude закрыт — по значку открывается только правое меню плюс Статистика и Отчёты.</div>
+</div>
+
+<h3>Окно Пимпа — Статистика</h3>
+<div class="row">
+  <div class="win">
+    <div class="title"><span class="b" style="background:#ff5f57"></span><span class="b" style="background:#febc2e"></span><span class="b" style="background:#28c840"></span> Пимп</div>
+    <div class="tabs"><span class="tab on">📊 Статистика</span><span class="tab">📄 Отчёты</span></div>
+    <div class="periods"><span>Сегодня</span><span class="on">7 дней</span><span>30 дней</span><span>Всё</span></div>
+    <div class="big"><div class="n">1 240M токенов за 7 дней</div><div class="s">если бы по API, а не по подписке — $1 118</div></div>
+    <div class="share"><div style="width:44%;background:var(--p1)">VkusnoffKz 44 %</div><div style="width:31%;background:var(--p2)">PimpMyClaude 31 %</div><div style="width:15%;background:var(--p3)">Trelvis 15 %</div><div style="width:10%;background:var(--p4)">ещё 2</div></div>
+    <div class="facts">5 проектов · 13 чатов · 7 дней</div>
+    <div class="top3"><div class="col" style="height:100%;background:var(--p1)">$492<span>VkusnoffKz</span></div><div class="col" style="height:72%;background:var(--p2)">$346<span>PimpMyClaude</span></div><div class="col" style="height:38%;background:var(--p3)">$168<span>Trelvis</span></div></div>
+    <div class="days">
+      <div class="d"><b>$96</b><i style="height:30px;background:var(--p1)"></i><i style="height:14px;background:var(--p2)"></i><small>пт 11</small></div>
+      <div class="d"><b>$140</b><i style="height:40px;background:var(--p1)"></i><i style="height:22px;background:var(--p2)"></i><small>сб 12</small></div>
+      <div class="d"><b>$61</b><i style="height:20px;background:var(--p1)"></i><i style="height:12px;background:var(--p3)"></i><small>вс 13</small></div>
+      <div class="d"><b>$210</b><i style="height:48px;background:var(--p1)"></i><i style="height:30px;background:var(--p2)"></i><i style="height:10px;background:var(--p3)"></i><small>пн 14</small></div>
+      <div class="d"><b>$180</b><i style="height:42px;background:var(--p1)"></i><i style="height:28px;background:var(--p2)"></i><small>вт 15</small></div>
+      <div class="d"><b>$233</b><i style="height:46px;background:var(--p1)"></i><i style="height:40px;background:var(--p2)"></i><i style="height:12px;background:var(--p4)"></i><small>ср 16</small></div>
+      <div class="d"><b>$198</b><i style="height:38px;background:var(--p1)"></i><i style="height:44px;background:var(--p2)"></i><small>чт 17</small></div>
+    </div>
+    <div class="list">
+      <div class="r"><span class="pd" style="background:var(--p1)"></span><span>VkusnoffKz</span><span>$492</span><span>44 %</span><span class="bar"><i style="width:44%;background:var(--p1)"></i></span><span>4 чата ▸</span></div>
+      <div class="r"><span class="pd" style="background:var(--p2)"></span><span>PimpMyClaude</span><span>$346</span><span>31 %</span><span class="bar"><i style="width:31%;background:var(--p2)"></i></span><span>5 чатов ▸</span></div>
+      <div class="r"><span class="pd" style="background:var(--p3)"></span><span>Trelvis</span><span>$168</span><span>15 %</span><span class="bar"><i style="width:15%;background:var(--p3)"></i></span><span>2 чата ▸</span></div>
+      <div class="r"><span class="pd" style="background:var(--p4)"></span><span>SkilZZZ</span><span>$78</span><span>7 %</span><span class="bar"><i style="width:7%;background:var(--p4)"></i></span><span>1 чат ▸</span></div>
+      <div class="r"><span class="pd" style="background:var(--p5)"></span><span>Dictatorik</span><span>$34</span><span>3 %</span><span class="bar"><i style="width:3%;background:var(--p5)"></i></span><span>1 чат ▸</span></div>
+    </div>
+    <div class="foot">Считаю с 18.09 — старое Claude уже стёр · прайс от 24.06.2026</div>
+  </div>
+  <div class="note" style="max-width:360px">Числа на картинке выдуманы для вида. Цвета проектов — те же, что красят окна. Окно встаёт справа от окна Claude, во всю его высоту. Круговой диаграммы и «денег по подписке» пока нет — ты сказал, покажешь, как было в других проектах.</div>
+</div>
+
+<h3>Окно Пимпа — Отчёты</h3>
+<div class="row">
+  <div class="win" style="width:min(100%, 720px)">
+    <div class="title"><span class="b" style="background:#ff5f57"></span><span class="b" style="background:#febc2e"></span><span class="b" style="background:#28c840"></span> Пимп</div>
+    <div class="tabs"><span class="tab">📊 Статистика</span><span class="tab on">📄 Отчёты</span><span class="tab" style="margin-left:auto">Все проекты ▾</span></div>
+    <div class="split">
+      <div class="rl">
+        <div class="h">Сегодня</div>
+        <div class="f on"><span class="pd" style="background:var(--p2)"></span><span class="t">Китайские подписки для кодинга</span><span class="tm">19:40</span></div>
+        <div class="f"><span class="pd" style="background:var(--p2)"></span><span class="t">Памятка Дархану про патч</span><span class="tm">12:30</span></div>
+        <div class="f"><span class="pd" style="background:var(--p1)"></span><span class="t">Ночная корзина — макет</span><span class="tm">10:05</span></div>
+        <div class="h">Вчера</div>
+        <div class="f"><span class="pd" style="background:var(--p2)"></span><span class="t">Широкий вид окна — макет</span><span class="tm">21:00</span></div>
+        <div class="f"><span class="pd" style="background:var(--p3)"></span><span class="t">Ревизия Трелвиса</span><span class="tm">14:12</span></div>
+        <div class="h">15.09</div>
+        <div class="f"><span class="pd" style="background:var(--p1)"></span><span class="t">Баннеры на выбор</span><span class="tm">23:50</span></div>
+        <div class="how">❓ Как это работает?</div>
+      </div>
+      <div class="rr">
+        <div class="bar2"><span>🌐 Открыть в Chrome</span><span>📋 Копировать</span></div>
+        <div class="doc"><h4>Китайские подписки для кодинга</h4><p>разведка · Opus max · 17.09.2026</p><p>GLM Coding Plan Pro — $80 в месяц или $56 при оплате за год…</p><p style="color:#666">(здесь сам файл, как в Chrome)</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="row">
+  <div class="win" style="width:min(100%, 720px)">
+    <div class="title"><span class="b" style="background:#ff5f57"></span><span class="b" style="background:#febc2e"></span><span class="b" style="background:#28c840"></span> Пимп — Как это работает</div>
+    <div class="rr">
+      <div class="bar2"><span>🌐 Открыть в Chrome</span><span>📋 Копировать</span></div>
+      <div class="doc">
+        <h4>Что это за файлы</h4>
+        <p>Агенты по системе SkilZZZ отвечают такими страницами: макеты, сравнения, разборы. Они лежат в папках проектов, Пимп собирает их сюда.</p>
+        <h4>Как получать такие же</h4>
+        <p>1. Поставь PimpMyClaude. 2. <b>Скилы должны быть подключены</b> — скачай правила SkilZZZ с GitHub и укажи на них своему агенту. 3. Скопируй промт и вставь агенту:</p>
+        <div class="prompt">Прочитай правила из папки SkilZZZ (github.com/ElvisIglikov/SkilZZZ): AGENTS.md — как общаться, WORKFLOW.md — как вести работу, HTML.md — как оформлять страницы. Дальше работай по ним: отвечай по-русски и коротко; всё, что мне нужно увидеть или решить, делай одной HTML-страницей в docs/ проекта; в конце ответа — строка состояния. Скажи одной фразой, что прочитал правила, и жди задачу.</div>
+        <span class="btn">Скопировать</span>
+        <h4 style="margin-top:14px">Пример</h4>
+        <p>Нарисованная страница сравнения — как выглядит ответ агента.</p>
+      </div>
+    </div>
+  </div>
+  <div class="note" style="max-width:360px">Список слева — все HTML-файлы из папок проектов, свежие сверху, с точкой в цвете проекта (тот же цвет, что у окон проекта). Справа — сам файл. Кнопка «Как это работает?» внизу открывает страницу-объяснение: её же можно открыть в Chrome и показать людям.</div>
+</div>
+
+<h3>Карточка воркфлоу — с ценой</h3>
+<div class="row">
+  <div class="card">
+    <div class="h"><span>Воркфлоу 3</span><span class="badge">готов</span></div>
+    <div class="st">карточка воркфлоу — вместо счёта проекта внизу «завершился 15 мин назад»</div>
+    <div class="stages"><span>✅ планирование</span><span>я</span><span>✅ критика</span><span>Fable Extra 1</span><span>✅ кодинг</span><span>Opus Max 1</span><span>✅ проверка</span><span>Fable High 1</span></div>
+    <div class="when">Завершился 6 ч назад · занял 2,9 ч</div>
+    <div class="cost">≈ <b>$38,40</b> по API · 9,6M токенов</div>
+  </div>
+  <div class="note" style="max-width:420px">Под строкой «когда» — одна строка цены: агенты этого воркфлоу считаются точно, ходы главного чата делятся между воркфлоу, что шли в это же время, — отсюда «≈». Данных нет — строки нет, выдуманных чисел не бывает.</div>
+</div>
+
+<h2 id="done">Что решено</h2>
+<ul>
+  <li>Одно меню везде: значок у часов и жёлтая кнопка открывают одно и то же; служебное — в «⚙️ Пимп ▸» внизу.</li>
+  <li>Значок — своя звезда по мотивам Claude с точкой состояния; Астра рисует картинку (промт готов, тебе — скопировать ей), до неё звезда нарисована кодом.</li>
+  <li>Окно Пимпа — одно, справа от окна Claude, две вкладки: Статистика и Отчёты. Оно же потом станет «админкой чатов».</li>
+  <li>Статистика по решениям Радуги, без её кода: периоды, «если бы по API», полоса долей, топ-3, по дням, список проектов. Ни одного выдуманного числа: нет данных — «пока пусто».</li>
+  <li>История копится с установки — Claude хранит переписку только открытых чатов, старое уже стёрто.</li>
+  <li>Цена воркфлоу — по прогонам его агентов плюс доля ходов главного чата, всегда «≈»; нет данных — нет числа.</li>
+  <li>Отчёты — все HTML из папок проектов, свежие сверху, просмотр в окне, «Открыть в Chrome» и «Копировать» под рукой, внизу «Как это работает?».</li>
+</ul>
+
+<h2 id="q1">Вопрос про SkilZZZ</h2>
+<p>Страница «Как это работает» ведёт людей на правила SkilZZZ на GitHub, а репозиторий сегодня закрытый — ссылка упрётся в дверь.</p>
+<ul>
+  <li><span class="rec">Сделать SkilZZZ публичным (рекомендую)</span> — почему: ты сам сказал «бесплатная штука, должна быть опубликована», и ссылка заработает сразу. <span class="minus">Минус: перед этим я проверю, что в репозитории нет ничего личного (ключи, телефоны), и скажу.</span></li>
+  <li>Оставить закрытым и положить копию правил внутрь PimpMyClaude — почему: ничего не открывать. <span class="minus">Минус: правила будут отставать от твоих, и «скилы» перестанут быть одним местом.</span></li>
+</ul>
+
+<h2 id="q2">Вопрос про деньги</h2>
+<p>В Радуге деньги считались как доля от платежа за подписку, а сумма «по API» была только строкой для понта. Здесь на первом шаге — только «если бы по API».</p>
+<ul>
+  <li><span class="rec">Сначала только «если бы по API» (рекомендую)</span> — почему: честные числа без ручных настроек, а долю подписки добавим, когда покажешь, как было в других проектах. <span class="minus">Минус: суммы выглядят страшнее реальных.</span></li>
+  <li>Сразу и доля подписки — почему: как в Радуге. <span class="minus">Минус: нужны сумма по чеку, налог и день цикла руками, и это ещё одна панель настроек.</span></li>
+</ul>
+
+<h2 id="out">Что не входит</h2>
+<ul>
+  <li>HEIC-фото в чате — отдельная задача, не этот план.</li>
+  <li>Круговая диаграмма и плашка проекта с мини-графиком — после твоего показа других проектов.</li>
+  <li>Выпуск команде — отдельно: у них старая версия и старая инструкция.</li>
+</ul>
+<p>Ответь одной фразой на каждый вопрос или скажи «как рекомендуешь».</p>
+</main>
+</body>
+</html>
