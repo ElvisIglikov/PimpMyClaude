@@ -11,7 +11,11 @@
 //      (без «Show in Finder») не трогается;
 //   3) клик по пункту зовёт мост Claude ровно раз с (id чата, путь) и потом
 //      закрывает меню Escape; без чата или моста — плашка, мост не зовётся;
-//   4) dispose() снимает подписку, наблюдателя, таймер и вставленный пункт.
+//   4) dispose() снимает подписку, наблюдателя, таймер и вставленный пункт;
+//   5) «📋 Копировать в буфер» (WF69, #6236) стоит ПОД «Открыть в Chrome» и есть
+//      у любого файла (у .md/.png — один, без Chrome): клик кладёт в буфер путь
+//      текстом и метку `<!--pimpmyclaude:copy-file:<путь>-->` в HTML-слое —
+//      договор с CopyFileRelay.swift побайтно; буфер не дался — плашка.
 //
 // Наблюдатель стаба записи о мутациях не отдаёт, поэтому появление меню
 // проверяется прямым вызовом openChromeInsert через люк, а сам наблюдатель —
@@ -102,11 +106,18 @@ test("правый клик по карточке: путь из волокна,
   assert.equal(plain(loaded.api.status().openInChrome).pending, false);
 });
 
-test("не страница (.md, .png) — пункта нет вовсе: мост открыл бы файл не в Chrome", () => {
+test("не страница (.md, .png): «Открыть в Chrome» нет (мост открыл бы файл не в Chrome), «Копировать» есть", () => {
   for (const other of [PATH.replace(/\.html$/, ".md"), PATH.replace(/\.html$/, ".png")]) {
     const loaded = page({ path: other });
-    assert.equal(found(loaded), null, `${other}: путь не должен опознаваться`);
+    const hit = found(loaded);
+    assert.equal(hit?.path, other, `${other}: путь не опознан`);
+    assert.equal(hit?.page, false, `${other}: посчитан страницей`);
+    const { menu, list } = menuOf(loaded);
+    assert.equal(loaded.inner.openChromeInsert(menu, hit), true, `${other}: пункт копирования не встал`);
+    assert.deepEqual(ours(list).map(node => node.textContent), ["📋 Копировать в буфер", ""], `${other}: пункты не те`);
+    assert.equal(list.children[1].getAttribute("role"), "separator");
   }
+  assert.equal(found(page())?.page, true, ".html не посчитан страницей");
 });
 
 test("путь берётся и с префиксом computer://, и с волокна самой кнопки", () => {
@@ -127,7 +138,7 @@ test("правый клик по тексту: наблюдатель не ст�
   assert.equal(loaded.counters.observers, before, "наблюдатель встал на правый клик по тексту");
 });
 
-test("меню с «Show in Finder»: наш пункт первым, жирным, с разделителем, один раз", () => {
+test("меню с «Show in Finder»: Chrome первым, под ним Копировать, жирные, с разделителем, один раз", () => {
   const loaded = page();
   const { menu, list } = menuOf(loaded);
   assert.equal(loaded.inner.openChromeInsert(menu, found(loaded)), true, "пункт не встал");
@@ -138,10 +149,15 @@ test("меню с «Show in Finder»: наш пункт первым, жирны
   assert.equal(first.textContent, "🌐 Открыть в Chrome");
   assert.equal(first.style.getPropertyValue("font-weight"), "600", "пункт не жирный");
   assert.equal(first.id, "", "у клона остался id пункта Claude");
-  assert.equal(list.children[1].getAttribute("role"), "separator", "после пункта нет разделителя");
-  assert.ok(list.children[1].hasAttribute(ATTRIBUTE), "разделитель без метки — dispose его не снимет");
-  assert.equal(list.children[2].textContent, "Attach as context", "пункты Claude сдвинулись не туда");
-  assert.equal(list.querySelectorAll('[role="menuitem"]').length, 4, "пунктов Claude стало не столько");
+  const second = list.children[1];
+  assert.ok(second.hasAttribute(ATTRIBUTE), "второй пункт не наш");
+  assert.equal(second.getAttribute("role"), "menuitem");
+  assert.equal(second.textContent, "📋 Копировать в буфер", "«Копировать в буфер» не под «Открыть в Chrome»");
+  assert.equal(second.style.getPropertyValue("font-weight"), "600", "второй пункт не жирный");
+  assert.equal(list.children[2].getAttribute("role"), "separator", "после пунктов нет разделителя");
+  assert.ok(list.children[2].hasAttribute(ATTRIBUTE), "разделитель без метки — dispose его не снимет");
+  assert.equal(list.children[3].textContent, "Attach as context", "пункты Claude сдвинулись не туда");
+  assert.equal(list.querySelectorAll('[role="menuitem"]').length, 5, "пунктов Claude стало не столько");
 
   // Подсветка — атрибутом, по которому Claude рисует фон.
   first.dispatchEvent({ type: "pointerenter" });
@@ -150,7 +166,7 @@ test("меню с «Show in Finder»: наш пункт первым, жирны
   assert.ok(!first.hasAttribute("data-highlighted"), "подсветка не снята");
 
   assert.equal(loaded.inner.openChromeInsert(menu, found(loaded)), false, "в то же меню встали второй раз");
-  assert.equal(ours(list).length, 2, "пункт и разделитель задвоились");
+  assert.equal(ours(list).length, 3, "пункты и разделитель задвоились");
   assert.equal(plain(loaded.api.status().openInChrome).inserted, 1);
 });
 
@@ -218,13 +234,13 @@ test("на чужой странице подписки нет", () => {
   assert.equal(listeners(page(), "contextmenu"), 1);
 });
 
-test("dispose(): подписка, наблюдатель, срок и вставленный пункт сняты; второй прогон не удваивает", () => {
+test("dispose(): подписка, наблюдатель, срок и вставленные пункты сняты; второй прогон не удваивает", () => {
   const loaded = page();
   const base = { observers: loaded.counters.observers, timers: loaded.counters.timers };
   rightClick(loaded, loaded.parts.label);
   const { menu, list } = menuOf(loaded);
   loaded.inner.openChromeInsert(menu, found(loaded));
-  assert.equal(ours(list).length, 2);
+  assert.equal(ours(list).length, 3);
 
   const again = loaded.reload();
   assert.equal(again.error, null, "второй прогон упал");
@@ -233,9 +249,71 @@ test("dispose(): подписка, наблюдатель, срок и вста�
   assert.equal(loaded.counters.observers, base.observers, "наблюдатель прошлого экземпляра жив");
   assert.equal(loaded.counters.timers, base.timers, "срок прошлого экземпляра жив");
   assert.equal(loaded.inner.openChromeInsert(menu, found(loaded)), true);
-  assert.equal(ours(list).length, 2, "после перезапуска пункт задвоился");
+  assert.equal(ours(list).length, 3, "после перезапуска пункты задвоились");
 
   loaded.api.dispose();
   assert.equal(listeners(loaded, "contextmenu"), 0, "подписка пережила dispose");
   assert.equal(ours(list).length, 0, "пункт пережил dispose");
+});
+
+// ---- «📋 Копировать в буфер» (WF69, #6236) --------------------------------
+
+const MARK = "<!--pimpmyclaude:copy-file:";
+const clipboard = loaded => loaded.document.__clipboard ?? null;
+
+test("клик по «Копировать в буфер»: путь текстом, метка и ссылка в HTML, меню закрыто Escape, счёт", () => {
+  const loaded = page();
+  const calls = bridgeOf(loaded);
+  const seen = keys(loaded);
+  const { menu, list } = menuOf(loaded);
+  loaded.inner.openChromeInsert(menu, found(loaded));
+
+  const stopped = [];
+  list.children[1].dispatchEvent({ type: "click", stopPropagation: () => stopped.push(1) });
+  assert.equal(stopped.length, 1, "клик всплыл в меню Claude");
+  assert.deepEqual(calls, [], "копирование позвало мост открытия файла");
+  const got = clipboard(loaded);
+  assert.ok(got, "в буфер ничего не легло");
+  assert.equal(got.text, PATH, "текстом в буфере не путь");
+  assert.ok(got.html.startsWith(`${MARK}${encodeURIComponent(PATH)}-->`), `метки нет в начале HTML: ${got.html}`);
+  assert.ok(got.html.includes(`<a href="file://${encodeURI(PATH)}">mockup-wf66-composer.html</a>`), `ссылки file:// нет: ${got.html}`);
+  assert.deepEqual(seen, ["Escape"], "меню не закрыто Escape");
+  const status = plain(loaded.api.status().openInChrome);
+  assert.equal(status.copies, 1, "счёт копий не вырос");
+  assert.deepEqual(status.lastCopy, { path: PATH, ok: true });
+  assert.equal(loaded.document.querySelector(`#${NOTE_ID}`), null, "плашка на удачной копии");
+  // Обработчик copy снят: обычная копия текста страницы нашего не подложит.
+  assert.equal(listeners(loaded, "copy"), 0, "слушатель copy остался висеть");
+});
+
+test("копия не доходит до обработчиков copy самого Claude: они переписали бы слои поверх наших", () => {
+  const loaded = page();
+  const seen = [];
+  loaded.document.addEventListener("copy", event => { seen.push(event.clipboardData.getData("text/plain")); });
+  assert.equal(loaded.inner.copyFileToClipboard(found(loaded)), true);
+  assert.deepEqual(seen, [], "чужой слушатель copy увидел событие");
+  assert.equal(clipboard(loaded).text, PATH);
+});
+
+test("метка: русский путь кодируется encodeURIComponent, имя экранируется, чужой путь — null", () => {
+  const loaded = page();
+  const path = "/Users/elvis/Не удалять/после установки.command";
+  const html = loaded.inner.copyFileHtml({ path, name: "a<b>&\"c\"" });
+  assert.equal(html, `${MARK}${encodeURIComponent(path)}--><a href="file://${encodeURI(path)}">a&lt;b&gt;&amp;&quot;c&quot;</a>`);
+  assert.ok(!html.slice(MARK.length, html.indexOf("-->")).includes(">"), "в метке остался > — комментарий оборвётся раньше");
+  assert.equal(loaded.inner.copyFileHtml({ path: "relative/x.html", name: "x" }), null, "относительный путь принят");
+  assert.equal(loaded.inner.copyFileHtml({ path, name: "" }).includes(">после установки.command</a>"), true, "без name имя не взято из пути");
+});
+
+test("буфер не дался (copy не отработал): плашка, счёт не растёт, меню всё равно закрыто", () => {
+  const loaded = page();
+  const seen = keys(loaded);
+  loaded.document.execCommand = () => false;
+  assert.equal(loaded.inner.copyFileToClipboard(found(loaded)), false);
+  const status = plain(loaded.api.status().openInChrome);
+  assert.equal(status.copies, 0);
+  assert.deepEqual(status.lastCopy, { path: PATH, ok: false });
+  assert.equal(loaded.document.querySelector(`#${NOTE_ID}`)?.textContent, "Не смог положить файл в буфер");
+  assert.deepEqual(seen, ["Escape"]);
+  assert.equal(listeners(loaded, "copy"), 0, "слушатель copy остался после осечки");
 });

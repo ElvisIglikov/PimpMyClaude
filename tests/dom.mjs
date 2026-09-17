@@ -187,8 +187,14 @@ export const createDom = ({
     counters.listeners -= 1;
     void options;
   };
+  // Порядок — как в браузере на самой цели: слушатели захвата (capture) первыми,
+  // остальные — в порядке подписки. На этом стоит «Копировать в буфер»: его
+  // обработчик copy на захвате обязан идти раньше чужих (WF69).
+  const isCapture = options => options === true || Boolean(options && options.capture);
   const fireListeners = (target, event) => {
-    for (const item of [...(listenersOf(target).get(event.type) ?? [])]) {
+    const list = [...(listenersOf(target).get(event.type) ?? [])];
+    const ordered = [...list.filter(item => isCapture(item.options)), ...list.filter(item => !isCapture(item.options))];
+    for (const item of ordered) {
       if (event.__stopped) break;
       try { item.handler.call(target, event); } catch (error) { event.__error = error; }
     }
@@ -491,6 +497,17 @@ export const createDom = ({
       if (name === "selectAll") {
         document.__selectedAll = document.activeElement;
         return Boolean(document.activeElement);
+      }
+      // Копия, как её делает Chromium: событие copy на document с DataTransfer;
+      // обработчик, вызвавший preventDefault, сам задаёт содержимое буфера
+      // («Копировать в буфер», WF69). Что легло — в document.__clipboard;
+      // никто не задал — буфер не тронут, команда отвечает false.
+      if (name === "copy") {
+        const data = new DataTransfer();
+        const event = makeEvent({ type: "copy", clipboardData: data, cancelable: true });
+        const passed = fireListeners(document, event);
+        if (!passed) document.__clipboard = { text: data.getData("text/plain"), html: data.getData("text/html") };
+        return !passed;
       }
       if (name !== "insertText") return false;
       const target = document.activeElement;

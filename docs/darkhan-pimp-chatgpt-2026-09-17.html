@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как PimpMyClaude влезает в Claude — и как повторить это с ChatGPT</title>
+<style>
+:root{--bg:#14161a;--panel:#1b1e24;--panel2:#23272f;--ink:#e9e7e2;--muted:#a9a69e;--accent:#84c9a8;--warn:#e2b75f;--bad:#e2786d;--line:#30343d;--code:#0e1013;--link:#9cc7ff}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:20px/1.55 -apple-system,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%}
+.wrap{max-width:1000px;margin:0 auto;padding:28px 22px 90px}
+h1{font-size:3.2rem;line-height:1.08;margin:.1em 0 .25em;letter-spacing:-.01em}
+h2{font-size:3.2rem;line-height:1.08;margin:1.5em 0 .35em;padding-top:.45em;border-top:1px solid var(--line);letter-spacing:-.01em}
+h3{font-size:1.65rem;line-height:1.2;margin:1.3em 0 .4em}
+h4{font-size:1.2rem;margin:1.1em 0 .3em;color:var(--accent)}
+p{margin:.65em 0;max-width:78ch}
+ul,ol{padding-left:1.25em;max-width:80ch}
+li{margin:.4em 0}
+li::marker{color:var(--muted)}
+a{color:var(--link)}
+strong{color:#fff}
+code{font:.82em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--panel2);padding:.12em .4em;border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere}
+pre{background:var(--code);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:14.5px;line-height:1.45;max-width:100%}
+pre code{background:none;padding:0;font-size:inherit;white-space:pre}
+details{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:0 20px;margin:1.1em 0}
+details > summary{cursor:pointer;padding:15px 0;font-weight:650;color:var(--accent);list-style:none;font-size:1.02em}
+details > summary::-webkit-details-marker{display:none}
+details > summary::before{content:"▶  ";font-size:.75em;color:var(--muted)}
+details[open] > summary::before{content:"▼  "}
+details[open] > summary{border-bottom:1px solid var(--line);margin-bottom:8px}
+details > :last-child{padding-bottom:16px}
+details > *{min-width:0}
+.pitfall,.note,p,li{overflow-wrap:anywhere}
+details details{background:var(--panel2)}
+.note{background:var(--panel2);border-left:5px solid var(--warn);padding:12px 18px;border-radius:10px;margin:1em 0;max-width:86ch}
+.note.bad{border-left-color:var(--bad)}
+.note.good{border-left-color:var(--accent)}
+.note p{margin:.3em 0}
+.toc{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 22px;margin:1.3em 0}
+.toc a{display:block;color:var(--ink);text-decoration:none;padding:8px 0;border-bottom:1px dashed var(--line);font-size:1.05em}
+.toc a:last-child{border-bottom:0}
+.toc a:hover{color:var(--accent)}
+.meta{color:var(--muted);font-size:.85em;margin-bottom:1.4em}
+.diagram{display:grid;gap:12px;grid-template-columns:1fr;margin:1.2em 0}
+.box{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:16px 18px;font-size:.92em}
+.box b{display:block;font-size:1.08em;margin-bottom:6px;color:#fff}
+.box .small{color:var(--muted);font-size:.9em}
+.arrow{text-align:center;color:var(--muted);font-size:.9em;padding:0 6px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;font-size:.92em;margin:.8em 0}
+.kv > div{min-width:0;overflow-wrap:anywhere}
+.kv div:nth-child(odd){color:var(--muted)}
+.tag{display:inline-block;font-size:.72em;padding:.1em .55em;border-radius:999px;border:1px solid var(--line);color:var(--muted);vertical-align:middle;margin-left:.4em;white-space:nowrap}
+.tag.ok{color:var(--accent);border-color:var(--accent)}
+.tag.no{color:var(--bad);border-color:var(--bad)}
+.tag.hm{color:var(--warn);border-color:var(--warn)}
+.tbl{overflow-x:auto;margin:1em 0;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;min-width:920px;width:100%;font-size:.9em}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;background:var(--panel);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.pitfall{margin:1em 0;padding:14px 18px;background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:86ch}
+.pitfall b{display:block;color:#fff;margin-bottom:4px}
+.pitfall .why{color:var(--muted);font-size:.92em}
+.foot{margin-top:3em;color:var(--muted);font-size:.85em;border-top:1px solid var(--line);padding-top:1em}
+@media (min-width:900px){.diagram{grid-template-columns:1fr auto 1fr auto 1fr;align-items:stretch}.arrow{align-self:center}}
+@media (max-width:640px){body{font-size:18px}.wrap{padding:20px 14px 70px}h1,h2{font-size:2.45rem}h3{font-size:1.45rem}pre{font-size:13.5px;padding:12px}details{padding:0 14px}.kv{grid-template-columns:1fr}.kv div:nth-child(odd){margin-top:.5em}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Как PimpMyClaude влезает в Claude — и как повторить это с ChatGPT</h1>
+<div class="meta">памятка для Дархана и его нейронки · Opus 5 max · 17.09.2026</div>
+
+<p>Дархан, это про то, как мы «пимпуем» Claude Desktop: что именно меняем внутри приложения, почему после этого его
+приходится переподписывать, и что из этого переносится на ChatGPT. Простые абзацы — для тебя, их немного.
+Свёрнутые блоки «для нейронки» — подробности, факты и код: отдай файл нейронке целиком, она развернёт их сама.</p>
+
+<div class="note">
+<p><strong>Откуда факты.</strong> Про Claude — из живого кода PimpMyClaude (две недели работы, стоит у Элвиса и команды).
+Про ChatGPT — снято 17.09.2026 с ChatGPT.app версии 26.908.70816 на Маке Элвиса. У тебя версия может быть
+другой: первое, что делает нейронка, — сверяет (команды в разделе «Порядок работы»).</p>
+</div>
+
+<nav class="toc">
+<a href="#sut">Суть в трёх абзацах</a>
+<a href="#sloi">Три слоя: что где живёт</a>
+<a href="#patch">Слой 1 — патч приложения: архив, лоадер, хэш, подпись</a>
+<a href="#live">Слой 2 — живые файлы: стили, скрипт и команды без перепатча</a>
+<a href="#ax">Слой 3 — приложение снаружи: меню, кнопки, окна</a>
+<a href="#chatgpt">ChatGPT: что у него внутри и чем он отличается</a>
+<a href="#kamni">Подводные камни</a>
+<a href="#poryadok">Порядок работы для нейронки</a>
+<a href="#perenos">Что переносится, а что нет</a>
+<a href="#golos">Голосовой ввод</a>
+<a href="#checklist">Чеклист «оно работает»</a>
+</nav>
+
+<h2 id="sut">Суть в трёх абзацах</h2>
+
+<p><strong>Что такое эти приложения.</strong> И Claude Desktop, и ChatGPT для Мака — это Electron: браузер Chromium и
+Node.js в одной коробке, а сам «мозг» приложения — JavaScript, упакованный в архив <code>app.asar</code> внутри бандла.
+Окно чата — это по сути веб-страница. Значит, всё, что умеет браузер (вставить CSS, выполнить скрипт на странице), можно
+сделать и с ней — если добраться до главного процесса Electron.</p>
+
+<p><strong>Что мы делаем.</strong> Мы не переписываем приложение. В начало его главного скрипта дописывается маленький
+лоадер (80 строк). Он умеет три вещи: вставлять в каждую страницу наш CSS и наш JS из файлов на диске, читать команды
+из файла и писать в файл диагностику. Всё остальное — стили, ручка над полем ввода, темы, полоса прогресса — живёт в
+этих файлах и меняется без перезапуска и без нового патча. Цена: подпись Apple у приложения ломается, и мы
+переподписываем его локальной подписью. Отсюда почти все «камни» ниже.</p>
+
+<p><strong>Что снаружи.</strong> Рядом стоит второе, обычное приложение в меню-баре (Swift). Оно через Accessibility
+жмёт кнопки в диалогах, рисует меню на жёлтой кнопке окна, расставляет окна, ловит горячие клавиши, а лоадеру внутри
+шлёт команды файлом. Этот слой работает с любым приложением на Маке — даже если внутрь залезть нельзя.</p>
+
+<div class="note good">
+<p><strong>Коротко про ChatGPT:</strong> он тоже Electron (в 2026 году это объединённое приложение ChatGPT + Codex),
+так что приём «дописать лоадер в архив» переносится один в один. Отличия и два серьёзных риска — в разделе
+«ChatGPT: что у него внутри».</p>
+</div>
+
+<h2 id="sloi">Три слоя: что где живёт</h2>
+
+<div class="diagram">
+<div class="box"><b>Снаружи: PimpMyClaude.app</b>Swift, значок у часов. Разрешение Accessibility.<br>
+Меню на жёлтой кнопке, авто-Allow, горячие клавиши, расстановка окон, темы.<div class="small">Пишет <code>command.json</code>,
+читает <code>status.json</code> и <code>probe-result.json</code>.</div></div>
+<div class="arrow">⇄ файлы в<br><code>~/Library/Application Support/MyClaude/</code></div>
+<div class="box"><b>Внутри: лоадер в app.asar</b>Главный процесс Electron. Дописан в начало главного скрипта.<br>
+Раз в секунду смотрит на файлы, при изменении — заново вставляет CSS/JS во все страницы.<div class="small">Пишет <code>status.json</code>
+каждые 2 с.</div></div>
+<div class="arrow">→ insertCSS<br>executeJavaScript</div>
+<div class="box"><b>Страницы чата</b>Обычные веб-страницы Chromium.<br>
+Получают <code>claude.css</code> и <code>inject.js</code>: ручка над полем, темы, полоса прогресса, событие
+<code>myclaude-command</code>.<div class="small">Отвечают на <code>probe.js</code> — так снаружи видно их DOM.</div></div>
+</div>
+
+<p>Почему связь через файлы, а не через сокеты или IPC: приложение остаётся нетронутым, файлы переживают перезапуск,
+всё видно глазами (<code>cat status.json</code>), а любой скрипт — хоть нейронка из терминала — может дать окну
+команду, просто записав JSON. Лоадер читает файлы по времени изменения (polling), потому что событийный
+<code>fs.watch</code> на Маке теряет атомарные перезаписи.</p>
+
+<h2 id="patch">Слой 1 — патч приложения: архив, лоадер, хэш, подпись</h2>
+
+<p>Шесть шагов, каждый простой. Приложение закрывается, сохраняются оригиналы, в главный скрипт дописывается лоадер,
+пересчитывается хэш, бандл переподписывается, приложение открывается снова. На Claude всё вместе занимает меньше
+минуты; у команды это одна кнопка «Поставить» в меню-баре.</p>
+
+<ol>
+<li><strong>Закрыть приложение</strong> — и не из терминала внутри него самого.</li>
+<li><strong>Сохранить оригиналы</strong> <code>app.asar</code> и <code>Info.plist</code> в папку с номером версии.</li>
+<li><strong>Дописать лоадер</strong> в начало главного скрипта внутри <code>app.asar</code> и пересобрать архив (смещения файлов сдвигаются).</li>
+<li><strong>Пересчитать хэш</strong> заголовка архива в <code>Info.plist</code> (<code>ElectronAsarIntegrity</code>).</li>
+<li><strong>Переподписать</strong> бандл локальной подписью с нужным списком прав.</li>
+<li><strong>Открыть</strong> и проверить: через 2 секунды лоадер пишет <code>status.json</code>.</li>
+</ol>
+
+<p>После обновления приложения (Claude — через Squirrel, ChatGPT — через Sparkle) бандл перезаписывается целиком,
+патч слетает. Это норма: приложение снаружи замечает и просит нажать «Поставить» ещё раз.</p>
+
+<details><summary>🤖 Для нейронки: формат asar и алгоритм патча (код)</summary>
+<p>Архив <code>Contents/Resources/app.asar</code> — это не zip. Устройство простое, поэтому его можно править
+без сторонних библиотек (у нас — 60 строк на Node, и порт на Swift):</p>
+<ul>
+<li>Первые 16 байт — «pickle»: четыре uint32 little-endian: <code>4</code>, <code>headerSize</code>,
+<code>headerSize − 4</code>, <code>jsonLength</code>. Дальше <code>jsonLength</code> байт JSON-заголовка, добитого нулями до кратности 4.</li>
+<li>JSON-заголовок — дерево <code>{"files": {"имя": {"files": …} | {"offset": "123", "size": 456, "integrity": {…}, "unpacked": true?}}}</code>.
+<code>offset</code> — строка, считается от начала блока данных, а блок данных начинается на <code>8 + headerSize</code>.</li>
+<li>После заголовка — просто конкатенация содержимого файлов. Файлы с <code>unpacked: true</code> лежат рядом в
+<code>app.asar.unpacked/</code> (нативные модули <code>.node</code>) — их не трогаем.</li>
+<li><code>integrity</code> у файла: <code>{"algorithm":"SHA256","hash":&lt;sha256 всего файла&gt;,"blockSize":4194304,"blocks":[sha256 каждого блока по 4 МиБ]}</code>.
+При правке файла его нужно пересчитать.</li>
+<li>Главный скрипт — не угадывать: читать <code>package.json</code> из архива, поле <code>main</code>
+(у Claude — <code>.vite/build/index.pre.js</code>, у ChatGPT — <code>.vite/build/early-bootstrap.js</code>; меняется от сборки к сборке).</li>
+<li>Ловушка: asar дедуплицирует одинаковые файлы — две записи могут указывать на одно смещение. Перед правкой
+проверить, что никто не делит данные с главным скриптом.</li>
+</ul>
+<p><strong>Алгоритм патча:</strong> прочитать архив → найти <code>main</code> → если в его начале уже стоит наш маркер нужной
+версии, ничего не делать → снять старый лоадер (если есть маркер другой версии) → приклеить лоадер спереди → у записи
+обновить <code>size</code> и <code>integrity</code> → у всех файлов, чьё смещение больше нашего, сдвинуть <code>offset</code>
+на разницу длины → собрать заголовок заново (pickle + JSON + паддинг) → записать во временный файл и переименовать
+(атомарно) → перечитать и убедиться, что маркер на месте. Перед боевым прогоном — <code>selftest</code> на копии:
+после патча каждый файл читается по своему смещению и его SHA-256 совпадает с <code>integrity.hash</code>.</p>
+<h4>Код чтения и пересборки asar (patch-claude.mjs, дословно)</h4>
+<pre><code>// ---------------------------------------------------------------- asar
+function readAsar(archivePath) {
+  const archive = fs.readFileSync(archivePath);
+  const headerSize = archive.readUInt32LE(4);
+  const jsonSize = archive.readUInt32LE(12);
+  const headerJson = archive.subarray(16, 16 + jsonSize);
+  return { archive, header: JSON.parse(headerJson.toString(&quot;utf8&quot;)), headerJson, dataOffset: 8 + headerSize };
+}
+
+function buildAsarPrefix(header) {
+  const headerJson = Buffer.from(JSON.stringify(header));
+  const padding = (4 - ((8 + headerJson.length) % 4)) % 4;
+  const headerSize = 8 + headerJson.length + padding;
+  const prefix = Buffer.alloc(16 + headerJson.length + padding);
+  prefix.writeUInt32LE(4, 0);
+  prefix.writeUInt32LE(headerSize, 4);
+  prefix.writeUInt32LE(headerSize - 4, 8);
+  prefix.writeUInt32LE(headerJson.length, 12);
+  headerJson.copy(prefix, 16);
+  return { prefix, headerJson };
+}
+
+function lookupFile(header, posixPath) {
+  let entry = header;
+  for (const component of posixPath.split(&quot;/&quot;)) {
+    entry = entry.files?.[component];
+    if (!entry) throw new Error(`в app.asar нет файла ${posixPath}`);
+  }
+  if (entry.files || entry.link || entry.unpacked) throw new Error(`${posixPath} — не упакованный файл`);
+  return entry;
+}
+
+function walkPackedFiles(node, callback) {
+  for (const value of Object.values(node.files ?? {})) {
+    if (value.files) walkPackedFiles(value, callback);
+    else if (!value.link &amp;&amp; !value.unpacked) callback(value);
+  }
+}
+
+function readEntry(parsed, posixPath) {
+  const entry = lookupFile(parsed.header, posixPath);
+  const start = parsed.dataOffset + Number(entry.offset);
+  return { entry, content: parsed.archive.subarray(start, start + Number(entry.size)) };
+}
+
+// Главный сценарий берём из package.json внутри архива: в 1.40609.1 это
+// .vite/build/index.pre.js, раньше был index.js — путь не хардкодим.
+function mainEntryPath(parsed) {
+  const pkg = JSON.parse(readEntry(parsed, &quot;package.json&quot;).content.toString(&quot;utf8&quot;));
+  if (!pkg.main) throw new Error(&quot;в package.json нет поля main&quot;);
+  return pkg.main.replace(/^\.\//, &quot;&quot;);
+}
+
+function loaderVersionOf(source) {
+  const match = source.match(/\/\* \[MyClaude:v(\d+):start\] \*\//);
+  return match ? Number(match[1]) : 0;
+}
+
+function stripLoader(source) {
+  const match = source.match(/^\/\* \[MyClaude:v\d+:start\] \*\/[\s\S]*?\/\* \[MyClaude:v\d+:end\] \*\/\n?/);
+  return match ? source.slice(match[0].length) : source;
+}
+
+function fileIntegrity(buffer, blockSize = 4 * 1024 * 1024) {
+  const blocks = [];
+  for (let offset = 0; offset &lt; buffer.length; offset += blockSize) blocks.push(sha256(buffer.subarray(offset, offset + blockSize)));
+  return { algorithm: &quot;SHA256&quot;, hash: sha256(buffer), blockSize, blocks };
+}</code></pre>
+<h4>Сам патч (patch-claude.mjs, дословно)</h4>
+<pre><code>function patchAsarFile(archivePath) {
+  const parsed = readAsar(archivePath);
+  const mainPath = mainEntryPath(parsed);
+  const { entry, content } = readEntry(parsed, mainPath);
+  const source = content.toString(&quot;utf8&quot;);
+  if (loaderVersionOf(source) === LOADER_VERSION) return { changed: false, mainPath, headerSha256: sha256(parsed.headerJson) };
+  const clean = stripLoader(source);
+  if (!clean.includes(&quot;require(&quot;) || !clean.includes(&quot;electron&quot;)) throw new Error(`${mainPath} не похож на главный сценарий Electron — патчить вслепую не буду`);
+
+  const targetOffset = Number(entry.offset);
+  const targetSize = Number(entry.size);
+  // asar дедуплицирует одинаковые файлы: два входа могут делить одно смещение.
+  // Если бы кто-то делил его с главным сценарием, его размер и хэш протухли бы.
+  walkPackedFiles(parsed.header, (candidate) =&gt; {
+    if (candidate === entry) return;
+    const offset = Number(candidate.offset);
+    if (offset &gt;= targetOffset &amp;&amp; offset &lt; targetOffset + targetSize) throw new Error(`${mainPath} делит данные с другим файлом архива — патчить не буду`);
+  });
+  const replacement = Buffer.concat([Buffer.from(LOADER), Buffer.from(clean)]);
+  const delta = replacement.length - targetSize;
+  walkPackedFiles(parsed.header, (candidate) =&gt; {
+    const offset = Number(candidate.offset);
+    if (offset &gt; targetOffset) candidate.offset = String(offset + delta);
+  });
+  entry.size = replacement.length;
+  entry.integrity = fileIntegrity(replacement, entry.integrity?.blockSize);
+
+  const { prefix, headerJson } = buildAsarPrefix(parsed.header);
+  const data = parsed.archive.subarray(parsed.dataOffset);
+  const rebuilt = Buffer.concat([prefix, data.subarray(0, targetOffset), replacement, data.subarray(targetOffset + targetSize)]);
+  const temporary = `${archivePath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, rebuilt);
+  fs.renameSync(temporary, archivePath);
+
+  const verify = readAsar(archivePath);
+  const after = readEntry(verify, mainPath).content.toString(&quot;utf8&quot;);
+  if (loaderVersionOf(after) !== LOADER_VERSION) throw new Error(&quot;после пересборки лоадер в архиве не найден&quot;);
+  return { changed: true, mainPath, headerSha256: sha256(headerJson) };
+}</code></pre>
+<h4>Самопроверка на копии</h4>
+<pre><code>function commandSelfTest() {
+  const scratch = process.env.MYCLAUDE_SCRATCH || os.tmpdir();
+  const copy = path.join(scratch, `myclaude-selftest-${process.pid}.asar`);
+  fs.copyFileSync(path.join(APP, ASAR_RELATIVE), copy);
+  try {
+    const before = asarStatus(copy);
+    const result = patchAsarFile(copy);
+    const after = asarStatus(copy);
+    const parsed = readAsar(copy);
+    // Все упакованные файлы должны читаться по своим смещениям с прежними хэшами.
+    let checked = 0;
+    walkPackedFiles(parsed.header, (entry) =&gt; {
+      if (!entry.integrity?.hash) return;
+      const start = parsed.dataOffset + Number(entry.offset);
+      const content = parsed.archive.subarray(start, start + Number(entry.size));
+      if (sha256(content) !== entry.integrity.hash) throw new Error(&quot;хэш файла в архиве разошёлся после сдвига смещений&quot;);
+      checked += 1;
+    });
+    const source = readEntry(parsed, after.mainPath).content.toString(&quot;utf8&quot;);
+    new Function(&quot;require&quot;, source.slice(0, source.indexOf(MARK_END) + MARK_END.length)); // лоадер — валидный JS
+    say(`selftest OK: ${before.mainPath}, лоадер ${before.loaderVersion} → ${after.loaderVersion}, изменён: ${result.changed}, файлов сверено: ${checked}`);
+  } finally {
+    fs.rmSync(copy, { force: true });
+  }
+}</code></pre></details><details><summary>🤖 Для нейронки: хэш в Info.plist и переподпись (команды, права)</summary>
+<p><strong>Хэш в Info.plist.</strong> В <code>Contents/Info.plist</code> лежит ключ
+<code>ElectronAsarIntegrity → Resources/app.asar → hash</code>. Это SHA-256 <em>строки JSON-заголовка</em> архива
+(не всего файла!). После пересборки заголовок другой — хэш пересчитать и записать:</p>
+<pre><code>/usr/libexec/PlistBuddy -c &quot;Set :ElectronAsarIntegrity:Resources/app.asar:hash &lt;sha256 заголовка&gt;&quot; /Applications/Claude.app/Contents/Info.plist</code></pre>
+<p>Проверяет ли Electron этот хэш — решает «предохранитель» (fuse) <code>EnableEmbeddedAsarIntegrityValidation</code>,
+зашитый в бинарник Electron Framework. У Claude он включён: не пересчитаешь — Claude падает на старте
+(«ASAR Integrity Violation»). У ChatGPT выключен (см. раздел про ChatGPT) — но держать хэш верным всё равно стоит:
+включат при следующем обновлении, и патч, который «и так работал», перестанет.</p>
+
+<p><strong>Подпись.</strong> Мы изменили <code>app.asar</code> и <code>Info.plist</code>. Оба входят в печать
+подписи Apple (Info.plist — в хэш самого исполняемого файла, asar — в список ресурсов <code>CodeResources</code>).
+На Apple Silicon приложение с битой подписью либо не запускается, либо теряет доступ к микрофону, экрану,
+связке ключей. Поэтому переподписываем бандл локальной («ad-hoc», подпись <code>-</code>) подписью — сначала всё
+дерево (<code>--deep</code>: фреймворки, хелперы), потом ещё раз само приложение со своим списком прав:</p>
+<pre><code>function updateInfoIntegrity(appPath, headerSha256) {
+  run(&quot;/usr/libexec/PlistBuddy&quot;, [&quot;-c&quot;, `Set :ElectronAsarIntegrity:Resources/app.asar:hash ${headerSha256}`, path.join(appPath, INFO_RELATIVE)]);
+}
+
+function signAndVerify(appPath) {
+  say(&quot;Переподписываю Claude локальной подписью…&quot;);
+  run(&quot;/usr/bin/xattr&quot;, [&quot;-cr&quot;, appPath]);
+  run(&quot;/usr/bin/codesign&quot;, [&quot;--force&quot;, &quot;--deep&quot;, &quot;--sign&quot;, &quot;-&quot;, &quot;--timestamp=none&quot;, appPath]);
+  run(&quot;/usr/bin/codesign&quot;, [&quot;--force&quot;, &quot;--sign&quot;, &quot;-&quot;, &quot;--timestamp=none&quot;, &quot;--entitlements&quot;, ENTITLEMENTS, appPath]);
+  run(&quot;/usr/bin/codesign&quot;, [&quot;--verify&quot;, &quot;--deep&quot;, &quot;--strict&quot;, &quot;--verbose=2&quot;, appPath]);
+}</code></pre>
+<p>Почему два прохода: <code>--deep</code> переподписывает вложенные бинарники, но права (entitlements) при
+переподписи не сохраняются. У главного приложения они нужны, иначе после патча пропадают микрофон и экран — это
+было проверено на живом Claude, отсюда файл <code>entitlements.plist</code> в проекте. Локальная подпись выключает
+hardened runtime, поэтому хелперам Chromium права на JIT не нужны — Claude так работает у всей команды.</p>
+<h4>entitlements.plist, которым подписывается Claude (дословно)</h4>
+<pre><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot; &quot;http://www.apple.com/DTDs/PropertyList-1.0.dtd&quot;&gt;
+&lt;plist version=&quot;1.0&quot;&gt;
+&lt;dict&gt;
+  &lt;key&gt;com.apple.security.cs.allow-jit&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.device.audio-input&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.device.bluetooth&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.device.camera&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.device.print&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.device.usb&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.personal-information.location&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.personal-information.photos-library&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.virtualization&lt;/key&gt;&lt;true/&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;</code></pre>
+<div class="note bad">
+<p><strong>Для ChatGPT этот список не годится один в один.</strong> У его подписи есть «ограниченные» права
+(<code>com.apple.application-identifier</code>, <code>com.apple.developer.aps-environment</code>,
+<code>com.apple.developer.team-identifier</code>, <code>keychain-access-groups</code>,
+<code>com.apple.security.application-groups</code>) — они действуют только с настоящим сертификатом OpenAI и
+provisioning-профилем. В локальную подпись их класть нельзя: macOS либо убьёт приложение на старте, либо права
+просто не сработают. Какие оставить — в разделе про ChatGPT.</p>
+</div>
+<p>После переподписи подпись перестаёт быть подписью Apple/Anthropic/OpenAI. Последствия, которые видит человек:
+macOS один раз заново спросит про микрофон, запись экрана, уведомления; связка ключей может спросить пароль от
+Мака («приложение хочет использовать ключ Safe Storage»); в худшем случае — выйти и войти заново. У команды Элвиса
+это описано одной строкой в инструкции: «ответь как раньше».</p>
+</details><details><summary>🤖 Для нейронки: лоадер дословно и что в нём менять для ChatGPT</summary>
+<p>Лоадер — единственное, что зашито внутрь приложения. Это одна строка-шаблон в патчере (Node) и её дословная копия
+в Swift-приложении (<code>Loader.swift</code>). Номер версии стоит в маркерах <code>/* [MyClaude:v7:start] */ … end */</code>:
+по нему патчер видит, что стоит, а что пора заменить. За две недели лоадер менялся семь раз, и каждый раз всей
+команде приходилось ставить патч заново — поэтому правило: <strong>в лоадер кладётся только «прочитать файлы и
+вставить», вся логика — в живых файлах</strong>.</p>
+<p>Что он делает по порядку: (1) <code>require("electron")</code> — мы в главном процессе, всё доступно;
+(2) подменяет <code>BrowserWindow.prototype.setMinimumSize</code>, чтобы минимальную ширину окна прижимать к нашей
+(приложение само зовёт этот метод при смене экрана и при стыковке панелей — просто выставить один раз не помогает);
+(3) на <code>web-contents-created → dom-ready</code> вставляет CSS через <code>insertCSS(text, {cssOrigin:"user"})</code>
+и выполняет <code>inject.js</code> через <code>executeJavaScript(code, true)</code>; (4) <code>fs.watchFile</code> с
+интервалом 0,5–1 с на настройки, CSS, скрипт и файл команд; (5) раз в 2 с пишет <code>status.json</code> и, если
+изменился <code>probe.js</code>, выполняет его во всех страницах и кладёт ответ в <code>probe-result.json</code>.
+Весь код — в одном <code>try/catch</code>: что бы ни случилось, приложение стартует.</p>
+<h4>Лоадер v7 дословно (шаблон из patch-claude.mjs; <code>${MARK_START}</code> и <code>${LOADER_VERSION}</code> подставляет патчер)</h4>
+<pre><code>// String.raw — чтобы обратные слэши в регэкспах лоадера доехали как есть.
+const LOADER = String.raw`${MARK_START}
+&quot;use strict&quot;;(()=&gt;{try{
+const electron=require(&quot;electron&quot;),fs=require(&quot;node:fs&quot;),os=require(&quot;node:os&quot;),path=require(&quot;node:path&quot;);
+const {app,BrowserWindow,webContents}=electron;
+const configPath=path.join(os.homedir(),&quot;Library&quot;,&quot;Application Support&quot;,&quot;MyClaude&quot;,&quot;claude.json&quot;);
+const log=(...a)=&gt;{try{console.log(&quot;[MyClaude]&quot;,...a)}catch{}};
+const readConfig=()=&gt;{try{return JSON.parse(fs.readFileSync(configPath,&quot;utf8&quot;))||{}}catch{return {}}};
+// --- минимальная ширина окон. Claude создаёт окна с minWidth 600 и сам зовёт
+// setMinimumSize при смене экрана, поэтому метод подменяется: всё, что выше
+// желаемого, прижимается к желаемому; штатное значение помнится для отката.
+const limits={desired:null,requested:new WeakMap(),native:null};
+function desiredMinWidth(){const v=Number(readConfig().minWindowWidth);if(!Number.isFinite(v)||v&lt;=0)return null;return Math.max(200,Math.round(v))}
+function hookMinimumSize(){if(limits.native)return;const proto=BrowserWindow.prototype;const native=proto.setMinimumSize;if(typeof native!==&quot;function&quot;)return;limits.native=native;
+// Claude сам зовёт setMinimumSize и с 600, и с 0 (при стыковке панелей):
+// ниже желаемого окно тоже не пускаем, иначе содержимое вылезает за край.
+proto.setMinimumSize=function(w,h){try{if(typeof w===&quot;number&quot;)limits.requested.set(this,[w,h]);if(typeof limits.desired===&quot;number&quot;&amp;&amp;typeof w===&quot;number&quot;&amp;&amp;w!==limits.desired)return native.call(this,limits.desired,h)}catch{}return native.call(this,w,h)}}
+function applyLimits(){try{const desired=desiredMinWidth();limits.desired=desired;hookMinimumSize();
+for(const win of BrowserWindow.getAllWindows()){try{if(win.isDestroyed())continue;const cur=win.getMinimumSize();if(!limits.requested.has(win))limits.requested.set(win,cur);
+const orig=limits.requested.get(win)||cur;const target=desired===null?orig[0]:desired;if(target===cur[0])continue;
+(limits.native||BrowserWindow.prototype.setMinimumSize).call(win,target,cur[1])}catch(e){log(e)}}}catch(e){log(e)}}
+// --- поля по бокам. Штатно Claude Code держит 32px слева и 40px справа на
+// контейнерах разговора и поля ввода. В 1.40609.1 это классы с
+// ps-[var(--chat-gutter-start…)] / pe-[…]; старые сборки — .epitaxy-*-width.
+// Плюс живой файл claude.css рядом с настройками: любые правила, без перепатча.
+const cssState=new WeakMap();
+const liveCssPath=path.join(path.dirname(configPath),&quot;claude.css&quot;);
+function cssText(){let out=&quot;&quot;;const v=Number(readConfig().sidePadding);
+if(Number.isFinite(v)&amp;&amp;v&gt;=0){const pad=Math.round(v);
+out+=&#x27;[class*=&quot;ps-[var(--chat-gutter&quot;],[class*=&quot;pe-[var(--chat-gutter&quot;],.epitaxy-transcript-width,.epitaxy-composer-width{padding-inline-start:&#x27;+pad+&#x27;px !important;padding-inline-end:&#x27;+pad+&#x27;px !important;padding-left:&#x27;+pad+&#x27;px !important;padding-right:&#x27;+pad+&#x27;px !important}\n&#x27;;
+// Лента разговора резервирует по 10px под полосу прокрутки с обеих сторон — на
+// macOS полоса накладная, резерв только съедает ширину.
+out+=&#x27;[class*=&quot;scrollbar-gutter:stable_both-edges&quot;]{scrollbar-gutter:auto !important}\n&#x27;}
+try{out+=fs.readFileSync(liveCssPath,&quot;utf8&quot;)}catch{}
+return out}
+// Окна «Open in new window» — это about:blank, куда страница-родитель рисует
+// чат сама; внешняя рамка окна — file://…/main_window. CSS кладём во все
+// страницы, кроме devtools: правила адресные и чужим страницам не мешают.
+const isClaudePage=c=&gt;{const u=c.getURL()||&quot;&quot;;return !u.startsWith(&quot;devtools:&quot;)&amp;&amp;!u.startsWith(&quot;chrome-&quot;)};
+async function applyCss(c,force){try{if(c.isDestroyed()||!isClaudePage(c))return;const text=cssText();const prev=cssState.get(c);
+if(!force&amp;&amp;prev&amp;&amp;prev.text===text)return;
+if(prev&amp;&amp;prev.key){try{await c.removeInsertedCSS(prev.key)}catch{}}
+const key=text?await c.insertCSS(text,{cssOrigin:&quot;user&quot;}):null;cssState.set(c,{text,key})}catch(e){log(e);try{cssState.set(c,{text:null,key:null,error:String(e)})}catch{}}}
+app.on(&quot;web-contents-created&quot;,(_,c)=&gt;{try{c.on(&quot;dom-ready&quot;,()=&gt;applyCss(c,true))}catch(e){log(e)}});
+app.on(&quot;browser-window-created&quot;,()=&gt;{applyLimits();setTimeout(applyLimits,400);setTimeout(applyLimits,1500)});
+app.whenReady().then(()=&gt;applyLimits()).catch(log);
+const reapplyCss=()=&gt;{for(const c of webContents.getAllWebContents())applyCss(c,false)};
+fs.watchFile(configPath,{interval:1000},()=&gt;{applyLimits();reapplyCss()});
+fs.watchFile(liveCssPath,{interval:1000},reapplyCss);
+// --- диагностика. status.json — что лоадер видит и куда вставил CSS.
+// probe.js — любой JS; при каждом изменении файла выполняется во всех страницах
+// claude.ai, ответ ложится в probe-result.json. Так снаружи видно DOM Claude.
+const supportDir=path.dirname(configPath);
+const statusPath=path.join(supportDir,&quot;status.json&quot;),probePath=path.join(supportDir,&quot;probe.js&quot;),probeResultPath=path.join(supportDir,&quot;probe-result.json&quot;);
+let probeStamp=&quot;&quot;;
+const stampOf=f=&gt;{try{const s=fs.statSync(f);return s.mtimeMs+&quot;:&quot;+s.size}catch{return &quot;&quot;}};
+function writeStatus(){try{const list=[];for(const c of webContents.getAllWebContents()){if(c.isDestroyed())continue;const st=cssState.get(c);list.push({id:c.id,url:c.getURL(),css:st?(st.error?&quot;error: &quot;+st.error:(st.key?&quot;inserted&quot;:&quot;none&quot;)):&quot;untouched&quot;,inject:injected.get(c)||&quot;none&quot;})}
+const wins=BrowserWindow.getAllWindows().filter(w=&gt;!w.isDestroyed()).map(w=&gt;({id:w.id,min:w.getMinimumSize(),size:w.getSize()}));
+fs.writeFileSync(statusPath,JSON.stringify({at:new Date().toISOString(),loader:${LOADER_VERSION},config:readConfig(),desiredMinWidth:limits.desired,windows:wins,webContents:list},null,2))}catch(e){log(e)}}
+async function runProbe(){try{const s=stampOf(probePath);if(!s||s===probeStamp)return;probeStamp=s;const code=fs.readFileSync(probePath,&quot;utf8&quot;);const results=[];
+for(const c of webContents.getAllWebContents()){if(c.isDestroyed()||!isClaudePage(c))continue;try{results.push({id:c.id,url:c.getURL(),result:await c.executeJavaScript(code,true)})}catch(e){results.push({id:c.id,url:c.getURL(),error:String(e)})}}
+fs.writeFileSync(probeResultPath,JSON.stringify({at:new Date().toISOString(),results},null,2))}catch(e){log(e)}}
+setInterval(()=&gt;{runProbe();writeStatus()},2000);
+// --- живой инжект и команды. inject.js рядом с настройками выполняется в каждой
+// странице при dom-ready и заново при каждом изменении файла (скрипт обязан быть
+// идемпотентным: сам снимает прошлый экземпляр). command.json {id, action, …}
+// доставляется во все страницы событием window &quot;myclaude-command&quot;.
+const injectPath=path.join(supportDir,&quot;inject.js&quot;),commandPath=path.join(supportDir,&quot;command.json&quot;);
+const injected=new WeakMap();
+async function applyInject(c,force){try{if(c.isDestroyed()||!isClaudePage(c))return;const s=stampOf(injectPath);if(!s)return;if(!force&amp;&amp;injected.get(c)===s)return;injected.set(c,s);
+const code=fs.readFileSync(injectPath,&quot;utf8&quot;);await c.executeJavaScript(code,true)}catch(e){log(&quot;inject&quot;,e)}}
+const reinjectAll=()=&gt;{for(const c of webContents.getAllWebContents())applyInject(c,false)};
+let lastCommandId=&quot;&quot;;
+function runCommand(){try{const cmd=JSON.parse(fs.readFileSync(commandPath,&quot;utf8&quot;));if(!cmd||!cmd.id||cmd.id===lastCommandId)return;lastCommandId=String(cmd.id);
+const js=&quot;window.dispatchEvent(new CustomEvent(&#x27;myclaude-command&#x27;,{detail:&quot;+JSON.stringify(cmd)+&quot;}));&quot;;
+for(const c of webContents.getAllWebContents()){if(c.isDestroyed()||!isClaudePage(c))continue;c.executeJavaScript(js,true).catch(e=&gt;log(&quot;command&quot;,e))}}catch{}}
+app.on(&quot;web-contents-created&quot;,(_,c)=&gt;{try{c.on(&quot;dom-ready&quot;,()=&gt;applyInject(c,true))}catch(e){log(e)}});
+fs.watchFile(injectPath,{interval:1000},reinjectAll);
+fs.watchFile(commandPath,{interval:500},runCommand);
+log(&quot;loader v${LOADER_VERSION} ready&quot;);
+}catch(e){console.error(&quot;[MyClaude]&quot;,e)}})();
+${MARK_END}
+`;</code></pre>
+<h4>Что в нём поменять для ChatGPT</h4>
+<ul>
+<li>Папку: <code>"MyClaude"</code> → своя, например <code>"PimpMyGPT"</code>; имена файлов любые, но их же должно знать приложение снаружи.</li>
+<li>Маркер <code>[MyClaude:vN:start]</code> → свой; версию считать с 1.</li>
+<li>В <code>cssText()</code> убрать две строки со селекторами Claude (<code>ps-[var(--chat-gutter…</code>,
+<code>.epitaxy-*</code>, <code>scrollbar-gutter</code>) — у ChatGPT другой DOM. Оставить только чтение живого CSS-файла:
+поля и всё прочее — туда, после разведки через <code>probe.js</code>.</li>
+<li><code>isClaudePage</code> оставить как есть (он лишь отсекает <code>devtools:</code> и <code>chrome-</code>) — просто переименовать.</li>
+<li>Минимальная ширина: у ChatGPT главное окно держит 480×600 (<code>getPrimaryMinimumSize</code>) и переустанавливает
+её через <code>setMinimumSize</code> — хук работает. Но тот же класс при сохранении и восстановлении рамки окна
+клампит ширину к 480 (<code>persistPrimaryWindowBounds</code>, <code>clampPrimaryWindowBounds</code>): после перезапуска
+окно откроется не уже 480, сузить снова можно. Лечится либо расстановкой окон приложением снаружи, либо текстовой
+правкой <code>{width:480,height:600}</code> в главном бандле тем же патчером (хрупко: меняется с каждой версией).</li>
+<li>Строку с <code>log("loader vN ready")</code> оставить: по ней в логах видно, что лоадер вообще запустился.</li>
+</ul>
+</details><details><summary>🤖 Для нейронки: порядок «Поставить», откат, статус</summary>
+<p>Порядок «Поставить» в приложении (порт на Swift, <code>Patcher.swift</code>), с решениями, которые стоили ошибок:</p>
+<ol>
+<li>Отказаться, если нас запустили изнутри самого приложения (Claude Code в окне Claude): закрытие Claude убило бы
+и патчер. Проверка — цепочка родительских процессов до <code>Claude.app/Contents/</code>. <strong>Для ChatGPT
+это ещё важнее:</strong> у него встроенный агент с терминалом — нейронка Дархана может сидеть внутри него.</li>
+<li>Прочитать версию из <code>Info.plist</code>, найти <code>entitlements.plist</code>, создать папку живых файлов и
+<code>claude.json</code> с умолчаниями (готовый файл никогда не перезаписывать).</li>
+<li>Разобрать asar и посмотреть, что стоит. Лоадер уже нужной версии, хэш сходится, подпись валидна — обновить только
+живые файлы и выйти. Лоадер стоит, но хэш/подпись битые (прошлый прогон упал между записью архива и подписью) —
+дочинить: закрыть, записать хэш, подписать, открыть.</li>
+<li>Пробная запись в <code>Contents/Resources/</code> <em>до</em> закрытия приложения: на macOS 13+ первая попытка
+поднимает системный запрос «Управление приложениями» (App Management). Без этого разрешения запись в
+<code>/Applications/*.app</code> даёт EPERM. Не администратор Мака — переустановить приложение в <code>~/Applications</code>.</li>
+<li>Закрыть приложение: свои процессы искать по пути бандла, не по имени (копий с именем «Claude» бывает несколько);
+сначала мягко (<code>terminate</code>, 20 с), потом жёстко.</li>
+<li>Бэкап <code>app.asar</code> и <code>Info.plist</code> в <code>backups/&lt;версия&gt;/</code> — только чистого архива;
+если в архиве уже чей-то лоадер, а чистого бэкапа этой версии нет, в бэкап его не класть (иначе «Снять» соврёт).</li>
+<li>Патч архива → хэш в Info.plist → подпись → проверка подписи. Осечка на любом из последних трёх шагов — вернуть
+оригиналы из бэкапа, подписать что есть и сказать человеку, что нажать. Между записью архива и удачной подписью
+приложение не запускается — это самое опасное окно.</li>
+<li>Скопировать живые файлы из бандла (CSS сливается по маркерам, чужие строки сохраняются), записать
+<code>installed.json</code> (версия, хэш, номер лоадера) — по нему меню-бар быстро показывает статус без разбора архива.</li>
+<li>Открыть приложение (<code>open -a</code>). Предупредить: macOS один раз переспросит разрешения.</li>
+</ol>
+<p>Статус для значка: <code>installed.json</code> верим только если версия, хэш и номер лоадера совпадают; иначе разбираем
+архив. Лоадера нет — «приложение обновилось», номер старый — «старый лоадер», хэш не сходится — «патч слетел».
+Красный значок → человек жмёт «Поставить» снова.</p>
+<p>«Снять» — вернуть оригиналы из бэкапа и подписать локально. Подпись Apple при этом не возвращается: настоящий
+откат только переустановкой с сайта.</p>
+</details>
+<h2 id="live">Слой 2 — живые файлы: стили, скрипт и команды без перепатча</h2>
+
+<p>После патча внутрь приложения больше никто не лезет. Всё, что видит человек — узкие поля, ручка над полем ввода,
+цвета, шрифты, полоса прогресса, — это два файла на диске: <code>claude.css</code> и <code>inject.js</code>.
+Поменял файл — через секунду применилось во всех окнах, приложение не перезапускается. Третий файл,
+<code>command.json</code>, — команды от приложения снаружи («покрась это окно», «вставь текст в поле», «вынеси чат
+в окно»), четвёртый, <code>probe.js</code>, — «выполни вот это во всех окнах и покажи ответ». Через него нейронка
+смотрит на разметку чужого приложения, не открывая DevTools.</p>
+
+<p>Главное правило этого слоя: скрипт в странице обязан уметь снять сам себя. Он выполняется заново при каждом
+сохранении файла, и без этого в окне копились бы дубли.</p>
+
+<details><summary>🤖 Для нейронки: файлы канала, примеры JSON, правила для скрипта в странице</summary>
+<p>Папка <code>~/Library/Application Support/MyClaude/</code> (лоадер зашит на это имя — переименовать нельзя без
+перепатча). Что в ней и кто читает:</p>
+<div class="kv">
+<div><code>claude.json</code></div><div>настройки лоадера: <code>{"minWindowWidth": 280, "sidePadding": 5}</code>. Читается при каждом изменении.</div>
+<div><code>claude.css</code></div><div>стили во все страницы, вставка как <strong>user-origin</strong> (<code>cssOrigin:"user"</code>): правило с
+<code>!important</code> отсюда бьёт даже inline-стиль страницы. Между маркерами <code>/* PimpMyClaude:auto */ … /* /PimpMyClaude:auto */</code> —
+блок приложения (поля, радиус рамки); всё вне маркеров человек пишет сам, «Поставить» это не трогает.</div>
+<div><code>inject.js</code></div><div>скрипт в каждую страницу при <code>dom-ready</code> и заново при каждом изменении файла. Сейчас ~8100 строк:
+ручка над полем ввода, темы, шрифты, полоса прогресса, «Обкэшить», новое окно, «кто этот чат»…</div>
+<div><code>command.json</code></div><div>команда от приложения снаружи: <code>{"id","action","at","scope","title",…}</code>. Лоадер читает раз в 500 мс,
+берёт ПОСЛЕДНЮЮ запись и рассылает во все страницы событием <code>window "myclaude-command"</code>; <code>id</code> обязан быть новым,
+иначе команда считается уже выполненной. Кто из страниц адресат — решает сама страница по <code>title</code>/<code>match</code>/<code>chat</code>.</div>
+<div><code>probe.js</code></div><div>любой JS. Изменился файл — выполняется во всех страницах, ответ в <code>probe-result.json</code>
+<code>{"at","results":[{"id","url","result"|"error"}]}</code>. Главный инструмент разведки DOM снаружи (и главный инструмент нейронки).</div>
+<div><code>status.json</code></div><div>раз в 2 с: номер лоадера, настройки, окна с минимумами и размерами, список страниц с URL и
+состоянием вставки (<code>css: inserted/none/error</code>, <code>inject: &lt;штамп файла&gt;</code>).</div>
+<div><code>themes.json</code>, <code>my-themes.json</code></div><div>палитры тем (приложение шлёт их страницам командой <code>theme</code>).</div>
+<div><code>installed.json</code>, <code>backups/&lt;версия&gt;/</code></div><div>что поставлено и оригиналы.</div>
+</div>
+
+<h4>Пример: <code>status.json</code> с живого Claude (обрезан)</h4>
+<pre><code>{
+  &quot;at&quot;: &quot;2026-09-17T06:39:58.198Z&quot;,
+  &quot;loader&quot;: 7,
+  &quot;config&quot;: { &quot;minWindowWidth&quot;: 280, &quot;sidePadding&quot;: 10 },
+  &quot;desiredMinWidth&quot;: 280,
+  &quot;windows&quot;: [ { &quot;id&quot;: 3, &quot;min&quot;: [280, 0], &quot;size&quot;: [800, 600] }, { &quot;id&quot;: 1, &quot;min&quot;: [280, 400], &quot;size&quot;: [1394, 922] } ],
+  &quot;webContents&quot;: [
+    { &quot;id&quot;: 4, &quot;url&quot;: &quot;about:blank&quot;, &quot;css&quot;: &quot;inserted&quot;, &quot;inject&quot;: &quot;1789621928559.7358:559129&quot; },
+    { &quot;id&quot;: 1, &quot;url&quot;: &quot;https://claude.ai/epitaxy/local_7c…&quot;, &quot;css&quot;: &quot;inserted&quot;, &quot;inject&quot;: &quot;1789621928559.7358:559129&quot; }
+  ]
+}</code></pre>
+<h4>Пример: <code>probe.js</code> для разведки чужого DOM</h4>
+<pre><code>// Кладёшь файл — через ≤2 с ответ в probe-result.json, по записи на страницу.
+(() =&gt; {
+  const ed = document.querySelector(&#x27;[contenteditable=&quot;true&quot;], textarea, .ProseMirror&#x27;);
+  return {
+    url: location.href, title: document.title, nodes: document.querySelectorAll(&quot;*&quot;).length,
+    editor: ed ? { tag: ed.tagName, cls: ed.className.slice(0, 200), rect: ed.getBoundingClientRect().toJSON() } : null,
+    // кусок разметки вокруг поля ввода — чтобы подобрать селекторы
+    around: ed ? ed.closest(&quot;form, main, body&quot;).outerHTML.slice(0, 20000) : null
+  };
+})()</code></pre>
+<h4>Пример: команда <code>theme</code> (контракт побайтно, порядок полей важен обеим сторонам)</h4>
+<pre><code>{&quot;id&quot;:&quot;1789621000000-4821&quot;,&quot;action&quot;:&quot;theme&quot;,&quot;at&quot;:&quot;2026-09-17T06:40:00Z&quot;,&quot;scope&quot;:&quot;window&quot;,&quot;title&quot;:&quot;PimpMyClaude&quot;,
+ &quot;theme&quot;:{&quot;id&quot;:&quot;tokyo&quot;,&quot;name&quot;:&quot;Токийская ночь&quot;,&quot;type&quot;:&quot;dark&quot;,&quot;palette&quot;:{&quot;accent&quot;:&quot;#7aa2f7&quot;,&quot;background&quot;:&quot;#1a1b26&quot;,&quot;foreground&quot;:&quot;#c0caf5&quot;,&quot;sidebar&quot;:&quot;#16161e&quot;,&quot;panel&quot;:&quot;#1f2335&quot;,&quot;muted&quot;:&quot;#565f89&quot;}},
+ &quot;font&quot;:null,&quot;size&quot;:{&quot;answer&quot;:15},&quot;frame&quot;:true}
+// поле есть → слой меняется; поля нет → не трогать; null → сброс. Страница красит через adoptedStyleSheets и запоминает в localStorage по id чата.</code></pre>
+<h4>Правила для скрипта в странице (все выстраданы)</h4>
+<ul>
+<li><strong>Идемпотентность.</strong> Скрипт выполняется заново при каждом изменении файла — значит первой строкой
+<code>window.__myclaude?.dispose?.()</code>: снять слушатели, таймеры, узлы, стили прошлого экземпляра. Иначе после десяти
+правок в окне десять ручек.</li>
+<li><strong>Никаких модулей и внешних скриптов.</strong> Это обычный скрипт в контексте страницы. <code>executeJavaScript</code> и
+<code>insertCSS</code> из главного процесса обходят CSP страницы, а вот <code>&lt;script src=…&gt;</code>, вставленный в DOM, CSP заблокирует.</li>
+<li><strong>Стили — через <code>adoptedStyleSheets</code>, не через <code>&lt;style&gt;</code>.</strong> Claude зеркалит <code>&lt;style&gt;</code> главного окна
+во все вынесенные окна — тема одного окна заезжала в остальные.</li>
+<li><strong>Чужие страницы — молчать.</strong> Скрипт прилетает и в <code>file://…/main_window</code>, и в окно логина: проверка «это
+страница чата?» первой, иначе ничего не делать.</li>
+<li><strong>Окно — это не заголовок.</strong> Заголовок окна меняется (переименовали чат) и повторяется (два чата с одним именем).
+Окно опознаётся id чата, который страница называет сама в ответ на <code>probe.js</code>; заголовок — запасной признак.</li>
+<li><strong>Селекторы ломаются каждым обновлением.</strong> Держать их в живых файлах, а не в лоадере; правило «сначала
+<code>probe.js</code>, потом CSS» — на каждое обновление приложения.</li>
+<li><strong>Канал <code>probe.js</code> общий.</strong> Им пользуются и приложение (спрашивает страницы, какой чат в окне), и человек/нейронка.
+Первая строка скрипта — подпись владельца; чужой свежий файл — не трогать; закончил — удалить свой.</li>
+</ul>
+</details>
+<h2 id="ax">Слой 3 — приложение снаружи: меню, кнопки, окна</h2>
+
+<p>PimpMyClaude.app — обычное приложение со значком у часов. Оно не лезет внутрь Claude: смотрит на его окна через
+Accessibility (то же, чем пользуются программы для людей с ограничениями), жмёт за человека «Allow» в диалогах,
+показывает своё меню, когда курсор задерживается на жёлтой кнопке окна, расставляет окна по экрану, ловит горячие
+клавиши и перехватывает ⌘Q. Внутрь оно передаёт команды через файл — и получает ответы тоже файлом.</p>
+
+<p>Это самый переносимый слой: ему всё равно, Electron перед ним или нативное приложение. Для ChatGPT он
+повторяется без изменений — меняются только имя приложения и то, какие кнопки искать.</p>
+
+<details><summary>🤖 Для нейронки: что использовано в AX-слое и какие грабли там лежат</summary>
+<p>Приложение снаружи — Swift/AppKit, меню-бар, macOS 13+. Разрешений два обязательных: <strong>Accessibility</strong>
+(читать окна и жать кнопки чужого приложения) и <strong>App Management</strong> (писать в чужой бандл при «Поставить»);
+третье, уведомления, — по желанию. Что и как:</p>
+<ul>
+<li><strong>Окна и кнопки</strong> — <code>AXUIElement</code>: список окон приложения по pid, у окна <code>AXPosition/AXSize/AXTitle</code>,
+кнопки в диалогах по <code>AXRole = AXButton</code> и заголовку, нажатие <code>AXPress</code>. Авто-Allow — обход диалога раз в
+тик (2 с), нажатие «Allow…» кроме списка исключений (удаление, деньги, внешние сервисы; узор ищется в тексте команды целым словом).</li>
+<li><strong>Меню на жёлтой кнопке</strong> — по AX находится рамка кнопки «свернуть», наведение с задержкой открывает
+<code>NSMenu</code>. Перед <code>popUp</code> обязателен <code>NSApp.activate(ignoringOtherApps: true)</code> — на macOS 14+ кооперативная
+активация не работает, подменю закрывались.</li>
+<li><strong>Горячие клавиши</strong> — только Carbon <code>RegisterEventHotKey</code>: глобальный <code>NSEvent</code>-монитор не глотает ⌘Q и
+просит ещё одно разрешение (Input Monitoring). ⌘Q перехватывается, чтобы не убить сессию агента.</li>
+<li><strong>Процессы</strong> — свои искать по <code>bundleURL</code>, не по имени; Launch Services помнит все копии с тем же bundle id
+(бэкапы, огрызки обновлений).</li>
+<li><strong>Подпись самого приложения</strong> — Developer ID с первой сборки: у Accessibility разрешение привязано к
+«designated requirement», и при каждой ad-hoc пересборке macOS спрашивала бы заново.</li>
+<li><strong>Команды внутрь</strong> — очередь: одна запись в <code>command.json</code> за раз, следующая после паузы ≥ 0,5 с (лоадер читает
+раз в 500 мс и берёт последнюю). Адрес окна — id чата из ответа <code>probe.js</code>; заголовок — запасной вариант.</li>
+<li><strong>Раскладка окон</strong> — рамки считаются от экрана, где стоят окна; ячейка не уже <code>minWindowWidth</code>; окна
+двигаются через AX (<code>AXPosition/AXSize</code>), не через приложение внутри.</li>
+</ul>
+<p>Этот слой не знает, Electron перед ним или нет. Если бы ChatGPT оказался нативным, меню на кнопке, авто-Allow и
+расстановка окон работали бы всё равно; не работали бы только стили и скрипт в странице.</p>
+</details>
+<h2 id="chatgpt">ChatGPT: что у него внутри и чем он отличается</h2>
+
+<p><strong>Хорошая новость.</strong> ChatGPT для Мака в 2026 году — тоже Electron: это объединённое приложение
+ChatGPT + Codex (внутри оно так и называется, Codex, bundle id <code>com.openai.codex</code>, Chromium 152). Внутри такой же
+<code>app.asar</code>, такой же главный скрипт, окна с минимальной шириной 480, которую приложение само переустанавливает, —
+ровно наш случай. Старое ChatGPT 2024–2025 годов было нативным Swift-приложением: там внутрь не залезть вовсе, работал бы
+только слой 3. Проверить, что у тебя, просто: есть ли файл <code>Contents/Resources/app.asar</code>.</p>
+
+<p><strong>Ещё лучше.</strong> «Предохранители» Electron у ChatGPT открыты: проверка хэша архива выключена, разрешён
+запуск с отладчиком и запуск как Node. Значит патч даже проще, а разведку можно делать вообще без патча — запустить
+приложение с флагом <code>--inspect</code> и подключить DevTools к главному процессу.</p>
+
+<p><strong>Хуже.</strong> Подпись OpenAI несёт «ограниченные» права: push-уведомления Apple, общая с другими
+приложениями OpenAI связка ключей, группы приложений. С локальной подписью их не оставить — уведомления через Apple
+отвалятся, возможно, попросит войти заново. И самое важное: приложение шлёт на сервер OpenAI токен Apple DeviceCheck
+(«я настоящее приложение OpenAI»). После переподписи токена не будет. Код это переживает — пишет в лог и шлёт код
+ошибки вместо токена, — а примет ли такое сервер, узнать можно только пробой. <strong>Это первый тест после патча</strong>;
+не примет — откат из бэкапа, и остаётся слой 3 или DevTools.</p>
+
+<p><strong>Обновления.</strong> Sparkle перезапишет приложение целиком, патч слетит — как у Claude, ставить снова.
+Либо не сможет обновить из-за подписи — тогда обновляться вручную с сайта.</p>
+
+<details><summary>🤖 Для нейронки: все факты про ChatGPT.app 26.908 — бандл, fuses, права, DeviceCheck, пути без патча</summary>
+<p>Всё ниже снято 17.09.2026 с <code>/Applications/ChatGPT.app</code> на Маке Элвиса. Нейронка Дархана сверяет
+каждую строку на его Маке (команды — в «Порядке работы»).</p>
+
+<h4>Бандл</h4>
+<div class="kv">
+<div>Версия</div><div><code>CFBundleShortVersionString</code> 26.908.70816, <code>CFBundleVersion</code> 9275, <code>LSMinimumSystemVersion</code> 13.0</div>
+<div>Bundle id</div><div><code>com.openai.codex</code> (альтернативное имя «Codex»; <code>CFBundleDisplayName</code> ChatGPT). Старое нативное
+приложение 2024–2025 годов было <code>com.openai.chat</code> — папка от него до сих пор лежит в Application Support.</div>
+<div>Движок</div><div>Electron, Chromium <code>152.0.7977.83</code>; фреймворк переименован в <code>Contents/Frameworks/Codex Framework.framework</code>
+(внутри те же <code>electron/js2c/*</code>, <code>ELECTRON_RUN_AS_NODE</code>, <code>v8_context_snapshot.arm64.bin</code>); хелперы
+<code>Codex (Renderer).app</code>, <code>Codex (GPU).app</code>, <code>Codex (Alerts).app</code>, <code>Codex (Service).app</code>.
+Рядом <code>Sparkle.framework</code> (автообновление, <code>SUPublicEDKey</code> в Info.plist) и <code>Codex Framework.sig</code> — похоже на подпись
+Widevine (DRM), то есть сборка на основе castlabs-Electron.</div>
+<div>Главный бинарник</div><div><code>Contents/MacOS/ChatGPT</code>, 70 КБ, arm64 (вся логика во фреймворке — типичный Electron).</div>
+<div>Архив</div><div><code>Contents/Resources/app.asar</code> — 307 МБ, 9144 файла, JSON-заголовок 2,5 МБ; <code>app.asar.unpacked</code> — 8,8 МБ
+(нативные модули: better-sqlite3, node-pty, objc-js, node-hid…). Отдельно <code>Contents/Resources/native/*.node</code>:
+<code>devicecheck.node</code>, <code>input-monitoring-permission.node</code>, <code>remote-control-device-key.node</code>,
+<code>hid-topology-watcher.node</code>, <code>browser-use-peer-authorization.node</code>.</div>
+<div><code>package.json</code></div><div><code>name: openai-codex-electron</code>, <code>productName: Codex</code>, <code>main: .vite/build/early-bootstrap.js</code>.</div>
+<div>Главный скрипт</div><div><strong>216 байт</strong>: <code>require("./src-KMpTO78a.js"),require("./desktop-open-path-queue-….js").r(process.platform===`darwin`),Promise.resolve().then(()=>require("./bootstrap-….js"))</code>.
+Слова «electron» в нём нет — сторож патчера «похож ли файл на главный скрипт Electron» (<code>includes("electron")</code>) его
+отвергнет; проверять только <code>require(</code>. Наш лоадер, приклеенный спереди, всё равно работает: это главный процесс.</div>
+<div>Бандлы главного процесса</div><div><code>bootstrap-*.js</code> (19 КБ: appendSwitch, checkForUpdates), <code>main-*.js</code> (3,8 МБ: окна, меню, WebContentsView),
+<code>window-all-closed-*.js</code> (578 КБ: Sparkle, схемы, preload), <code>src-*.js</code>, <code>worker.js</code>; preload-скрипты
+<code>preload.js</code>, <code>browser-page-preload.js</code>, <code>sandbox-preload.js</code>. Хэши в именах меняются каждой сборкой — не хардкодить.</div>
+<div>Интерфейс</div><div>собственное веб-приложение в <code>webview/</code> (8189 файлов: <code>index.html</code>, <code>detached-window.html</code>,
+<code>assets/</code>), отдаётся по привилегированной схеме <code>app://</code> (<code>protocol.registerSchemesAsPrivileged</code>).
+Отдельно — встроенный <code>WebContentsView</code> с <code>https://chatgpt.com</code> (<code>sandbox:true, nodeIntegration:false, contextIsolation:true</code>)
+для части сценариев; deeplink-схема <code>codex://</code>. <code>insertCSS</code>/<code>executeJavaScript</code> из главного процесса
+работают на обоих видах страниц; свои селекторы придётся снимать с <code>app://</code>-страниц через <code>probe.js</code>.</div>
+<div>Окна</div><div><code>getPrimaryMinimumSize(){return{width:480,height:600}}</code>; <code>syncPrimaryMinimumSize()</code> зовёт
+<code>setMinimumSize</code> на всех главных окнах и растягивает узкие до минимума; <code>persistPrimaryWindowBounds</code> и
+<code>clampPrimaryWindowBounds</code> хранят ширину не меньше 480 (<code>electron-main-window-bounds</code>). Детачнутые окна —
+<code>detached-window.html</code> (аналог вынесенных чатов Claude).</div>
+<div>Папки</div><div>профиль Chromium/userData — <code>~/Library/Application Support/Codex/</code> (там <code>Default/</code>, <code>Local State</code>…);
+ещё <code>~/Library/Application Support/OpenAI/Codex</code> и <code>~/.codex/</code> (auth.json, sessions — общая с Codex CLI);
+логи — <code>~/Library/Logs/com.openai.codex/&lt;год&gt;/…</code>; группы — <code>~/Library/Group Containers/2DC432GLL2.com.openai.codex.notifications</code>.</div>
+</div>
+
+<h4>Предохранители Electron (fuses) — прочитаны из бинарника фреймворка</h4>
+<div class="tbl"><table>
+<tr><th>Fuse</th><th>ChatGPT 26.908</th><th>Claude 1.46388 (Electron 42.10)</th><th>Что это значит</th></tr>
+<tr><td>EnableEmbeddedAsarIntegrityValidation</td><td><span class="tag ok">выкл</span></td><td><span class="tag hm">вкл</span></td><td>ChatGPT не сверяет хэш asar с Info.plist. Пересчитывать всё равно — на будущее.</td></tr>
+<tr><td>OnlyLoadAppFromAsar</td><td><span class="tag ok">выкл</span></td><td><span class="tag hm">вкл</span></td><td>У ChatGPT папка <code>Resources/app/</code> грузится ВМЕСТО <code>app.asar</code> — путь «наложить своё приложение сверху» (ниже).</td></tr>
+<tr><td>RunAsNode</td><td><span class="tag ok">вкл</span></td><td><span class="tag no">выкл</span></td><td><code>ELECTRON_RUN_AS_NODE=1 …/MacOS/ChatGPT script.js</code> — встроенный Node для своего патчера, ставить Node не нужно.</td></tr>
+<tr><td>EnableNodeCliInspectArguments</td><td><span class="tag ok">вкл</span></td><td><span class="tag no">выкл</span></td><td><code>--inspect=9229</code> при запуске из терминала даёт DevTools к главному процессу — опыты без патча.</td></tr>
+<tr><td>EnableNodeOptionsEnvironmentVariable</td><td><span class="tag hm">вкл</span></td><td><span class="tag no">выкл</span></td><td>Не радоваться: в упакованном приложении Electron вырезает почти все <code>NODE_OPTIONS</code>, включая <code>--require</code>.</td></tr>
+<tr><td>EnableCookieEncryption</td><td><span class="tag ok">выкл</span></td><td><span class="tag hm">вкл</span></td><td>Куки ChatGPT не шифруются связкой ключей — сессия сайта должна пережить переподпись без вопросов про «Safe Storage».</td></tr>
+<tr><td>GrantFileProtocolExtraPrivileges</td><td>вкл</td><td>вкл</td><td>—</td></tr>
+<tr><td>LoadBrowserProcessSpecificV8Snapshot</td><td>выкл</td><td>выкл</td><td>—</td></tr>
+</table></div>
+<p>Скрипт, которым это прочитано (ищет в бинарнике строку-сентинел <code>dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX</code>, за ней
+байт версии, байт-счётчик и по байту на fuse: <code>1</code> вкл, <code>0</code> выкл, <code>r</code> удалён; девятый fuse новее
+моего списка):</p>
+<pre><code>import fs from &quot;node:fs&quot;;
+const names=[&quot;RunAsNode&quot;,&quot;EnableCookieEncryption&quot;,&quot;EnableNodeOptionsEnvironmentVariable&quot;,&quot;EnableNodeCliInspectArguments&quot;,&quot;EnableEmbeddedAsarIntegrityValidation&quot;,&quot;OnlyLoadAppFromAsar&quot;,&quot;LoadBrowserProcessSpecificV8Snapshot&quot;,&quot;GrantFileProtocolExtraPrivileges&quot;];
+for (const file of process.argv.slice(2)) {
+  const buf = fs.readFileSync(file);
+  const sentinel = Buffer.from(&quot;dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX&quot;);
+  const idx = buf.indexOf(sentinel);
+  if (idx &lt; 0) { console.log(file, &quot;: fuse sentinel not found&quot;); continue; }
+  const version = buf[idx + sentinel.length];
+  const count = buf[idx + sentinel.length + 1];
+  const fuses = buf.subarray(idx + sentinel.length + 2, idx + sentinel.length + 2 + count);
+  console.log(&quot;== &quot; + file + &quot; (fuse wire v&quot; + version + &quot;, &quot; + count + &quot; fuses)&quot;);
+  for (let i = 0; i &lt; count; i++) {
+    const b = fuses[i];
+    const state = b === 0x31 ? &quot;ENABLED&quot; : b === 0x30 ? &quot;disabled&quot; : b === 0x72 ? &quot;removed&quot; : &quot;?&quot; + b.toString(16);
+    console.log(&quot;  &quot; + (names[i] || &quot;fuse&quot; + i).padEnd(42) + state);
+  }
+}</code></pre>
+
+<h4>Подпись и права — вот где главные отличия</h4>
+<p><code>codesign -dvv</code>: Developer ID Application «OpenAI OpCo, LLC (2DC432GLL2)», hardened runtime, notarized,
+<code>embedded.provisionprofile</code> в бандле. Права главного приложения:</p>
+<pre><code>com.apple.application-identifier = 2DC432GLL2.com.openai.codex      ← ограниченное, только с профилем
+com.apple.developer.aps-environment = production                     ← push-уведомления Apple; ограниченное
+com.apple.developer.team-identifier = 2DC432GLL2                     ← ограниченное
+keychain-access-groups = [2DC432GLL2.*, 2DC432GLL2.com.openai.shared] ← ограниченное: общие ключи с другими приложениями OpenAI
+com.apple.security.application-groups = [2DC432GLL2.com.openai.codex.notifications, 2DC432GLL2.com.openai.sky.CUAService]
+com.apple.security.app-sandbox = false
+com.apple.security.automation.apple-events = true
+com.apple.security.cs.allow-jit = true
+com.apple.security.cs.allow-unsigned-executable-memory = true
+com.apple.security.device.audio-input = true
+com.apple.security.device.camera = true
+com.apple.security.files.user-selected.read-write = true
+com.apple.security.network.client = true
+com.apple.security.personal-information.calendars = true</code></pre>
+<p>С локальной (ad-hoc) подписью ограниченные права не проходят — их из списка убрать. Предлагаемый
+<code>entitlements.plist</code> для переподписи ChatGPT (не проверялся живьём — первым делом проверить, что приложение
+стартует и слышит микрофон):</p>
+<pre><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;!DOCTYPE plist PUBLIC &quot;-//Apple//DTD PLIST 1.0//EN&quot; &quot;http://www.apple.com/DTDs/PropertyList-1.0.dtd&quot;&gt;
+&lt;plist version=&quot;1.0&quot;&gt;
+&lt;dict&gt;
+  &lt;key&gt;com.apple.security.cs.allow-jit&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.cs.allow-unsigned-executable-memory&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.device.audio-input&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.device.camera&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.automation.apple-events&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.files.user-selected.read-write&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.network.client&lt;/key&gt;&lt;true/&gt;
+  &lt;key&gt;com.apple.security.personal-information.calendars&lt;/key&gt;&lt;true/&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;</code></pre>
+<p>Что от этого отвалится: push-уведомления через Apple (<code>aps-environment</code>); ключи в связке, общие с другими
+приложениями OpenAI (<code>keychain-access-groups</code>) — возможен повторный вход; общие контейнеры групп
+(звук уведомлений лежит в Group Containers) — уведомления могут стать тише или пропасть. Чат как таковой этого не требует.</p>
+
+<h4>DeviceCheck — риск номер один</h4>
+<p>В <code>main-*.js</code> есть код, который через <code>Resources/native/devicecheck.node</code> получает токен Apple
+DeviceCheck («это настоящее приложение OpenAI на настоящем Маке») и прикладывает его к запросам на серверы OpenAI
+(<code>attachDeviceCheckToken</code>, <code>attachIntegrityState</code>, «Refusing to attach DeviceCheck token to non-OpenAI URL»).
+DeviceCheck работает только у приложения, подписанного сертификатом команды с профилем; после локальной подписи токена
+не будет. Код к этому готов: пишет в лог «DeviceCheck attestation unavailable/failed» и вместо токена шлёт
+<code>error_code</code>. <strong>Примет ли это сервер — из кода не видно.</strong> Поэтому первый тест после патча: войти,
+отправить сообщение, посмотреть логи в <code>~/Library/Logs/com.openai.codex/</code> на строки про DeviceCheck и ошибки
+авторизации (в коде встречается свой статус 432 — «Failed to retrieve authentication token»). Отказ сервера — откат
+из бэкапа и другой путь (слой 3 снаружи или DevTools без патча).</p>
+
+<h4>Автообновление</h4>
+<p>Sparkle заменит бандл целиком — патч слетит, как у Claude (там Squirrel). Возможен и второй исход: Sparkle не примет
+обновление, потому что подпись текущего приложения не совпадает с подписью новой версии, — тогда обновляться вручную
+с сайта и патчить снова. В обоих случаях нужен индикатор «патч слетел» (проверка маркера в главном скрипте).</p>
+
+<h4>Пути без патча — есть только у ChatGPT</h4>
+<ul>
+<li><strong>DevTools к главному процессу.</strong> <code>open -a ChatGPT --args --inspect=9229</code> (fuse разрешает), затем
+<code>chrome://inspect</code> или любой клиент Inspector Protocol: в консоли главного процесса доступен <code>require("electron")</code>,
+можно на живую вешать <code>insertCSS</code>, хуки и смотреть окна. Отличный способ разведки перед патчем; для постоянной
+работы неудобно (запуск только из терминала, открытый порт — дыра: любой процесс на Маке управляет приложением).
+<code>--remote-debugging-port=9222</code> — то же для страниц (CDP); проверить, не вырезает ли приложение флаг.</li>
+<li><strong>Папка поверх архива.</strong> Fuse <code>OnlyLoadAppFromAsar</code> выключен: Electron сначала ищет
+<code>Contents/Resources/app/</code> и, если там есть <code>package.json</code>, грузит его вместо <code>app.asar</code>. Можно положить
+туда свой <code>package.json</code> (скопировав <code>name</code>, <code>version</code>, <code>productName</code>) и <code>main.js</code>,
+который выполняет лоадер и затем <code>require("…/app.asar/.vite/build/early-bootstrap.js")</code>. Архив не трогается, хэш не
+нужен. Минусы: <code>app.getAppPath()</code> станет другим (в бандле он используется 53 раза), <code>__dirname</code>-относительные
+пути внутри архива работают, а вот всё, что строится от <code>getAppPath()</code>, может сломаться; переподпись всё равно
+нужна (в бандл добавлены файлы). Путь для экспериментов, не для команды.</li>
+<li><strong>Встроенный Node.</strong> <code>ELECTRON_RUN_AS_NODE=1 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT patch.mjs</code> —
+свой патчер можно гонять без установки Node.</li>
+</ul>
+</details><h2 id="kamni">Подводные камни</h2>
+<p>Каждый из этих пунктов стоил нам хотя бы одного вечера. Заголовок — что ломается, ниже — как обойти.</p>
+<div class="pitfall"><b>Патч из терминала внутри самого приложения</b><div class="why">Патчер закрывает приложение — и убивает себя. У ChatGPT встроенный агент с терминалом, нейронка может сидеть внутри. Запускать из Terminal.app; в патчере — проверка цепочки родительских процессов.</div></div>
+<div class="pitfall"><b>Разрешение «Управление приложениями»</b><div class="why">Без него писать в /Applications/*.app нельзя (EPERM). Дать его Terminal или своему приложению; пробную запись делать до закрытия приложения, чтобы системный запрос не остался без ответа. Не администратор — ставить приложение в ~/Applications.</div></div>
+<div class="pitfall"><b>Бэкап до, откат при осечке</b><div class="why">Между записью архива и удачной подписью приложение не запускается. Осечка — вернуть оригиналы из бэкапа той же версии. Бэкап только чистого архива; «Снять» подпись Apple не возвращает.</div></div>
+<div class="pitfall"><b>Главный скрипт — не угадывать</b><div class="why">Брать из package.json → main внутри архива; у ChatGPT это 216-байтный бутстрап без слова «electron» — сторож «похож на Electron» переписать.</div></div>
+<div class="pitfall"><b>Смещения, дедуп, integrity</b><div class="why">После вставки сдвинуть offset у всех файлов после нашего, пересчитать integrity (SHA-256 + блоки 4 МиБ), проверить, что никто не делит данные с главным скриптом. Прогон на копии с полной сверкой хэшей — обязателен.</div></div>
+<div class="pitfall"><b>Хэш заголовка в Info.plist</b><div class="why">SHA-256 строки JSON-заголовка, не файла. У Claude проверяется (fuse включён), у ChatGPT нет — держать верным всё равно.</div></div>
+<div class="pitfall"><b>Подпись в два прохода и права</b><div class="why">--deep локально, потом само приложение со своим entitlements.plist. Ограниченные права (application-identifier, aps-environment, team-identifier, keychain-access-groups, application-groups) в локальную подпись не класть.</div></div>
+<div class="pitfall"><b>После переподписи macOS спросит заново</b><div class="why">Микрофон, запись экрана, Accessibility, уведомления — один раз. Связка ключей может спросить пароль. У ChatGPT возможен повторный вход; у него же — риск DeviceCheck на стороне сервера.</div></div>
+<div class="pitfall"><b>Обновления сносят патч</b><div class="why">Squirrel/Sparkle заменяют бандл. Нужен индикатор «патч слетел» по маркеру в главном скрипте и кнопка «поставить снова». Обновление может и не пройти из-за подписи — тогда вручную с сайта.</div></div>
+<div class="pitfall"><b>Лоадер = перепатч у всех</b><div class="why">Каждая правка лоадера — «Поставить» заново у каждого пользователя. В лоадере — только чтение файлов и вставка; вся логика в живых файлах.</div></div>
+<div class="pitfall"><b>Скрипт в странице должен снимать сам себя</b><div class="why">Выполняется заново при каждом сохранении. Первой строкой — dispose прошлого экземпляра. Стили через adoptedStyleSheets, не &lt;style&gt; (Claude зеркалит &lt;style&gt; в вынесенные окна).</div></div>
+<div class="pitfall"><b>Следить за файлами опросом, не событиями</b><div class="why">fs.watchFile с интервалом; fs.watch теряет атомарные перезаписи. Команды — «последняя запись побеждает», id всегда новый.</div></div>
+<div class="pitfall"><b>Селекторы живут до следующего обновления</b><div class="why">DOM меняется с каждой сборкой. Держать CSS в живых файлах, после каждого обновления — probe.js и правка. Из Claude в ChatGPT не переносится ни один селектор.</div></div>
+<div class="pitfall"><b>Минимальная ширина — не одна точка</b><div class="why">Приложение само зовёт setMinimumSize (Claude — при смене экрана, ChatGPT — syncPrimaryMinimumSize); подменять метод на прототипе, а не вызывать один раз. У ChatGPT ещё и сохранённая рамка клампится к 480.</div></div>
+<div class="pitfall"><b>Окно — не заголовок</b><div class="why">Заголовки меняются и повторяются. Адресовать окна id чата, который страница называет сама; заголовок — запасной признак.</div></div>
+<div class="pitfall"><b>Имена внутри бандла не Electron-овские</b><div class="why">У ChatGPT фреймворк «Codex Framework», хелперы «Codex (Renderer)». Не хардкодить «Electron Framework»; путь к архиву у всех один — Contents/Resources/app.asar.</div></div>
+<div class="pitfall"><b>Несколько копий приложения</b><div class="why">Launch Services помнит бэкапы и старые копии с тем же bundle id. Бандл выбирать по пути, процессы закрывать по пути бандла, не по имени.</div></div>
+<div class="pitfall"><b>Права самого приложения снаружи</b><div class="why">Accessibility и App Management — два разных разрешения. Dev-сборки подписывать Developer ID с первого билда, иначе macOS будет спрашивать Accessibility после каждой пересборки.</div></div>
+<h2 id="poryadok">Порядок работы для нейронки</h2>
+
+<p>Девять шагов, в этом порядке. Первые два — только чтение, ничего не ломают. Патч — с пятого. Самый важный
+тест — седьмой: после него понятно, принимает ли сервер OpenAI переподписанное приложение.</p>
+
+<ol>
+<li><strong>Сверить</strong>, что перед нами: есть ли <code>app.asar</code>, какой bundle id, версия, чем подписано.</li>
+<li><strong>Прочитать fuses</strong> — нужен ли хэш, разрешён ли отладчик.</li>
+<li><strong>Найти главный скрипт</strong> в архиве и убедиться, что это читаемый JS.</li>
+<li><strong>Написать патчер</strong> по образцу PimpMyClaude и прогнать его на копии архива.</li>
+<li><strong>Дать разрешение</strong> «Управление приложениями» тому, кто будет писать в бандл.</li>
+<li><strong>Патч</strong>: закрыть → бэкап → архив → хэш → подпись → открыть.</li>
+<li><strong>Проверить лоадер</strong>: <code>status.json</code> появился, страницы видны, CSS вставлен.</li>
+<li><strong>Тест входа и сообщения</strong> — DeviceCheck. Не прошло — откат.</li>
+<li><strong>Разведка DOM</strong> через <code>probe.js</code>, первый CSS, потом скрипт с командами, потом приложение снаружи.</li>
+</ol>
+
+<details><summary>🤖 Для нейронки: команды к каждому шагу</summary>
+<h4>Шаг 0 — сверить, что перед нами</h4>
+<pre><code>APP=/Applications/ChatGPT.app
+ls -la &quot;$APP/Contents/Resources/app.asar&quot; &quot;$APP/Contents/Resources/app.asar.unpacked&quot;   # нет asar → нативное приложение, слой 1 невозможен
+/usr/libexec/PlistBuddy -c &quot;Print :CFBundleIdentifier&quot; &quot;$APP/Contents/Info.plist&quot;       # ожидаем com.openai.codex
+/usr/libexec/PlistBuddy -c &quot;Print :CFBundleShortVersionString&quot; &quot;$APP/Contents/Info.plist&quot;
+/usr/libexec/PlistBuddy -c &quot;Print :ElectronAsarIntegrity&quot; &quot;$APP/Contents/Info.plist&quot;
+ls &quot;$APP/Contents/Frameworks&quot;                                                             # Codex Framework.framework, Sparkle.framework
+codesign -dvv &quot;$APP&quot; 2&gt;&amp;1 | grep -E &quot;Authority|Identifier=|Runtime|Signature&quot;
+codesign -d --entitlements :- &quot;$APP&quot; 2&gt;/dev/null                                          # список прав — сверить с разделом про ChatGPT
+pgrep -fl &quot;ChatGPT.app/Contents/MacOS&quot; ; ps -o ppid=,command= -p $$                        # не сидим ли мы внутри самого приложения</code></pre>
+
+<h4>Шаг 1 — fuses</h4>
+<p>Скрипт из раздела про ChatGPT. Node можно взять встроенный:</p>
+<pre><code>ELECTRON_RUN_AS_NODE=1 &quot;$APP/Contents/MacOS/ChatGPT&quot; fuses.mjs &quot;$APP/Contents/Frameworks/Codex Framework.framework/Versions/Current/Codex Framework&quot;
+# Интересуют: EnableEmbeddedAsarIntegrityValidation (нужен ли хэш), OnlyLoadAppFromAsar, EnableNodeCliInspectArguments</code></pre>
+
+<h4>Шаг 2 — главный скрипт архива</h4>
+<pre><code>node -e &#x27;
+const fs=require(&quot;fs&quot;);const a=fs.readFileSync(process.argv[1]);const hs=a.readUInt32LE(4),js=a.readUInt32LE(12);
+const h=JSON.parse(a.subarray(16,16+js).toString(&quot;utf8&quot;));const off=8+hs;
+const get=p=&gt;p.split(&quot;/&quot;).reduce((e,c)=&gt;e&amp;&amp;e.files&amp;&amp;e.files[c],h);
+const rd=p=&gt;{const e=get(p);return a.subarray(off+Number(e.offset),off+Number(e.offset)+Number(e.size))};
+const pkg=JSON.parse(rd(&quot;package.json&quot;).toString(&quot;utf8&quot;));const main=pkg.main.replace(/^\.\//,&quot;&quot;);
+console.log(&quot;main:&quot;,main,&quot;bytes:&quot;,get(main).size);console.log(rd(main).toString(&quot;utf8&quot;).slice(0,400));
+&#x27; &quot;$APP/Contents/Resources/app.asar&quot;
+# Ожидаем читаемый JS (не байткод): у 26.908 это 216 байт с тремя require(...)</code></pre>
+
+<h4>Шаг 3 — свой патчер и прогон на копии</h4>
+<p>Взять <code>patch-claude.mjs</code> из PimpMyClaude как основу. Поменять: <code>APP</code>, <code>BUNDLE_ID</code>
+(<code>com.openai.codex</code>), <code>SUPPORT</code> (своя папка), маркеры и <code>LOADER</code> (правки из раздела про лоадер),
+сторож «похож на Electron» (только <code>require(</code>), <code>entitlements.plist</code> (список для ChatGPT). Затем
+<code>selftest</code>: патч на копии архива, сверка хэшей всех файлов, синтаксис лоадера через <code>new Function</code>.
+Для разведки перед патчем можно вообще не патчить: <code>open -a ChatGPT --args --inspect=9229</code> и DevTools к главному процессу.</p>
+
+<h4>Шаг 4 — разрешение</h4>
+<p>Системные настройки → Конфиденциальность и безопасность → Управление приложениями → включить Terminal
+(или своё приложение). Признак, что не дали: <code>EPERM</code> при записи в <code>Contents/Resources</code>.</p>
+
+<h4>Шаг 5 — боевой прогон</h4>
+<pre><code># 1. закрыть приложение (мягко, затем жёстко), убедиться: pgrep -f &quot;ChatGPT.app/Contents/MacOS&quot; пуст
+# 2. бэкап
+V=$(/usr/libexec/PlistBuddy -c &quot;Print :CFBundleShortVersionString&quot; &quot;$APP/Contents/Info.plist&quot;)
+mkdir -p ~/Library/Application\ Support/PimpMyGPT/backups/$V
+cp &quot;$APP/Contents/Resources/app.asar&quot; &quot;$APP/Contents/Info.plist&quot; ~/Library/Application\ Support/PimpMyGPT/backups/$V/
+# 3. патч архива своим патчером (лоадер спереди main, смещения, integrity, атомарная запись, перечитать)
+# 4. хэш заголовка → Info.plist
+/usr/libexec/PlistBuddy -c &quot;Set :ElectronAsarIntegrity:Resources/app.asar:hash &lt;sha256 строки JSON-заголовка&gt;&quot; &quot;$APP/Contents/Info.plist&quot;
+# 5. подпись
+xattr -cr &quot;$APP&quot;
+codesign --force --deep --sign - --timestamp=none &quot;$APP&quot;
+codesign --force --sign - --timestamp=none --entitlements entitlements.plist &quot;$APP&quot;
+codesign --verify --deep --strict --verbose=2 &quot;$APP&quot;
+# 6. открыть
+open -a &quot;$APP&quot;</code></pre>
+
+<h4>Шаг 6 — проверить, что лоадер жив</h4>
+<pre><code>sleep 4; cat ~/Library/Application\ Support/PimpMyGPT/status.json        # loader: N, список страниц с url и css: &quot;inserted&quot;
+# не запустилось — смотреть, кто убил:
+log show --last 3m --predicate &#x27;process == &quot;kernel&quot; OR process == &quot;amfid&quot; OR process == &quot;taskgated&quot; OR eventMessage CONTAINS &quot;ChatGPT&quot;&#x27; | tail -60
+# &quot;ASAR Integrity Violation&quot; → хэш; &quot;Killed: 9&quot;/&quot;invalid signature&quot;/&quot;restricted entitlements&quot; → подпись или права; иначе — лог самого приложения:
+ls -t ~/Library/Logs/com.openai.codex/*/ | head</code></pre>
+
+<h4>Шаг 7 — тест DeviceCheck и входа (главный)</h4>
+<p>Войти (если выкинуло), отправить сообщение, открыть Codex-сценарий. В логах приложения найти строки
+<code>DeviceCheck attestation</code> и ошибки авторизации (401, 432, «Failed to retrieve authentication token»). Сообщение
+уходит, ответ приходит — путь открыт. Не уходит — откат: вернуть <code>app.asar</code> и <code>Info.plist</code> из бэкапа,
+переподписать теми же командами (подпись Apple вернёт только переустановка с сайта).</p>
+
+<h4>Шаг 8 — разведка DOM и первый CSS</h4>
+<p>Положить <code>probe.js</code> (пример в разделе «Живые файлы»), прочитать <code>probe-result.json</code>: какие страницы есть
+(<code>app://…/index.html</code>, <code>detached-window.html</code>, <code>https://chatgpt.com/…</code>), где поле ввода, какие
+классы у ленты. Писать правила в живой CSS — они применяются за секунду, без перезапуска. Удалить <code>probe.js</code>,
+когда закончил.</p>
+
+<h4>Шаг 9 — скрипт и команды</h4>
+<p><code>inject.js</code> — с <code>dispose()</code> первой строкой, проверкой «это страница чата?», слушателем события команды.
+Потом — своё приложение снаружи (меню-бар, Accessibility) и файл команд. Порядок такой, потому что каждый следующий
+слой опирается на диагностику предыдущего (<code>status.json</code> → <code>probe.js</code> → команды).</p>
+</details>
+<h2 id="perenos">Что переносится, а что нет</h2>
+
+<p><strong>Переносится целиком:</strong> сам приём (лоадер спереди главного скрипта, хэш, локальная подпись, бэкап),
+код разбора и пересборки архива, лоадер почти дословно, устройство канала через файлы (настройки, CSS, скрипт, команды,
+разведка, статус), правила для скрипта в странице, архитектура приложения снаружи и все грабли из списка.</p>
+
+<p><strong>Не переносится ни строчки:</strong> содержимое <code>claude.css</code> и <code>inject.js</code> — это восемь тысяч
+строк, привязанных к разметке Claude (классы, структура ленты, поле ввода, внутренние сторы страницы, тексты кнопок
+«Allow»). У ChatGPT свой интерфейс, и его надо разведывать с нуля через <code>probe.js</code>. Не переносятся и контракты команд,
+которые опираются на устройство Claude (вынос чата в окно, «кто этот чат», настройка папки проекта).</p>
+
+<p><strong>Переносится с оговорками:</strong> список прав для подписи (у ChatGPT свои), сторож «похож ли файл на
+главный скрипт», хук минимальной ширины (у ChatGPT ещё клампится сохранённая рамка), и сама возможность залезть внутрь —
+она держится на том, что сервер OpenAI терпит приложение без DeviceCheck-токена.</p>
+
+<h2 id="golos">Голосовой ввод</h2>
+
+<p>Внутри страницы это не сделать: распознавание речи браузера (Web Speech API) в Electron не работает — у него нет
+ключа Google, которым пользуется Chrome. Поэтому голос делается снаружи, и тут ChatGPT и Claude одинаковы.
+Два пути. Простой — диктовка самого macOS: она печатает в любое поле любого приложения, ничего патчить не надо.
+Свой — приложение снаружи записывает звук, отправляет в распознавание (Whisper или любая модель для речи) и кладёт
+текст в поле: либо через буфер обмена и ⌘V (у нас есть опыт: ⌘V ловится в любом месте окна и уводится в поле ввода),
+либо командой в <code>command.json</code>, которую скрипт в странице превращает во вставку текста без отправки — так у нас
+работает кнопка «Workflow».</p>
+
+<h2 id="checklist">Чеклист «оно работает»</h2>
+<ul>
+<li><code>status.json</code> обновляется каждые 2 секунды, в нём номер лоадера.</li>
+<li>У страниц <code>app://…</code> и <code>https://chatgpt.com/…</code> стоит <code>css: "inserted"</code>.</li>
+<li>Окно сужается ниже родных 480.</li>
+<li><code>probe.js</code> отвечает в <code>probe-result.json</code> по записи на страницу.</li>
+<li><code>codesign --verify --deep --strict</code> проходит без ошибок.</li>
+<li>Микрофон и камера работают после переподписи (один раз macOS переспросил).</li>
+<li>Вход не слетел, сообщение уходит и приходит ответ, в логах нет ошибок авторизации.</li>
+<li>Бэкап лежит в папке с номером версии; возврат из него проверен один раз.</li>
+<li>После обновления приложения индикатор говорит «патч слетел», а не молчит.</li>
+<li>Правка живого CSS видна в окне через секунду, без перезапуска.</li>
+</ul>
+
+<div class="foot">
+<p>Живой пример всего этого — PimpMyClaude у Элвиса: покажет окно, меню на жёлтой кнопке и папку с живыми файлами.
+Исходники патчера, лоадера и Swift-приложения — в его репозитории, ключевые куски здесь скопированы дословно.</p>
+</div>
+</div>
+
+</body>
+</html>

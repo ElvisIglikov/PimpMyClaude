@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf68-a-1";
+  const VERSION = "wf69-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -7288,7 +7288,7 @@ nav[aria-label="Repository and pull request controls"] {
     }
   };
 
-  // ---- 12г. Открыть в Chrome (WF67, #6190) ---------------------------------
+  // ---- 12г. Открыть в Chrome и Копировать в буфер (WF67 #6190, WF69 #6236) --
   // Слово Элвиса 17.09: «правой кнопкой открываю, а здесь не вижу до сих пор
   // открыть в Хром… приходится через Файндер идти». У Claude в контекстном меню
   // карточки файла есть «Show in Finder», а открыть файл браузером негде.
@@ -7303,11 +7303,19 @@ nav[aria-label="Repository and pull request controls"] {
   // Устройство: `contextmenu` на захвате НИЧЕГО не отменяет — меню Claude
   // открывается само. Мы только запоминаем путь файла (из React-волокна
   // карточки: пропс `path`) и на 1,5 с ставим наблюдателя за body: появилось
-  // меню с пунктом «Show in Finder» — ставим в него ПЕРВЫМ свой пункт (клон
+  // меню с пунктом «Show in Finder» — ставим в него ПЕРВЫМИ свои пункты (клоны
   // «Show in Finder» без React-обработчиков и без id) и клон разделителя.
   // Постоянного наблюдателя нет: правый клик по тексту меню не трогает вовсе.
+  //
+  // Второй пункт — «📋 Копировать в буфер» (WF69, #6236, слово Элвиса 17.09:
+  // «правой кнопкой — копировать в буфер, сам файл скопирует, потом в Telegram
+  // „вставить“ — и он вставит файл; а то приходится Finder открывать»). Он есть
+  // у ЛЮБОГО файла с путём, не только у страниц. Страница положить в буфер ФАЙЛ
+  // не может — только текст; файл (public.file-url, как «Скопировать» в Finder)
+  // кладёт приложение (CopyFileRelay.swift): см. copyFileToClipboard ниже.
   const OPEN_CHROME_ATTRIBUTE = "data-myclaude-open-chrome";
   const OPEN_CHROME_LABEL = "🌐 Открыть в Chrome";
+  const COPY_FILE_LABEL = "📋 Копировать в буфер";
   const OPEN_CHROME_MENU_SELECTOR = '[role="menu"][data-cds="ContextMenu"]';
   const OPEN_CHROME_ITEM_SELECTOR = '[role="menuitem"]';
   const OPEN_CHROME_SEPARATOR_SELECTOR = '[role="separator"]';
@@ -7319,21 +7327,21 @@ nav[aria-label="Repository and pull request controls"] {
   const OPEN_CHROME_ERROR_MAX = 120;
   const OPEN_CHROME_NOTE_NO_CHAT = "Не знаю, какой это чат — открой через Finder";
   const OPEN_CHROME_NOTE_NO_BRIDGE = "Claude не даёт открыть файл";
-  const openState = { pending: null, observer: null, timer: 0, inserted: 0, last: null };
+  const openState = { pending: null, observer: null, timer: 0, inserted: 0, last: null, copies: 0, lastCopy: null };
 
   // Путь файла из пропсов карточки. Пропс `path` — абсолютный путь или
   // `computer://<путь>` (префикс снимается); `name` — имя файла, для плашки.
-  // Только страницы (.html/.htm): мост открывает файл в программе ПО УМОЛЧАНИЮ
-  // для его типа — у html это Chrome, а .md на Маке Элвиса уехал в Xcode (гейт
-  // 17.09 05:20, два раза). Пункт называется «Открыть в Chrome» и обещает
-  // именно это, поэтому у прочих файлов его нет вовсе.
+  // `page` — страница ли это (.html/.htm): мост открывает файл в программе ПО
+  // УМОЛЧАНИЮ для его типа — у html это Chrome, а .md на Маке Элвиса уехал в
+  // Xcode (гейт 17.09 05:20, два раза). Пункт «Открыть в Chrome» обещает именно
+  // Chrome, поэтому у прочих файлов его нет; «Копировать в буфер» есть у всех.
   const OPEN_CHROME_FILE_RE = /\.html?$/i;
   const openChromePathOf = props => {
     const raw = props?.path;
     if (typeof raw !== "string") return null;
     const path = raw.startsWith("computer://") ? raw.slice("computer://".length) : raw;
-    if (!path.startsWith("/") || !OPEN_CHROME_FILE_RE.test(path)) return null;
-    return { path, name: typeof props.name === "string" ? props.name : "" };
+    if (!path.startsWith("/")) return null;
+    return { path, name: typeof props.name === "string" ? props.name : "", page: OPEN_CHROME_FILE_RE.test(path) };
   };
   const openChromeFiber = node => {
     try {
@@ -7371,8 +7379,36 @@ nav[aria-label="Repository and pull request controls"] {
       return node.querySelector(OPEN_CHROME_MENU_SELECTOR);
     } catch { return null; }
   };
-  // Свой пункт в меню Claude. Возвращает true, когда пункт встал; в меню без
-  // «Show in Finder» (чужое меню) и в меню с уже стоящим пунктом — false.
+  // Свой пункт — клон «Show in Finder» без React-обработчиков (их у клона нет
+  // по устройству), без id и без чужой подсветки; метка — чтобы второй раз в то
+  // же меню не встать и чтобы dispose() снял.
+  const openChromeItem = (finder, text, action) => {
+    const item = finder.cloneNode(true);
+    item.removeAttribute("id");
+    for (const kid of item.querySelectorAll("[id]")) kid.removeAttribute("id");
+    item.removeAttribute("data-highlighted");
+    item.setAttribute(OPEN_CHROME_ATTRIBUTE, "");
+    const label = [...item.querySelectorAll("span")]
+      .find(span => OPEN_CHROME_FINDER_RE.test(String(span.textContent ?? "").trim())) ?? item;
+    label.textContent = text;
+    // «Жирненькая, выделенная» — слово Элвиса.
+    item.style.setProperty("font-weight", "600");
+    // Подсветку base-ui ставит атрибутом data-highlighted, а класс Claude
+    // рисует по нему фон; нашему клону атрибут ставим сами.
+    item.addEventListener("pointerenter", () => { try { item.setAttribute("data-highlighted", ""); } catch {} });
+    item.addEventListener("pointerleave", () => { try { item.removeAttribute("data-highlighted"); } catch {} });
+    item.addEventListener("click", event => {
+      // Не всплывает в меню Claude: делегированные обработчики React живут у
+      // корня, и клик по клону им не достаётся.
+      try { event.stopPropagation(); } catch {}
+      action();
+    });
+    return item;
+  };
+  // Свои пункты в меню Claude: «Открыть в Chrome» (только у страниц), под ним
+  // «Копировать в буфер» (у всех) — порядок слова Элвиса («ещё ниже команду
+  // скопировать»). Возвращает true, когда пункты встали; в меню без «Show in
+  // Finder» (чужое меню) и в меню с уже стоящими пунктами — false.
   const openChromeInsert = (menu, found) => {
     if (!menu || !found) return false;
     if (menu.querySelector(`[${OPEN_CHROME_ATTRIBUTE}]`)) return false;
@@ -7380,31 +7416,9 @@ nav[aria-label="Repository and pull request controls"] {
     const finder = items.find(item => OPEN_CHROME_FINDER_RE.test(String(item.textContent ?? "").trim()));
     const list = finder?.parentNode;
     if (!list) return false;
-    const item = finder.cloneNode(true);
-    // Клон без React-обработчиков (их у клона нет по устройству), без id и без
-    // чужой подсветки; метка — чтобы второй раз в то же меню не встать.
-    item.removeAttribute("id");
-    for (const kid of item.querySelectorAll("[id]")) kid.removeAttribute("id");
-    item.removeAttribute("data-highlighted");
-    item.setAttribute(OPEN_CHROME_ATTRIBUTE, "");
-    const label = [...item.querySelectorAll("span")]
-      .find(span => OPEN_CHROME_FINDER_RE.test(String(span.textContent ?? "").trim())) ?? item;
-    label.textContent = OPEN_CHROME_LABEL;
-    // «Жирненькая, выделенная» — слово Элвиса.
-    item.style.setProperty("font-weight", "600");
-    // Подсветку base-ui ставит атрибутом data-highlighted, а класс Claude
-    // рисует по нему фон; нашему клону атрибут ставим сами.
-    item.addEventListener("pointerenter", () => { try { item.setAttribute("data-highlighted", ""); } catch {} });
-    item.addEventListener("pointerleave", () => { try { item.removeAttribute("data-highlighted"); } catch {} });
-    const path = found.path;
-    item.addEventListener("click", event => {
-      // Не всплывает в меню Claude: делегированные обработчики React живут у
-      // корня, и клик по клону им не достаётся.
-      try { event.stopPropagation(); } catch {}
-      openChromeOpen(path);
-    });
     const first = list.firstElementChild;
-    list.insertBefore(item, first);
+    if (found.page) list.insertBefore(openChromeItem(finder, OPEN_CHROME_LABEL, () => openChromeOpen(found.path)), first);
+    list.insertBefore(openChromeItem(finder, COPY_FILE_LABEL, () => copyFileToClipboard(found)), first);
     const separator = menu.querySelector(OPEN_CHROME_SEPARATOR_SELECTOR);
     if (separator) {
       const line = separator.cloneNode(true);
@@ -7479,6 +7493,60 @@ nav[aria-label="Repository and pull request controls"] {
       if (value && value.ok === false) { openChromeFail(path, value.error ?? OPEN_CHROME_NOTE_NO_BRIDGE); return; }
       openState.last = { path, ok: true, error: "" };
     }, error => openChromeFail(path, error));
+  };
+
+  // «📋 Копировать в буфер» (WF69, #6236). Договор с приложением
+  // (CopyFileRelay.swift) — побайтно: текстом в буфер уходит ПУТЬ (вставка в
+  // терминал даёт путь, как после «Скопировать» в Finder), а в HTML-слое —
+  // метка `<!--pimpmyclaude:copy-file:<путь в encodeURIComponent>-->` и ссылка
+  // file:// с именем файла. Приложение раз в 0,25 с смотрит changeCount буфера,
+  // по метке подменяет содержимое самим файлом (public.file-url +
+  // NSFilenamesPboardType + путь строкой) и говорит плашкой «Файл в буфере».
+  // Приложения нет — в буфере остаётся путь: вставка даёт его текстом, не
+  // тишину. Путь в метке — percent-encoding, а не base64: btoa/TextEncoder на
+  // странице есть, а в стенде тестов (node:vm) их нет, encodeURIComponent —
+  // часть языка; `-->` внутри метки невозможен (`>` кодируется).
+  //
+  // Кладёт execCommand("copy") со своим обработчиком copy: он есть в любом
+  // Chromium, разрешений не спрашивает, работает синхронно по клику (клик по
+  // пункту — жест человека). navigator.clipboard.write — асинхронный и с
+  // разрешением clipboard-sanitized-write, которое Claude может и не дать.
+  const COPY_FILE_MARK = "pimpmyclaude:copy-file:";
+  const COPY_FILE_NOTE_FAIL = "Не смог положить файл в буфер";
+  const copyFileEscape = text => String(text).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
+  const copyFileHtml = found => {
+    const path = String(found?.path ?? "");
+    if (!path.startsWith("/")) return null;
+    const name = found.name || path.split("/").pop() || path;
+    return `<!--${COPY_FILE_MARK}${encodeURIComponent(path)}--><a href="file://${encodeURI(path)}">${copyFileEscape(name)}</a>`;
+  };
+  const copyFileToClipboard = found => {
+    const html = copyFileHtml(found);
+    let filled = false;
+    let done = false;
+    if (html) {
+      const onCopy = event => {
+        try {
+          event.clipboardData.setData("text/plain", found.path);
+          event.clipboardData.setData("text/html", html);
+          event.preventDefault();
+          // Дальше событие не идёт: обработчики copy самого Claude (у корня
+          // React) могли бы переписать слои поверх наших.
+          event.stopImmediatePropagation();
+          filled = true;
+        } catch {}
+      };
+      // На захвате: наш обработчик первый и единственный.
+      try { document.addEventListener("copy", onCopy, true); } catch {}
+      try { done = document.execCommand("copy") !== false; } catch { done = false; }
+      try { document.removeEventListener("copy", onCopy, true); } catch {}
+    }
+    const ok = Boolean(html) && filled && done;
+    if (ok) openState.copies += 1;
+    openState.lastCopy = { path: String(found?.path ?? ""), ok };
+    if (!ok) { try { newWindowNote(COPY_FILE_NOTE_FAIL); } catch {} }
+    openChromeClose();
+    return ok;
   };
   // Снятие экземпляра: наблюдатель, таймер и уже вставленные пункты (меню
   // Claude живёт своей жизнью, но наш узел в нём — наш).
@@ -7964,6 +8032,9 @@ nav[aria-label="Repository and pull request controls"] {
         path: openState.pending?.path ?? null,
         inserted: openState.inserted,
         last: openState.last,
+        // «Копировать в буфер» (WF69): сколько раз положили и чем кончился последний.
+        copies: openState.copies,
+        lastCopy: openState.lastCopy,
       },
       layoutRuns: state.layoutRuns,
       mutationBatches: state.mutationBatches,
@@ -8116,7 +8187,7 @@ nav[aria-label="Repository and pull request controls"] {
     cashoutPillNames, cashoutSweep,
     chatKind, chatPath, chatRowId, myChatId, readChatId, writeChatId, chatsMap, chatsScan, chatsFolder,
     popoutChat, chats,
-    openChromePath, openChromeInsert, openChromeOpen });
+    openChromePath, openChromeInsert, openChromeOpen, copyFileHtml, copyFileToClipboard });
 
   // Всё, что ниже, трогает живую страницу и может бросить на неготовой
   // разметке. Такое падение не должно оставлять в окне зомби: установка

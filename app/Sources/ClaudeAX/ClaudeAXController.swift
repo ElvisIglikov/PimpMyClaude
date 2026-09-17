@@ -40,6 +40,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
     /// Канал «Пимп» (план WF36, задача #5531): окна Claude из любого чата — файлами.
     /// Тикает на общем таймере, своего не заводит.
     private let pimp = PimpChannel()
+    /// «📋 Копировать в буфер» (WF69, #6236): страница кладёт путь и метку, приложение подменяет
+    /// буфер самим файлом. Свой таймер 0,25 с — общий тик в 2 с опоздал бы к «вставить» в Telegram.
+    private let copyRelay = CopyFileRelay()
 
     private var observers: [NSObjectProtocol] = []
     /// Заголовки окон, снятые в этом тике: их читает и канал probe, и покраска — второй
@@ -383,6 +386,11 @@ public final class ClaudeAXController: ClaudeAXControlling {
         windowThemes.beginGeneration()
         // Каталог канала «Пимп»: по нему CLI видит, что приложение вообще есть (план WF36).
         pimp.start()
+        copyRelay.onCopied = { [weak self] name in self?.hud.show("📋 Файл в буфере: \(name) — вставляй", seconds: 2.5) }
+        copyRelay.onMissing = { [weak self] path in
+            self?.hud.show("📋 Файла нет на диске: \((path as NSString).lastPathComponent)", seconds: 3)
+        }
+        copyRelay.start()
         observeActivation()
         claudeFrontmost = app.isFrontmost
         refreshHotkeys()
@@ -430,6 +438,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         autoAllow.stop()
         menu.stop()
         statusFeed.stop()
+        copyRelay.stop()
         hotkeys.removeAll()
         watchdog?.invalidate()
         watchdog = nil
@@ -488,7 +497,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         blockQuit=\(blockQuitEnabled) blocks=\(blockedQuits) hotkeys=\(hotkeys.count) \
         status=\(statusFeed.isRunning)/\(statusFeed.projectCount)/\(statusFeed.sentCount) \
         project=\(projectPaint.status) chats=\(chatProbe.status) themes=\(windowThemes.status) \
-        pimp=\(pimp.status) live=\(liveColorsStatus) lastCommand=\(actions.lastCommand)
+        pimp=\(pimp.status) copy=\(copyRelay.status) live=\(liveColorsStatus) lastCommand=\(actions.lastCommand)
         """
     }
 
