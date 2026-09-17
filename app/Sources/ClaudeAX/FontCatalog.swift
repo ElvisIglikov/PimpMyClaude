@@ -203,10 +203,12 @@ enum FontCatalog {
         "Trebuchet MS", "Arial", "Tahoma",
     ]
 
-    /// Рукописные и весёлые.
+    /// Рукописные и весёлые. Noteworthy, Bradley Hand и Snell Roundhand убраны (слово Элвиса
+    /// 17.09, #6251: «плохо читаются»); шрифт с таким семейством в `my-themes.json` или в
+    /// памяти окна остаётся без галки в меню — это нормально.
     static let handFamilies = [
-        "Comic Sans MS", "Chalkboard SE", "Noteworthy", "Marker Felt", "Bradley Hand",
-        "Snell Roundhand", "Papyrus", "Copperplate", "American Typewriter",
+        "Comic Sans MS", "Chalkboard SE", "Marker Felt", "Papyrus", "Copperplate",
+        "American Typewriter",
     ]
 
     /// Моноширинные — свой белый список, дальше добираем установленные по регулярке.

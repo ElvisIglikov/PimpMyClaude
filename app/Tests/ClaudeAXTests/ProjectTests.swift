@@ -1301,8 +1301,17 @@ final class ProjectTests: XCTestCase {
         XCTAssertTrue(rig.sent.isEmpty)
     }
 
+    /// «🖥 Всем окнам ▸» — последний пункт «⋯ Ещё ▸» (с WF71).
+    private func allWindows(in menu: NSMenu) throws -> NSMenu {
+        let more = try XCTUnwrap(menu.items.last?.submenu, "«Ещё ▸» не последний")
+        let item = try XCTUnwrap(more.items.last)
+        XCTAssertEqual(item.title, MenuModel.allWindowsTitle, "«Всем окнам ▸» не последний в «Ещё ▸»")
+        return try XCTUnwrap(item.submenu)
+    }
+
     /// Переписан из `testMenuHasProjectItem`: подменю «🗂 Проект ▸» больше нет, остался один
-    /// тумблер «🗂 Цвет по проекту» в «🖥 Всем окнам ▸» (решение 3.4 плана WF20).
+    /// тумблер «🗂 Цвет по проекту» в «🖥 Всем окнам ▸» (решение 3.4 плана WF20), а само
+    /// «Всем окнам ▸» с WF71 стоит последним в «⋯ Ещё ▸».
     func testMenuHasProjectColorToggle() throws {
         var toggled: [Bool] = []
         var config = MinimizeMenu.MenuConfig()
@@ -1310,16 +1319,17 @@ final class ProjectTests: XCTestCase {
         config.projectColor = true
         config.setProjectColor = { toggled.append($0) }
 
-        let appearance = try XCTUnwrap(MinimizeMenu.build(config: config).items
-            .first { $0.title == MenuModel.appearanceTitle }?.submenu)
-        // Ни подменю проекта, ни «Записать этот вид», ни лишнего разделителя сверху.
-        XCTAssertNil(appearance.items.first { $0.title.hasPrefix("Проект") })
-        XCTAssertNil(appearance.items.first { $0.title.contains("в проект") })
-        XCTAssertNil(appearance.items.first { $0.title.contains("AGENTS.md") })
-        XCTAssertFalse(try XCTUnwrap(appearance.items.first).isSeparatorItem)
+        let menu = MinimizeMenu.build(config: config)
+        // Ни подменю проекта, ни «Записать этот вид», ни лишнего разделителя сверху; тумблера
+        // на верхнем уровне тоже нет.
+        XCTAssertNil(menu.items.first { $0.title.hasPrefix("Проект") })
+        XCTAssertNil(menu.items.first { $0.title.contains("в проект") })
+        XCTAssertNil(menu.items.first { $0.title.contains("AGENTS.md") })
+        XCTAssertNil(menu.items.first { $0.title == MenuModel.projectColorTitle })
+        XCTAssertFalse(try XCTUnwrap(menu.items.first).isSeparatorItem)
 
         // Тумблер стоит после разделителя и ПЕРЕД «🌈 Раскрасить по кругу ▸».
-        let all = try XCTUnwrap(appearance.items.first { $0.title == MenuModel.allWindowsTitle }?.submenu)
+        let all = try allWindows(in: menu)
         XCTAssertEqual(Array(all.items.map { $0.isSeparatorItem ? "—" : $0.title }.suffix(4)),
                        ["—", MenuModel.projectColorTitle, MenuModel.autoPaintTitle,
                         MenuModel.liveColorsTitle])
@@ -1332,9 +1342,7 @@ final class ProjectTests: XCTestCase {
 
         // Выключенный — без галки, клик включает обратно.
         config.projectColor = false
-        let off = try XCTUnwrap(try XCTUnwrap(MinimizeMenu.build(config: config).items
-            .first { $0.title == MenuModel.appearanceTitle }?.submenu).items
-            .first { $0.title == MenuModel.allWindowsTitle }?.submenu)
+        let off = try allWindows(in: MinimizeMenu.build(config: config))
         let offToggle = try XCTUnwrap(off.items.first { $0.title == MenuModel.projectColorTitle })
         XCTAssertEqual(offToggle.state, .off)
         click(offToggle)
@@ -1342,12 +1350,128 @@ final class ProjectTests: XCTestCase {
 
         // Меню собрано без сведений о проекте — тумблера нет вовсе.
         config.projectColor = nil
-        let bare = try XCTUnwrap(try XCTUnwrap(MinimizeMenu.build(config: config).items
-            .first { $0.title == MenuModel.appearanceTitle }?.submenu).items
-            .first { $0.title == MenuModel.allWindowsTitle }?.submenu)
+        let bare = try allWindows(in: MinimizeMenu.build(config: config))
         XCTAssertNil(bare.items.first { $0.title == MenuModel.projectColorTitle })
         XCTAssertEqual(Array(bare.items.map { $0.isSeparatorItem ? "—" : $0.title }.suffix(3)),
                        ["—", MenuModel.autoPaintTitle, MenuModel.liveColorsTitle])
+    }
+
+    // MARK: - «🗂 <Проект>» в меню (план WF71 п. 3)
+
+    /// Тема проекта окна под кнопкой: без файла — авто-цвет и имя папки, с файлом — тема
+    /// файла; папку не знаем — nil. `current` — отпечаток покраски сошёлся с видом.
+    func testProjectThemeForMenuFollowsFileAndAutoColor() throws {
+        let rig = makeRig()
+        let pimp = rig.folder("PimpMyClaude")
+
+        // Файла нет — авто-цвет по имени папки; окно ещё не крашено, значит вид не стоит.
+        let auto = try XCTUnwrap(rig.paint.projectTheme(forTitle: ProjectPaint.mainWindowTitle))
+        XCTAssertEqual(auto.name, "PimpMyClaude")
+        XCTAssertEqual(auto.theme.id, "project-\(AutoPaint.hue(forName: "PimpMyClaude"))")
+        XCTAssertEqual(auto.theme, AutoPaint.projectTheme(folderName: "PimpMyClaude"))
+        XCTAssertFalse(auto.current)
+        // Безымянное окно — это главное окно; чужой чат (нет в индексе) проекта главного окна
+        // НЕ получает: попап обычного чата claude.ai показал бы «🗂 PimpMyClaude» (находка 2
+        // проверки WF20).
+        XCTAssertEqual(rig.paint.projectTheme(forTitle: " ")?.name, "PimpMyClaude")
+        XCTAssertNil(rig.paint.projectTheme(forTitle: "Разговор ни о чём"))
+        // Тик покрасил — стоит.
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
+        XCTAssertEqual(try XCTUnwrap(rig.paint.projectTheme(forTitle: ProjectPaint.mainWindowTitle)).current,
+                       true)
+
+        // С файлом — тема файла; отпечаток авто-цвета с ней не сходится, пока тик не прошёл.
+        rig.store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(ProjectTests.indigo),
+                                        font: .set(ProjectTests.menlo)), to: pimp)
+        let filed = try XCTUnwrap(rig.paint.projectTheme(forTitle: ProjectPaint.mainWindowTitle))
+        XCTAssertEqual(filed.name, "PimpMyClaude")
+        XCTAssertEqual(filed.theme.id, "indigo")
+        XCTAssertFalse(filed.current)
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(try XCTUnwrap(rig.paint.projectTheme(forTitle: ProjectPaint.mainWindowTitle)).current,
+                       true)
+        // Файл без цвета (только шрифт) — тему проект не задаёт, пункта нет.
+        rig.store.write(ProjectSettings(name: "PimpMyClaude", font: .set(ProjectTests.menlo)), to: pimp)
+        XCTAssertNil(rig.paint.projectTheme(forTitle: ProjectPaint.mainWindowTitle))
+
+        // Попап с заголовком чата из индекса — папка своя.
+        let popout = try XCTUnwrap(rig.paint.projectTheme(forTitle: "Dictatoric"))
+        XCTAssertEqual(popout.name, "Dictatorik")
+        XCTAssertEqual(popout.theme.id, "project-\(AutoPaint.hue(forName: "Dictatorik"))")
+
+        // Главное окно без сессии — папки нет, пункта нет.
+        putStatus(rig.status, urls: ["about:blank"])
+        rig.clock.advance()
+        XCTAssertNil(rig.paint.projectTheme(forTitle: ProjectPaint.mainWindowTitle))
+    }
+
+    /// Клик по «🗂 <Проект>»: окно получает вид проекта сразу, файл проекта не заводится и не
+    /// меняется (решение 3.1 плана WF20 — авто-цвет живёт в голове приложения).
+    func testRepaintProjectFromMenuWritesNoFile() throws {
+        let rig = makeRig()
+        let pimp = rig.folder("PimpMyClaude")
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
+
+        // Отпечаток свежий — тик молчит, а клик красит мимо отпечатка.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 1)
+        rig.paint.repaintProject(forTitle: ProjectPaint.mainWindowTitle)
+        XCTAssertEqual(rig.sent.count, 2)
+        let again = try XCTUnwrap(rig.sent.last)
+        XCTAssertEqual(again.key, "main")
+        XCTAssertEqual(again.match, "/epitaxy/local_a1")
+        XCTAssertEqual(again.theme.value?.id, "project-\(AutoPaint.hue(forName: "PimpMyClaude"))")
+        XCTAssertEqual(PaintRig.layers(again), "t")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rig.store.url(in: pimp).path),
+                       "клик по теме проекта завёл файл")
+        XCTAssertTrue(rig.store.registry().isEmpty)
+        XCTAssertTrue(rig.notices.isEmpty)
+        // Следующий тик по-прежнему молчит: отпечаток тот же.
+        rig.clock.advance()
+        rig.paint.tick()
+        XCTAssertEqual(rig.sent.count, 2)
+
+        // Папку не знаем — молчим.
+        rig.paint.repaintProject(forTitle: "Разговор ни о чём")
+        XCTAssertEqual(rig.sent.count, 2)
+    }
+
+    /// «Применить ▸» у своей темы (план WF71 п. 2): «Только этому окну» в проект не пишет,
+    /// «Окнам проекта …» пишет, как любой ручной выбор, «Всем окнам» — запись «всем окнам».
+    func testMyThemeTargetsWriteProjectOnlyForProjectWindows() throws {
+        let rig = makeRig()
+        let pimp = rig.folder("PimpMyClaude")
+        let actions = makeActions(rig)
+        let my = MyTheme(id: "user-1", name: "Матрица", type: "dark",
+                         palette: ProjectTests.indigo.palette, font: nil)
+
+        // Только этому окну: команда ушла, память «последнее применённое» знает её, файла
+        // проекта нет (записи по заголовку тут не бывает — у окна теста заголовок пустой).
+        XCTAssertTrue(actions.apply(myTheme: my, scope: MenuModel.themeScopeWindow, window: nil,
+                                    toProject: false))
+        XCTAssertNil(rig.store.settings(in: pimp), "«Только этому окну» ушло в проект")
+        XCTAssertTrue(rig.notices.isEmpty)
+        XCTAssertEqual(actions.lastAppliedTheme?.id, "user-1")
+        XCTAssertNil(actions.themeStore.allThemeID)
+        XCTAssertTrue(try String(contentsOf: rig.box.appendingPathComponent("command.json"),
+                                 encoding: .utf8).contains("\"theme\":{\"id\":\"user-1\""))
+
+        // Окнам проекта: тот же выбор, но он стал видом проекта.
+        rig.clock.advance(CommandChannel.minInterval + 1)
+        XCTAssertTrue(actions.apply(myTheme: my, scope: MenuModel.themeScopeWindow, window: nil))
+        XCTAssertEqual(rig.store.settings(in: pimp)?.theme.value?.id, "user-1")
+        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude")])
+
+        // Всем окнам: запись «всем окнам», проект не трогается.
+        try FileManager.default.removeItem(at: rig.store.url(in: pimp))
+        rig.clock.advance(CommandChannel.minInterval + 1)
+        XCTAssertTrue(actions.apply(myTheme: my, scope: MenuModel.themeScopeAll, window: nil))
+        XCTAssertEqual(actions.themeStore.allThemeID, "user-1")
+        XCTAssertNil(rig.store.settings(in: pimp))
     }
 
     // MARK: - чат окна вместо заголовка (план WF29, задачи #5448 и #5455)

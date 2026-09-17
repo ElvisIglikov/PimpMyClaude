@@ -723,10 +723,12 @@ final class ClaudeActions {
     /// id, action, at, scope, title, preview, theme, font, size, frame).
     /// Окно адресуется AX-заголовком, как «Обкэшить»; пустой заголовок страница понимает как
     /// «окно в фокусе» — тогда, как у «Обкэшить», сперва даём окну фокус и ждём focusDelay.
+    /// `toProject: false` — «Применить ▸ Только этому окну» (WF71): выбор остаётся местным,
+    /// в `.pimpmyclaude.json` ничего не пишется и окна проекта не трогаются.
     @discardableResult
     func applyTheme(scope: String, theme: Layer<Theme> = .keep, font: Layer<Font> = .keep,
                     size: SizeLayer = .keep, frame: Layer<Bool> = .keep,
-                    window: AXUIElement?) -> Bool {
+                    window: AXUIElement?, toProject: Bool = true) -> Bool {
         // Все слои «не трогать» — команде нечего делать.
         guard !theme.isKeep || !font.isKeep || !size.isKeep || !frame.isKeep else { return false }
         noteUserCommand()
@@ -741,7 +743,8 @@ final class ClaudeActions {
                                                    font: font, size: size, frame: frame)
             guard self.commands.write(action: "theme", fields: fields) else { return false }
             self.recordTheme(fields: fields)
-            self.remember(scope: scope, title: title, theme: theme, font: font, size: size, frame: frame)
+            self.remember(scope: scope, title: title, theme: theme, font: font, size: size,
+                          frame: frame, toProject: toProject)
             return true
         }
         if title.isEmpty, let target = target {
@@ -821,12 +824,13 @@ final class ClaudeActions {
     /// хранятся (`saveMyTheme` пишет их все), но выбираются своими списками — правило одно
     /// и без исключений: список цветов меняет цвет. Так же с WF15 живёт цвет проекта
     /// (`ProjectPaint.view`), и панель «Своя тема» теперь ставит ровно то, что крутила.
+    /// `toProject` — как у `applyTheme`: «Только этому окну» в проект не пишет (WF71).
     @discardableResult
-    func apply(myTheme: MyTheme, scope: String, window: AXUIElement?) -> Bool {
-        applyTheme(scope: scope, theme: .set(myTheme.theme), window: window)
+    func apply(myTheme: MyTheme, scope: String, window: AXUIElement?, toProject: Bool = true) -> Bool {
+        applyTheme(scope: scope, theme: .set(myTheme.theme), window: window, toProject: toProject)
     }
 
-    /// «Сохранить как мою тему…»: набор из темы этого окна и последних шрифта, размера и рамки.
+    /// «💾 Сохранить тему»: набор из темы этого окна и последних шрифта, размера и рамки.
     /// Тема ни разу не выбиралась — сохранять нечего (меню покажет алерт).
     @discardableResult
     func saveMyTheme(name: String, window: AXUIElement? = nil) -> [MyTheme]? {
@@ -835,7 +839,7 @@ final class ClaudeActions {
                             frame: lastAppliedFrame == true)
     }
 
-    /// Что предложит «Сохранить как мою тему…» (и каким именем): у автопокрашенного окна — его
+    /// Что запишет «💾 Сохранить тему» (и от чего считается имя): у автопокрашенного окна — его
     /// собственную автотему (план WF10 п. 6), у остальных — последнюю применённую этим
     /// приложением. Иначе на окне «Радуги» сохранялся бы цвет соседнего окна.
     func themeToSave(window: AXUIElement?) -> Theme? {
@@ -893,8 +897,12 @@ final class ClaudeActions {
     /// Размер приходит половинами, поэтому кладётся поверх запомненного — как его склеивает
     /// страница; `.reset` («🧹 Всё как у Claude») снимает слой целиком, а снятая половина
     /// («Как у Claude» в одном из двух подменю) уходит из записи одна (решение 1 плана WF19).
+    /// `toProject: false` — крючок `onWindowViewChanged` не зовётся вовсе (WF71): память
+    /// окна и галки те же, а вид проекта не меняется. Отпечаток покраски при этом не
+    /// трогается, поэтому окно держит выбор, пока не изменится вид проекта или не
+    /// перезапустится приложение — после перезапуска оно красится по проекту.
     private func remember(scope: String, title: String, theme: Layer<Theme>, font: Layer<Font>,
-                          size: SizeLayer, frame: Layer<Bool>) {
+                          size: SizeLayer, frame: Layer<Bool>, toProject: Bool = true) {
         // Размер окна ЦЕЛЫМ слоем — таким он и уйдёт в файл проекта (крючок в конце).
         var windowSize: Layer<Size> = .keep
         if scope == MenuModel.themeScopeAll {
@@ -944,7 +952,7 @@ final class ClaudeActions {
         // и «Раскрасить по кругу» сюда не доходят. Сверка именно «равно окну», а не «не равно
         // всем» (находка 6 проверки WF20): третий scope, который однажды появится, ушёл бы
         // в файл проекта молча.
-        guard scope == MenuModel.themeScopeWindow else { return }
+        guard scope == MenuModel.themeScopeWindow, toProject else { return }
         onWindowViewChanged?(title, theme, font, windowSize, frame)
     }
 

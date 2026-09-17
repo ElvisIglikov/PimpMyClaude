@@ -61,8 +61,9 @@ final class MyThemesStore {
     /// Сохранить последний применённый набор слоёв под именем (цвет, шрифт, размер, рамка).
     /// Имя занято своей темой (после `clean`, регистронезависимо) — перезаписываем её слои,
     /// сохраняя id и место в списке: это и есть «изменить свою тему» (задача #5364), галка
-    /// в меню не съезжает, а применённая тема остаётся применённой. Спрашивает про перезапись
-    /// вызывающий (`MinimizeMenu.saveMyTheme`), здесь только запись.
+    /// в меню не съезжает, а применённая тема остаётся применённой. Новая тема встаёт ПЕРВОЙ
+    /// (WF71). Меню с WF71 сюда приходит только с новым именем (`autoName`), про перезапись
+    /// спрашивает одна панель «Своя тема», здесь только запись.
     /// Возвращает новый список (nil — не записалось).
     @discardableResult
     func add(name: String, theme: Theme, font: Font?, size: Size? = nil, frame: Bool = false,
@@ -128,15 +129,29 @@ final class MyThemesStore {
         return list.first { clean(name: $0.name).lowercased() == wanted }
     }
 
+    /// Имя для «💾 Сохранить тему» без диалога (WF71): имя цвета окна («Матрица»), а занято —
+    /// «Матрица 2», «Матрица 3»… первое свободное. Совпадение считается как у `matching`,
+    /// без регистра и пробелов. Пустое имя темы (кривой каталог) — «Тема», чтобы запись
+    /// всё равно состоялась.
+    static func autoName(for theme: Theme, among list: [MyTheme]) -> String {
+        let base = clean(name: theme.name)
+        let stem = base.isEmpty ? "Тема" : base
+        guard matching(name: stem, in: list) != nil else { return stem }
+        var number = 2
+        while matching(name: "\(stem) \(number)", in: list) != nil { number += 1 }
+        return "\(stem) \(number)"
+    }
+
     /// Тема с известным id — на своё место (перезапись слоёв «изменить»: галка в меню не
-    /// съезжает); новая — в конец, и за лимитом уходит самая старая.
+    /// съезжает); новая — ПЕРВОЙ (слово Элвиса 17.09: «она чик сразу появляется сверху»),
+    /// и за лимитом уходит последняя — самая старая.
     static func appending(_ theme: MyTheme, to list: [MyTheme]) -> [MyTheme] {
         if let index = list.firstIndex(where: { $0.id == theme.id }) {
             var updated = list
             updated[index] = theme
             return updated
         }
-        return Array((list + [theme]).suffix(limit))
+        return Array(([theme] + list).prefix(limit))
     }
 
     /// Запись без id, имени или палитры пропускается — из-за одной кривой строки не должен
