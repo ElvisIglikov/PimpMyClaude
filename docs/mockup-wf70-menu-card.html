@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Меню про оформление и карточка воркфлоу — макет WF70/71</title>
+<style>
+:root{--bg:#14161a;--panel:#1b1e24;--panel2:#23272f;--ink:#e9e7e2;--muted:#a9a69e;--accent:#84c9a8;--warn:#e2b75f;--line:#30343d;--menu:#2a2d34;--menu-hi:#3d5bd6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:20px/1.5 -apple-system,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:26px 22px 80px}
+h1{font-size:3rem;line-height:1.08;margin:.1em 0 .2em}
+h2{font-size:3rem;line-height:1.08;margin:1.3em 0 .35em;padding-top:.4em;border-top:1px solid var(--line)}
+h3{font-size:1.6rem;margin:1.1em 0 .4em}
+p{margin:.6em 0;max-width:78ch}
+ul,ol{padding-left:1.25em;max-width:80ch}
+li{margin:.4em 0}
+.meta{color:var(--muted);font-size:.85em;margin-bottom:1em}
+.toc{color:var(--muted);margin:.6em 0 1.2em;font-size:1.02em}
+.toc a{color:var(--ink);text-decoration:none}
+.toc a:hover{color:var(--accent)}
+.row{display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start;margin:1em 0}
+.frame{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px 16px}
+.frame .cap{color:var(--muted);font-size:.78em;margin-bottom:8px}
+/* нарисованное меню macOS — размер как в жизни (13 px) */
+.menu{width:272px;background:var(--menu);border:1px solid #444a55;border-radius:10px;padding:5px;box-shadow:0 12px 30px rgba(0,0,0,.5);font:13px/1.25 -apple-system,"SF Pro Text",Helvetica,Arial,sans-serif;color:#eee}
+.menu .it{display:flex;align-items:center;gap:8px;padding:4px 10px 4px 8px;border-radius:6px;white-space:nowrap}
+.menu .it .ic{width:18px;text-align:center;flex:0 0 18px}
+.menu .it .t{flex:1 1 auto}
+.menu .it .k{color:#9aa0ab;font-size:12px;margin-left:12px}
+.menu .it .arr{color:#c9ccd3;margin-left:10px}
+.menu .it.hi{background:var(--menu-hi);color:#fff}
+.menu .it.dim{color:#8e939c}
+.menu .sep{height:1px;background:#4a505b;margin:5px 8px}
+.menu .hd{color:#9aa0ab;font-size:11px;padding:6px 10px 2px;letter-spacing:.02em}
+.menu .chk{width:14px;text-align:center;flex:0 0 14px;color:#fff}
+.menu .slider{display:flex;align-items:center;gap:8px;padding:4px 10px 4px 8px}
+.menu .slider .bar{flex:1;height:4px;background:#5a606b;border-radius:2px;position:relative}
+.menu .slider .bar i{position:absolute;left:22%;top:-5px;width:14px;height:14px;border-radius:50%;background:#fff;border:1px solid #888}
+.menu .slider .v{color:#9aa0ab;font-size:12px;width:16px;text-align:right}
+.tiles{display:flex;gap:6px;padding:4px 8px}
+.tiles .tile{width:44px;height:30px;border:1px solid #6a707b;border-radius:5px;display:grid;place-items:center;font-size:9px;color:#c9ccd3;background:#353941}
+.sub{position:relative}
+.sub .menu.child{position:absolute;left:262px;top:-6px}
+@media (max-width:760px){.sub .menu.child{position:static;margin-top:8px}}
+/* карточка воркфлоу — размер как в жизни */
+.card{width:400px;background:#1e2128;border:1px solid #3a3f4a;border-left:4px solid #4caf50;border-radius:12px;padding:12px 14px;font:13px/1.35 -apple-system,"SF Pro Text",Helvetica,Arial,sans-serif;color:#e9e9ec;box-shadow:0 10px 26px rgba(0,0,0,.45)}
+.card.run{border-left-color:#e2b75f}
+.card.plan{border-left-color:#6b7280}
+.card .head{display:flex;align-items:center;gap:10px}
+.card .title{font-size:15px;font-weight:700}
+.card .pill{font-size:12px;padding:2px 9px;border-radius:999px;border:1px solid #4caf50;color:#8fe39a}
+.card.run .pill{border-color:#e2b75f;color:#f0d38a}
+.card.plan .pill{border-color:#6b7280;color:#b3b8c2}
+.card .about{margin:6px 0 4px;color:#e0e0e3}
+.card .old{color:#9aa0ab;margin:2px 0}
+.card .rows{margin-top:7px;display:grid;grid-template-columns:18px 70px 1fr;gap:4px 10px;align-items:center}
+.card .rows .lab{font-weight:600}
+.card .rows .dim{color:#8e939c}
+.card .foot{margin-top:9px;padding-top:8px;border-top:1px solid #3a3f4a;color:#c9ccd3}
+.card .foot b{color:#fff;font-weight:600}
+.strike{text-decoration:line-through;opacity:.55}
+.new{color:var(--accent)}
+.q{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:1em 0;max-width:86ch}
+.q b{display:block;font-size:1.1em;margin-bottom:6px}
+.q .why{color:var(--muted);font-size:.9em}
+.foot-note{margin-top:2.5em;color:var(--muted);font-size:.85em;border-top:1px solid var(--line);padding-top:1em}
+@media (max-width:640px){body{font-size:18px}h1,h2{font-size:2.4rem}.wrap{padding:18px 14px 60px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Меню про оформление и карточка воркфлоу</h1>
+<div class="meta">макет · Opus 5 max · 17.09.2026 · по диктовке 12:50</div>
+<div class="toc"><a href="#resheno">Что решено</a> · <a href="#menu">Новое меню</a> · <a href="#card">Карточка</a> · <a href="#voprosy">Один вопрос</a></div>
+
+<h2 id="resheno">Что решено — не переспрашиваю</h2>
+<ul>
+<li>Минус нажал — сразу оформление: мои темы первыми, ниже цвет, шрифт, размер, рамка, поля. Всё остальное — в «⋯ Ещё ▸». Клавиши работают как раньше.</li>
+<li>У каждой своей темы свой список: применить, изменить, удалить. «Сохранить как мою тему…» — одной строкой в том же разделе. Нижней кучи «Своя тема / Изменить / Сохранить / Удалить» больше нет.</li>
+<li>Первым в «Моих темах» — тема проекта этого окна («🗂 PimpMyClaude»): вернуть цвет проекта одним кликом, ничего не записывая.</li>
+<li>Навёл на тему, ушёл в другой раздел — окно сразу возвращается к тому, что было до открытия меню.</li>
+<li>Шрифты: с засечками — в самый конец; Noteworthy, Bradley Hand и Snell Roundhand убраны.</li>
+<li>«Размер вопросов» убран (не работает и не нужен), «Поля по бокам» → «Поля».</li>
+<li>Плитки раскладок — первой строкой в «⋯ Ещё ▸», ⌥⌘A и все клавиши работают как раньше.</li>
+<li>Карточка: строка «09:45 → 10:35 · 50 мин · шаги 1 из 1» и подвал со счётом проекта убраны; внизу одна человеческая строка про этот воркфлоу.</li>
+</ul>
+
+<h2 id="menu">Новое меню на минусе</h2>
+<p>Нарисовано в натуральную величину. Слева — что видно сразу; справа — «⋯ Ещё ▸» и список у своей темы.</p>
+<div class="row">
+<div class="frame"><div class="cap">минус нажат — верхний уровень</div>
+<div class="menu">
+  <div class="it"><span class="chk"> </span><span class="ic">🗂</span><span class="t">PimpMyClaude</span></div>
+  <div class="it hi"><span class="chk">✓</span><span class="ic"> </span><span class="t">Матрица</span><span class="arr">▸</span></div>
+  <div class="it"><span class="chk"> </span><span class="ic"> </span><span class="t">Пудра</span><span class="arr">▸</span></div>
+  <div class="it"><span class="chk"> </span><span class="ic">➕</span><span class="t">Своя тема…</span></div>
+  <div class="it"><span class="chk"> </span><span class="ic">💾</span><span class="t">Сохранить как мою тему…</span></div>
+  <div class="sep"></div>
+  <div class="it"><span class="chk"> </span><span class="ic">🎨</span><span class="t">Цвет</span><span class="arr">▸</span></div>
+  <div class="it"><span class="chk"> </span><span class="ic">🔤</span><span class="t">Шрифт</span><span class="arr">▸</span></div>
+  <div class="it"><span class="chk"> </span><span class="ic">🔠</span><span class="t">Размер ответов</span><span class="arr">▸</span></div>
+  <div class="it"><span class="chk">✓</span><span class="ic">✨</span><span class="t">Неоновая рамка</span></div>
+  <div class="slider"><span class="chk"> </span><span class="ic">↔️</span><span>Поля</span><span class="bar"><i></i></span><span class="v">5</span></div>
+  <div class="sep"></div>
+  <div class="it"><span class="chk"> </span><span class="ic">🧹</span><span class="t">Всё как у Claude</span></div>
+  <div class="sep"></div>
+  <div class="it"><span class="chk"> </span><span class="ic">⋯</span><span class="t">Ещё</span><span class="arr">▸</span></div>
+</div>
+</div>
+
+<div class="frame"><div class="cap">«⋯ Ещё ▸» — всё, что не про вид</div>
+<div class="menu">
+  <div class="tiles"><span class="tile">4 в ряд</span><span class="tile">5 в ряд</span><span class="tile">5 × 2</span><span class="tile">как сейчас</span><span class="tile">💾</span></div>
+  <div class="sep"></div>
+  <div class="it"><span class="ic">🚀</span><span class="t">Workflow</span></div>
+  <div class="it"><span class="ic">💬</span><span class="t">Новый чат</span><span class="k">⌘N</span></div>
+  <div class="it"><span class="ic">🪟</span><span class="t">Новое окно</span><span class="arr">▸</span></div>
+  <div class="it"><span class="ic">🪟</span><span class="t">Вынести этот чат в окно</span></div>
+  <div class="sep"></div>
+  <div class="it"><span class="ic">⬆️</span><span class="t">Развернуть</span><span class="k">⌥⌘↑</span></div>
+  <div class="it"><span class="ic">⬇️</span><span class="t">Свернуть</span><span class="k">⌥⌘↓</span></div>
+  <div class="sep"></div>
+  <div class="it"><span class="ic">💰</span><span class="t">Обкэшить</span><span class="k">⇧⌘N</span></div>
+  <div class="it"><span class="ic">▦</span><span class="t">Расставить</span><span class="k">⌥⌘A</span></div>
+  <div class="it"><span class="ic">👀</span><span class="t">Показать</span><span class="k">⌥⌘S</span></div>
+  <div class="it"><span class="ic">⏬</span><span class="t">Прокрутить</span><span class="k">⌥⌘D</span></div>
+  <div class="it"><span class="ic">🗂</span><span class="t">Раскладки</span><span class="arr">▸</span></div>
+  <div class="sep"></div>
+  <div class="it"><span class="ic">🖥</span><span class="t">Всем окнам</span><span class="arr">▸</span></div>
+</div>
+</div>
+
+<div class="frame"><div class="cap">список у своей темы («Матрица ▸»)</div>
+<div class="menu" style="width:230px">
+  <div class="it"><span class="chk">✓</span><span class="t">Применить</span></div>
+  <div class="it"><span class="chk"> </span><span class="ic">✏️</span><span class="t">Изменить…</span></div>
+  <div class="sep"></div>
+  <div class="it"><span class="chk"> </span><span class="ic">🗑</span><span class="t">Удалить</span></div>
+</div>
+<p style="font-size:.8em;color:var(--muted);max-width:260px;margin-top:10px">Наведение на «Матрица ▸» примеряет её, как сейчас. Ушёл на «Цвет ▸» или ниже — окно вернулось к своему виду.</p>
+</div>
+</div>
+
+<h2 id="card">Карточка воркфлоу</h2>
+<p>Три состояния. Серым зачёркнуто то, что уходит; зелёным — новая строка внизу.</p>
+<div class="row">
+<div class="frame"><div class="cap">готов</div>
+<div class="card">
+  <div class="head"><span class="title">Воркфлоу 1</span><span class="pill">✅ готов</span></div>
+  <div class="about">правая колонка широкого окна не шире строки модели — «Auto» и «Fable 5.1» рядом, поле…</div>
+  <div class="old strike">09:45 → 10:35 · 50 мин · шаги 1 из 1</div>
+  <div class="rows">
+    <span>✅</span><span class="lab">план</span><span>я · Opus Extra</span>
+    <span>⬜</span><span class="lab dim">критик</span><span class="dim">—</span>
+    <span>✅</span><span class="lab">кодинг</span><span>я · Opus Extra</span>
+    <span>✅</span><span class="lab">проверка</span><span>Opus Max ×2</span>
+  </div>
+  <div class="foot"><span class="strike">PimpMyClaude · 2 воркфлоу, 2 готово · 1,4 ч</span><br><b class="new">Завершился 15 мин назад · занял 50 мин</b></div>
+</div>
+</div>
+
+<div class="frame"><div class="cap">идёт</div>
+<div class="card run">
+  <div class="head"><span class="title">Воркфлоу 2</span><span class="pill">💭 идёт кодинг</span></div>
+  <div class="about">статус заказа для гостя — виджет сверху, честный экран после оформления, этап «Готов»</div>
+  <div class="rows">
+    <span>✅</span><span class="lab">план</span><span>я · Fable Extra</span>
+    <span>✅</span><span class="lab">критик</span><span>Opus Max</span>
+    <span>💭</span><span class="lab">кодинг</span><span>Opus Max 2</span>
+    <span>⬜</span><span class="lab dim">проверка</span><span class="dim">—</span>
+  </div>
+  <div class="foot"><b class="new">Идёт 25 мин · начался в 13:05 · закончит в 13:50</b></div>
+</div>
+</div>
+
+<div class="frame"><div class="cap">запланирован</div>
+<div class="card plan">
+  <div class="head"><span class="title">Воркфлоу 3</span><span class="pill">⬜ запланирован</span></div>
+  <div class="about">вход гостя по SMS — чтобы бонусы со старого сайта заработали</div>
+  <div class="rows">
+    <span>⬜</span><span class="lab dim">план</span><span class="dim">—</span>
+    <span>⬜</span><span class="lab dim">критик</span><span class="dim">—</span>
+    <span>⬜</span><span class="lab dim">кодинг</span><span class="dim">Opus Max</span>
+    <span>⬜</span><span class="lab dim">проверка</span><span class="dim">Fable Max</span>
+  </div>
+  <div class="foot"><b class="new">Ещё не начат</b></div>
+</div>
+</div>
+</div>
+<p>Слова внизу: «только что» — меньше минуты назад; «15 мин назад», «2 ч назад», «вчера». Ждёт тебя — «Ждёт тебя · идёт 40 мин». Заодно: карточка в низком окне получает прокрутку, а запланированный и готовый воркфлоу показывают «о чём» и «кто делал», когда это записано.</p>
+
+<h2 id="voprosy">Один вопрос</h2>
+<div class="q"><b>«Всем окнам ▸» — куда</b>
+Последним пунктом в «⋯ Ещё ▸» (рекомендую).<div class="why">почему: только там живут выключатели «Цвет по проекту», «Раскрасить по кругу» и «Живые цвета» — выключишь однажды, включить будет негде; минус: в «Ещё» на одну строку больше.</div>
+Или: убрать совсем.<div class="why">почему: ты его не понял и не пользуешься; минус: цвет по проекту и живые цвета останутся включёнными навсегда, без ручки.</div></div>
+<p>Ответь одной фразой — и «делай». Остальное решено твоей диктовкой, не переспрашиваю.</p>
+<div class="foot-note">План — docs/plan-wf70-2026-09-17.md, критик его разнёс (7 блокеров, 10 замечаний), правки внесены.</div>
+</div>
+</body>
+</html>
