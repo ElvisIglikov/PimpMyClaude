@@ -37,6 +37,20 @@ private final class PimpRig {
     var mainTitle = "Claude"
     var popouts: [(chat: String, name: String, origin: (x: Int, y: Int))] = []
 
+    /// Голосовой Пимп (план WF75): поднятые и закрытые окна, окно в фокусе, вставки и
+    /// последний чат каждой папки.
+    var raised: [CGWindowID] = []
+    var closed: [CGWindowID] = []
+    var canClose = true
+    /// Окно Claude в фокусе, когда Claude впереди; nil — Claude позади (тогда `front:true`
+    /// вставлять не должен вовсе).
+    var front: CGWindowID?
+    var pastes: [(id: CGWindowID, paths: [String])] = []
+    /// Нажали ли ⌘V: false — окно пропало между выбором и нажатием.
+    var pasteWorks = true
+    /// Последний чат папки: путь → чат и его заголовок (у приложения это `ProjectIndex`).
+    var lastChats: [String: (chat: String, title: String)] = [:]
+
     func advance(_ seconds: TimeInterval) { now = now.addingTimeInterval(seconds) }
 
     func window(_ id: CGWindowID) -> PimpWindow? { windows.first { $0.id == id } }
@@ -70,7 +84,20 @@ private final class PimpRig {
             openChat: { [unowned self] chat, name, origin in
                 self.popouts.append((chat: chat, name: name, origin: origin))
             },
-            notice: { [unowned self] text in self.notices.append(text) })
+            notice: { [unowned self] text in self.notices.append(text) },
+            raise: { [unowned self] id in self.raised.append(id) },
+            close: { [unowned self] id in
+                guard self.canClose else { return false }
+                self.closed.append(id)
+                self.windows.removeAll { $0.id == id }
+                return true
+            },
+            frontWindow: { [unowned self] in self.front },
+            paste: { [unowned self] id, paths, done in
+                self.pastes.append((id: id, paths: paths))
+                done(self.pasteWorks)
+            },
+            lastChat: { [unowned self] folder in self.lastChats[folder.path] })
     }
 
     /// «Расставить»: та же арифметика, что в приложении, только окна двигаются в массиве.
@@ -147,6 +174,12 @@ final class PimpChannelTests: XCTestCase {
 
     private func write(_ body: String, id: String, in box: URL) {
         try? Data(body.utf8).write(to: box.appendingPathComponent(id + ".json"))
+    }
+
+    /// Ответ канала как он лёг на диск — для побайтной сверки с эталоном.
+    private func resultText(_ id: String, in box: URL) throws -> String {
+        try String(contentsOf: box.appendingPathComponent(id + ".result.json"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func result(_ id: String, in box: URL) -> [String: Any]? {
@@ -410,6 +443,105 @@ final class PimpChannelTests: XCTestCase {
                          LayoutCell(folder: "/tmp/p\($0)", chat: "local_\($0)",
                                     title: "Окно \($0)", cell: $0)
                      })
+    }
+
+    // MARK: - 2б. эталоны контракта WF75: последний чат, закрытие, вставка, плашка
+
+    func testPimpParsesWF75Requests() throws {
+        // «Последний чат проекта»: ключ `chat` стоит ПОСЛЕ `place` и знает одно слово.
+        let last = try XCTUnwrap(PimpRequest.parse(fixture("new-window-last.request.json")))
+        XCTAssertEqual(last.action, .newWindow)
+        XCTAssertEqual(last.project, "TrelvisCom")
+        XCTAssertEqual(last.place, .right)
+        XCTAssertEqual(last.chat, "last")
+        // Поля `chat` нет — прежнее «новое окно» (эталон WF36 остаётся собой).
+        XCTAssertEqual(try XCTUnwrap(PimpRequest.parse(fixture("new-window.request.json"))).chat, "")
+        XCTAssertNil(PimpRequest.parse(Data(("{\"id\":\"1-1\",\"at\":\"2026-09-19T19:00:00Z\","
+            + "\"action\":\"new-window\",\"project\":\"X\",\"chat\":\"local_1\"}").utf8)),
+                     "чужое значение chat — bad-request")
+
+        let close = try XCTUnwrap(PimpRequest.parse(fixture("close-window.request.json")))
+        XCTAssertEqual(close.action, .closeWindow)
+        XCTAssertEqual(close.project, "TrelvisCom")
+        XCTAssertNil(PimpRequest.parse(Data(("{\"id\":\"1-1\",\"at\":\"2026-09-19T19:00:10Z\","
+            + "\"action\":\"close-window\",\"from\":\"\"}").utf8)), "без папки закрывать нечего")
+
+        let paste = try XCTUnwrap(PimpRequest.parse(fixture("paste.request.json")))
+        XCTAssertEqual(paste.action, .paste)
+        XCTAssertTrue(paste.front)
+        XCTAssertEqual(paste.paths, ["/Users/elvis/Downloads/IMG_0001.jpeg",
+                                     "/Users/elvis/Downloads/IMG_0002.jpeg"])
+        let clipboard = try XCTUnwrap(PimpRequest.parse(fixture("paste-clipboard.request.json")))
+        XCTAssertFalse(clipboard.front)
+        XCTAssertTrue(clipboard.paths.isEmpty, "без paths вставляем то, что в буфере")
+        XCTAssertEqual(clipboard.project, "VkusnoffKz")
+        func pasteBody(_ list: [String]) -> Data {
+            let body = list.map { "\"\($0)\"" }.joined(separator: ",")
+            return Data(("{\"id\":\"1-1\",\"at\":\"2026-09-19T19:00:20Z\",\"action\":\"paste\","
+                + "\"from\":\"\",\"paths\":[\(body)]}").utf8)
+        }
+        XCTAssertNil(PimpRequest.parse(pasteBody(["Downloads/IMG_0001.jpeg"])), "путь не от корня")
+        XCTAssertNil(PimpRequest.parse(pasteBody((1...21).map { "/tmp/\($0).jpg" })),
+                     "больше двадцати")
+        XCTAssertEqual(PimpRequest.parse(pasteBody((1...20).map { "/tmp/\($0).jpg" }))?.paths.count,
+                       20)
+
+        let hud = try XCTUnwrap(PimpRequest.parse(fixture("hud.request.json")))
+        XCTAssertEqual(hud.action, .hud)
+        XCTAssertEqual(hud.text, "Открыл 3 чата: VkusnoffKz, TrelvisCom, Dictator")
+        XCTAssertNil(PimpRequest.parse(Data(("{\"id\":\"1-1\",\"at\":\"2026-09-19T19:00:30Z\","
+            + "\"action\":\"hud\",\"text\":\"  \"}").utf8)), "плашка без слов — bad-request")
+        // Длинную плашку обрезаем, а не отказываем: на экране всё равно строка.
+        let long = String(repeating: "я", count: 260)
+        XCTAssertEqual(PimpRequest.parse(Data(("{\"id\":\"1-1\",\"at\":\"2026-09-19T19:00:30Z\","
+            + "\"action\":\"hud\",\"text\":\"\(long)\"}").utf8))?.text.count,
+                       PimpChannel.hudTextLimit)
+
+        // Урок #5682: чужие поля новые действия не роняют — `place` и `layout` разбирает
+        // только тот, кому они адресованы.
+        let noise = "{\"id\":\"1-1\",\"at\":\"2026-09-19T19:00:10Z\",\"action\":\"close-window\","
+            + "\"from\":\"\",\"project\":\"X\",\"place\":\"под этим\",\"layout\":\"5x3\"}"
+        XCTAssertEqual(PimpRequest.parse(Data(noise.utf8))?.action, .closeWindow)
+    }
+
+    func testPimpWF75AnswersMatchFixtures() throws {
+        // Плашка отвечает без полей действия.
+        XCTAssertEqual(PimpAnswer(id: "1789850030000-0401",
+                                  at: PimpChannel.date("2026-09-19T19:00:30Z")!, ok: true).json,
+                       try fixtureText("hud.result.json"))
+        XCTAssertEqual(PimpAnswer(id: "1789850000000-0102",
+                                  at: PimpChannel.date("2026-09-19T19:00:11Z")!, ok: false,
+                                  error: PimpChannel.Failure.chatMissing.rawValue).json,
+                       try fixtureText("new-window-last.error.json"))
+        XCTAssertEqual(PimpAnswer(id: "1789850010000-0203",
+                                  at: PimpChannel.date("2026-09-19T19:00:13Z")!, ok: false,
+                                  error: PimpChannel.Failure.mainWindow.rawValue).json,
+                       try fixtureText("close-window-main.error.json"))
+        XCTAssertEqual(PimpAnswer(id: "1789850020000-0303",
+                                  at: PimpChannel.date("2026-09-19T19:00:24Z")!, ok: false,
+                                  error: PimpChannel.Failure.badRequest.rawValue).json,
+                       try fixtureText("paste.error.json"))
+
+        XCTAssertEqual(PimpAnswer(id: "1789850010000-0201",
+                                  at: PimpChannel.date("2026-09-19T19:00:11Z")!, ok: true,
+                                  fields: PimpChannel.closeFields("Дубли задач")).json,
+                       try fixtureText("close-window.result.json"))
+        XCTAssertEqual(PimpAnswer(id: "1789850020000-0301",
+                                  at: PimpChannel.date("2026-09-19T19:00:21Z")!, ok: true,
+                                  fields: PimpChannel.pasteFields(pasted: 2,
+                                                                  window: "Сайт: корзина")).json,
+                       try fixtureText("paste.result.json"))
+        XCTAssertEqual(PimpAnswer(id: "1789850020000-0302",
+                                  at: PimpChannel.date("2026-09-19T19:00:23Z")!, ok: true,
+                                  fields: PimpChannel.pasteFields(pasted: 0,
+                                                                  window: "Сайт: корзина")).json,
+                       try fixtureText("paste-clipboard.result.json"))
+        // «Не знаю, какое окно»: в `windows` — заголовки тех, между которыми выбирать.
+        let two = [PimpWindow(id: 1, title: "Дубли задач"), PimpWindow(id: 2, title: "Бот: голос")]
+        XCTAssertEqual(PimpChannel.ambiguous(id: "1789850010000-0202",
+                                             at: PimpChannel.date("2026-09-19T19:00:12Z")!,
+                                             windows: two).json,
+                       try fixtureText("close-window.error.json"))
     }
 
     // MARK: - 3. место нового окна
@@ -1421,6 +1553,375 @@ final class PimpChannelTests: XCTestCase {
         write(request("700-0003", action: "windows", at: rig.now), id: "700-0003", in: box)
         channel.tick()
         XCTAssertEqual(result("700-0003", in: box)?["ok"] as? Bool, true)
+    }
+
+    // MARK: - 6а. голосовой Пимп (план WF75)
+
+    /// Закрытый последний чат выносится отдельным окном, и ждём окно ИМЕННО ЕГО: чужое
+    /// новое окно (вынос соседнего чата, «Обкэшить») нашим не считается — это #5691.
+    func testPimpChannelOpensLastChatByIndex() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.now = PimpChannel.date("2026-09-19T19:00:00Z")!
+        rig.projects = [PimpChannelTests.project("TrelvisCom")]
+        rig.lastChats["/Users/elvis/_ElvisProjects/TrelvisCom"] =
+            (chat: "local_9f1c2d3e-0000-4000-8000-000000000002", title: "Дубли задач")
+        rig.windows = [
+            PimpWindow(id: 1, title: "Claude", frame: CGRect(x: 0, y: 34, width: 735, height: 859)),
+            PimpWindow(id: 2, title: "Вкуснофф",
+                       frame: CGRect(x: 735, y: 34, width: 735, height: 859)),
+        ]
+        let channel = makeChannel(rig, in: box)
+
+        write(try fixtureText("new-window-last.request.json"), id: "1789850000000-0101", in: box)
+        channel.tick()
+        // Нового чата не заводим вовсе — чат выносит главное окно, как «↩︎ Вернуть эти чаты».
+        XCTAssertTrue(rig.opened.isEmpty)
+        XCTAssertEqual(rig.popouts.first?.chat, "local_9f1c2d3e-0000-4000-8000-000000000002")
+        XCTAssertEqual(rig.popouts.first?.name, "Дубли задач")
+        XCTAssertNil(result("1789850000000-0101", in: box))
+
+        rig.advance(2)
+        rig.windows.append(PimpWindow(id: 3, title: "Бот: голос", chat: "local_other",
+                                      frame: CGRect(x: 120, y: 120, width: 900, height: 700)))
+        channel.tick()
+        XCTAssertNil(result("1789850000000-0101", in: box), "чужое новое окно — не наше")
+        rig.windows.removeAll { $0.id == 3 }
+
+        rig.advance(4)
+        rig.windows.append(PimpWindow(id: 4, title: "Дубли задач",
+                                      chat: "local_9f1c2d3e-0000-4000-8000-000000000002",
+                                      frame: CGRect(x: 120, y: 120, width: 900, height: 700)))
+        channel.tick()
+        // Ответ побайтно: `opened` последним, и он есть только потому, что просили `chat`.
+        XCTAssertEqual(try resultText("1789850000000-0101", in: box),
+                       try fixtureText("new-window-last.result.json"))
+        XCTAssertTrue(rig.raised.isEmpty, "окно родилось — поднимать было нечего")
+    }
+
+    func testPimpChannelRaisesWindowOfOpenLastChat() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.projects = [PimpChannelTests.project("TrelvisCom")]
+        rig.lastChats["/Users/elvis/_ElvisProjects/TrelvisCom"] =
+            (chat: "local_last", title: "Дубли задач")
+        rig.windows = [
+            PimpWindow(id: 1, title: "Claude", frame: CGRect(x: 0, y: 34, width: 735, height: 859)),
+            PimpWindow(id: 2, title: "Дубли задач", chat: "local_last",
+                       frame: CGRect(x: 735, y: 34, width: 735, height: 859)),
+        ]
+        let channel = makeChannel(rig, in: box)
+
+        write(request("910-0001", action: "new-window", at: rig.now,
+                      extra: ",\"project\":\"TrelvisCom\",\"place\":\"left\",\"chat\":\"last\""),
+              id: "910-0001", in: box)
+        channel.tick()
+
+        let answer = try XCTUnwrap(result("910-0001", in: box))
+        XCTAssertEqual(answer["ok"] as? Bool, true)
+        XCTAssertEqual(answer["opened"] as? Bool, false, "окно было — мы его только подняли")
+        XCTAssertEqual(rig.raised, [2])
+        XCTAssertTrue(rig.popouts.isEmpty)
+        XCTAssertTrue(rig.opened.isEmpty)
+        XCTAssertEqual(rig.arranged.first, [2, 1], "поднятое окно встало слева")
+        XCTAssertEqual(rig.window(2)?.frame, CGRect(x: 0, y: 34, width: 735, height: 859))
+    }
+
+    func testPimpChannelSaysChatMissingAndWaitsFifteenSeconds() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.now = PimpChannel.date("2026-09-19T19:00:11Z")!
+        rig.projects = [PimpChannelTests.project("TrelvisCom")]
+        rig.windows = [PimpWindow(id: 1, title: "Claude",
+                                  frame: CGRect(x: 0, y: 34, width: 1470, height: 859))]
+        let channel = makeChannel(rig, in: box)
+
+        // Последнего чата у папки нет (Claude переустановлен, проект новый).
+        write(request("1789850000000-0102", action: "new-window", at: rig.now,
+                      extra: ",\"project\":\"TrelvisCom\",\"place\":\"right\",\"chat\":\"last\""),
+              id: "1789850000000-0102", in: box)
+        channel.tick()
+        XCTAssertEqual(try resultText("1789850000000-0102", in: box),
+                       try fixtureText("new-window-last.error.json"))
+        XCTAssertTrue(rig.popouts.isEmpty)
+
+        // Чат есть, окно не приехало: ждём 15 с (вынос готового чата — секунды), не 40.
+        rig.lastChats["/Users/elvis/_ElvisProjects/TrelvisCom"] =
+            (chat: "local_last", title: "Дубли задач")
+        rig.advance(1)
+        write(request("920-0002", action: "new-window", at: rig.now,
+                      extra: ",\"project\":\"TrelvisCom\",\"place\":\"right\",\"chat\":\"last\""),
+              id: "920-0002", in: box)
+        channel.tick()
+        XCTAssertEqual(rig.popouts.count, 1)
+        rig.advance(14)
+        channel.tick()
+        XCTAssertNil(result("920-0002", in: box))
+        rig.advance(2)
+        channel.tick()
+        XCTAssertEqual(result("920-0002", in: box)?["error"] as? String, "window-missing")
+
+        // Главного окна на экране нет — выносить нечем.
+        rig.windows = [PimpWindow(id: 2, title: "Вкуснофф",
+                                  frame: CGRect(x: 0, y: 34, width: 1470, height: 859))]
+        rig.advance(1)
+        write(request("920-0003", action: "new-window", at: rig.now,
+                      extra: ",\"project\":\"TrelvisCom\",\"place\":\"right\",\"chat\":\"last\""),
+              id: "920-0003", in: box)
+        channel.tick()
+        XCTAssertEqual(result("920-0003", in: box)?["error"] as? String, "window-missing")
+        XCTAssertEqual(rig.popouts.count, 1, "второй раз выносить не пробовали")
+    }
+
+    func testPimpChannelClosesOneWindowOfProject() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.now = PimpChannel.date("2026-09-19T19:00:11Z")!
+        rig.windows = [
+            PimpWindow(id: 1, title: "Claude", chat: "local_main",
+                       folder: "/Users/elvis/_ElvisProjects/PimpMyClaude",
+                       frame: CGRect(x: 0, y: 34, width: 735, height: 859)),
+            PimpWindow(id: 2, title: "Дубли задач", chat: "local_2",
+                       folder: "/Users/elvis/_ElvisProjects/TrelvisCom",
+                       frame: CGRect(x: 735, y: 34, width: 735, height: 859)),
+        ]
+        let channel = makeChannel(rig, in: box)
+
+        write(try fixtureText("close-window.request.json"), id: "1789850010000-0201", in: box)
+        channel.tick()
+        XCTAssertEqual(rig.closed, [2], "закрыли только окно проекта, и только красной кнопкой")
+        XCTAssertEqual(try resultText("1789850010000-0201", in: box),
+                       try fixtureText("close-window.result.json"))
+    }
+
+    func testPimpChannelRefusesToCloseAmbiguousOrMainWindow() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.now = PimpChannel.date("2026-09-19T19:00:12Z")!
+        let trelvis = "/Users/elvis/_ElvisProjects/TrelvisCom"
+        rig.windows = [
+            PimpWindow(id: 1, title: "Claude", folder: "/Users/elvis/_ElvisProjects/PimpMyClaude",
+                       frame: CGRect(x: 0, y: 34, width: 490, height: 859)),
+            PimpWindow(id: 2, title: "Дубли задач", chat: "local_2", folder: trelvis,
+                       frame: CGRect(x: 490, y: 34, width: 490, height: 859)),
+            PimpWindow(id: 3, title: "Бот: голос", chat: "local_3", folder: trelvis,
+                       frame: CGRect(x: 980, y: 34, width: 490, height: 859)),
+        ]
+        let channel = makeChannel(rig, in: box)
+
+        // Два окна проекта — не гадаем и не закрываем ни одного.
+        write(request("1789850010000-0202", action: "close-window", at: rig.now,
+                      extra: ",\"project\":\"TrelvisCom\""), id: "1789850010000-0202", in: box)
+        channel.tick()
+        XCTAssertEqual(try resultText("1789850010000-0202", in: box),
+                       try fixtureText("close-window.error.json"))
+        XCTAssertTrue(rig.closed.isEmpty)
+
+        // Осталось главное окно проекта и попап с заглушкой: закрывать нечего, и это
+        // не «окон нет», а «это главное окно» (#5729, #5534).
+        rig.now = PimpChannel.date("2026-09-19T19:00:13Z")!
+        rig.windows = [
+            PimpWindow(id: 1, title: "Claude", chat: "local_main", folder: trelvis,
+                       frame: CGRect(x: 0, y: 34, width: 735, height: 859)),
+            PimpWindow(id: 4, title: "New chat", chat: "local_4", folder: trelvis,
+                       frame: CGRect(x: 735, y: 34, width: 735, height: 859)),
+        ]
+        write(request("1789850010000-0203", action: "close-window", at: rig.now,
+                      extra: ",\"project\":\"TrelvisCom\""), id: "1789850010000-0203", in: box)
+        channel.tick()
+        XCTAssertEqual(try resultText("1789850010000-0203", in: box),
+                       try fixtureText("close-window-main.error.json"))
+        XCTAssertTrue(rig.closed.isEmpty)
+
+        // Карта чатов молчит — папки окон неизвестны, окон проекта не находится.
+        rig.advance(1)
+        rig.windows = [PimpWindow(id: 5, title: "Дубли задач",
+                                  frame: CGRect(x: 0, y: 34, width: 1470, height: 859))]
+        write(request("930-0004", action: "close-window", at: rig.now,
+                      extra: ",\"project\":\"TrelvisCom\""), id: "930-0004", in: box)
+        channel.tick()
+        XCTAssertEqual(result("930-0004", in: box)?["error"] as? String, "window-missing")
+
+        // Кнопки закрытия у окна нет — «закрыл» без закрытия не пишем.
+        rig.advance(1)
+        rig.canClose = false
+        rig.windows = [PimpWindow(id: 6, title: "Дубли задач", chat: "local_6", folder: trelvis,
+                                  frame: CGRect(x: 0, y: 34, width: 1470, height: 859))]
+        write(request("930-0005", action: "close-window", at: rig.now,
+                      extra: ",\"project\":\"TrelvisCom\""), id: "930-0005", in: box)
+        channel.tick()
+        XCTAssertEqual(result("930-0005", in: box)?["error"] as? String, "window-missing")
+        XCTAssertTrue(rig.closed.isEmpty)
+    }
+
+    /// Два окна, которые приложение зовёт главными (безымянный попап носит ту же заглушку):
+    /// не трогаем ничего, как `layout-save` (#5534).
+    func testPimpChannelRefusesToCloseWithTwoMainWindows() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        let trelvis = "/Users/elvis/_ElvisProjects/TrelvisCom"
+        rig.windows = [
+            PimpWindow(id: 1, title: "Claude", chat: "local_main", folder: trelvis,
+                       frame: CGRect(x: 0, y: 34, width: 490, height: 859)),
+            PimpWindow(id: 2, title: "Claude", chat: "local_2", folder: trelvis,
+                       frame: CGRect(x: 490, y: 34, width: 490, height: 859)),
+            PimpWindow(id: 3, title: "Дубли задач", chat: "local_3", folder: trelvis,
+                       frame: CGRect(x: 980, y: 34, width: 490, height: 859)),
+        ]
+        let channel = makeChannel(rig, in: box)
+
+        write(request("940-0001", action: "close-window", at: rig.now,
+                      extra: ",\"project\":\"TrelvisCom\""), id: "940-0001", in: box)
+        channel.tick()
+        let answer = try XCTUnwrap(result("940-0001", in: box))
+        XCTAssertEqual(answer["error"] as? String, "ambiguous")
+        XCTAssertEqual(answer["windows"] as? [String], ["Claude", "Claude"])
+        XCTAssertTrue(rig.closed.isEmpty)
+    }
+
+    func testPimpChannelPastesFilesIntoFrontWindow() throws {
+        let box = makeTemp()
+        let files = makeTemp()
+        let one = files.appendingPathComponent("IMG_0001.jpeg")
+        let two = files.appendingPathComponent("IMG_0002.jpeg")
+        try Data("1".utf8).write(to: one)
+        try Data("2".utf8).write(to: two)
+        let rig = PimpRig()
+        rig.windows = [
+            PimpWindow(id: 7, title: "Сайт: корзина", chat: "local_7",
+                       folder: "/Users/elvis/_ElvisProjects/VkusnoffKz",
+                       frame: CGRect(x: 0, y: 34, width: 735, height: 859)),
+            PimpWindow(id: 8, title: "Диктаторик",
+                       frame: CGRect(x: 735, y: 34, width: 735, height: 859)),
+        ]
+        rig.front = 7
+        let channel = makeChannel(rig, in: box)
+
+        write(request("950-0001", action: "paste", at: rig.now,
+                      extra: ",\"front\":true,\"paths\":[\"\(one.path)\",\"\(two.path)\"]"),
+              id: "950-0001", in: box)
+        channel.tick()
+        XCTAssertEqual(rig.pastes.first?.id, 7)
+        XCTAssertEqual(rig.pastes.first?.paths, [one.path, two.path])
+        let answer = try XCTUnwrap(result("950-0001", in: box))
+        XCTAssertEqual(answer["ok"] as? Bool, true)
+        XCTAssertEqual(answer["pasted"] as? Int, 2)
+        XCTAssertEqual(answer["window"] as? String, "Сайт: корзина")
+
+        // Claude позади — ⌘V ушёл бы в чужую программу, поэтому не вставляем вовсе.
+        rig.front = nil
+        rig.advance(1)
+        write(request("950-0002", action: "paste", at: rig.now,
+                      extra: ",\"front\":true,\"paths\":[\"\(one.path)\"]"), id: "950-0002", in: box)
+        channel.tick()
+        XCTAssertEqual(result("950-0002", in: box)?["error"] as? String, "no-windows")
+        XCTAssertEqual(rig.pastes.count, 1)
+
+        // Путь абсолютный, а файла нет (или это папка) — bad-request, и ничего не нажимаем.
+        rig.front = 7
+        rig.advance(1)
+        write(request("950-0003", action: "paste", at: rig.now,
+                      extra: ",\"front\":true,\"paths\":[\"\(files.path)/нет-такого.jpg\"]"),
+              id: "950-0003", in: box)
+        channel.tick()
+        XCTAssertEqual(result("950-0003", in: box)?["error"] as? String, "bad-request")
+        rig.advance(1)
+        write(request("950-0004", action: "paste", at: rig.now,
+                      extra: ",\"front\":true,\"paths\":[\"\(files.path)\"]"), id: "950-0004", in: box)
+        channel.tick()
+        XCTAssertEqual(result("950-0004", in: box)?["error"] as? String, "bad-request")
+        XCTAssertEqual(rig.pastes.count, 1)
+    }
+
+    func testPimpChannelPastesByChatAndProject() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        let vkus = "/Users/elvis/_ElvisProjects/VkusnoffKz"
+        rig.windows = [
+            PimpWindow(id: 7, title: "Сайт: корзина", chat: "local_7", folder: vkus,
+                       frame: CGRect(x: 0, y: 34, width: 735, height: 859)),
+            PimpWindow(id: 8, title: "Диктаторик", chat: "local_8",
+                       folder: "/Users/elvis/_ElvisProjects/Dictator",
+                       frame: CGRect(x: 735, y: 34, width: 735, height: 859)),
+        ]
+        let channel = makeChannel(rig, in: box)
+
+        // Чат назван — вставляем в его окно, и это видно по fromResolved.
+        write(request("960-0001", action: "paste", at: rig.now, from: "local_7"),
+              id: "960-0001", in: box)
+        channel.tick()
+        let byChat = try XCTUnwrap(result("960-0001", in: box))
+        XCTAssertEqual(byChat["fromResolved"] as? Bool, true)
+        XCTAssertEqual(byChat["pasted"] as? Int, 0, "буфер вставляем как есть")
+        XCTAssertEqual(byChat["window"] as? String, "Сайт: корзина")
+        XCTAssertEqual(rig.pastes.first?.id, 7)
+        XCTAssertTrue(rig.pastes.first?.paths.isEmpty ?? false, "буфер не трогаем")
+
+        // Чата нет — единственное окно проекта (эталон paste-clipboard.request.json).
+        rig.advance(1)
+        write(request("960-0002", action: "paste", at: rig.now,
+                      extra: ",\"project\":\"VkusnoffKz\""), id: "960-0002", in: box)
+        channel.tick()
+        let byProject = try XCTUnwrap(result("960-0002", in: box))
+        XCTAssertEqual(byProject["ok"] as? Bool, true)
+        XCTAssertEqual(byProject["fromResolved"] as? Bool, false)
+        XCTAssertEqual(rig.pastes.last?.id, 7)
+
+        // Два окна проекта — не гадаем.
+        rig.advance(1)
+        rig.windows.append(PimpWindow(id: 9, title: "Сайт: доставка", chat: "local_9",
+                                      folder: vkus,
+                                      frame: CGRect(x: 0, y: 34, width: 200, height: 200)))
+        write(request("960-0003", action: "paste", at: rig.now,
+                      extra: ",\"project\":\"VkusnoffKz\""), id: "960-0003", in: box)
+        channel.tick()
+        let many = try XCTUnwrap(result("960-0003", in: box))
+        XCTAssertEqual(many["error"] as? String, "ambiguous")
+        XCTAssertEqual(many["windows"] as? [String], ["Сайт: корзина", "Сайт: доставка"])
+
+        // Окон проекта нет вовсе.
+        rig.advance(1)
+        write(request("960-0004", action: "paste", at: rig.now,
+                      extra: ",\"project\":\"SkilZZZ\""), id: "960-0004", in: box)
+        channel.tick()
+        XCTAssertEqual(result("960-0004", in: box)?["error"] as? String, "window-missing")
+
+        // Окно пропало между выбором и нажатием — «вставил» не пишем.
+        rig.advance(1)
+        rig.pasteWorks = false
+        write(request("960-0005", action: "paste", at: rig.now, from: "local_7"),
+              id: "960-0005", in: box)
+        channel.tick()
+        XCTAssertEqual(result("960-0005", in: box)?["error"] as? String, "window-missing")
+    }
+
+    /// Плашка отвечает и когда канал занят долгой работой: её ветка стоит ВЫШЕ проверки
+    /// занятости (критик Б12). Остальные действия в это время честно получают `busy`.
+    func testPimpChannelShowsHudEvenWhenBusy() throws {
+        let box = makeTemp()
+        let rig = PimpRig()
+        rig.now = PimpChannel.date("2026-09-19T19:00:20Z")!
+        rig.projects = [PimpChannelTests.project("Dictator")]
+        rig.windows = [PimpWindow(id: 1, title: "Claude",
+                                  frame: CGRect(x: 0, y: 34, width: 1470, height: 859))]
+        let channel = makeChannel(rig, in: box)
+
+        write(request("970-0001", action: "new-window", at: rig.now,
+                      extra: ",\"project\":\"Dictator\",\"place\":\"right\""),
+              id: "970-0001", in: box)
+        channel.tick()
+        XCTAssertNil(result("970-0001", in: box), "канал занят открытием окна")
+
+        rig.advance(10)
+        write(try fixtureText("hud.request.json"), id: "1789850030000-0401", in: box)
+        write(request("970-0002", action: "arrange", at: rig.now), id: "970-0002", in: box)
+        channel.tick()
+        XCTAssertEqual(try resultText("1789850030000-0401", in: box),
+                       try fixtureText("hud.result.json"))
+        XCTAssertEqual(rig.notices.last, "Открыл 3 чата: VkusnoffKz, TrelvisCom, Dictator")
+        XCTAssertEqual(result("970-0002", in: box)?["error"] as? String, "busy")
+        XCTAssertTrue(rig.arranged.isEmpty, "плашка окон не трогает")
+        XCTAssertNil(result("970-0001", in: box), "работа канала не сбилась")
     }
 
     // MARK: - 7. точка и уборка
