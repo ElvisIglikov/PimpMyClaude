@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-1";
+  const VERSION = "wf76-a-2";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -7949,6 +7949,9 @@ nav[aria-label="Repository and pull request controls"] {
   const HTML_CHROME_URL_SELECTOR = 'input[aria-label="Page URL"]';
   const HTML_CHROME_TAB_SELECTOR = "[data-vtb-id]";
   const HTML_CHROME_NEW_TAB_RE = /^New tab$/i;
+  // Что уходит из панели наружу (#6621): страницы и PDF — в Chrome, картинки — в
+  // «Просмотр»; куда именно — решает приложение по расширению.
+  const HTML_CHROME_FILE_RE = /\.(html?|pdf|png|jpe?g|gif|webp|heic|tiff?|bmp)$/i;
   const htmlChromeState = { clicks: 0, autos: 0, closed: 0, last: null, lastPath: "", lastAt: 0, timer: 0 };
   const htmlChromeAsk = (path, mode) => {
     htmlChromeState.last = { path, mode, via: "app" };
@@ -7965,7 +7968,7 @@ nav[aria-label="Repository and pull request controls"] {
     if (!button) return;
     let found = null;
     try { found = openChromePath(button); } catch { found = null; }
-    if (!found || !found.page) return;
+    if (!found || !HTML_CHROME_FILE_RE.test(found.path)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     htmlChromeState.clicks += 1;
@@ -7975,7 +7978,7 @@ nav[aria-label="Repository and pull request controls"] {
   const htmlChromePanePath = value => {
     let text = String(value ?? "").trim();
     if (text.startsWith("file://")) { try { text = decodeURIComponent(text.slice(7)); } catch { return null; } }
-    return text.startsWith("/") && OPEN_CHROME_FILE_RE.test(text) ? text : null;
+    return text.startsWith("/") && HTML_CHROME_FILE_RE.test(text) ? text : null;
   };
   const htmlChromePane = input => {
     let pane = input;
