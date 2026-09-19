@@ -252,10 +252,36 @@ public final class ClaudeAXController: ClaudeAXControlling {
                 self?.actions.popoutChat(chat: chat, name: name, origin: origin)
             },
             // Возврат раскладки из МЕНЮ ответа не пишет никому: без этой плашки пункт
-            // «↩︎ Вернуть эти чаты» молчал до конца работы и после неё (#5689).
+            // «↩︎ Вернуть эти чаты» молчал до конца работы и после неё (#5689). Той же
+            // плашкой канал говорит «сделал 2 из 3» (действие `hud`, план WF75).
             notice: { [weak self] text in
                 self?.hud.show(text, seconds: MenuModel.newWindowNoticeSeconds)
-            })
+            },
+            // Голосовой Пимп (план WF75): поднять окно, закрыть окно, окно в фокусе и ⌘V.
+            raise: { [weak self] id in self?.actions.raise(id: id) },
+            close: { [weak self] id in self?.actions.close(id: id) ?? false },
+            frontWindow: { [weak self] in self?.actions.frontWindowID() },
+            paste: { [weak self] id, paths, done in
+                guard let self = self else {
+                    done(false)
+                    return
+                }
+                self.actions.paste(into: id, paths: paths, done: done)
+            },
+            lastChat: { [weak self] folder in self?.lastChat(in: folder) })
+    }
+
+    /// Последний чат папки (контракт WF75): свежайшая НЕ архивная сессия индекса Claude
+    /// с этой папкой. Карта probe тут ни при чём — она знает только чаты, уже открытые
+    /// окнами, и молчит при выключенном тумблере «🗂 Цвет по проекту» (критик Б1).
+    /// Чаты индекс отдаёт свежими вперёд, поэтому первая же подходящая и есть последняя.
+    private func lastChat(in folder: URL) -> (chat: String, title: String)? {
+        let wanted = folder.standardizedFileURL.path
+        for session in index.sessions where !session.isArchived {
+            guard index.folder(of: session).standardizedFileURL.path == wanted else { continue }
+            return (chat: session.sessionId, title: session.title)
+        }
+        return nil
     }
 
     /// Сколько ждём круг опознания чатов (#5770): лоадер читает `probe.js` раз в 500 мс,

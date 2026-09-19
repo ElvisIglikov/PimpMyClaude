@@ -26,6 +26,8 @@ CLI = ROOT / "tools" / "pimp.py"
 FIXTURES = ROOT / "tests" / "fixtures" / "pimp"
 ID_RE = re.compile(r"^\d{13,}-\d{4}$")
 CHAT = "local_5265171a-0ab8-4472-b4e5-40604a36ef6e"
+# Подставной ключ: он обязан не попасть ни в вывод, ни в журнал (WF75).
+SECRET = "sk-this-key-must-not-leak"
 
 
 def fixture(name: str) -> dict:
@@ -33,27 +35,33 @@ def fixture(name: str) -> dict:
 
 
 class FakeApp(threading.Thread):
-    """Приложение на минималках: взял первый запрос — ответил по образцу.
+    """Приложение на минималках: взял запрос — ответил по образцу.
 
     `beats` — сколько раз перезаписать <id>.taken перед ответом с паузой
     `beat_s`: так приложение показывает, что открывает окна раскладки по одному
     (heartbeat WF41), и CLI обязан ждать дальше.
+    `result` списком и `count` больше единицы — разговор на несколько запросов
+    подряд: так идёт голосовая фраза (WF75), где шагов несколько, а первым
+    уходит `projects`. Кончились образцы — отвечаем последним.
     """
 
-    def __init__(self, directory: Path, result: dict, taken: bool = True,
-                 beats: int = 0, beat_s: float = 0.0):
+    def __init__(self, directory: Path, result, taken: bool = True,
+                 beats: int = 0, beat_s: float = 0.0, count: int = 1):
         super().__init__(daemon=True)
         self.dir = Path(directory)
-        self.result = result
+        self.results = list(result) if isinstance(result, list) else [result]
         self.taken = taken
         self.beats = beats
         self.beat_s = beat_s
+        self.count = count
         self.requests = []
         self.paths = []
+        self.seen = set()
         self._stop = threading.Event()
 
     def run(self):
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 20
+        served = 0
         while time.monotonic() < deadline and not self._stop.is_set():
             for path in sorted(self.dir.glob("*.json")):
                 if path.name.startswith(".") or path.name.endswith(".result.json"):
@@ -63,6 +71,9 @@ class FakeApp(threading.Thread):
                     request = json.loads(text)
                 except (OSError, ValueError):
                     continue
+                if request["id"] in self.seen:
+                    continue
+                self.seen.add(request["id"])
                 self.requests.append(request)
                 self.paths.append(path)
                 mark = self.dir / f"{request['id']}.taken"
@@ -72,11 +83,13 @@ class FakeApp(threading.Thread):
                     if self._stop.wait(self.beat_s):
                         return
                     mark.write_text("", encoding="utf-8")   # окно открыто, живы
-                answer = dict(self.result)
+                answer = dict(self.results[min(served, len(self.results) - 1)])
                 answer["id"] = request["id"]
                 body = json.dumps(answer, ensure_ascii=False, separators=(",", ":")) + "\n"
                 (self.dir / f"{request['id']}.result.json").write_text(body, encoding="utf-8")
-                return
+                served += 1
+                if served >= self.count:
+                    return
             time.sleep(0.01)
 
     def stop(self):
@@ -97,23 +110,57 @@ class PimpCliTest(unittest.TestCase):
             self.app.join(timeout=2)
 
     def call(self, *argv, result=None, session=CHAT, taken=True, wait="5", silent="2",
-             beats=0, beat_s=0.0):
+             beats=0, beat_s=0.0, count=None, extra=None):
         if result is not None:
             self.dir.mkdir(parents=True, exist_ok=True)
-            self.app = FakeApp(self.dir, result, taken=taken, beats=beats, beat_s=beat_s)
+            if count is None:
+                count = len(result) if isinstance(result, list) else 1
+            self.app = FakeApp(self.dir, result, taken=taken, beats=beats, beat_s=beat_s,
+                               count=count)
             self.app.start()
         env = dict(os.environ)
         env["MYCLAUDE_PIMP_DIR"] = str(self.dir)
         env["MYCLAUDE_PIMP_WAIT"] = wait
         env["MYCLAUDE_PIMP_TAKEN"] = silent
+        # Ключ Элвиса лежит на его же Маке (0600): ни один тест не смеет попасть в
+        # настоящий файл и в настоящий DeepSeek — оба пути уводим в tmp (WF75).
+        env["MYCLAUDE_VOICE_ENV"] = str(self.support / "pimp-voice.env")
+        env["MYCLAUDE_DOWNLOADS"] = str(self.support / "Downloads")
+        env.pop("MYCLAUDE_VOICE_FAKE", None)
         env.pop("CLAUDE_CODE_HOST_SESSION_ID", None)
         if session is not None:
             env["CLAUDE_CODE_HOST_SESSION_ID"] = session
+        env.update(extra or {})
         done = subprocess.run([sys.executable, str(CLI), *argv], env=env,
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, text=True, timeout=60)
         if self.app is not None:
             self.app.join(timeout=2)
         return done
+
+    # ---- голос (WF75): подставной мозг и подставные загрузки ----------------
+    def brain(self, answer: dict) -> str:
+        """Готовый ответ модели на диске: MYCLAUDE_VOICE_FAKE = ни ключа, ни сети."""
+        path = self.support / "brain.json"
+        path.write_text(json.dumps(answer, ensure_ascii=False), encoding="utf-8")
+        return str(path)
+
+    def voice(self, phrase: str, answer: dict, results: list, extra=None, **kwargs):
+        env = {"MYCLAUDE_VOICE_FAKE": self.brain(answer)}
+        env.update(extra or {})
+        return self.call("say", phrase, result=results, extra=env, **kwargs)
+
+    def shots(self, ages, suffix=".jpeg"):
+        """Фотки в подставных загрузках: ages — сколько секунд назад легла каждая."""
+        folder = self.support / "Downloads"
+        folder.mkdir(parents=True, exist_ok=True)
+        now = time.time()
+        made = []
+        for number, age in enumerate(ages):
+            path = folder / f"IMG_{number:04d}{suffix}"
+            path.write_bytes(b"jpeg")
+            os.utime(path, (now - age, now - age))
+            made.append(path)
+        return made
 
     # ---- запрос: имена, типы и порядок полей ------------------------------
     def test_request_matches_fixture(self):
@@ -439,6 +486,313 @@ class PimpCliTest(unittest.TestCase):
         done = self.call("windows", result=fixture("windows.result.json"))
         self.assertEqual(done.returncode, 0)
         self.assertEqual(done.stderr.strip(), "")
+
+    # ---- WF75: последний чат, закрытие, вставка, плашка --------------------
+    def test_open_last_request(self):
+        done = self.call("open", "TrelvisCom", "--last",
+                         result=fixture("new-window-last.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        request = self.app.requests[0]
+        self.assertEqual(list(request.keys()),
+                         list(fixture("new-window-last.request.json").keys()))
+        self.assertEqual(request["chat"], "last")
+        self.assertEqual(done.stdout.strip(), "Открыл Дубли задач справа")
+
+    def test_open_last_raised(self):
+        # Чат уже был открыт окном — окно подняли, а не открыли: «открыл» тут ложь.
+        answer = dict(fixture("new-window-last.result.json"))
+        answer["opened"] = False
+        done = self.call("open", "TrelvisCom", "--last", result=answer)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), "Поднял Дубли задач справа")
+
+    def test_open_without_last_has_no_chat(self):
+        self.call("open", "TrelvisCom", result=fixture("new-window.result.json"))
+        self.assertNotIn("chat", self.app.requests[0])
+
+    def test_chat_missing(self):
+        done = self.call("open", "TrelvisCom", "--last",
+                         result=fixture("new-window-last.error.json"))
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout.strip(),
+                         "Последнего чата в этом проекте нет — открой новый")
+
+    def test_close_request(self):
+        done = self.call("close", "TrelvisCom", result=fixture("close-window.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(list(self.app.requests[0].keys()),
+                         list(fixture("close-window.request.json").keys()))
+        self.assertEqual(self.app.requests[0]["action"], "close-window")
+        self.assertEqual(done.stdout.strip(), "Закрыл окно «Дубли задач»")
+
+    def test_close_ambiguous(self):
+        # Двусмысленность — отказ без движения: закрыть не то окно дороже вопроса.
+        done = self.call("close", "TrelvisCom", result=fixture("close-window.error.json"))
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout.strip(),
+                         "Окон проекта несколько («Дубли задач», «Бот: голос») — "
+                         "скажи, какое именно, я ничего не трогал")
+
+    def test_close_main_window(self):
+        done = self.call("close", "TrelvisCom",
+                         result=fixture("close-window-main.error.json"))
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout.strip(), "Это главное окно Claude — его я не закрываю")
+
+    def test_paste_clipboard_front(self):
+        done = self.call("paste-clipboard", result=fixture("paste-clipboard.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        request = self.app.requests[0]
+        self.assertEqual(list(request.keys()), ["id", "at", "action", "from", "front"])
+        self.assertIs(request["front"], True)
+        self.assertEqual(done.stdout.strip(),
+                         "Вставил из буфера в «Сайт: корзина» — жми Enter")
+
+    def test_paste_clipboard_project(self):
+        done = self.call("paste-clipboard", "--project", "VkusnoffKz",
+                         result=fixture("paste-clipboard.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        request = self.app.requests[0]
+        self.assertEqual(list(request.keys()),
+                         list(fixture("paste-clipboard.request.json").keys()))
+        self.assertEqual(request["project"], "VkusnoffKz")
+        self.assertNotIn("front", request)
+
+    def test_paste_bad_request(self):
+        done = self.call("paste-clipboard", result=fixture("paste.error.json"))
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(done.stdout.strip(), "Пимп не понял запрос")
+
+    def test_paste_airdrop_batch(self):
+        # Эйрдроп кладёт пачку подряд: берём её целиком, а лежавшую до неё фотку
+        # (разрыв больше двух минут) не трогаем. Не картинка — не в счёт.
+        self.shots([600, 20, 14, 8])
+        self.shots([5], suffix=".txt")
+        done = self.call("paste-airdrop", result=fixture("paste.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        request = self.app.requests[0]
+        self.assertEqual(list(request.keys()), list(fixture("paste.request.json").keys()))
+        self.assertIs(request["front"], True)
+        self.assertEqual([Path(path).name for path in request["paths"]],
+                         ["IMG_0001.jpeg", "IMG_0002.jpeg", "IMG_0003.jpeg"])
+        self.assertEqual(done.stdout.strip(),
+                         "Вставил 2 файла в «Сайт: корзина» — жми Enter")
+
+    def test_paste_airdrop_limit(self):
+        self.shots([300 - 10 * number for number in range(25)])
+        done = self.call("paste-airdrop", result=fixture("paste.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        names = [Path(path).name for path in self.app.requests[0]["paths"]]
+        self.assertEqual(len(names), 20)
+        self.assertEqual([names[0], names[-1]], ["IMG_0005.jpeg", "IMG_0024.jpeg"])
+
+    def test_paste_airdrop_stale(self):
+        # Вся пачка старше получаса — это не «сейчас скинул»: молча тащить нельзя.
+        self.shots([4000, 3900])
+        done = self.call("paste-airdrop")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("Свежих фоток нет", done.stdout)
+
+    def test_paste_airdrop_remembers(self):
+        self.shots([20, 10])
+        done = self.call("paste-airdrop", result=fixture("paste.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        mark = json.loads((self.support / "voice-pasted.json").read_text(encoding="utf-8"))
+        self.assertIsInstance(mark["mtime"], float)
+        again = self.call("paste-airdrop", result=fixture("paste.result.json"))
+        self.assertEqual(again.returncode, 1)
+        self.assertIn("Новых фоток нет", again.stdout)
+
+    def test_hud_request(self):
+        sample = fixture("hud.request.json")
+        done = self.call("hud", sample["text"], result=fixture("hud.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        request = self.app.requests[0]
+        self.assertEqual(list(request.keys()), list(sample.keys()))
+        self.assertEqual(request["text"], sample["text"])
+        self.assertEqual(done.stdout.strip(), "Показал плашку")
+
+    def test_hud_cuts_long_text(self):
+        self.call("hud", "я" * 300, result=fixture("hud.result.json"))
+        self.assertEqual(len(self.app.requests[0]["text"]), 200)
+
+    # ---- WF75: голос ------------------------------------------------------
+    def test_say_fake_touches_neither_key_nor_net(self):
+        # Ключ на месте и адрес заведомо мёртвый: раз фраза прошла, ни файла, ни
+        # сети мозг не касался — проверка MYCLAUDE_VOICE_FAKE стоит ДО ключа.
+        (self.support / "pimp-voice.env").write_text(
+            f"DEEPSEEK_API_KEY={SECRET}\nDEEPSEEK_BASE_URL=http://127.0.0.1:1\n",
+            encoding="utf-8")
+        done = self.voice("что открыто", {"steps": [{"action": "windows"}], "say": "Смотрю"},
+                          [fixture("projects.result.json"), fixture("windows.result.json"),
+                           fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("Окон 1", done.stdout)
+        log = (self.support / "voice-log.jsonl").read_text(encoding="utf-8")
+        self.assertNotIn(SECRET, log, "ключ в журнал не пишется никогда")
+        record = json.loads(log.splitlines()[-1])
+        self.assertEqual(record["phrase"], "что открыто")
+        self.assertEqual(record["model"], "fake")
+        self.assertEqual(oct((self.support / "voice-log.jsonl").stat().st_mode & 0o777),
+                         oct(0o600))
+
+    def test_say_without_fake_reads_key(self):
+        # Тот же ключ и тот же мёртвый адрес, но без подставного ответа — значит
+        # ключ прочитан и в сеть Пимп пошёл (и честно сказал, что не дозвонился).
+        # Заодно единственная проверка, что tools/voice_prompt.md читается: без него
+        # строка была бы другой — промпт собирается ДО запроса.
+        (self.support / "pimp-voice.env").write_text(
+            f"DEEPSEEK_API_KEY={SECRET}\nDEEPSEEK_BASE_URL=http://127.0.0.1:1\n",
+            encoding="utf-8")
+        done = self.call("say", "что открыто",
+                         result=[fixture("projects.result.json"), fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("DeepSeek не ответил", done.stdout)
+        self.assertNotIn(SECRET, done.stdout + done.stderr)
+
+    def test_say_key_not_latin(self):
+        # Кривой ключ валил CLI трассой: Диктатору с его stdout это мусор.
+        (self.support / "pimp-voice.env").write_text(
+            "DEEPSEEK_API_KEY=ключ\nDEEPSEEK_BASE_URL=http://127.0.0.1:1\n",
+            encoding="utf-8")
+        done = self.call("say", "что открыто",
+                         result=[fixture("projects.result.json"), fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("не латинские знаки", done.stdout)
+        self.assertEqual(done.stderr.strip(), "")
+
+    def test_say_without_key(self):
+        done = self.call("say", "что открыто",
+                         result=[fixture("projects.result.json"), fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("ключа DeepSeek нет", done.stdout)
+
+    def test_say_close_needs_the_word(self):
+        # Ворота стоят в КОДЕ: модель решает, что делать, но не решает, можно ли.
+        done = self.voice("открой чат по вкуснофф",
+                          {"steps": [{"action": "close", "project": "VkusnoffKz"}],
+                           "say": "Закрыл"},
+                          [fixture("projects.result.json"), fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("слова «закрой» в твоей фразе нет", done.stdout)
+        self.assertEqual([item["action"] for item in self.app.requests],
+                         ["projects", "hud"], "закрывать канал не просили")
+
+    def test_say_close_with_the_word(self):
+        done = self.voice("закрой чат с вкуснофф",
+                          {"steps": [{"action": "close", "project": "VkusnoffKz"}],
+                           "say": "Закрыл окно Вкусноффа"},
+                          [fixture("projects.result.json"),
+                           fixture("close-window.result.json"), fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        request = self.app.requests[1]
+        self.assertEqual(list(request.keys()),
+                         list(fixture("close-window.request.json").keys()))
+        self.assertEqual(request["project"], "VkusnoffKz")
+        self.assertEqual(self.app.requests[2]["text"], "Закрыл окно Вкусноффа")
+
+    def test_say_airdrop_needs_photo_word(self):
+        self.shots([10])
+        done = self.voice("вставь это",
+                          {"steps": [{"action": "paste_airdrop"}], "say": "Вставил"},
+                          [fixture("projects.result.json"), fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("про фотки в твоей фразе нет", done.stdout)
+
+    def test_say_airdrop_with_photo_word(self):
+        self.shots([20, 10])
+        done = self.voice("вставь фотки с эйрдропа",
+                          {"steps": [{"action": "paste_airdrop"}], "say": "Вставил фотки"},
+                          [fixture("projects.result.json"), fixture("paste.result.json"),
+                           fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        request = self.app.requests[1]
+        self.assertEqual(list(request.keys()), list(fixture("paste.request.json").keys()))
+        self.assertEqual(len(request["paths"]), 2)
+        self.assertTrue((self.support / "voice-pasted.json").exists())
+
+    def test_say_unknown_project(self):
+        done = self.voice("открой чат по ресторану",
+                          {"steps": [{"action": "open", "project": "Ресторан",
+                                      "chat": "new", "place": "right"}], "say": "Открыл"},
+                          [fixture("projects.result.json"), fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("не знаю проект «Ресторан»", done.stdout)
+
+    def test_say_two_opens_get_arrange(self):
+        # Несколько окон подряд встают стопкой — раскладку дописываем сами, порядком,
+        # который назвала модель.
+        answer = {"steps": [{"action": "open", "project": "VkusnoffKz",
+                             "chat": "new", "place": "right"},
+                            {"action": "open", "project": "PimpMyClaude",
+                             "chat": "last", "place": "right"}],
+                  "say": "Открыл два чата"}
+        done = self.voice("открой чаты по вкуснофф и пимпу", answer,
+                          [fixture("projects.result.json"), fixture("new-window.result.json"),
+                           fixture("new-window-last.result.json"),
+                           fixture("arrange.result.json"), fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual([item["action"] for item in self.app.requests],
+                         ["projects", "new-window", "new-window", "arrange", "hud"])
+        self.assertNotIn("chat", self.app.requests[1])
+        self.assertEqual(self.app.requests[2]["chat"], "last")
+        self.assertEqual(self.app.requests[3]["layout"], "last")
+        self.assertEqual(self.app.requests[3]["order"], ["VkusnoffKz", "PimpMyClaude"])
+        # Всё вышло — плашка говорит короткой фразой модели.
+        self.assertEqual(self.app.requests[4]["text"], "Открыл два чата")
+
+    def test_say_busy_repeats_with_new_id(self):
+        # У прежнего id ответ уже лежит: второй раз приложение его не возьмёт, а
+        # `at` старше 30 с даст stale — поэтому повтор идёт новым id и свежим at.
+        done = self.voice("что открыто", {"steps": [{"action": "windows"}], "say": "Смотрю"},
+                          [fixture("projects.result.json"), fixture("busy.result.json"),
+                           fixture("windows.result.json"), fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        first, again = self.app.requests[1], self.app.requests[2]
+        self.assertEqual([first["action"], again["action"]], ["windows", "windows"])
+        self.assertNotEqual(first["id"], again["id"])
+        self.assertGreaterEqual(again["at"], first["at"])
+
+    def test_say_partial_result(self):
+        # Сорвался один шаг из двух — плашка и stdout говорят одно и то же, и это
+        # не фраза модели: она бы соврала.
+        answer = {"steps": [{"action": "windows"}, {"action": "projects"}],
+                  "say": "Всё сделал"}
+        done = self.voice("что открыто и какие проекты", answer,
+                          [fixture("projects.result.json"), fixture("windows.result.json"),
+                           fixture("bad.result.json"), fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("Сделал 1 из 2", done.stdout)
+        self.assertIn("Пимп не понял запрос", done.stdout)
+        self.assertEqual(self.app.requests[3]["text"], done.stdout.strip())
+
+    def test_say_none_step(self):
+        done = self.voice("пимп это отличная штука",
+                          {"steps": [{"action": "none", "say": "Понял, ничего не трогаю"}],
+                           "say": "Понял, ничего не трогаю"},
+                          [fixture("projects.result.json"), fixture("hud.result.json")])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), "Понял, ничего не трогаю")
+
+    def test_say_reads_stdin(self):
+        fake = self.brain({"steps": [{"action": "windows"}], "say": "Смотрю"})
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.app = FakeApp(self.dir, [fixture("projects.result.json"),
+                                      fixture("windows.result.json"),
+                                      fixture("hud.result.json")], count=3)
+        self.app.start()
+        env = dict(os.environ)
+        env["MYCLAUDE_PIMP_DIR"] = str(self.dir)
+        env["MYCLAUDE_PIMP_WAIT"] = "5"
+        env["MYCLAUDE_PIMP_TAKEN"] = "2"
+        env["MYCLAUDE_VOICE_FAKE"] = fake
+        env["MYCLAUDE_VOICE_ENV"] = str(self.support / "pimp-voice.env")
+        done = subprocess.run([sys.executable, str(CLI), "say", "-"], env=env,
+                              input="Пимп, что открыто\n", capture_output=True,
+                              text=True, timeout=60)
+        self.app.join(timeout=2)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("Окон 1", done.stdout)
 
     def test_bad_place(self):
         # Кодов ровно два: ругань argparse (её 2) сведена к 1 и строке по-русски.

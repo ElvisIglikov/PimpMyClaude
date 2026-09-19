@@ -1495,6 +1495,73 @@ final class ClaudeActions {
         return (known, live)
     }
 
+    /// Поднять окно вперёд (канал «Пимп», план WF75): «последний чат проекта» уже открыт
+    /// окном — открывать нечего, окно надо только показать и поставить на место. Тот же
+    /// порядок, что у фокуса перед командой: активировать Claude, поднять, сделать главным.
+    func raise(id: CGWindowID) {
+        guard let entry = pimpWindows().first(where: { $0.id == id }) else { return }
+        app.focus(window: entry.window)
+    }
+
+    /// Закрыть окно его красной кнопкой (план WF75) — тем же путём, что замена окна на
+    /// «Обкэшить» (`cashoutReplace`). ⌘W каналу не даём НИКОГДА: `postKey` уходит в процесс
+    /// Claude, и исполнит его КЛЮЧЕВОЕ окно, а не то, что мы выбрали (#5734). Кнопки у окна
+    /// может не быть вовсе (Electron ещё не отдал дерево) — тогда false, и канал честно
+    /// говорит, что не закрыл.
+    func close(id: CGWindowID) -> Bool {
+        guard let entry = pimpWindows().first(where: { $0.id == id }) else { return false }
+        AX.timeout(entry.window, ClaudeActions.axWindowTimeout)
+        return AX.close(entry.window)
+    }
+
+    /// Номер окна Claude в фокусе — и только пока Claude ПЕРЕДНЯЯ программа (план WF75):
+    /// `paste` с `front:true` обязан вставлять ровно туда, куда Элвис нажал бы ⌘V сам.
+    /// Claude позади или окна не видно — nil, и канал отказывает.
+    func frontWindowID() -> CGWindowID? {
+        guard app.isFrontmost, let focused = app.focusedWindow() else { return nil }
+        return pimpWindows().first { CFEqual($0.window, focused) }?.id
+    }
+
+    /// «Вставить» каналом (план WF75): файлы ложатся в буфер, окно поднимается, и после
+    /// паузы на фокус в процесс Claude уходит ⌘V. **Enter не шлём никогда** — вставка не
+    /// отправка. Ответ канала пишется из `done`, уже ПОСЛЕ нажатия (критик п. 6): фокус
+    /// асинхронный, и до него `ok` не значил бы ничего.
+    func paste(into id: CGWindowID, paths: [String], done: @escaping (Bool) -> Void) {
+        guard let entry = pimpWindows().first(where: { $0.id == id }) else {
+            done(false)
+            return
+        }
+        if !paths.isEmpty { ClaudeActions.writeFiles(paths) }
+        app.focus(window: entry.window)
+        after(focusDelay) { [weak self] in
+            guard let self = self else {
+                done(false)
+                return
+            }
+            // ⌘V уходит в ПРОЦЕСС и достанется ключевому окну (#5734): фокус не доехал —
+            // честный отказ, а не вставка в чужой чат.
+            guard let focused = self.app.focusedWindow(), CFEqual(focused, entry.window) else {
+                done(false)
+                return
+            }
+            self.app.postKey(CGKeyCode(ClaudeActions.pasteKeyCode), flags: .maskCommand)
+            done(true)
+        }
+    }
+
+    /// `kVK_ANSI_V`: в таблице `KeySpec.codes` клавиши «v» нет, и заводить её там незачем —
+    /// пункта меню у вставки нет, это код одной команды канала (критик п. 2 плана WF75).
+    static let pasteKeyCode: UInt32 = 0x09
+
+    /// Файлы в буфер обмена. Несколько разом умеет только `writeObjects` — `CopyFileRelay`
+    /// кладёт ОДИН файл строкой (критик п. 3). Прежний буфер не восстанавливаем: типы
+    /// с ленивой поставкой вернуть нельзя (критик п. 5), и обещать это было бы враньём.
+    static func writeFiles(_ paths: [String]) {
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.writeObjects(paths.map { NSURL(fileURLWithPath: $0) })
+    }
+
     /// Свёрнутые окна: их «Расставить» не трогает — канал только считает их в ответе,
     /// чтобы CLI сказал «одно окно свёрнуто, не считал».
     func minimizedCount() -> Int {
