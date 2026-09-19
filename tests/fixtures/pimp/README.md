@@ -17,3 +17,10 @@ WF43 (08.09, чистка по Ревизору) — три правки кон�
 - `screen` во ВСЕХ ответах теперь `"windows"` (было `"main"`): раскладываем на том экране, где стоят окна Claude (`Screens.usableFrame(holding:)`), а не на главном. CLI на это говорит «на экране, где стоят окна».
 - `layout-save` и `layouts`: поле `cells` ответа — сколько мест получили НОМЕР ЯЧЕЙКИ (было: сколько записей всего); столько окон и вернётся. Ни одного номера (окна стоят не по сетке) → `ok:false`, `error:"not-arranged"`, файл не пишется; CLI говорит «сперва расставь». Записи без ячейки в файл по-прежнему идут (`"cell":null`) и при возврате «пропавшими» не зовутся.
 - `layout-save` отказывает `chat-unknown` и тогда, когда главным окном опознаны ДВА окна (безымянный попап носит тот же заголовок «Claude»): в поле `windows` — заголовок второго. Обход до починки опознания (#5534).
+
+WF75 (19.09.2026, эталоны написаны до волны, оба конца стоят на них; полный текст — `docs/plan-wf75-2026-09-19.md`):
+- Новые ошибки: `chat-missing`, `ambiguous`, `main-window`.
+- `new-window` + необязательный `chat:"last"` ПОСЛЕ `place` (`new-window-last.*`): ответ получает `opened` ПОСЛЕДНИМ, только когда в запросе был `chat`; `new-window.result.json` прежний побайтно.
+- `close-window` — `id, at, action, from, project`; ответ `…, screen, closed`; `ambiguous` несёт `windows:[заголовки]` (`close-window.error.json`), главное окно — `main-window` (`close-window-main.error.json`).
+- `paste` — `id, at, action, from, front?, project?, paths?`; ответ `…, screen, pasted, window`; без `paths` — буфер как есть, `pasted:0` (`paste-clipboard.*`); плохой путь — `bad-request` (`paste.error.json`). Enter канал не шлёт никогда.
+- `hud` — `id, at, action, from, text`; ответ без полей действия; отвечает и когда канал занят.
