@@ -144,7 +144,7 @@ final class AutoAllow {
                              heading: AutoAllow.heading(of: hit.element),
                              button: hit.text, ok: ok), at: 0)
             if log.count > maxLog { log.removeLast() }
-            hud.show("Пимп нажал " + hit.text, seconds: 2.4)
+            hud.show("Пимп нажал " + AutoAllow.label(of: hit.text), seconds: 2.4)
             return hit.text
         }
         // Обход не дошёл до конца и ничего не нажал — считаем это отдельно от «диалогов не было».
@@ -156,6 +156,21 @@ final class AutoAllow {
     /// Чистая, её и гоняют тесты.
     static func preferredIndex(_ texts: [String]) -> Int? {
         texts.firstIndex { $0.lowercased().contains("always") } ?? (texts.isEmpty ? nil : 0)
+    }
+
+    /// Имя кнопки для плашки: AX отдаёт текст кнопки дважды (заголовок и потомок) и с цифрой
+    /// клавиши — «Always allow 2 Always allow 2». Повтор и хвост без букв снимаем (#6600).
+    /// Чистая, её и гоняют тесты.
+    static func label(of text: String) -> String {
+        var words = text.split(separator: " ").map(String.init)
+        if words.count >= 2, words.count % 2 == 0,
+           Array(words[..<(words.count / 2)]) == Array(words[(words.count / 2)...]) {
+            words = Array(words[..<(words.count / 2)])
+        }
+        while words.count > 1, let last = words.last, !last.contains(where: { $0.isLetter }) {
+            words.removeLast()
+        }
+        return words.joined(separator: " ")
     }
 
     /// Обёртка вопроса вокруг действия: её снимаем, чтобы осталось само действие.

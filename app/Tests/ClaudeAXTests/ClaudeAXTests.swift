@@ -2904,6 +2904,14 @@ final class ClaudeAXTests: XCTestCase {
 
     // MARK: - авто-Allow (#5736)
 
+    /// Плашка пишет имя кнопки один раз и без цифры клавиши (#6600).
+    func testAutoAllowLabelDropsRepeatAndKeyDigit() {
+        XCTAssertEqual(AutoAllow.label(of: "Always allow 2 Always allow 2"), "Always allow")
+        XCTAssertEqual(AutoAllow.label(of: "Allow once 1"), "Allow once")
+        XCTAssertEqual(AutoAllow.label(of: "Allow ⌘⏎"), "Allow")
+        XCTAssertEqual(AutoAllow.label(of: "Allow"), "Allow")
+    }
+
     /// «Always allow» жмётся раньше разового Allow; нет её — первая найденная (#6594).
     func testAutoAllowPrefersAlwaysButton() {
         XCTAssertEqual(AutoAllow.preferredIndex(["Allow once", "Always allow"]), 1)
