@@ -2904,6 +2904,16 @@ final class ClaudeAXTests: XCTestCase {
 
     // MARK: - авто-Allow (#5736)
 
+    /// «Always allow» жмётся раньше разового Allow; нет её — первая найденная (#6594).
+    func testAutoAllowPrefersAlwaysButton() {
+        XCTAssertEqual(AutoAllow.preferredIndex(["Allow once", "Always allow"]), 1)
+        XCTAssertEqual(AutoAllow.preferredIndex(["Allow once", "Allow always for this project"]), 1)
+        XCTAssertEqual(AutoAllow.preferredIndex(["Allow once", "Allow"]), 0)
+        XCTAssertNil(AutoAllow.preferredIndex([]))
+        XCTAssertTrue(AutoAllow(app: ClaudeApp(), hud: HUD()).buttonPatterns
+            .contains { $0.matches("Always allow") })
+    }
+
     /// Список исключений больше не пуст: удаление, необратимое, пуш и деньги авто-Allow не
     /// подтверждает — диалог остаётся Элвису. Регистр не важен, незнакомый заголовок жмём,
     /// как раньше (иначе авто-Allow замолчал бы на любой новой разметке).
