@@ -26,5 +26,7 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Elvis Iglikov</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Пимп открывает HTML-файлы из чата в Chrome и находит уже открытую вкладку, чтобы не плодить новые.</string>
 </dict>
 </plist>

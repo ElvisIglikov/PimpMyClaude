@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf70-b-1";
+  const VERSION = "wf76-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -7928,6 +7928,101 @@ nav[aria-label="Repository and pull request controls"] {
     try { for (const node of document.querySelectorAll(`[${OPEN_CHROME_ATTRIBUTE}]`)) node.remove(); } catch {}
   });
 
+  // ---- 12д. HTML-файлы — в Chrome, а не в панель Browser (#6618) -------------
+  // Слово Элвиса 20.09.2026: «одно нажатие на HTML-ку открывает его в Хроме… и
+  // панелька, если даже открылась, чтобы она закрылась сразу… если файл уже
+  // открыт — новую вкладку не открывал, ту же показывал».
+  //
+  // Клик по карточке .html/.htm (кнопка, путь — из того же волокна, что у 12г)
+  // глушится на захвате: Claude панель не открывает. Панель открылась сама (файл
+  // только что собран) — раз в HTML_CHROME_TICK_MS смотрим поле «Page URL»
+  // панели Browser: там абсолютный путь .html — закрываем эту вкладку панели, а
+  // если других настоящих вкладок нет — и саму панель.
+  //
+  // Открывает приложение (HtmlChromeOpener.swift): запрос на 127.0.0.1, оно ищет
+  // вкладку с этим файлом в Chrome. `click` выводит её вперёд, `auto` при
+  // открытой вкладке молчит. Приложения нет — мост Claude, как в 12г (новая
+  // вкладка). Ответ no-cors непрозрачный: дошёл запрос — и хорошо.
+  const HTML_CHROME_PORT = 47615;
+  const HTML_CHROME_TICK_MS = 400;
+  const HTML_CHROME_REPEAT_MS = 3000;
+  const HTML_CHROME_URL_SELECTOR = 'input[aria-label="Page URL"]';
+  const HTML_CHROME_TAB_SELECTOR = "[data-vtb-id]";
+  const HTML_CHROME_NEW_TAB_RE = /^New tab$/i;
+  const htmlChromeState = { clicks: 0, autos: 0, closed: 0, last: null, lastPath: "", lastAt: 0, timer: 0 };
+  const htmlChromeAsk = (path, mode) => {
+    htmlChromeState.last = { path, mode, via: "app" };
+    const fallback = () => { htmlChromeState.last = { path, mode, via: "bridge" }; try { openChromeOpen(path); } catch {} };
+    if (typeof fetch !== "function") { fallback(); return; }
+    try {
+      fetch(`http://127.0.0.1:${HTML_CHROME_PORT}/open-html?mode=${mode}&path=${encodeURIComponent(path)}`, { mode: "no-cors", cache: "no-store" })
+        .then(() => {}, fallback);
+    } catch { fallback(); }
+  };
+  const onHtmlChromeClick = event => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const button = event.target?.closest?.("button");
+    if (!button) return;
+    let found = null;
+    try { found = openChromePath(button); } catch { found = null; }
+    if (!found || !found.page) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    htmlChromeState.clicks += 1;
+    htmlChromeAsk(found.path, "click");
+  };
+  // Путь из поля панели: абсолютный или file://, только страницы.
+  const htmlChromePanePath = value => {
+    let text = String(value ?? "").trim();
+    if (text.startsWith("file://")) { try { text = decodeURIComponent(text.slice(7)); } catch { return null; } }
+    return text.startsWith("/") && OPEN_CHROME_FILE_RE.test(text) ? text : null;
+  };
+  const htmlChromePane = input => {
+    let pane = input;
+    for (let depth = 0; pane && depth < 12; depth += 1, pane = pane.parentElement) {
+      if (pane.querySelector?.(HTML_CHROME_TAB_SELECTOR)) return pane;
+    }
+    return null;
+  };
+  const htmlChromeClosePane = input => {
+    const pane = htmlChromePane(input);
+    if (!pane) return false;
+    const tab = pane.querySelector(`${HTML_CHROME_TAB_SELECTOR}[data-selected="true"] button[aria-label="Close tab"]`);
+    if (!tab) return false;
+    tab.click();
+    htmlChromeState.closed += 1;
+    htmlChromeState.emptyUntil = Date.now() + HTML_CHROME_REPEAT_MS;
+    return true;
+  };
+  // После закрытия нашей вкладки в панели остался один «New tab» — панель не нужна.
+  // Только в первые секунды после НАШЕГО закрытия: пустую панель, открытую человеком, не трогаем.
+  const htmlChromeCloseEmpty = input => {
+    if (!(Date.now() < (htmlChromeState.emptyUntil ?? 0)) || String(input.value ?? "").trim()) return;
+    const pane = htmlChromePane(input);
+    if (!pane) return;
+    const tabs = [...pane.querySelectorAll(HTML_CHROME_TAB_SELECTOR)];
+    if (!tabs.every(node => HTML_CHROME_NEW_TAB_RE.test(String(node.textContent ?? "").trim()))) return;
+    const close = pane.querySelector('button[aria-label="Close"]');
+    if (!close) return;
+    htmlChromeState.emptyUntil = 0;
+    close.click();
+  };
+  const htmlChromeTick = () => {
+    const input = document.querySelector(HTML_CHROME_URL_SELECTOR);
+    if (!input) return;
+    const path = htmlChromePanePath(input.value);
+    if (!path) { htmlChromeCloseEmpty(input); return; }
+    if (!htmlChromeClosePane(input)) return;
+    const now = Date.now();
+    if (path === htmlChromeState.lastPath && now - htmlChromeState.lastAt < HTML_CHROME_REPEAT_MS) return;
+    htmlChromeState.lastPath = path;
+    htmlChromeState.lastAt = now;
+    htmlChromeState.autos += 1;
+    htmlChromeAsk(path, "auto");
+  };
+  htmlChromeState.timer = setInterval(() => { try { htmlChromeTick(); } catch {} }, HTML_CHROME_TICK_MS);
+  track(() => { clearInterval(htmlChromeState.timer); htmlChromeState.timer = 0; });
+
   // ---- 13. Прокрутка ленты ------------------------------------------------
   // Команда «Прокрутить»: поставить ленту разговора на последнее сообщение.
   // В отличие от collapse/expand она адресована ВСЕМ окнам сразу, поэтому
@@ -8229,6 +8324,8 @@ nav[aria-label="Repository and pull request controls"] {
     // «Открыть в Chrome» (раздел 12г, WF67): правый клик по карточке файла
     // запоминает путь и ждёт меню Claude; само событие не отменяется.
     on(document, "contextmenu", onOpenChromeMenu, true);
+    // HTML-файлы — в Chrome (раздел 12д, #6618): клик по карточке глушим на захвате.
+    on(document, "click", onHtmlChromeClick, true);
   }
   // Escape не должен останавливать выполнение (слово Элвиса 03.09 14:00: F1/F2 рядом,
   // «постоянно боюсь нажать Escape»). Глотаем Escape на захвате, но только когда на
@@ -8432,6 +8529,7 @@ nav[aria-label="Repository and pull request controls"] {
       })(),
       // «Открыть в Chrome» (раздел 12г, WF67): ждём ли меню после правого клика,
       // какой путь нашли, сколько пунктов вставили, чем кончился последний вызов.
+      htmlChrome: { clicks: htmlChromeState.clicks, autos: htmlChromeState.autos, closed: htmlChromeState.closed, last: htmlChromeState.last },
       openInChrome: {
         pending: Boolean(openState.observer),
         path: openState.pending?.path ?? null,
@@ -8579,7 +8677,7 @@ nav[aria-label="Repository and pull request controls"] {
   // Тестовый люк: в бою этой функции нет, объект даже не собирается.
   // Ставит её только tests/load.mjs, чтобы дотянуться до чистых функций замыкания.
   // Глушителя ошибок здесь нет намеренно: переименовали функцию — люк обязан кричать, а не отдавать тестам undefined.
-  if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ themeCss, epitaxyCss, fontCss, sizeCss,
+  if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ htmlChromePanePath, themeCss, epitaxyCss, fontCss, sizeCss,
     attachmentsCss, layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_FLOOR, SIDE_CHIN_GAP, CHIN_ROW_SELECTOR, SIDE_MAX_SHARE, PROGRESS_GAP, TITLE_SIDE_ATTRIBUTE, TITLEBAR_CLEARANCE_LEFT, WIDE_TILE,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     codeCss, codePalette, contrastRatio, readableOn,

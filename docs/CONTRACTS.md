@@ -479,6 +479,23 @@
   это сессии Cowork), потом Escape на `document` — меню base-ui закрывается (проверено живьём). Нет чата/моста
   или `{ok:false}` — плашка `newWindowNote`. Диагностика — `status().openInChrome = {pending, path, inserted, last}`
   (`last` заполняется по ответу моста, обычно через ~1 с). Всё снимается по `dispose()`.
+- **HTML-файлы — в Chrome, а не в панель Browser (20.09.2026, #6618)** — раздел 12д `inject.js` ↔
+  `app/Sources/ClaudeAX/HtmlChromeOpener.swift`. Страница: левый клик без модификаторов по карточке `.html`/`.htm`
+  (кнопка; путь — тем же `openChromePath`, что у 12г) глушится на захвате (`preventDefault` +
+  `stopImmediatePropagation`) — панель не открывается. Панель открылась сама — тик 400 мс смотрит
+  `input[aria-label="Page URL"]`: абсолютный путь страницы → клик по «Close tab» выбранной вкладки
+  (`[data-vtb-id][data-selected="true"]`), а если в первые 3 с после этого в панели остались одни «New tab» —
+  клик по «Close» панели (пустую панель, открытую человеком, не трогаем). **Запрос приложению побайтно:**
+  `GET http://127.0.0.1:47615/open-html?mode=<click|auto>&path=<encodeURIComponent(путь)>`, `fetch` с
+  `mode:"no-cors"` (CSP Claude пускает, проверено живьём); ответ 204, непрозрачный. Запрос не дошёл (приложения
+  нет) — мост Claude из 12г, новая вкладка. Приложение слушает ТОЛЬКО 127.0.0.1, берёт существующий файл с
+  абсолютным путём и расширением страницы, ведёт Chrome через `/usr/bin/osascript`: вкладка с
+  `URL == file://…` найдена → `reload`, при `click` ещё активная вкладка, окно вперёд, `activate`; не найдена →
+  новая вкладка + `activate`. Скрипт не прошёл (нет разрешения «управлять Google Chrome») — файл открывается в
+  Chrome через `NSWorkspace`, плашка просит разрешение. Нужны `NSAppleEventsUsageDescription` и
+  `com.apple.security.automation.apple-events`. Диагностика — `status().htmlChrome = {clicks, autos, closed, last}`
+  и `html=<открыл>/<скрипт не прошёл>` в `statusText`. Проверено живьём 20.09: клик → вкладка в Chrome активна;
+  панель, открытая через `onOpen`, закрылась быстрее 0,6 с, второй вкладки в Chrome не появилось.
 - **«📋 Копировать в буфер» (17.09.2026, WF69, #6236)** — второй пункт того же меню, ПОД «Открыть в Chrome»
   (слово Элвиса: «ещё ниже команду скопировать… сам файл скопирует, потом в Telegram „вставить“»), и есть он у
   ЛЮБОГО файла с путём (`openChromePathOf` теперь отдаёт `{path, name, page}`; `page` — .html/.htm, только у
