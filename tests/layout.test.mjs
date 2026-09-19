@@ -105,14 +105,15 @@ test("сетка и флаг --myclaude-wide живут ТОЛЬКО внутр�
   assert.ok(grid, "правила сетки внутри блока нет");
   for (const part of FORM) assert.ok(grid.selector.includes(part), `сетка не проверяет форму «${part}»`);
   assert.match(grid.body, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+clamp\(/, "левая колонка — minmax(0,1fr), правая — clamp");
-  // Нижняя граница — переменная от JS (замер строки модели), без неё SIDE_MIN;
-  // верхняя — доля панели, та же, что у рейки.
-  assert.ok(grid.body.includes(`clamp(var(${SIDE_MIN_VARIABLE}, ${SIDE_MIN}px), var(${SIDE_VARIABLE}), ${SIDE_MAX_SHARE * 100}%)`),
+  // Нижняя граница — пол SIDE_FLOOR (#6625: замер строки модели держит только
+  // умолчание, рейкой можно ýже); верхняя — доля панели, та же, что у рейки.
+  assert.ok(grid.body.includes(`clamp(${SIDE_FLOOR}px, var(${SIDE_VARIABLE}), ${SIDE_MAX_SHARE * 100}%)`),
     "границы правой колонки в CSS — те же, что у рейки в JS");
   // Группы строки модели в широком виде не ужимаются: по их ширине считается
   // нижняя граница, и ужатая строка мерилась бы ужатой (граница застряла бы).
   // Правило — только в доке, куда смотрит и JS (chinRow → sideDock).
-  const chin = grid.children.find(item => item.selector === `& .group\\/approval-dock ${CHIN_ROW_SELECTOR} > *`);
+  // Колонка ýже замера (#6625) — панель помечена, и группам снова можно ужиматься.
+  const chin = grid.children.find(item => item.selector === `&:not(.epitaxy-chat-panel[data-myclaude-side-tight] > *) .group\\/approval-dock ${CHIN_ROW_SELECTOR} > *`);
   assert.ok(chin && /flex-shrink:\s*0/.test(chin.body), "группы строки модели в доке должны держать натуральную ширину");
   // Снаружи блока ни сетки, ни флага: в узком окне раскладка Claude не трогается.
   for (const item of outside) {
@@ -371,9 +372,9 @@ test("рейка: тяга меняет --myclaude-side в границах, о�
   assert.equal(bar.dataset.dragging, "false");
   assert.equal(loaded.document.documentElement.style.cursor, "");
   assert.equal(loaded.win.localStorage.getItem(SIDE_KEY), "400", "отпустили — ширина в хранилище");
-  // Границы: не уже нижней границы по строке модели, не шире доли панели.
+  // Границы: не уже пола (#6625 — ýже строки модели можно), не шире доли панели.
   drag(700, 1050); drop(1050);
-  assert.equal(panel.style.getPropertyValue(SIDE_VARIABLE), `${CHIN_MIN}px`, "уже нижней границы по строке модели не даём");
+  assert.equal(panel.style.getPropertyValue(SIDE_VARIABLE), `${SIDE_FLOOR}px`, "уже пола не даём");
   drag(800, 100); drop(100);
   assert.equal(panel.style.getPropertyValue(SIDE_VARIABLE), `${Math.round(PANEL.width * SIDE_MAX_SHARE)}px`, "шире доли панели не даём");
   bar.dispatchEvent({ type: "dblclick" });
@@ -417,12 +418,20 @@ test("нижняя граница колонки — по строке моде�
   chinRight.rect = { ...chinRight.rect, width: CHIN_RIGHT };
   settle(loaded);
   assert.equal(panel.style.getPropertyValue(SIDE_MIN_VARIABLE), `${CHIN_MIN}px`, "и вернулась");
-  // Рейка упирается в ту же границу, что и CSS.
+  // Рейка уводит колонку ýже строки модели, до пола (#6625); панель помечается,
+  // замер замирает на натуральном, шире замера — пометка снимается.
   const bar = rail(loaded);
   bar.dispatchEvent({ type: "pointerdown", button: 0, clientX: DOCK.left, pointerId: 1 });
   loaded.document.dispatchEvent({ type: "pointermove", clientX: 1090, pointerId: 1 });
   loaded.document.dispatchEvent({ type: "pointerup", clientX: 1090, pointerId: 1 });
-  assert.equal(panel.style.getPropertyValue(SIDE_VARIABLE), `${CHIN_MIN}px`, "тяга не уводит ниже границы по строке");
+  assert.equal(panel.style.getPropertyValue(SIDE_VARIABLE), `${SIDE_FLOOR}px`, "тяга уводит ниже строки модели, до пола");
+  settle(loaded);
+  assert.ok(panel.hasAttribute("data-myclaude-side-tight"), "колонка ýже замера — панель помечена");
+  assert.equal(panel.style.getPropertyValue(SIDE_MIN_VARIABLE), `${CHIN_MIN}px`, "замер замер на натуральном");
+  loaded.win.localStorage.removeItem(SIDE_KEY);
+  panel.style.removeProperty(SIDE_VARIABLE);
+  settle(loaded); settle(loaded);
+  assert.ok(!panel.hasAttribute("data-myclaude-side-tight"), "ширина по умолчанию — пометка снята");
   // Совсем короткая строка не роняет колонку ниже пола: редактору нужны narrowLimit.
   chinLeft.rect = { ...chinLeft.rect, width: 40 };
   chinRight.rect = { ...chinRight.rect, width: 40 };

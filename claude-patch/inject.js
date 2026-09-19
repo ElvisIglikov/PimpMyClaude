@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-2";
+  const VERSION = "wf76-a-3";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1152,6 +1152,12 @@ div:has(> .ProseMirror) {
   // ◑») на нижней границе: у правой группы своё поле слева (8), у кнопок —
   // свои (6), так что визуально между словами остаётся ~20.
   const SIDE_CHIN_GAP = 4;
+  // #6625 (слово Элвиса 20.09: «просто сделай, чтобы они сужались»): замер строки
+  // модели — нижняя граница только УМОЛЧАНИЯ; рейкой колонку можно увести до
+  // SIDE_FLOOR. Ýже замера панель получает этот атрибут — группам строки снова
+  // можно ужиматься (как у Claude в узком окне), а замер замирает на последнем
+  // натуральном: ужатая строка мерилась бы ужатой.
+  const SIDE_TIGHT_ATTRIBUTE = "data-myclaude-side-tight";
   // Строка модели — та, у которой Claude держит боковые поля переменными
   // `--cmp-chin-*` (класс `ps-[var(--cmp-chin-start)]`, замер 17.09; по этой же
   // примете «обёртка по инлайн-переменной» ниже узнаётся `--cmp-wrap-h`); её два
@@ -1279,7 +1285,7 @@ nav[aria-label="Repository and pull request controls"] {
   }
   .epitaxy-chat-panel > div:has(> .epitaxy-titlebar):has(> .contents > .epitaxy-chat-panel-body [data-testid="epitaxy-virtual-transcript"]):has(.group\\/approval-dock) {
     display: grid !important;
-    grid-template-columns: minmax(0, 1fr) clamp(var(${SIDE_MIN_VARIABLE}, ${SIDE_MIN}px), var(${SIDE_VARIABLE}), ${SIDE_MAX_SHARE * 100}%);
+    grid-template-columns: minmax(0, 1fr) clamp(${SIDE_FLOOR}px, var(${SIDE_VARIABLE}), ${SIDE_MAX_SHARE * 100}%);
     grid-template-rows: auto minmax(0, 1fr);
     & > .epitaxy-titlebar {
       grid-column: 2;
@@ -1320,7 +1326,7 @@ nav[aria-label="Repository and pull request controls"] {
       right: calc(100% + ${DOCK_PAD}px);
       bottom: ${DOCK_PAD}px;
     }
-    & .group\\/approval-dock ${CHIN_ROW_SELECTOR} > * {
+    &:not(.epitaxy-chat-panel[${SIDE_TIGHT_ATTRIBUTE}] > *) .group\\/approval-dock ${CHIN_ROW_SELECTOR} > * {
       flex-shrink: 0;
     }
     & .epitaxy-prompt {
@@ -4199,6 +4205,7 @@ nav[aria-label="Repository and pull request controls"] {
     try { wideState.panel?.style?.removeProperty(SIDE_MIN_VARIABLE); } catch {}
     try { wideState.panel?.style?.removeProperty(TITLE_INSET_VARIABLE); } catch {}
     try { wideState.panel?.removeAttribute(TITLE_SIDE_ATTRIBUTE); } catch {}
+    try { wideState.panel?.removeAttribute(SIDE_TIGHT_ATTRIBUTE); } catch {}
   });
   // Куда класть шапку: панель начинается у левого края окна (главное окно со
   // свёрнутой боковой панелью, любой попап) — шапка влево, в полосу под кнопками
@@ -4231,10 +4238,19 @@ nav[aria-label="Repository and pull request controls"] {
     wideState.panel = panel;
     if (!wide) {
       if (panel.style.getPropertyValue(SIDE_MIN_VARIABLE)) panel.style.removeProperty(SIDE_MIN_VARIABLE);
+      if (panel.hasAttribute(SIDE_TIGHT_ATTRIBUTE)) panel.removeAttribute(SIDE_TIGHT_ATTRIBUTE);
       return;
     }
-    const value = `${sideMinFor(panel)}px`;
+    const side = Number.parseFloat(panel.style.getPropertyValue(SIDE_VARIABLE));
+    if (panel.hasAttribute(SIDE_TIGHT_ATTRIBUTE)) {
+      if (Number.isFinite(side) && side < sideMinOf(panel)) return;
+      panel.removeAttribute(SIDE_TIGHT_ATTRIBUTE);
+      return;
+    }
+    const min = sideMinFor(panel);
+    const value = `${min}px`;
     if (panel.style.getPropertyValue(SIDE_MIN_VARIABLE) !== value) panel.style.setProperty(SIDE_MIN_VARIABLE, value);
+    if (Number.isFinite(side) && side < min) panel.setAttribute(SIDE_TIGHT_ATTRIBUTE, "");
   };
   // Ступени в широком виде выключены: поле стоит на обычной высоте и растёт само
   // вместе с колонкой, ручки нет — свёрнутое поле тут исчезло бы навсегда.
@@ -4295,7 +4311,7 @@ nav[aria-label="Repository and pull request controls"] {
   // и кромкой доки в момент захвата и тянем кромку, а не курсор.
   const railSide = (panel, x) => {
     const frame = panel.getBoundingClientRect();
-    return Math.round(Math.min(frame.width * SIDE_MAX_SHARE, Math.max(sideMinOf(panel), frame.right - (x + wideState.grip))));
+    return Math.round(Math.min(frame.width * SIDE_MAX_SHARE, Math.max(SIDE_FLOOR, frame.right - (x + wideState.grip))));
   };
   const onRailDown = event => {
     if (event.button !== 0) return;
@@ -4344,6 +4360,99 @@ nav[aria-label="Repository and pull request controls"] {
     document.documentElement.style.userSelect = "";
   });
 
+  // ---- 2д. Левая панель Claude ýже заводского минимума (#6625) ------------
+  // Claude держит ширину боковой панели переменной `--df-sidebar-width` на
+  // `.dframe-root` и сам не даёт ей стать меньше 242 (aria-valuemin рейки
+  // «Resize sidebar», замер 20.09). Тянут его же рейку левее минимума — ширину
+  // ведём мы: своя переменная на корне + правило с !important (инлайновое
+  // значение Claude без !important уступает). Вернулись за минимум — снимаем
+  // своё, дальше ведёт Claude. Пол — кнопка «Hide sidebar» и переключатель
+  // Claude/Code вплотную (слово Элвиса: «вплотную, но уже не стоит»).
+  const LEFT_ATTRIBUTE = "data-myclaude-left";
+  const LEFT_VARIABLE = "--myclaude-left";
+  const LEFT_STORAGE_KEY = "myclaude-left-side-v1";
+  const LEFT_RAIL_SELECTOR = '[data-cds="ResizeHandle"][aria-label="Resize sidebar"]';
+  const LEFT_BUTTONS_GAP = 4;
+  const LEFT_FLOOR_FALLBACK = 190;
+  const leftState = { dragging: false, root: null, grip: 0, min: 242, floor: LEFT_FLOOR_FALLBACK };
+  const leftRoot = () => document.querySelector(".dframe-root");
+  const applyLeft = (root, value) => {
+    if (!root) return;
+    leftState.root = root;
+    if (value == null) {
+      if (root.hasAttribute(LEFT_ATTRIBUTE)) root.removeAttribute(LEFT_ATTRIBUTE);
+      root.style.removeProperty(LEFT_VARIABLE);
+      return;
+    }
+    root.style.setProperty(LEFT_VARIABLE, `${Math.round(value)}px`);
+    if (!root.hasAttribute(LEFT_ATTRIBUTE)) root.setAttribute(LEFT_ATTRIBUTE, "");
+  };
+  const readStoredLeft = () => {
+    try {
+      const stored = Number(localStorage.getItem(LEFT_STORAGE_KEY));
+      return Number.isFinite(stored) && stored > 0 ? Math.round(stored) : null;
+    } catch { return null; }
+  };
+  const storeLeft = value => {
+    try {
+      if (value == null) localStorage.removeItem(LEFT_STORAGE_KEY);
+      else localStorage.setItem(LEFT_STORAGE_KEY, String(Math.round(value)));
+    } catch {}
+  };
+  // Пол по живой геометрии: сколько сейчас пустует между кнопкой и переключателем.
+  const leftFloor = aside => {
+    const hide = document.querySelector('button[aria-label="Hide sidebar"]')?.getBoundingClientRect();
+    const mode = document.querySelector('[role="radiogroup"][aria-label="Mode"]')?.getBoundingClientRect();
+    const width = aside?.getBoundingClientRect().width ?? 0;
+    if (!hide || !mode || hide.width <= 0 || mode.width <= 0 || width <= 0) return LEFT_FLOOR_FALLBACK;
+    return Math.round(width - (mode.left - hide.right) + LEFT_BUTTONS_GAP);
+  };
+  const onLeftDown = event => {
+    if (event.button !== 0) return;
+    const handle = event.target?.closest?.(LEFT_RAIL_SELECTOR);
+    const root = leftRoot();
+    const aside = root?.querySelector("aside.dframe-sidebar");
+    if (!handle || !aside) return;
+    const min = Number(handle.getAttribute("aria-valuemin"));
+    leftState.dragging = true;
+    leftState.root = root;
+    leftState.min = Number.isFinite(min) && min > 0 ? min : 242;
+    leftState.floor = Math.min(leftState.min, leftFloor(aside));
+    leftState.grip = aside.getBoundingClientRect().right - event.clientX;
+  };
+  const onLeftMove = event => {
+    if (!leftState.dragging) return;
+    const root = leftState.root;
+    if (!root?.isConnected) return;
+    const aside = root.querySelector("aside.dframe-sidebar");
+    const width = event.clientX + leftState.grip - (aside?.getBoundingClientRect().left ?? 0);
+    applyLeft(root, width < leftState.min ? Math.max(leftState.floor, width) : null);
+  };
+  const onLeftUp = () => {
+    if (!leftState.dragging) return;
+    leftState.dragging = false;
+    const value = Number.parseFloat(leftState.root?.style?.getPropertyValue(LEFT_VARIABLE) ?? "");
+    storeLeft(leftState.root?.hasAttribute(LEFT_ATTRIBUTE) && Number.isFinite(value) ? value : null);
+    scheduleLayout();
+  };
+  const onLeftReset = event => {
+    if (!event.target?.closest?.(LEFT_RAIL_SELECTOR)) return;
+    applyLeft(leftRoot(), null);
+    storeLeft(null);
+  };
+  // Сохранённая ширина — на каждом проходе раскладки: корень Claude пересобирает.
+  const restoreLeft = () => {
+    if (leftState.dragging) return;
+    const root = leftRoot();
+    if (!root || root.hasAttribute(LEFT_ATTRIBUTE)) return;
+    const stored = readStoredLeft();
+    if (stored != null) applyLeft(root, stored);
+  };
+  track(() => {
+    leftState.dragging = false;
+    try { applyLeft(leftState.root ?? leftRoot(), null); } catch {}
+  });
+
   // ---- 3. Сироты прошлых установок ---------------------------------------
   // Реестра у них могло и не быть (падение до его заполнения), а в окне они уже
   // висят. Сносим по id и по своим атрибутам — иначе полосок в окне остаётся
@@ -4385,6 +4494,8 @@ nav[aria-label="Repository and pull request controls"] {
     `#${SIDE_RAIL_ID}>span{position:absolute;left:50%;top:0;bottom:0;width:3px;margin-left:-1.5px;border-radius:2px;background:currentColor;opacity:0;transition:opacity 160ms ease}`,
     `#${SIDE_RAIL_ID}:hover>span{opacity:.45;transition-delay:${SIDE_RAIL_REVEAL_MS}ms}`,
     `#${SIDE_RAIL_ID}[data-dragging="true"]>span{opacity:.55;transition-delay:0ms}`,
+    // Левая панель Claude ýже его минимума (раздел 2д).
+    `.dframe-root[${LEFT_ATTRIBUTE}]{--df-sidebar-width:var(${LEFT_VARIABLE}) !important}`,
     // Схлопнутый узел: не display:none, а полоска нулевой высоты — редактор
     // остаётся живым, черновик и фокус переживают сворачивание.
     `[${BLOCK_ATTRIBUTE}="collapsed"]{height:0 !important;min-height:0 !important;max-height:0 !important;padding-top:0 !important;padding-bottom:0 !important;margin-top:0 !important;margin-bottom:0 !important;overflow:hidden !important;opacity:0 !important;pointer-events:none !important}`,
@@ -5185,6 +5296,7 @@ nav[aria-label="Repository and pull request controls"] {
     // (свёрнутое поле, потерянный редактор), и в самом конце — чтобы во время
     // тяги она не отставала на проход от только что изменённой высоты.
     placeProgress();
+    restoreLeft();
     const editor = findEditor();
     // Страховка от мигания: даже если редактор потерялся, свёрнутое состояние не
     // сбрасываем, пока жив хоть один схлопнутый узел.
@@ -8282,6 +8394,11 @@ nav[aria-label="Repository and pull request controls"] {
   on(document, "pointermove", onRailMove, { capture: true });
   on(document, "pointerup", onRailUp, { capture: true });
   on(document, "pointercancel", onRailUp, { capture: true });
+  on(document, "pointerdown", onLeftDown, { capture: true });
+  on(document, "dblclick", onLeftReset, { capture: true });
+  on(document, "pointermove", onLeftMove, { capture: true });
+  on(document, "pointerup", onLeftUp, { capture: true });
+  on(document, "pointercancel", onLeftUp, { capture: true });
   on(window, "resize", scheduleLayout);
   on(window, "scroll", onScrolled, true);
   on(window, "myclaude-command", onCommand);
