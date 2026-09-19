@@ -19,6 +19,10 @@ import Network
 public final class HtmlChromeOpener {
     public static let port: UInt16 = 47615
     public static let chromeBundleID = "com.google.Chrome"
+    public static let previewBundleID = "com.apple.Preview"
+    /// Страницы и PDF — в Chrome, картинки — в «Просмотр» (#6621).
+    public static let chromeExtensions: Set<String> = ["html", "htm", "pdf"]
+    public static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tif", "tiff", "bmp"]
 
     public enum Mode: String { case click, auto }
     public struct Request: Equatable {
@@ -78,8 +82,8 @@ public final class HtmlChromeOpener {
               components.path == "/open-html",
               let path = components.queryItems?.first(where: { $0.name == "path" })?.value,
               path.hasPrefix("/"), !path.contains("\0") else { return nil }
-        let lower = path.lowercased()
-        guard lower.hasSuffix(".html") || lower.hasSuffix(".htm") else { return nil }
+        let ext = (path as NSString).pathExtension.lowercased()
+        guard chromeExtensions.contains(ext) || imageExtensions.contains(ext) else { return nil }
         let mode = components.queryItems?.first(where: { $0.name == "mode" })?.value
         return Request(path: path, mode: Mode(rawValue: mode ?? "") ?? .click)
     }
@@ -125,10 +129,16 @@ public final class HtmlChromeOpener {
 
     private func open(_ request: Request) {
         let file = URL(fileURLWithPath: request.path)
+        if Self.imageExtensions.contains(file.pathExtension.lowercased()) {
+            opened += 1
+            DispatchQueue.main.async { Self.launch(file, in: Self.previewBundleID) }
+            return
+        }
         let process = Process()
+        let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", Self.script(url: file.absoluteString, mode: request.mode)]
-        process.standardOutput = Pipe()
+        process.standardOutput = output
         process.standardError = Pipe()
         do {
             try process.run()
@@ -136,18 +146,35 @@ public final class HtmlChromeOpener {
         } catch {}
         if process.isRunning == false, process.terminationStatus == 0 {
             opened += 1
+            let answer = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            // `activate` из скрипта фонового приложения macOS вперёд не выводит (#6622) — выводим
+            // Chrome через LaunchServices. Авто-открытие при уже открытой вкладке Chrome не трогает.
+            if request.mode == .click || !answer.contains("found") {
+                DispatchQueue.main.async { Self.launch(nil, in: Self.chromeBundleID) }
+            }
             return
         }
         failed += 1
         DispatchQueue.main.async { [weak self] in
             // Без разрешения на Chrome — хотя бы обычным путём: новая вкладка лучше тишины.
-            if let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.chromeBundleID) {
-                NSWorkspace.shared.open([file], withApplicationAt: chrome,
-                                        configuration: NSWorkspace.OpenConfiguration())
-            } else {
-                NSWorkspace.shared.open(file)
-            }
+            Self.launch(file, in: Self.chromeBundleID)
             self?.onScriptFailed?()
+        }
+    }
+
+    /// Открыть файл программой (или просто вывести её вперёд, если файла нет); программы нет —
+    /// файл уходит программе по умолчанию.
+    private static func launch(_ file: URL?, in bundleID: String) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            if let file = file { NSWorkspace.shared.open(file) }
+            return
+        }
+        if let file = file {
+            NSWorkspace.shared.open([file], withApplicationAt: app, configuration: configuration)
+        } else {
+            NSWorkspace.shared.openApplication(at: app, configuration: configuration)
         }
     }
 }

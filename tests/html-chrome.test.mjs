@@ -9,5 +9,7 @@ test("путь из поля панели Browser: только абсолютн
   assert.equal(htmlChromePanePath("file:///tmp/a%20b/x.HTM"), "/tmp/a b/x.HTM");
   assert.equal(htmlChromePanePath("http://localhost:1488/index.html"), null);
   assert.equal(htmlChromePanePath("/tmp/notes.md"), null);
+  assert.equal(htmlChromePanePath("/tmp/00-превью.png"), "/tmp/00-превью.png");
+  assert.equal(htmlChromePanePath("/tmp/счёт.PDF"), "/tmp/счёт.PDF");
   assert.equal(htmlChromePanePath(""), null);
 });
