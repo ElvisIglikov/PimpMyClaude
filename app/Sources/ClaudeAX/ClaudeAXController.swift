@@ -43,6 +43,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
     /// «📋 Копировать в буфер» (WF69, #6236): страница кладёт путь и метку, приложение подменяет
     /// буфер самим файлом. Свой таймер 0,25 с — общий тик в 2 с опоздал бы к «вставить» в Telegram.
     private let copyRelay = CopyFileRelay()
+    private let htmlOpener = HtmlChromeOpener()
 
     private var observers: [NSObjectProtocol] = []
     /// Заголовки окон, снятые в этом тике: их читает и канал probe, и покраска — второй
@@ -419,6 +420,10 @@ public final class ClaudeAXController: ClaudeAXControlling {
             self?.hud.show("📋 Файла нет на диске: \((path as NSString).lastPathComponent)", seconds: 3)
         }
         copyRelay.start()
+        htmlOpener.onScriptFailed = { [weak self] in
+            self?.hud.show("Разреши Пимпу управлять Chrome — тогда вкладки не будут плодиться", seconds: 4)
+        }
+        htmlOpener.start()
         observeActivation()
         claudeFrontmost = app.isFrontmost
         refreshHotkeys()
@@ -467,6 +472,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         menu.stop()
         statusFeed.stop()
         copyRelay.stop()
+        htmlOpener.stop()
         hotkeys.removeAll()
         watchdog?.invalidate()
         watchdog = nil
@@ -525,7 +531,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         blockQuit=\(blockQuitEnabled) blocks=\(blockedQuits) hotkeys=\(hotkeys.count) \
         status=\(statusFeed.isRunning)/\(statusFeed.projectCount)/\(statusFeed.sentCount) \
         project=\(projectPaint.status) chats=\(chatProbe.status) themes=\(windowThemes.status) \
-        pimp=\(pimp.status) copy=\(copyRelay.status) live=\(liveColorsStatus) lastCommand=\(actions.lastCommand)
+        pimp=\(pimp.status) copy=\(copyRelay.status) html=\(htmlOpener.status) live=\(liveColorsStatus) lastCommand=\(actions.lastCommand)
         """
     }
 

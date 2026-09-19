@@ -4,5 +4,7 @@
 <dict>
 	<!-- Hardened runtime без sandbox: AX, запись в /Applications, подпроцессы codesign/xattr. -->
 	<key>com.apple.security.app-sandbox</key><false/>
+	<!-- HTML из чата — в Chrome: поиск открытой вкладки идёт AppleScript'ом (#6618). -->
+	<key>com.apple.security.automation.apple-events</key><true/>
 </dict>
 </plist>

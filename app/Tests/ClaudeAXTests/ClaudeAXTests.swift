@@ -2904,6 +2904,26 @@ final class ClaudeAXTests: XCTestCase {
 
     // MARK: - авто-Allow (#5736)
 
+    /// Запрос страницы «открой HTML в Chrome» (#6618): только GET /open-html, абсолютный путь, страница.
+    func testHtmlChromeRequestParsing() {
+        let ok = HtmlChromeOpener.parse("GET /open-html?mode=auto&path=%2FUsers%2Fe%2F%D0%BE%D1%82%D1%87%D1%91%D1%82%20a.html HTTP/1.1\r\nHost: x\r\n")
+        XCTAssertEqual(ok, HtmlChromeOpener.Request(path: "/Users/e/отчёт a.html", mode: .auto))
+        XCTAssertEqual(HtmlChromeOpener.parse("GET /open-html?path=%2Fa.HTM HTTP/1.1")?.mode, .click)
+        XCTAssertNil(HtmlChromeOpener.parse("GET /open-html?path=%2Fetc%2Fpasswd HTTP/1.1"))
+        XCTAssertNil(HtmlChromeOpener.parse("GET /open-html?path=a.html HTTP/1.1"))
+        XCTAssertNil(HtmlChromeOpener.parse("POST /open-html?path=%2Fa.html HTTP/1.1"))
+        XCTAssertNil(HtmlChromeOpener.parse("GET /other?path=%2Fa.html HTTP/1.1"))
+    }
+
+    /// Клик выводит найденную вкладку вперёд, авто-открытие при открытой вкладке Chrome не трогает.
+    func testHtmlChromeScriptModes() {
+        let click = HtmlChromeOpener.script(url: "file:///a.html", mode: .click)
+        let auto = HtmlChromeOpener.script(url: "file:///a.html", mode: .auto)
+        XCTAssertTrue(click.contains("set active tab index of w to i"))
+        XCTAssertFalse(auto.contains("set active tab index"))
+        XCTAssertTrue(auto.contains("set target to \"file:///a.html\""))
+    }
+
     /// Меню Пимпа открывается и с кнопки боковой панели (#6611).
     func testSidebarButtonLabel() {
         XCTAssertTrue(MinimizeMenu.isSidebarLabel("Show sidebar"))
