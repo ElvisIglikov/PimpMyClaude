@@ -13,6 +13,13 @@ final class MinimizeMenu: NSObject {
     let topBand: CGFloat = 48
     /// Сколько курсор должен простоять на кнопке.
     let hoverSeconds: TimeInterval = 0.3
+    /// Кнопка «Show sidebar» открывает то же меню, но держать надо дольше: на неё наводят и
+    /// ради самой панели (#6611). Живёт ниже жёлтой кнопки и только у левого края окна.
+    let sidebarHoverSeconds: TimeInterval = 0.8
+    let sidebarBand: CGFloat = 70
+    let sidebarStrip: CGFloat = 260
+    /// Поиск кнопки в дереве страницы дольше этого не идёт — главный поток не должен стоять.
+    let sidebarScanSeconds: TimeInterval = 0.15
     /// Кэш геометрии кнопки (и промахов) на окно.
     let buttonCacheSeconds: TimeInterval = 0.5
 
@@ -30,7 +37,9 @@ final class MinimizeMenu: NSObject {
     }
 
     private var buttons: [CGWindowID: ButtonCache] = [:]
+    private var sidebarButtons: [CGWindowID: ButtonCache] = [:]
     private var hoverID: CGWindowID?
+    private var hoverSidebar = false
     private var hoverSince: TimeInterval = 0
     private var suppressed = false
     private var menuOpen = false
@@ -103,20 +112,27 @@ final class MinimizeMenu: NSObject {
     var isRunning: Bool { timer != nil }
 
     /// Окна переехали или Claude перезапустился — прямоугольники кнопок протухли.
-    func clearCache() { buttons = [:] }
+    func clearCache() {
+        buttons = [:]
+        sidebarButtons = [:]
+    }
 
     private func tick() {
         guard !hoverPaused, AX.isTrustedCached, let pid = app.pid else { return }
         let point = Screens.flip(point: NSEvent.mouseLocation)
 
-        var target: (window: AXUIElement, id: CGWindowID, rect: CGRect)?
+        var target: (window: AXUIElement, id: CGWindowID, rect: CGRect, sidebar: Bool)?
         // Окна перекрываются: решает первое (самое переднее) под курсором.
         for window in ClaudeApp.onScreenFrames(pid: pid) {
             let f = window.frame
             guard point.x >= f.minX, point.x <= f.maxX,
-                  point.y >= f.minY, point.y <= f.minY + topBand else { continue }
-            if let hit = minimizeButton(of: window), hit.rect.contains(point) {
-                target = (hit.element, window.id, hit.rect)
+                  point.y >= f.minY, point.y <= f.minY + max(topBand, sidebarBand) else { continue }
+            if point.y <= f.minY + topBand,
+               let hit = minimizeButton(of: window), hit.rect.contains(point) {
+                target = (hit.element, window.id, hit.rect, false)
+            } else if point.x <= f.minX + sidebarStrip,
+                      let hit = sidebarButton(of: window), hit.rect.contains(point) {
+                target = (hit.element, window.id, hit.rect, true)
             }
             break
         }
@@ -127,14 +143,16 @@ final class MinimizeMenu: NSObject {
             suppressed = false
             return
         }
-        if hoverID != hit.id {
+        if hoverID != hit.id || hoverSidebar != hit.sidebar {
             hoverID = hit.id
+            hoverSidebar = hit.sidebar
             hoverSince = Date.timeIntervalSinceReferenceDate
             suppressed = false
             return
         }
         if suppressed { return } // меню уже показывали: ждём, пока курсор уйдёт с кнопки
-        if Date.timeIntervalSinceReferenceDate - hoverSince >= hoverSeconds {
+        let wait = hit.sidebar ? sidebarHoverSeconds : hoverSeconds
+        if Date.timeIntervalSinceReferenceDate - hoverSince >= wait {
             suppressed = true // до блокирующего popUp, а не после
             show(for: hit.window, at: hit.rect)
         }
@@ -157,6 +175,45 @@ final class MinimizeMenu: NSObject {
         buttons[window.id] = ButtonCache(element: element, rect: rect, frame: window.frame, at: now)
         guard let element = element, let rect = rect else { return nil }
         return (element, rect)
+    }
+
+    /// AX-окно и прямоугольник кнопки «Show sidebar» / «Hide sidebar». Кэш — как у жёлтой кнопки.
+    private func sidebarButton(of window: ClaudeWindowFrame) -> (element: AXUIElement, rect: CGRect)? {
+        let now = Date.timeIntervalSinceReferenceDate
+        if let hit = sidebarButtons[window.id], now - hit.at < buttonCacheSeconds, hit.frame == window.frame {
+            guard let element = hit.element, let rect = hit.rect else { return nil }
+            return (element, rect)
+        }
+        let element = app.window(matching: window.frame)
+        var rect: CGRect?
+        if let element = element {
+            rect = MinimizeMenu.findSidebarButton(root: element, deadline: now + sidebarScanSeconds)
+                .flatMap { AX.frame($0) }
+        }
+        sidebarButtons[window.id] = ButtonCache(element: element, rect: rect, frame: window.frame, at: now)
+        guard let element = element, let rect = rect else { return nil }
+        return (element, rect)
+    }
+
+    /// Подпись кнопки боковой панели? Чистая, её и гоняют тесты.
+    static func isSidebarLabel(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespaces).lowercased()
+        return t == "show sidebar" || t == "hide sidebar"
+    }
+
+    /// Первая кнопка боковой панели в дереве окна; обход обрывается по дедлайну.
+    static func findSidebarButton(root: AXUIElement, deadline: TimeInterval) -> AXUIElement? {
+        func walk(_ element: AXUIElement, _ depth: Int) -> AXUIElement? {
+            if depth > 40 || Date.timeIntervalSinceReferenceDate > deadline { return nil }
+            if AX.string(element, kAXRoleAttribute) == kAXButtonRole {
+                return isSidebarLabel(AutoAllow.text(of: element)) ? element : nil
+            }
+            for child in AX.elements(element, kAXChildrenAttribute) {
+                if let found = walk(child, depth + 1) { return found }
+            }
+            return nil
+        }
+        return walk(root, 0)
     }
 
     // MARK: - меню

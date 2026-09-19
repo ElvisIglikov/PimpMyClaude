@@ -2904,6 +2904,14 @@ final class ClaudeAXTests: XCTestCase {
 
     // MARK: - авто-Allow (#5736)
 
+    /// Меню Пимпа открывается и с кнопки боковой панели (#6611).
+    func testSidebarButtonLabel() {
+        XCTAssertTrue(MinimizeMenu.isSidebarLabel("Show sidebar"))
+        XCTAssertTrue(MinimizeMenu.isSidebarLabel("Hide sidebar"))
+        XCTAssertFalse(MinimizeMenu.isSidebarLabel("Show sidebar settings"))
+        XCTAssertFalse(MinimizeMenu.isSidebarLabel(""))
+    }
+
     /// Плашка пишет имя кнопки один раз и без цифры клавиши (#6600).
     func testAutoAllowLabelDropsRepeatAndKeyDigit() {
         XCTAssertEqual(AutoAllow.label(of: "Always allow 2 Always allow 2"), "Always allow")
