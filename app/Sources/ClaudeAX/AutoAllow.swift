@@ -21,7 +21,7 @@ final class AutoAllow {
     /// ^Allow always, ^Yes, allow).
     var buttonPatterns: [TextPattern] = [
         .prefix("Allow once"), .exact("Allow"), .prefix("Allow for this"),
-        .prefix("Allow always"), .prefix("Yes, allow"),
+        .prefix("Allow always"), .prefix("Always allow"), .prefix("Yes, allow"),
     ]
     /// Что НИКОГДА не подтверждаем: удаление и необратимое, деньги, внешние сервисы (слово
     /// Элвиса по странице ревизии, вариант A вопроса 7 — #5736). Список короткий и живёт в
@@ -117,6 +117,7 @@ final class AutoAllow {
         for window in AX.elements(appElement, kAXWindowsAttribute) {
             let found = AutoAllow.findButtons(root: window, patterns: buttonPatterns, deadline: deadline)
             cut = cut || found.timedOut
+            var allowed: [Hit] = []
             for hit in found.hits {
                 let head = AutoAllow.heading(of: hit.element)
                 if AutoAllow.isBlocked(heading: head, patterns: blockActionPatterns,
@@ -130,20 +131,31 @@ final class AutoAllow {
                     }
                     continue
                 }
-                let now = Date.timeIntervalSinceReferenceDate
-                guard now - lastPressAt > 0.7 else { continue }
-                let ok = AX.perform(hit.element, kAXPressAction)
-                lastPressAt = now
-                log.insert(Press(at: AutoAllow.clock.string(from: Date()), heading: head,
-                                 button: hit.text, ok: ok), at: 0)
-                if log.count > maxLog { log.removeLast() }
-                hud.show("Auto-allow: " + (head.isEmpty ? hit.text : head), seconds: 1.2)
-                return hit.text
+                allowed.append(hit)
             }
+            // «Always allow» сильнее разового Allow: диалоги появляются реже (#6594).
+            guard let index = AutoAllow.preferredIndex(allowed.map { $0.text }) else { continue }
+            let hit = allowed[index]
+            let now = Date.timeIntervalSinceReferenceDate
+            guard now - lastPressAt > 0.7 else { continue }
+            let ok = AX.perform(hit.element, kAXPressAction)
+            lastPressAt = now
+            log.insert(Press(at: AutoAllow.clock.string(from: Date()),
+                             heading: AutoAllow.heading(of: hit.element),
+                             button: hit.text, ok: ok), at: 0)
+            if log.count > maxLog { log.removeLast() }
+            hud.show("Пимп нажал " + hit.text, seconds: 2.4)
+            return hit.text
         }
         // Обход не дошёл до конца и ничего не нажал — считаем это отдельно от «диалогов не было».
         if cut { timeoutCount += 1 }
         return nil
+    }
+
+    /// Какую кнопку жать из найденных: первую со словом «always», нет такой — первую.
+    /// Чистая, её и гоняют тесты.
+    static func preferredIndex(_ texts: [String]) -> Int? {
+        texts.firstIndex { $0.lowercased().contains("always") } ?? (texts.isEmpty ? nil : 0)
     }
 
     /// Обёртка вопроса вокруг действия: её снимаем, чтобы осталось само действие.
