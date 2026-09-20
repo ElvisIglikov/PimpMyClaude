@@ -127,7 +127,8 @@ final class ClaudeActions {
         case .popoutWindow: popoutWindow(target)
         case .collapse: stage("collapse", target)
         case .expand: stage("expand", target)
-        case .arrange: arrange()
+        // ⌥⌘A и «▦ Расставить» — умный путь (план WF77); плитку ставят только рукой.
+        case .arrange: arrangeSmart()
         case .show: showAll(target)
         // «Прокрутить» адресована всем окнам сразу — фокус не нужен.
         case .scroll: commands.write(action: "scroll")
@@ -1334,38 +1335,41 @@ final class ClaudeActions {
         }
     }
 
-    /// Ровная сетка по главному экрану. Порядок окон сохраняется (см. ArrangeLayout.order).
-    /// Свёрнутые и спрятанные не трогаем; чужие приложения — тоже (в отличие от ElvisOS).
-    /// ⌥⌘A и пункт «▦ Расставить» повторяют последнюю раскладку (план WF21).
+    /// Умная расстановка — ⌥⌘A и пункт «▦ Расставить» (план WF77, слова Элвиса 20.09:
+    /// «расстановка работает как попало… окна, которые уже стояли на месте, никуда не
+    /// переводить; есть свободное место и одно-два окна болтаются неприкаянно — заполни ими
+    /// свободное место. Решение принимай по положению окон, у них же координаты есть»).
     ///
-    /// Раскладку, которая на ЭТОМ экране не влезает, не ставим вовсе (#5733): ячейки вышли бы
-    /// уже, чем Electron умеет, окна налезли бы друг на друга, а последнее уехало за край.
-    /// Плитка в меню такую раскладку гасит, канал «Пимп» отвечает `too-small` — у хоткея
-    /// проверки не было. Кладём лентой (она разводит узкие ячейки по рядам сама) и говорим.
-    func arrange() {
-        // Окон на экране нет (все свёрнуты, Claude спрятан) — раскладывать нечего, и плашке
-        // тогда взяться неоткуда. Список окон кэширован секунду, лишнего обхода AX нет.
-        guard !app.visibleWindows().isEmpty else { return }
-        let asked = themeStore.arrangeMode
-        let mode = ClaudeActions.arrangeLayout(asked, fits: arrangeFits(asked))
-        if mode != asked { onWarning?(MenuModel.arrangeTooSmallNotice) }
-        arrange(mode: mode)
+    /// Плитку (`themeStore.arrangeMode`) этот путь НЕ читает и НЕ пишет (критик блокер 2:
+    /// иначе первая же расстановка стирала бы выбор Элвиса), `arrangeFits` и плашку «экран
+    /// мал» не зовёт вовсе (блокер 3) — сетка считается по тому, как окна стоят, и уже она
+    /// не бывает минимума. Окна с разных экранов остаются каждое на своём.
+    func arrangeSmart() {
+        let windows = app.visibleWindows()
+        guard !windows.isEmpty else { return }
+        let frames = windows.map { AX.frame($0) ?? .zero }
+        let placed = ArrangeLayout.smart(frames: frames, screens: Screens.all(),
+                                         minCellWidth: cellWidth(), gap: cellGap())
+        for (index, window) in windows.enumerated() {
+            // Сидящему окну рамку не пишем ВОВСЕ: лишняя запись в AX дёргает окно даже на
+            // тех же координатах, а Элвис просил таких не трогать.
+            guard !ClaudeActions.frameMatches(frames[index], placed[index]) else { continue }
+            ClaudeActions.setFrame(window, placed[index])
+        }
+        onWindowsMoved?()
     }
 
-    /// Какую раскладку ставить на самом деле: не влезла — лента. Чистая, её и гоняют тесты.
-    static func arrangeLayout(_ mode: ArrangeLayout.Mode, fits: Bool) -> ArrangeLayout.Mode {
-        fits ? mode : .ribbon
-    }
-
-    /// То же по заданной раскладке — её выбирают плиткой в меню. Ячеек меньше, чем окон
-    /// («4» при пяти окнах), — хвост порядка не трогаем вовсе, окна стоят где стояли.
+    /// Ровная сетка по главному экрану, раскладка задана плиткой в меню. Порядок окон
+    /// сохраняется (см. ArrangeLayout.order). Свёрнутые и спрятанные не трогаем; чужие
+    /// приложения — тоже (в отличие от ElvisOS). Ячеек меньше, чем окон («4» при пяти
+    /// окнах), — хвост порядка не трогаем вовсе, окна стоят где стояли.
     func arrange(mode: ArrangeLayout.Mode) {
         let windows = app.visibleWindows()
         let frames = windows.map { AX.frame($0) ?? .zero }
         guard !windows.isEmpty, let area = Screens.usableFrame(holding: frames) else { return }
         let order = ArrangeLayout.order(of: frames)
         let cells = ArrangeLayout.frames(count: order.count, in: area, mode: mode,
-                                         minCellWidth: cellWidth())
+                                         minCellWidth: cellWidth(), gap: cellGap())
         for (index, cell) in cells.enumerated() {
             ClaudeActions.setFrame(windows[order[index]], cell)
         }
@@ -1379,23 +1383,33 @@ final class ClaudeActions {
     func arrangeCells(mode: ArrangeLayout.Mode, count: Int) -> [CGRect] {
         let frames = pimpWindows().map { $0.frame }
         guard count > 0, let area = Screens.usableFrame(holding: frames) else { return [] }
-        return ArrangeLayout.frames(count: count, in: area, mode: mode, minCellWidth: cellWidth())
+        return ArrangeLayout.frames(count: count, in: area, mode: mode,
+                                    minCellWidth: cellWidth(), gap: cellGap())
     }
 
     /// Влезает ли раскладка на главный экран (ячейка не уже `minWindowWidth`): по этому
     /// плитка в меню гаснет, а канал «Пимп» отвечает `too-small`. Экрана не знаем — не мешаем.
+    /// Умный путь сюда не заходит вовсе (критик WF77 блокер 3).
     func arrangeFits(_ mode: ArrangeLayout.Mode) -> Bool {
         let frames = app.visibleWindows().compactMap { AX.frame($0) }
         guard let area = Screens.usableFrame(holding: frames) else { return true }
-        return ArrangeLayout.fits(mode, in: area, minCellWidth: cellWidth())
+        return ArrangeLayout.fits(mode, in: area, minCellWidth: cellWidth(), gap: cellGap())
     }
 
     /// Поставить окну рамку и УБЕДИТЬСЯ, что она встала (гейт WF36, 07.09): Electron молча
     /// глотает `kAXPositionAttribute`, пока окно ещё едет (свежий popout, анимация) — на живом
     /// прогоне три окна сузились по сетке, а с места не сдвинулись, и Элвис видел ровно это
     /// («в ширину уменьшились, больше ничего не произошло»). Поэтому после записи читаем рамку
-    /// назад и повторяем до трёх раз с паузой; порядок записи — `frameSteps`.
-    static let frameRetries = 3
+    /// назад и повторяем с паузой; порядок записи — `frameSteps`.
+    ///
+    /// Кругов четыре, а не три (находка живьём 20.09, план WF77): на Маке Элвиса запись
+    /// «позиция → размер → позиция» подряд, без пауз, НЕ ставит размер вовсе — окно
+    /// остаётся прежней ширины и высоты, а систему потом прижимает его к низу экрана.
+    /// Сработало «позиция → пауза → размер»: круг второй пишет размер уже после того, как
+    /// верх окна встал, и высота наконец берётся. Отсюда же сверка размера в
+    /// `needsFrameRetry` — до WF77 промах размера повтора не вызывал, и «расставило как
+    /// попало» было ровно этим.
+    static let frameRetries = 4
     static let frameRetryPause: TimeInterval = 0.25
     static let frameTolerance: CGFloat = 2
 
@@ -1441,20 +1455,31 @@ final class ClaudeActions {
         }
         let now = AX.frame(window)
         if let now = now, frameMatches(now, frame) { return true }
-        guard attempt + 1 < frameRetries, needsFrameRetry(now: now, want: frame) else { return false }
+        guard attempt + 1 < frameRetries,
+              needsFrameRetry(now: now, want: frame, minWidth: minFrameWidth())
+        else { return false }
         frameSchedule(frameRetryPause) { setFrame(window, frame, fresh: fresh, attempt: attempt + 1) }
         return false
     }
 
-    /// Стоит ли повторять: только когда не встала ПОЗИЦИЯ — её Electron глотает у окна,
-    /// которое ещё едет. Размер он зажимает осознанно (минимальная ширина окна), и на узкой
-    /// сетке повторы уходили на него впустую — весь бюджет на каждое окно (#5733). Рамки
-    /// нет вовсе (окно закрылось, AX молчит) — повторять некому.
+    /// Минимальная ширина окна Electron — тот же `minWindowWidth` живого `claude.json`,
+    /// который лоадер отдаёт окнам. Живьём читается из файла, в тестах подставляется.
+    static var minFrameWidth: () -> CGFloat = { minCellWidth() }
+
+    /// Стоит ли повторять. ПОЗИЦИЯ — всегда: её Electron глотает у окна, которое ещё едет.
+    /// РАЗМЕР — с WF77 тоже (находка живьём 20.09: за один заход размер не берётся вовсе,
+    /// окно остаётся прежней ширины и высоты, и «расставило как попало» было ровно этим).
+    /// Кроме ШИРИНЫ уже `minWidth`: её Electron зажимает осознанно, и на узкой сетке
+    /// повторы уходили туда впустую — весь бюджет на каждое окно (#5733). Рамки нет вовсе
+    /// (окно закрылось, AX молчит) — повторять некому.
     static func needsFrameRetry(now: CGRect?, want: CGRect,
-                                tolerance: CGFloat = frameTolerance) -> Bool {
+                                tolerance: CGFloat = frameTolerance,
+                                minWidth: CGFloat = 0) -> Bool {
         guard let now = now else { return false }
-        return abs(now.origin.x - want.origin.x) > tolerance
-            || abs(now.origin.y - want.origin.y) > tolerance
+        if abs(now.origin.x - want.origin.x) > tolerance
+            || abs(now.origin.y - want.origin.y) > tolerance { return true }
+        if abs(now.height - want.height) > tolerance { return true }
+        return want.width >= minWidth && abs(now.width - want.width) > tolerance
     }
 
     static func frameMatches(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = frameTolerance) -> Bool {
@@ -1589,7 +1614,7 @@ final class ClaudeActions {
         guard !ordered.isEmpty,
               let area = Screens.usableFrame(holding: ordered.map { $0.frame }) else { return ([], 0) }
         let cells = ArrangeLayout.frames(count: ordered.count, in: area, mode: mode,
-                                         minCellWidth: cellWidth())
+                                         minCellWidth: cellWidth(), gap: cellGap())
         var out: [(id: CGWindowID, title: String, frame: CGRect)] = []
         for (index, cell) in cells.enumerated() {
             ClaudeActions.setFrame(ordered[index].window, cell)
@@ -1597,6 +1622,33 @@ final class ClaudeActions {
         }
         onWindowsMoved?()
         return (placed: out, skipped: ordered.count - out.count)
+    }
+
+    /// Умная расстановка для канала «Пимп» (план WF77): окна названы номерами, экран у
+    /// каждого свой. Отдаёт ВСЕ названные окна с итоговыми рамками — и сидящих тоже, им
+    /// рамку не пишем вовсе («окна, которые уже стояли на месте, никуда не переводить»).
+    /// Ячейка находится каждому, кто влез на экран, поэтому `skipped` у этого пути не
+    /// бывает. `ordered` — порядок навязан: место названо словом («слева», «посередине»).
+    @discardableResult
+    func arrangeSmart(ids: [CGWindowID], ordered: Bool)
+        -> [(id: CGWindowID, title: String, frame: CGRect)] {
+        let windows = pimpWindows()
+        let listed = ids.compactMap { id in windows.first { $0.id == id } }
+        guard !listed.isEmpty else { return [] }
+        let frames = listed.map { $0.frame }
+        // Окна уже идут в том порядке, о котором просили, — навязанный порядок это он и есть.
+        let placed = ArrangeLayout.smart(frames: frames, screens: Screens.all(),
+                                         minCellWidth: cellWidth(), gap: cellGap(),
+                                         order: ordered ? Array(frames.indices) : nil)
+        var out: [(id: CGWindowID, title: String, frame: CGRect)] = []
+        for (index, entry) in listed.enumerated() {
+            if !ClaudeActions.frameMatches(frames[index], placed[index]) {
+                ClaudeActions.setFrame(entry.window, placed[index])
+            }
+            out.append((id: entry.id, title: entry.title, frame: placed[index]))
+        }
+        onWindowsMoved?()
+        return out
     }
 
     /// Поставить окна по рамкам — деление столбца пополам («под этим»/«над этим»).
@@ -1628,6 +1680,29 @@ final class ClaudeActions {
         guard let value = (json?["minWindowWidth"] as? NSNumber)?.doubleValue,
               value.isFinite, value > 0 else { return 360 }
         return CGFloat(value)
+    }
+
+    /// Зазор между окнами. Живьём — из claude.json, в тестах подставляется.
+    var cellGap: () -> CGFloat = { ClaudeActions.windowGap() }
+
+    /// Зазор по умолчанию и его потолок (план WF77, слово Элвиса 20.09: «между окнами
+    /// небольшие отступы — это специально… должна быть настройка, сколько пикселей; по
+    /// умолчанию — как у меня сейчас»). Шире 40 pt не берём: ячейки начали бы съедаться
+    /// щелями, а потолок столбцов — проваливаться.
+    static let defaultWindowGap: CGFloat = 5
+    static let maxWindowGap: CGFloat = 40
+
+    /// `windowGap` из живого `claude.json` — тем же способом, что `minCellWidth`: пункта
+    /// меню у него нет, Элвис правит файл руками, и битое значение не должно разъезжать
+    /// окна. Ключа нет или он не число — 5; за края зажимаем.
+    static func windowGap(configURL: URL = CommandChannel.directory
+                            .appendingPathComponent(StatusFeed.configFileName)) -> CGFloat {
+        let data = try? Data(contentsOf: configURL)
+        let json = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+        guard let value = (json?["windowGap"] as? NSNumber)?.doubleValue, value.isFinite else {
+            return defaultWindowGap
+        }
+        return min(max(CGFloat(value), 0), maxWindowGap)
     }
 
     /// Все окна Claude вперёд, потом фокус обратно тому, из которого пришли.

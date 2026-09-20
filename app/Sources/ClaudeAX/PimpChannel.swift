@@ -143,7 +143,13 @@ struct PimpSeats {
     /// им поставили, и сколько окон осталось без ячейки — их не двигали (план WF21).
     var arrange: ([CGWindowID], ArrangeLayout.Mode) -> (windows: [PimpWindow], skipped: Int)
         = { _, _ in ([], 0) }
-    /// Последняя выбранная раскладка: её берут `layout: "last"` и новое окно.
+    /// Умная расстановка (план WF77): сетку выбирает не плитка, а то, как окна стоят
+    /// сейчас; окна с разных экранов остаются каждое на своём, стоящие на месте не
+    /// двигаются. Отдаёт ВСЕ названные окна с итоговыми рамками — ячейка есть у каждого,
+    /// кто влез на экран. Второй параметр — «порядок навязан»: место названо словом.
+    var arrangeSmart: (_ ids: [CGWindowID], _ ordered: Bool) -> [PimpWindow] = { _, _ in [] }
+    /// Последняя выбранная раскладка: её берут явные плитки. Умный путь её не читает и не
+    /// пишет (критик WF77 блокер 2: иначе «расставь» стирала бы выбор Элвиса).
     var arrangeMode: () -> ArrangeLayout.Mode = { .ribbon }
     /// Влезает ли раскладка на экран (ячейка не уже `minWindowWidth`) — иначе `too-small`.
     var fitsLayout: (ArrangeLayout.Mode) -> Bool = { _ in true }
@@ -512,25 +518,43 @@ final class PimpChannel {
             windows, minimized: seats.minimized())), for: id)
     }
 
-    /// «Расставить» — то же, что плитка в меню: порядок по текущим рамкам, раскладка из
-    /// запроса (`last` — последняя выбранная). Ячейка уже `minWindowWidth` — `too-small`:
-    /// такие окна Electron всё равно не сделает, и лучше сказать это словами.
+    /// «Расставить». Голая просьба (`layout: "last"` или поля нет) идёт УМНЫМ путём
+    /// (план WF77): плитка не читается и не пишется, `fitsLayout` и `too-small` не
+    /// зовутся вовсе (критик блокеры 2 и 3) — сетку выбирает то, как окна стоят сейчас.
+    /// Названная плитка (`4|5|5x2|row`) работает по-прежнему: порядок по текущим рамкам,
+    /// ячейка уже `minWindowWidth` — `too-small`, такие окна Electron всё равно не сделает.
     private func runArrange(_ request: PimpRequest, id: String, at: Date) {
         let windows = seats.windows()
         guard seats.claudeRunning(), !windows.isEmpty else {
             reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
             return
         }
-        let mode = request.layout ?? seats.arrangeMode()
-        guard seats.fitsLayout(mode) else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.tooSmall.rawValue), for: id)
-            return
-        }
         let base = ArrangeLayout.order(of: windows.map { $0.frame })
         // Порядок по проектам (план WF41): просили — окна названных папок идут первыми,
         // не просили — прежний порядок по рамкам и ответ без `unknown`/`missing`.
         let sorted = request.order.map { PimpChannel.order(of: windows, by: $0, base: base) }
-        let placed = seats.arrange((sorted?.order ?? base).map { windows[$0].id }, mode)
+        let ids = (sorted?.order ?? base).map { windows[$0].id }
+        guard let mode = request.layout else {
+            // Порядок назвали сами (`order`) — он и навязан; иначе окна занимают ячейки
+            // сами, а стоящие на месте не двигаются вовсе.
+            let placed = seats.arrangeSmart(ids, sorted != nil)
+            guard !placed.isEmpty else {
+                reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue),
+                      for: id)
+                return
+            }
+            // Поле `layout` у умного пути — `row` (решение 8 плана): эталоны канала и слова
+            // CLI не меняются, а про умную расстановку CLI говорит своими словами.
+            reply(PimpAnswer(id: id, at: at, ok: true, fields: PimpChannel.arrangeFields(
+                placed, mode: .ribbon, skipped: 0, unknown: sorted?.unknown,
+                missing: sorted?.missing, minimized: seats.minimized())), for: id)
+            return
+        }
+        guard seats.fitsLayout(mode) else {
+            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.tooSmall.rawValue), for: id)
+            return
+        }
+        let placed = seats.arrange(ids, mode)
         // Не переставили ни одного окна (окна закрылись между снимком и расстановкой, экрана
         // не нашлось): подставлять сюда ВСЕ окна и говорить «Расставил N окон» — неправда,
         // их никто не двигал (#5680).
@@ -705,20 +729,24 @@ final class PimpChannel {
         job.chat == nil ? PimpChannel.newWindowSeconds : PimpChannel.restoreWindowSeconds
     }
 
-    /// Поставить новое окно столбцом: порядок существующих окон берём по их рамкам, новое
-    /// вставляем по индексу места и расставляем всё последней раскладкой. Возвращает рамку
-    /// нового окна; нет ячейки (окон больше, чем ячеек) — nil, и окно остаётся где родилось.
+    /// Поставить новое окно столбцом (план WF77 — умным путём). «Справа» и умолчание:
+    /// новое окно просто неприкаянное, ячейку оно займёт само, а окна, стоящие на месте,
+    /// не двинутся. «Слева» и «посередине» называют место — там порядок НАВЯЗАН, и окна
+    /// кладутся подряд. Возвращает рамку нового окна; ячейки не нашлось (окон больше, чем
+    /// мест на экране) — nil, и окно остаётся где родилось.
     private func row(_ place: PimpPlace, window: PimpWindow, in windows: [PimpWindow]) -> CGRect? {
         let others = windows.indices.filter { windows[$0].id != window.id }
         let order = ArrangeLayout.order(of: others.map { windows[$0].frame })
-        let mode = seats.arrangeMode()
-        // «Посередине» у сетки с рядами — середина ПЕРВОГО ряда (#5560): по всему порядку
-        // окно уезжало в нижний ряд, хотя Элвис просил середину.
-        let index = ArrangeLayout.insertIndex(of: place, count: others.count,
-                                              columns: ArrangeLayout.grid(of: mode)?.cols)
+        guard place == .left || place == .middle else {
+            let ids = order.map { windows[others[$0]].id } + [window.id]
+            return seats.arrangeSmart(ids, false).first { $0.id == window.id }?.frame
+        }
+        // Число столбцов умной сетки канал не знает (её считает приложение по экрану),
+        // поэтому «посередине» — середина всего порядка, как у ленты.
+        let index = ArrangeLayout.insertIndex(of: place, count: others.count)
         let full = ArrangeLayout.insert(order: order, count: others.count, at: index)
         let ids = full.map { $0 == others.count ? window.id : windows[others[$0]].id }
-        return seats.arrange(ids, mode).windows.first { $0.id == window.id }?.frame
+        return seats.arrangeSmart(ids, true).first { $0.id == window.id }?.frame
     }
 
     // MARK: - закрыть, вставить, сказать (план WF75)
@@ -1483,15 +1511,16 @@ extension PimpRequest {
             guard !raw.isEmpty else { return nil }
             text = String(raw.prefix(PimpChannel.hudTextLimit))
         }
-        // Раскладка (WF21): поля нет — лента (умолчание CLI), `last` — nil (подставит
-        // приложение), чужое слово — `bad-request`: наугад окна не двигаем.
+        // Раскладка (WF21): `last` — nil, то есть умная расстановка (план WF77); туда же
+        // идёт запрос БЕЗ поля `layout` — умолчание CLI и так `last`, а руками пишут
+        // по-разному. Чужое слово — `bad-request`: наугад окна не двигаем.
         var layout: ArrangeLayout.Mode? = .ribbon
         if action == .arrange {
             let raw = (root["layout"] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-            if raw == "last" {
+            if raw.isEmpty || raw == "last" {
                 layout = nil
-            } else if !raw.isEmpty {
+            } else {
                 guard let mode = ArrangeLayout.Mode(rawValue: raw) else { return nil }
                 layout = mode
             }

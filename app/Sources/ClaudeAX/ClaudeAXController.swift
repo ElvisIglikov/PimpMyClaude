@@ -228,13 +228,20 @@ public final class ClaudeAXController: ClaudeAXControlling {
             },
             arrange: { [weak self] ids, mode in
                 guard let self = self else { return ([], 0) }
-                // Раскладка запроса становится последней (план WF21): ⌥⌘A и плитка в меню
-                // повторяют её же. `last` и новое окно кладут сюда то, что и так лежит.
+                // Названная плитка становится последней (план WF21): её повторяет полоса
+                // раскладок в меню. С WF77 сюда приходит ТОЛЬКО явный `--layout 4|5|5x2|row`
+                // — умный путь плитку не трогает (критик блокер 2).
                 self.actions.themeStore.arrangeMode = mode
                 let done = self.actions.arrange(ids: ids, mode: mode)
                 return (windows: done.placed.map {
                     self.pimpWindow(id: $0.id, title: $0.title, frame: $0.frame)
                 }, skipped: done.skipped)
+            },
+            arrangeSmart: { [weak self] ids, ordered in
+                guard let self = self else { return [] }
+                return self.actions.arrangeSmart(ids: ids, ordered: ordered).map {
+                    self.pimpWindow(id: $0.id, title: $0.title, frame: $0.frame)
+                }
             },
             arrangeMode: { [weak self] in self?.actions.themeStore.arrangeMode ?? .ribbon },
             fitsLayout: { [weak self] mode in self?.actions.arrangeFits(mode) ?? true },
