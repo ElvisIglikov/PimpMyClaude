@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-16";
+  const VERSION = "wf77-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -413,6 +413,15 @@
   // в самом разделе: её читает chatIdKey (раздел 2а) уже на инжекте, а раздел
   // 12в лежит ниже по файлу — его `const`-ы к тому мгновению ещё в TDZ.
   const CHAT_ID_KEY = "myclaude-chat-v1";
+  // Своё React-волокно (раздел 12в, WF77): откуда начинаем обход и как глубоко
+  // идём вверх по `return`. Стоят ЗДЕСЬ по той же причине, что ключ выше.
+  // Старт — контейнеры ИМЕННО ЭТОГО чата, глубина — как у «Открыть в Chrome».
+  const CHAT_FIBER_SELECTOR = ".epitaxy-titlebar,.epitaxy-chat-panel";
+  const CHAT_FIBER_DEPTH = 12;
+  // Ответ волокна до смены заголовка окна: myChatId() зовут на каждую команду и
+  // на каждом круге сторожа заголовка. Промах НЕ запоминается — разметка попапа
+  // приходит позже инжекта, и запомненный null остался бы с окном навсегда.
+  const chatFiberState = { title: null, id: null };
   // Сторож заголовка: подчинённое окно («Open in new window») живёт на
   // about:blank и получает заголовок позже, чем выполняется инжект, а в главном
   // окне заголовок меняется на каждом чате. План просит опрос раз в секунду —
@@ -7642,11 +7651,16 @@ nav[aria-label="Repository and pull request controls"] {
   //
   // Кто как узнаёт свой чат:
   //   главное окно (claude.ai) — хвост location.pathname (/epitaxy/local_<id>);
-  //   попап (about:blank, своего адреса у него нет) — спрашивает окно-родителя:
+  //   попап (about:blank, своего адреса у него нет) — сперва читает СВОЁ
+  //     React-волокно (chatFiberId, WF77 #6734): у узлов над панелью чата есть
+  //     пропс sessionId, и он про ЭТО окно и ни про какое другое. Волокно
+  //     молчит — прежний путь: спрашивает окно-родителя
   //     window.opener.__myclaude.popoutChat(<заголовок>). У claude.ai есть стор
   //     с картой popoutWindows: <id чата> → {title,…}, где title — ровно то, что
   //     стоит в document.title попапа. Стор ищется поведенчески, тот же, что у
-  //     «Нового окна» (раздел 12б), и тем же кэшем.
+  //     «Нового окна» (раздел 12б), и тем же кэшем. Вопрос ПО ЗАГОЛОВКУ и был
+  //     бедой: одинаковые заголовки у Элвиса норма, и двум попапам родитель
+  //     называл ОДИН чат — «меняю цвет, меняется у обоих» (слово Элвиса 20.09).
   //   чужая страница (data:, file:, localhost) — молчит первой же строкой:
   //     лоадер шлёт probe.js во ВСЕ страницы, а их у Claude больше сорока.
   //
@@ -7714,9 +7728,50 @@ nav[aria-label="Repository and pull request controls"] {
       return id;
     } catch { return null; }
   }
-  const writeChatId = id => {
+  // Объявление, а не стрелка, по той же причине, что и у readChatId: запись
+  // кэша случается и на инжекте — лоадер перечитывает inject.js по mtime в ЖИВОМ
+  // попапе, где волокно уже отвечает, а раздел 2а идёт раньше этой строки.
+  function writeChatId(id) {
     try { sessionStorage.setItem(CHAT_ID_KEY, JSON.stringify({ id, title: windowTitle() })); } catch {}
-  };
+  }
+
+  // Волокно React у узла: React кладёт его собственным свойством
+  // `__reactFiber$<хэш>`. Свой обход, а не openChromeFiber раздела 12г: тот
+  // объявлен НИЖЕ по файлу и на инжекте был бы ещё в TDZ.
+  function chatFiberOf(node) {
+    try {
+      for (const key of Object.keys(node)) {
+        if (key.startsWith("__reactFiber$")) return node[key];
+      }
+    } catch {}
+    return null;
+  }
+  // Свой id из React-волокна (WF77, #6734). От контейнеров ИМЕННО ЭТОГО чата
+  // вверх по `return` (не дальше CHAT_FIBER_DEPTH): у компонентов над панелью
+  // есть пропс sessionId — id открытого в окне чата (проба 20.09).
+  // Три ответа: `local_<uuid>` — вот мой чат; `""` — волокно СПОРИТ САМО С
+  // СОБОЙ, встретились два разных id, и тогда мы не называем ни одного (чужой
+  // чат хуже, чем «не определён», — разбор критика, п. 4); null — волокна нет
+  // вовсе, и работает прежний путь через родителя.
+  // Объявление, а не стрелка: myChatId() зовут на инжекте (chatIdKey, раздел
+  // 2а). Не бросает и на пустом DOM: там просто нет стартовых узлов.
+  function chatFiberId() {
+    if (chatFiberState.title === windowTitle()) return chatFiberState.id;
+    let found = null;
+    try {
+      for (const node of document.querySelectorAll(CHAT_FIBER_SELECTOR)) {
+        let fiber = chatFiberOf(node);
+        for (let hop = 0; fiber && hop <= CHAT_FIBER_DEPTH; hop += 1, fiber = fiber.return) {
+          const id = fiber.memoizedProps?.sessionId;
+          if (typeof id !== "string" || !id.startsWith("local_")) continue;
+          if (found && found !== id) return "";
+          found = id;
+        }
+      }
+    } catch { return null; }
+    if (found) { chatFiberState.title = windowTitle(); chatFiberState.id = found; }
+    return found;
+  }
 
   // Синхронный ответ «какой чат в этом окне» — им пользуются addressed() и ключ
   // темы chatIdKey (раздел 2а). Объявление, а не стрелка: chatIdKey зовёт его на
@@ -7724,7 +7779,16 @@ nav[aria-label="Repository and pull request controls"] {
   function myChatId() {
     if (!themable) return null;
     if (isMainWindow()) return newWindowSessionId() || null;
-    return readChatId();
+    // Попап: своё волокно сильнее кэша ответа родителя — родитель ищет чат ПО
+    // ЗАГОЛОВКУ и двум одноимённым окнам называет один и тот же (слово Элвиса
+    // 20.09). Спорную запись кэша переписываем: она уже увела чужую команду в
+    // это окно и сама не исправится. Волокно спорит само с собой ("") — кэш не
+    // спасает: он из того же вопроса по заголовку, которому мы больше не верим.
+    const own = chatFiberId();
+    if (own === "") return null;
+    if (!own) return readChatId();
+    if (readChatId() !== own) writeChatId(own);
+    return own;
   }
 
   // Карта попапов из стора: [{id, title}]. null — стор ответить не смог (упал
@@ -7790,6 +7854,14 @@ nav[aria-label="Repository and pull request controls"] {
   // (это и есть «не определён», приложение такое окно не красит вовсе); "none"
   // — спросить было некого, и приложение падает на старый путь по заголовку.
   const chatsAsk = async scan => {
+    // Волокно — раньше всего, даже раньше заголовка: у безымянного попапа
+    // («Claude») своего id по заголовку не добыть вовсе, а в волокне он есть.
+    // Волокно ответило хоть что-то (id или «согласия нет», см. chatFiberId) —
+    // этим и кончаем: "ok" значит «спросили источник», даже когда id не
+    // определился (набор значений store не расширяем).
+    const own = chatFiberId();
+    if (own !== null) return { id: own || null, store: "ok" };
+    // Волокна нет — прежний путь, как до WF77: кэш, потом сам родитель.
     const title = windowTitle();
     if (!title || THEME_TITLE_STUBS.has(title.toLowerCase())) return { id: null, store: "none" };
     const cached = readChatId();
@@ -7812,6 +7884,23 @@ nav[aria-label="Repository and pull request controls"] {
   // (ответ и без того весит мегабайты), а артефакт на чужом origin вернул бы
   // ПУСТУЮ карту и подсунул бы приложению ложное «Элвис снял всё сам».
   const chatsThemes = () => (isMainWindow() ? readThemeMap() : null);
+
+  // Рамка окна страницы (WF77, #6734): [screenX, screenY, outerWidth,
+  // outerHeight] в тех же глобальных координатах, что у AX (проверено на
+  // Odyssey над макбуком). Ею приложение отличает два окна с ОДИНАКОВЫМ
+  // заголовком — заголовок у Элвиса перестал быть приметой окна.
+  // Целые: у Quartz рамка целая, дробь страницы сверке только мешала бы.
+  // Отдают её ТОЛЬКО наши страницы (main и popout): артефакт на data:-адресе
+  // живёт в том же окне Claude и подсунул бы приложению его рамку как свою.
+  // Чисел нет (браузер их не дал) — поля нет вовсе.
+  const chatFrame = kind => {
+    if (kind !== "main" && kind !== "popout") return null;
+    try {
+      const box = [window.screenX, window.screenY, window.outerWidth, window.outerHeight];
+      if (!box.every(value => Number.isFinite(value))) return null;
+      return box.map(value => Math.round(value));
+    } catch { return null; }
+  };
 
   // Папка домашнего экрана (WF37, #5576). Пока чат не открыт, сессии на диске
   // нет, и приложению папку взять неоткуда — окно оставалось некрашеным, хотя
@@ -7850,7 +7939,9 @@ nav[aria-label="Repository and pull request controls"] {
   //   {v, nonce, kind, self, path, row, title, popouts:[{id,title}], store, folder, at}
   // WF35 дописывает в ХВОСТ необязательное themes (карта тем главного окна):
   // контракт выше остаётся побайтно прежним, а «поля нет» приложение отличает
-  // от «карта пуста».
+  // от «карта пуста». WF77 дописывает туда же frame (рамка окна) — ПОСЛЕ at и
+  // ПЕРЕД themes; старое приложение поле игнорирует, новое без поля работает
+  // по-старому.
   // store: "ok" — спросили стор/родителя, "cache" — из карты в замыкании,
   // "busy" — идёт «Новое окно», "none" — спросить не вышло, "skip" — не наша
   // страница. Функция НИКОГДА не бросает: probe ждёт объект, а не исключение.
@@ -7859,6 +7950,7 @@ nav[aria-label="Repository and pull request controls"] {
     const scan = opts?.scan === true;
     const answer = (kind, self, store, popouts) => {
       const themes = chatsThemes();
+      const frame = chatFrame(kind);
       return {
         v: 1,
         nonce,
@@ -7871,6 +7963,7 @@ nav[aria-label="Repository and pull request controls"] {
         store,
         folder: chatsFolder(true),
         at: Date.now(),
+        ...(frame ? { frame } : {}),
         ...(themes ? { themes } : {}),
       };
     };
@@ -9083,7 +9176,8 @@ nav[aria-label="Repository and pull request controls"] {
     cashoutState, cashoutArrived, cashoutHeadHit, cashoutNorm, cashoutRemember, cashoutPills,
     cashoutHaul, cashoutUniqueName, cashoutCarry, cashoutTake, cashoutHome,
     cashoutPillNames, cashoutSweep,
-    chatKind, chatPath, chatRowId, myChatId, readChatId, writeChatId, chatsMap, chatsScan, chatsFolder,
+    chatKind, chatPath, chatRowId, myChatId, readChatId, writeChatId, chatFiberId, chatFrame,
+    chatsMap, chatsScan, chatsFolder,
     popoutChat, chats,
     openChromePath, openChromeInsert, openChromeOpen, copyFileHtml, copyFileToClipboard });
 

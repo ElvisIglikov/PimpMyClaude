@@ -46,6 +46,7 @@ export const loadInject = ({
     local: storage.local ?? {},
     session: storage.session ?? {},
     viewport: geometry.viewport ?? { width: 1200, height: 800 },
+    frame: geometry.frame ?? null,
   });
   // Разметка страницы: "composer" — стандартное поле ввода Claude Code, функция —
   // свой билдер (получает dom), ничего — пустая страница.

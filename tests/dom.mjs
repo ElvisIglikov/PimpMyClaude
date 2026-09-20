@@ -128,6 +128,10 @@ export const createDom = ({
   // боевого файла), либо любой объект-заглушку, либо ничего: без opener окно
   // ведёт себя как первое окно браузера.
   opener = null,
+  // Рамка окна на экране (WF77, раздел 12в): [screenX, screenY, outerWidth,
+  // outerHeight]. Не задал тест — свойств у окна НЕТ вовсе, как у страницы,
+  // которой браузер их не дал: ответ chats() тогда идёт без поля frame.
+  frame = null,
 } = {}) => {
   // sheets считается на лету: тема, шрифт и размер живут конструируемыми
   // таблицами (adoptedStyleSheets), и их число — тот же счётчик утечки.
@@ -644,6 +648,7 @@ export const createDom = ({
     sessionStorage: makeStorage(session),
     innerWidth: viewport.width,
     innerHeight: viewport.height,
+    ...(frame ? { screenX: frame[0], screenY: frame[1], outerWidth: frame[2], outerHeight: frame[3] } : {}),
     devicePixelRatio: 2,
     performance: { now: () => Date.now(), getEntriesByType: () => [] },
     CSSStyleSheet,
