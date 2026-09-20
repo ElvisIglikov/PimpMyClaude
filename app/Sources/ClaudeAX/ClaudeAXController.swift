@@ -421,7 +421,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         }
         copyRelay.start()
         htmlOpener.onScriptFailed = { [weak self] in
-            self?.hud.show("Разреши Пимпу управлять Chrome — тогда вкладки не будут плодиться", seconds: 4)
+            self?.hud.show("Разреши Пимпу управлять браузером — тогда вкладки не будут плодиться", seconds: 4)
         }
         htmlOpener.start()
         observeActivation()

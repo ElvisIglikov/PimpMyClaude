@@ -19,6 +19,14 @@ import Network
 public final class HtmlChromeOpener {
     public static let port: UInt16 = 47615
     public static let chromeBundleID = "com.google.Chrome"
+    /// Vivaldi стоит — страницы идут в него (слово Элвиса 20.09.2026, #6652: «в Вивальди по
+    /// высоте больше, чем в Хроме»); он на Chromium и понимает тот же AppleScript. Нет его
+    /// (команда) — Chrome, как раньше.
+    public static let vivaldiBundleID = "com.vivaldi.Vivaldi"
+    static var browser: (name: String, bundleID: String) {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: vivaldiBundleID) != nil
+            ? ("Vivaldi", vivaldiBundleID) : ("Google Chrome", chromeBundleID)
+    }
     public static let previewBundleID = "com.apple.Preview"
     /// Страницы и PDF — в Chrome, картинки — в «Просмотр» (#6621).
     public static let chromeExtensions: Set<String> = ["html", "htm", "pdf"]
@@ -94,7 +102,7 @@ public final class HtmlChromeOpener {
     }
 
     /// AppleScript для Chrome. Чистая, её и гоняют тесты.
-    public static func script(url: String, mode: Mode) -> String {
+    public static func script(url: String, mode: Mode, browser: String = "Google Chrome") -> String {
         let target = url.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         let bring = mode == .click ? """
                         set active tab index of w to i
@@ -103,7 +111,7 @@ public final class HtmlChromeOpener {
 
         """ : ""
         return """
-        tell application "Google Chrome"
+        tell application "\(browser)"
             set target to "\(target)"
             repeat with w in windows
                 set i to 0
@@ -137,7 +145,8 @@ public final class HtmlChromeOpener {
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", Self.script(url: file.absoluteString, mode: request.mode)]
+        let browser = Self.browser
+        process.arguments = ["-e", Self.script(url: file.absoluteString, mode: request.mode, browser: browser.name)]
         process.standardOutput = output
         process.standardError = Pipe()
         do {
@@ -150,14 +159,14 @@ public final class HtmlChromeOpener {
             // `activate` из скрипта фонового приложения macOS вперёд не выводит (#6622) — выводим
             // Chrome через LaunchServices. Авто-открытие при уже открытой вкладке Chrome не трогает.
             if request.mode == .click || !answer.contains("found") {
-                DispatchQueue.main.async { Self.launch(nil, in: Self.chromeBundleID) }
+                DispatchQueue.main.async { Self.launch(nil, in: browser.bundleID) }
             }
             return
         }
         failed += 1
         DispatchQueue.main.async { [weak self] in
             // Без разрешения на Chrome — хотя бы обычным путём: новая вкладка лучше тишины.
-            Self.launch(file, in: Self.chromeBundleID)
+            Self.launch(file, in: browser.bundleID)
             self?.onScriptFailed?()
         }
     }
