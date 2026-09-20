@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-12";
+  const VERSION = "wf76-a-14";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -4492,8 +4492,10 @@ nav[aria-label="Repository and pull request controls"] {
     `#${SIDE_RAIL_ID}>span{position:absolute;left:50%;top:0;bottom:0;width:3px;margin-left:-1.5px;border-radius:2px;background:currentColor;opacity:0;transition:opacity 160ms ease}`,
     `#${SIDE_RAIL_ID}:hover>span{opacity:.45;transition-delay:${SIDE_RAIL_REVEAL_MS}ms}`,
     `#${SIDE_RAIL_ID}[data-dragging="true"]>span{opacity:.55;transition-delay:0ms}`,
-    // Угловой фейд ленты в режиме чтения (раздел 6).
-    `[data-myclaude-corner-fade]{-webkit-mask-image:radial-gradient(ellipse var(--myclaude-fade-w) var(--myclaude-fade-h) at 0 0,transparent 70%,#000 100%);mask-image:radial-gradient(ellipse var(--myclaude-fade-w) var(--myclaude-fade-h) at 0 0,transparent 70%,#000 100%)}`,
+    // Угловой фейд ленты в режиме чтения (раздел 6). Не в ноль и без резкой кромки
+    // (слово Элвиса 20.09 06:30: «чтобы чуть-чуть просвечивал, ненавязчивый»; первая
+    // редакция съедала две строки и гасила текст целиком).
+    `[data-myclaude-corner-fade]{-webkit-mask-image:radial-gradient(ellipse var(--myclaude-fade-w) var(--myclaude-fade-h) at 0 0,rgba(0,0,0,.15) 55%,#000 100%);mask-image:radial-gradient(ellipse var(--myclaude-fade-w) var(--myclaude-fade-h) at 0 0,rgba(0,0,0,.15) 55%,#000 100%)}`,
     // Левая панель Claude ýже его минимума (раздел 2д).
     `.dframe-root[${LEFT_ATTRIBUTE}]{--df-sidebar-width:var(${LEFT_VARIABLE}) !important}`,
     // Схлопнутый узел: не display:none, а полоска нулевой высоты — редактор
@@ -5070,8 +5072,8 @@ nav[aria-label="Repository and pull request controls"] {
   // не на всю длину»). Не накладка, а маска самой ленты: текст в углу плавно
   // сходит на нет, цвет фона подбирать не надо и кнопки Claude ничем не закрыты.
   const CORNER_FADE_ATTRIBUTE = "data-myclaude-corner-fade";
-  const CORNER_FADE_REACH_MAIN = 140;
-  const CORNER_FADE_REACH_POPOUT = 96;
+  const CORNER_FADE_REACH_MAIN = 118;
+  const CORNER_FADE_REACH_POPOUT = 78;
   const CORNER_FADE_DROP = 40;
   const cornerFade = { node: null };
   const clearCornerFade = () => {
@@ -5096,8 +5098,8 @@ nav[aria-label="Repository and pull request controls"] {
     if (!box || box.width <= 0 || box.left >= TITLEBAR_CLEARANCE_LEFT || width <= 0 || height <= 0) { clearCornerFade(); return; }
     if (cornerFade.node !== scroller) clearCornerFade();
     cornerFade.node = scroller;
-    const w = `${Math.round(width * 1.4)}px`;
-    const h = `${Math.round(height * 1.9)}px`;
+    const w = `${Math.round(width * 1.25)}px`;
+    const h = `${Math.round(height * 1.35)}px`;
     if (scroller.style.getPropertyValue("--myclaude-fade-w") !== w) scroller.style.setProperty("--myclaude-fade-w", w);
     if (scroller.style.getPropertyValue("--myclaude-fade-h") !== h) scroller.style.setProperty("--myclaude-fade-h", h);
     if (!scroller.hasAttribute(CORNER_FADE_ATTRIBUTE)) scroller.setAttribute(CORNER_FADE_ATTRIBUTE, "");
