@@ -619,4 +619,25 @@
   унаследует его цвет и закрепит на своём `id:` — лечится выбором темы (риск 11 плана WF35).
 - Тема = `adoptedStyleSheets` (НЕ `<style>`: Claude зеркалит `<style>` главного окна в попапы). Красятся только
   страницы `claude.ai` и `about:blank` (окна «Open in new window»), артефакты/браузер — нет.
-
+- **Панель лимитов по-русски (WF78, 21.09.2026, #6738; раздел 12ж `inject.js`)**: панель — `div[role="dialog"][data-cds="Popover"]`
+  со `[data-cds="StackedMeter"]` и `a[href="/settings/usage"]` внутри (опознание по устройству; разведка —
+  `docs/recon-wf78-usage-panel.md`). Подменяется ТОЛЬКО `nodeValue` текстовых узлов листа (лист — элемент без детей-элементов;
+  текстовых узлов у него бывает несколько — шапку React держит тремя: пишем всё в первый, остальным пусто); узлы Claude не
+  создаются, не удаляются, не переставляются. Память на элементе: `data-myclaude-lim-src` (английский оригинал) и
+  `data-myclaude-lim-out` (что написали); текст ≠ `out` — свежий оригинал React. Процент 5-часового прячется
+  `data-myclaude-lim-hide` + правило в `RULES`. Постоянных наблюдателей нет: клик по кружку
+  (`[aria-haspopup="dialog"][aria-label^="Usage:"]`) → временный наблюдатель до появления панели → наблюдатель на панели →
+  снятие; страховка — `usageTick` в `heartbeatTick`; один `track`. Момент сброса привязан к строке, из которой посчитан
+  (`usageSteady(key, src, at)`). Своя полоса недели — `data-myclaude-week`, одна на панель, неделю задаёт строка «all models»,
+  подписи дней только при абсолютном моменте. Словарь точных строк — `USAGE_WORDS`; незнакомое не трогаем и считаем в
+  `status().usage = {opens, swaps, unknown, week}`. Имя аккаунта: главное окно пишет `localStorage` `myclaude-account-v1` из
+  `button[data-testid="user-menu-button"]`; имя НЕ попадает в `status()`, `probe-result.json` и журналы. `dispose()` текст назад
+  не откатывает.
+- **Кружок контекста в режиме чтения (WF78, #6737)**: ветка `composerBlock`, в которой лежит кружок, метится
+  `data-myclaude-composer-block="collapsed-ring"` (свёртка без `opacity`), путь до кнопки — `data-myclaude-ring-path`, сама
+  кнопка — `data-myclaude-ring` (`position:absolute`, z-index ниже ручки), зеркальный угловой фейд — `data-myclaude-ring-fade`
+  (две маски, `mask-composite:intersect`; радиус меньше левого верхнего #6656). Узел React из дерева не вынимается. В широком
+  виде не включается. Снятие — `clearCollapsedNodes()` и `dispose()`.
+- **Самовосстановление узлов Пимпа (WF78, #6766)**: сторож проверяет `isConnected` своих узлов в `body` (рамка, полоска,
+  подсказка с карточкой, ручка, рейка); пропали — ставит заново тем же путём, что на инжекте, и зовёт `layout()`;
+  `status().restored` — счётчик, `status().handleVisible` считается по живому узлу.

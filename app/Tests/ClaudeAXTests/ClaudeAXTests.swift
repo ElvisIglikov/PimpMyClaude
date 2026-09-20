@@ -470,13 +470,18 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(ArrangeLayout.smart(frames: standing, in: area,
                                            minCellWidth: ClaudeAXTests.minCell, gap: 5),
                        standing, "сидящие окна не двигаются вовсе")
-        // Живые рамки Элвиса (замер 20.09) сходятся с ячейками не точка в точку — их
-        // берёт допуск 8 pt, и это тоже «никто не двигается» (КП-2 критика).
+        // Живые рамки Элвиса (замер 20.09) сходятся с ячейками не точка в точку — допуск
+        // 8 pt узнаёт в них ту же сетку (место не меняется), а рамка доводится до точной
+        // ячейки: «не совсем ровно стоят — ты должен это без моих слов делать».
         let live = [CGRect(x: -792, y: -842, width: 495, height: 838),
                     CGRect(x: -290, y: -842, width: 497, height: 838),
                     CGRect(x: 210, y: -842, width: 497, height: 838)]
         XCTAssertEqual(ArrangeLayout.smart(frames: live, in: area,
-                                           minCellWidth: ClaudeAXTests.minCell, gap: 5), live)
+                                           minCellWidth: ClaudeAXTests.minCell, gap: 5), standing)
+        // Окна встык без зазора (живой случай 21.09) — те же места, но с зазором.
+        let tight = ArrangeLayout.cells(cols: 6, rows: 1, count: 3, in: area, gap: 0)
+        XCTAssertEqual(ArrangeLayout.smart(frames: Array(tight[0..<2]) + [tight[2]], in: area,
+                                           minCellWidth: ClaudeAXTests.minCell, gap: 5), standing)
     }
 
     /// К трём стоящим окнам добавилось четвёртое «где попало»: трое стоят, новое встаёт

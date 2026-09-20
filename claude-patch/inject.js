@@ -37,7 +37,10 @@
 // приходят кольцом опорных точек (раздел «2в»). «Обкэшить» из подчинённого
 // окна (WF37) не вставляет перенос себе, а помечает его «ждёт адресата»:
 // адресата назовёт цепочка «Нового окна», и перенос ляжет в НОВОЕ окно
-// (раздел «12»).
+// (раздел «12»). Окошко лимитов (кружок контекста над полем ввода) страница
+// переписывает по-русски и дорисовывает ему полосу дней недели — подменой
+// nodeValue в родных узлах React (раздел «12ж»); в режиме чтения сам кружок
+// остаётся на виду в правом нижнем углу (раздел «6»).
 //
 // Логика ступеней, порогов и кликов перенесена из донора ElvisOS
 // (~/_ElvisProjects/ElvisOS/Resources/claude-chat-cleaner-inject.js, разделы
@@ -49,7 +52,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf77-a-2";
+  const VERSION = "wf78-a-5";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -76,6 +79,20 @@
   const EDITOR_ROOT_ATTRIBUTE = "data-myclaude-editor-root";
   const EDITOR_ATTRIBUTE = "data-myclaude-editor";
   const BLOCK_ATTRIBUTE = "data-myclaude-composer-block";
+  // Кружок контекста в режиме чтения (#6737, раздел 6) и панель лимитов
+  // (#6738, раздел 12ж). Константы стоят ЗДЕСЬ, а не в самих разделах: их
+  // читают уборка сирот (раздел 3) и правила стилей (раздел 4) — то есть
+  // раньше, чем разделы объявлены, и оттуда их `const`-ы ещё в TDZ.
+  const RING_ATTRIBUTE = "data-myclaude-ring";
+  const RING_PATH_ATTRIBUTE = "data-myclaude-ring-path";
+  const RING_FADE_ATTRIBUTE = "data-myclaude-ring-fade";
+  const USAGE_RING_SELECTOR = '[aria-haspopup="dialog"][aria-label^="Usage:"]';
+  // Куда кружок садится в свёрнутом поле: «на своём месте остаётся стоять,
+  // просто плавает» (слово Элвиса 20.09) — то есть у правого нижнего угла, где
+  // он и живёт в открытом поле. Отступы маленькие: ближе к углу — дальше от
+  // полоски возврата, которая стоит по центру низа.
+  const RING_INSET_RIGHT = 10;
+  const RING_INSET_BOTTOM = 4;
   const HEIGHT_VARIABLE = "--myclaude-input-height";
   // Высота и ступень — в sessionStorage. Отступление от донора (у него высота в
   // localStorage) намеренное: профиль у всех окон Claude общий, и новое окно
@@ -227,7 +244,10 @@
   // Выступ меньше этого — дрожь замера, а не уехавший за край окна низ.
   const BOTTOM_TRIM_SLACK = 1;
   const EDITOR_SELECTOR = '.ProseMirror[contenteditable],[contenteditable="true"],textarea';
-  const COLLAPSED_BLOCK_SELECTOR = `[${BLOCK_ATTRIBUTE}="collapsed"]`;
+  // Обе свёртки разом («collapsed» и «collapsed-ring», #6737): по этой примете
+  // свёрнутое поле остаётся НАЙДЕННЫМ, хотя геометрия у него нулевая, — и
+  // ветка с кружком тут ничем не отличается от остальных.
+  const COLLAPSED_BLOCK_SELECTOR = `[${BLOCK_ATTRIBUTE}^="collapsed"]`;
   // Роли — самое устойчивое, что есть у меню и модалок: классы Claude
   // перегенерирует каждый релиз, а role держит доступность.
   const OVERLAY_SELECTOR = '[role="menu"],[role="listbox"],[role="dialog"]';
@@ -366,6 +386,10 @@
     layoutRuns: 0,
     mutationBatches: 0,
     mutationSkipped: 0,
+    // Сколько своих узлов сторож вернул в body после того, как Claude пересобрал
+    // его содержимое (#6766, restoreOwnNodes в разделе 16). Ноль — болезни не
+    // было; растёт — значит окно теряет наши узлы и это видно, а не гадается.
+    restored: 0,
   };
 
   // ---- 2а. Слои чата: тема, шрифт, размер, рамка --------------------------
@@ -4491,10 +4515,12 @@ nav[aria-label="Repository and pull request controls"] {
   for (const id of [STYLE_ID, HANDLE_ID, SIDE_RAIL_ID]) {
     for (const orphan of document.querySelectorAll(`#${id}`)) orphan.remove();
   }
-  for (const node of document.querySelectorAll(`[${EDITOR_ROOT_ATTRIBUTE}],[${EDITOR_ATTRIBUTE}],[${BLOCK_ATTRIBUTE}]`)) {
+  for (const node of document.querySelectorAll(`[${EDITOR_ROOT_ATTRIBUTE}],[${EDITOR_ATTRIBUTE}],[${BLOCK_ATTRIBUTE}],[${RING_PATH_ATTRIBUTE}],[${RING_ATTRIBUTE}]`)) {
     node.removeAttribute(EDITOR_ROOT_ATTRIBUTE);
     node.removeAttribute(EDITOR_ATTRIBUTE);
     node.removeAttribute(BLOCK_ATTRIBUTE);
+    node.removeAttribute(RING_PATH_ATTRIBUTE);
+    node.removeAttribute(RING_ATTRIBUTE);
     try { node.style.removeProperty(HEIGHT_VARIABLE); } catch {}
   }
 
@@ -4529,11 +4555,44 @@ nav[aria-label="Repository and pull request controls"] {
     // (слово Элвиса 20.09 06:30: «чтобы чуть-чуть просвечивал, ненавязчивый»; первая
     // редакция съедала две строки и гасила текст целиком).
     `[data-myclaude-corner-fade]{-webkit-mask-image:radial-gradient(ellipse var(--myclaude-fade-w) var(--myclaude-fade-h) at 0 0,rgba(0,0,0,.15) 55%,#000 100%);mask-image:radial-gradient(ellipse var(--myclaude-fade-w) var(--myclaude-fade-h) at 0 0,rgba(0,0,0,.15) 55%,#000 100%)}`,
+    // Зеркальный фейд под кружком в режиме чтения (#6737, раздел 6). Отдельным
+    // правилом с ДВУМЯ приметами, а не вторым слоем в правиле выше: слои маски
+    // по умолчанию складываются (mask-composite:add), и там, где левый верхний
+    // прозрачен, правый нижний непрозрачен — левый фейд #6656/#6658 пропал бы
+    // совсем. Здесь слоёв два и composite intersect, а без кружка правило не
+    // применяется вовсе и верхний фейд остаётся ровно таким, как был.
+    `[data-myclaude-corner-fade][${RING_FADE_ATTRIBUTE}]{-webkit-mask-image:radial-gradient(ellipse var(--myclaude-fade-w) var(--myclaude-fade-h) at 0 0,rgba(0,0,0,.15) 55%,#000 100%),radial-gradient(ellipse var(--myclaude-ring-fade-w) var(--myclaude-ring-fade-h) at 100% 100%,rgba(0,0,0,.15) 55%,#000 100%);-webkit-mask-composite:source-in;mask-image:radial-gradient(ellipse var(--myclaude-fade-w) var(--myclaude-fade-h) at 0 0,rgba(0,0,0,.15) 55%,#000 100%),radial-gradient(ellipse var(--myclaude-ring-fade-w) var(--myclaude-ring-fade-h) at 100% 100%,rgba(0,0,0,.15) 55%,#000 100%);mask-composite:intersect}`,
+    // Панель лимитов (раздел 12ж). Процент 5-часового прячем СВОИМ атрибутом:
+    // узел остаётся на месте, React о нём не спотыкается. Своя полоса недели —
+    // отрезки в ряд и подписи дней под ними; всё остальное (высота, цвет,
+    // скругление) снято классами с родных полос, здесь этих чисел нет.
+    // Прозрачность у каждой подписи своя, а не у ряда: opacity на родителе
+    // создаёт группу, и сегодняшний день из неё уже не «ярче».
+    `[data-myclaude-lim-hide]{display:none !important}`,
+    `[data-myclaude-week="bar"]{display:flex;gap:1px;align-items:stretch;margin-bottom:3px}`,
+    `[data-myclaude-week="bar"]>*{flex:1 1 0;min-width:0}`,
+    `[data-myclaude-week="days"]{display:flex;gap:1px;font-size:10px;line-height:1.5}`,
+    `[data-myclaude-week="days"]>*{flex:1 1 0;min-width:0;text-align:center;opacity:.5}`,
+    `[data-myclaude-week="days"]>[data-myclaude-week-on="true"]{opacity:1;font-weight:600}`,
     // Левая панель Claude ýже его минимума (раздел 2д).
     `.dframe-root[${LEFT_ATTRIBUTE}]{--df-sidebar-width:var(${LEFT_VARIABLE}) !important}`,
     // Схлопнутый узел: не display:none, а полоска нулевой высоты — редактор
     // остаётся живым, черновик и фокус переживают сворачивание.
     `[${BLOCK_ATTRIBUTE}="collapsed"]{height:0 !important;min-height:0 !important;max-height:0 !important;padding-top:0 !important;padding-bottom:0 !important;margin-top:0 !important;margin-bottom:0 !important;overflow:hidden !important;opacity:0 !important;pointer-events:none !important}`,
+    // Ветка с кружком контекста (#6737, раздел 6): та же свёртка, но БЕЗ
+    // opacity — она создаёт группу прозрачности, и никакой opacity:1 на
+    // потомке кружок из неё уже не вытащит, — с overflow:visible (иначе
+    // кружок срежет) и position:relative (чтобы absolute внутри считался от
+    // неё, а не от неизвестно чего).
+    `[${BLOCK_ATTRIBUTE}="collapsed-ring"]{height:0 !important;min-height:0 !important;max-height:0 !important;padding-top:0 !important;padding-bottom:0 !important;margin-top:0 !important;margin-bottom:0 !important;overflow:visible !important;position:relative !important;pointer-events:none !important}`,
+    // Внутри пути к кружку остаётся только сам путь и кружок: модель, счётчики
+    // и кнопка отправки уходят. Редактор и черновик не задеты — они в ДРУГОМ
+    // ребёнке блока ввода и живут обычным collapsed (opacity:0, фокус цел).
+    `[${RING_PATH_ATTRIBUTE}]>*:not([${RING_PATH_ATTRIBUTE}]):not([${RING_ATTRIBUTE}]){display:none !important}`,
+    // Сам кружок: на своём месте справа внизу, видимый и нажимаемый. z-index
+    // НИЖЕ ручки (2147483646) намеренно: иначе кружок перехватил бы клик по
+    // полоске возврата, и вернуть поле стало бы нечем.
+    `[${RING_ATTRIBUTE}]{position:absolute !important;right:${RING_INSET_RIGHT}px !important;bottom:${RING_INSET_BOTTOM}px !important;opacity:1 !important;pointer-events:auto !important;z-index:2147483645 !important}`,
     // Растягиваем скролл-контейнер, а сам редактор освобождаем от его
     // собственного максимума (в Claude Code это max-h-[218px] на .tiptap) —
     // иначе текст остаётся полосой сверху. Прокрутка одна: у контейнера,
@@ -5108,11 +5167,25 @@ nav[aria-label="Repository and pull request controls"] {
   const CORNER_FADE_REACH_MAIN = 118;
   const CORNER_FADE_REACH_POPOUT = 78;
   const CORNER_FADE_DROP = 40;
+  // Зеркальный фейд под кружком (#6737) МЕНЬШЕ левого верхнего намеренно: слева
+  // под фейдом пустая шапка окна, а справа внизу — свежий текст, который Элвис
+  // прямо сейчас читает; зеркало 118×40 съело бы конец последнего ответа.
+  const CORNER_FADE_RING_REACH = 72;
+  const CORNER_FADE_RING_RISE = 30;
   const cornerFade = { node: null };
+  const clearRingFade = node => {
+    if (!node) return;
+    try {
+      node.removeAttribute(RING_FADE_ATTRIBUTE);
+      node.style.removeProperty("--myclaude-ring-fade-w");
+      node.style.removeProperty("--myclaude-ring-fade-h");
+    } catch {}
+  };
   const clearCornerFade = () => {
     const node = cornerFade.node;
     cornerFade.node = null;
     if (!node) return;
+    clearRingFade(node);
     try {
       node.removeAttribute(CORNER_FADE_ATTRIBUTE);
       node.style.removeProperty("--myclaude-fade-w");
@@ -5136,6 +5209,72 @@ nav[aria-label="Repository and pull request controls"] {
     if (scroller.style.getPropertyValue("--myclaude-fade-w") !== w) scroller.style.setProperty("--myclaude-fade-w", w);
     if (scroller.style.getPropertyValue("--myclaude-fade-h") !== h) scroller.style.setProperty("--myclaude-fade-h", h);
     if (!scroller.hasAttribute(CORNER_FADE_ATTRIBUTE)) scroller.setAttribute(CORNER_FADE_ATTRIBUTE, "");
+    // Второй угол — только когда кружок и правда всплыл (#6737): нет кружка —
+    // нет и фейда, и правило с двумя масками не применяется вовсе.
+    const ringWidth = ringState.button?.isConnected ? CORNER_FADE_RING_REACH - (innerWidth - box.right) : 0;
+    const ringHeight = ringState.button?.isConnected ? CORNER_FADE_RING_RISE - (innerHeight - box.bottom) : 0;
+    if (ringWidth <= 0 || ringHeight <= 0) { clearRingFade(scroller); return; }
+    const rw = `${Math.round(ringWidth * 1.25)}px`;
+    const rh = `${Math.round(ringHeight * 1.35)}px`;
+    if (scroller.style.getPropertyValue("--myclaude-ring-fade-w") !== rw) scroller.style.setProperty("--myclaude-ring-fade-w", rw);
+    if (scroller.style.getPropertyValue("--myclaude-ring-fade-h") !== rh) scroller.style.setProperty("--myclaude-ring-fade-h", rh);
+    if (!scroller.hasAttribute(RING_FADE_ATTRIBUTE)) scroller.setAttribute(RING_FADE_ATTRIBUTE, "");
+  };
+
+  // Кружок контекста в режиме чтения (#6737, WF78). Слово Элвиса 20.09: «кружок
+  // — правый нижний угол, там же, где он и сейчас, он на своём месте остаётся
+  // стоять, тот же кружок, просто плавает».
+  //
+  // Кружок НЕ вынимается из дерева и не клонируется — React потерял бы свой
+  // узел. Вместо этого сужается действие свёртки на одну ветку: тому ОДНОМУ
+  // прямому ребёнку блока ввода, внутри которого лежит кнопка, достаётся
+  // «collapsed-ring» (свёртка без opacity, с overflow:visible и relative),
+  // путь от него вниз до кнопки метится RING_PATH_ATTRIBUTE, соседи по пути
+  // прячутся правилом, а сама кнопка метится RING_ATTRIBUTE и встаёт absolute
+  // в правый нижний угол. Метки ставятся заново на каждом проходе: React
+  // пересоздаёт узлы, как и для углового фейда.
+  const ringState = { nodes: [], button: null };
+  const clearRingPath = () => {
+    for (const node of ringState.nodes) {
+      if (node.isConnected) node.removeAttribute(RING_PATH_ATTRIBUTE);
+    }
+    if (ringState.button?.isConnected) ringState.button.removeAttribute(RING_ATTRIBUTE);
+    ringState.nodes = [];
+    ringState.button = null;
+  };
+  track(clearRingPath);
+  // Прямой ребёнок блока ввода, внутри которого лежит кружок. Ищем подъёмом ОТ
+  // КНОПКИ, а не по имени строки: разведка сама себе противоречит («над полем
+  // ввода» и «в нижней строке поля ввода»), и класс тут был бы гаданием.
+  // Кнопка, оказавшаяся прямым ребёнком блока, в счёт не идёт: путь до неё
+  // пустой, а свёртка нулевой высоты срезала бы сам значок.
+  const ringChild = block => {
+    if (!block?.isConnected) return null;
+    let button = null;
+    try { button = block.querySelector(USAGE_RING_SELECTOR); } catch {}
+    if (!button?.isConnected) return null;
+    let child = button;
+    while (child?.parentElement && child.parentElement !== block) child = child.parentElement;
+    if (child?.parentElement !== block || child === button) return null;
+    return { child, button };
+  };
+  const applyRingPath = ring => {
+    if (!ring) { clearRingPath(); return; }
+    const nodes = [];
+    // Сама кнопка в путь НЕ входит: правило прячет всё, что внутри пути и не
+    // помечено, а внутри кнопки лежит её собственный значок.
+    for (let node = ring.button.parentElement; node && node !== ring.child; node = node.parentElement) nodes.push(node);
+    nodes.push(ring.child);
+    for (const node of ringState.nodes) {
+      if (node.isConnected && !nodes.includes(node)) node.removeAttribute(RING_PATH_ATTRIBUTE);
+    }
+    if (ringState.button?.isConnected && ringState.button !== ring.button) ringState.button.removeAttribute(RING_ATTRIBUTE);
+    for (const node of nodes) {
+      if (!node.hasAttribute(RING_PATH_ATTRIBUTE)) node.setAttribute(RING_PATH_ATTRIBUTE, "");
+    }
+    if (!ring.button.hasAttribute(RING_ATTRIBUTE)) ring.button.setAttribute(RING_ATTRIBUTE, "");
+    ringState.nodes = nodes;
+    ringState.button = ring.button;
   };
 
   const clearCollapsedNodes = () => {
@@ -5143,6 +5282,7 @@ nav[aria-label="Repository and pull request controls"] {
       if (node.isConnected) node.removeAttribute(BLOCK_ATTRIBUTE);
     }
     state.collapsedNodes = [];
+    clearRingPath();
   };
 
   const applyCollapse = () => {
@@ -5160,7 +5300,12 @@ nav[aria-label="Repository and pull request controls"] {
     for (const node of state.collapsedNodes) {
       if (node.isConnected && !next.includes(node)) node.removeAttribute(BLOCK_ATTRIBUTE);
     }
-    for (const node of next) node.setAttribute(BLOCK_ATTRIBUTE, "collapsed");
+    // Ветка с кружком контекста сворачивается по-своему (#6737): без opacity,
+    // чтобы кружок остался виден и нажимаем. В широком виде ступень всегда
+    // обычная (syncWide), поэтому сюда мы там просто не заходим.
+    const ring = collapsed ? ringChild(state.composerBlock) : null;
+    for (const node of next) node.setAttribute(BLOCK_ATTRIBUTE, node === ring?.child ? "collapsed-ring" : "collapsed");
+    applyRingPath(next.includes(ring?.child) ? ring : null);
     state.collapsedNodes = next;
     handle.dataset.collapsed = collapsed ? "true" : "false";
     handle.setAttribute("aria-label", collapsed ? "Вернуть поле ввода" : "Изменить высоту поля ввода");
@@ -8504,6 +8649,685 @@ nav[aria-label="Repository and pull request controls"] {
   autoAllowState.timer = setInterval(() => { try { autoAllowTick(); } catch {} }, AUTO_ALLOW_TICK_MS);
   track(() => { clearInterval(autoAllowState.timer); autoAllowState.timer = 0; });
 
+  // ---- 12ж. Панель лимитов по-русски (#6738, WF78) --------------------------
+  // Слово Элвиса 20.09: окошко лимитов (открывается кружком контекста над полем
+  // ввода) — «вся панель на русском без единого английского слова», цифры
+  // короче, вместо «Plan usage limits» строка аккаунта, внизу новая полоса дней
+  // недели, нижняя строка — «Статистика» (страница за ней остаётся английской).
+  // Макет — файл 1 `docs/mockup-wf78-limits.html`, решения — MOCKUPS.md,
+  // устройство панели — `docs/recon-wf78-usage-panel.md`.
+  //
+  // Панель рисует React, и трогать её можно ровно одним способом: менять
+  // nodeValue УЖЕ СУЩЕСТВУЮЩЕГО текстового узла (так же, как раздел 14 сокращает
+  // «3 minutes ago»). Присваивание textContent/innerHTML уничтожает старый узел,
+  // а React держит на него ссылку в своём волокне: при закрытии панели он зовёт
+  // removeChild того, чего там уже нет, — и дерево Claude рвётся. Узлов не
+  // создаём, не удаляем и не переставляем; «спрятать» — своим атрибутом и
+  // правилом в RULES (раздел 4), не style и не remove().
+  //
+  // Что написали — помним на самом элементе: …-lim-src английский оригинал,
+  // …-lim-out наш текст. Проход: nodeValue === out → ничего не делаем; иначе
+  // React вернул своё, разбираем заново от nodeValue. dispose() атрибуты
+  // снимает, но текст назад НЕ откатывает: панель живёт секунды и пересоздаётся
+  // при следующем открытии.
+  //
+  // Постоянного наблюдателя за body нет — он стоил бы второго комплекта записей
+  // на каждую мутацию в каждом окне (раздел 9 про цену прохода). Панель
+  // открывается кликом по кружку: ловим повод и ставим ВРЕМЕННОГО наблюдателя,
+  // как openChromeWatch ждёт меню (раздел 12г), потом переезжаем на саму панель,
+  // а страховка — один querySelector в heartbeatTick (раздел 16).
+  //
+  // Не опознали строку — не трогаем: родной английский лучше сломанного. Такие
+  // строки считаются в status().usage.unknown, и это событие, а не норма.
+  // USAGE_RING_SELECTOR — в разделе 1: его читает ещё и свёртка (раздел 6).
+  const USAGE_PANEL_SELECTOR = '[role="dialog"][data-cds="Popover"]';
+  // Опознание панели по УСТРОЙСТВУ, не по английскому тексту: цветной метр
+  // контекста и ссылка на страницу статистики есть только у неё.
+  const USAGE_METER_SELECTOR = '[data-cds="StackedMeter"]';
+  const USAGE_LINK_SELECTOR = 'a[href="/settings/usage"]';
+  const USAGE_BAR_SELECTOR = '[role="progressbar"]';
+  const USAGE_ACCOUNT_SELECTOR = 'button[data-testid="user-menu-button"]';
+  const USAGE_SRC_ATTRIBUTE = "data-myclaude-lim-src";
+  const USAGE_OUT_ATTRIBUTE = "data-myclaude-lim-out";
+  const USAGE_HIDE_ATTRIBUTE = "data-myclaude-lim-hide";
+  const USAGE_WEEK_ATTRIBUTE = "data-myclaude-week";
+  const USAGE_WEEK_ON = "data-myclaude-week-on";
+  // Имя аккаунта: кнопка с ним есть только в ГЛАВНОМ окне и только при открытой
+  // боковой панели, а localStorage у окон Claude общий — главное окно кладёт имя
+  // сюда, попапы читают. Наружу (status, probe-result.json, журналы) имя не
+  // уходит: эти файлы лежат на диске и их читают агенты.
+  const USAGE_ACCOUNT_KEY = "myclaude-account-v1";
+  const USAGE_ACCOUNT_MAX = 40;
+  // Сколько ждём панель после клика по кружку — как меню в 12г.
+  const USAGE_WAIT_MS = 1500;
+  // Время сброса считается от «сейчас» и на границе минуты прыгало бы туда-сюда:
+  // пока новый ответ ближе этого к запомненному, держим запомненный.
+  const USAGE_STEADY_MS = 90000;
+  const USAGE_WEEK_PARTS = 7;
+  const USAGE_DAYS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+  const USAGE_WEEKDAYS = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  // Словарь панели. Отдельного слоя, конфига и файла с текстами не заводим
+  // (правило «Раздувание»): десяток строк живёт прямо здесь. Совпадение точное —
+  // чего в словаре нет, остаётся как есть.
+  const USAGE_WORDS = new Map([
+    ["Context window", "Контекст"],
+    ["See detailed breakdown", "Статистика"],
+    // Раскрытый «Контекст» (шеврон): список долей внутри панели.
+    ["Messages", "Сообщения"],
+    ["System tools", "Системные инструменты"],
+    ["MCP tools", "Инструменты MCP"],
+    ["Memory files", "Файлы памяти"],
+    ["Other", "Прочее"],
+    ["Autocompact buffer", "Запас автосжатия"],
+    ["System prompt", "Системный промпт"],
+    ["Free space", "Свободно"],
+    ["MCP tools (deferred)", "Инструменты MCP (отложенные)"],
+    ["System tools (deferred)", "Системные инструменты (отложенные)"],
+    ["Usage", "Расход"],
+    ["Skills", "Скиллы"],
+    ["Custom agents", "Свои агенты"],
+  ]);
+  // Потолок множества нераспознанных строк: страница живёт часами, а панель
+  // может смениться не раз — расти без края этому счётчику незачем.
+  const USAGE_UNKNOWN_MAX = 20;
+  const usageState = {
+    observer: null, timer: 0, panel: null,
+    opens: 0, swaps: 0, week: false,
+    // Нераспознанные строки — множеством: счётчик «сколько раз» рос бы каждым
+    // проходом и ничего не значил. Сами строки наружу не отдаём, только число.
+    unknown: new Set(),
+    // Устоявшиеся моменты сброса по видам лимитов — от дрожи «в 01:25».
+    resets: new Map(),
+  };
+
+  // ---- чистые разборы (тестируются через люк) ----
+  const usagePlural = (value, one, few, many) => {
+    const hundred = Math.abs(Math.round(value)) % 100;
+    const ten = hundred % 10;
+    if (hundred >= 11 && hundred <= 14) return many;
+    if (ten === 1) return one;
+    if (ten >= 2 && ten <= 4) return few;
+    return many;
+  };
+  const usageTwo = value => String(value).padStart(2, "0");
+  const usageClock = at => {
+    const point = new Date(at);
+    return `${usageTwo(point.getHours())}:${usageTwo(point.getMinutes())}`;
+  };
+  // «324.7k / 1M (32%)» → «325k / 1M (32%)»: тысячи без десятых, миллионы как
+  // есть. Проценты и косая не трогаются.
+  const usageNumber = text => String(text ?? "")
+    .replace(/(\d+(?:[.,]\d+)?)k/g, (all, num) => `${Math.round(Number(String(num).replace(",", ".")))}k`);
+  // «4 hr 9 min», «2 hr», «59 min», «1 day 3 hr», «2 days», «tomorrow» → минуты.
+  // Разобрали не всё — null: незнакомую строку лучше оставить английской.
+  const USAGE_SPAN_RE = /(\d+(?:\.\d+)?)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m)\b/g;
+  const usageMinutes = text => {
+    const raw = String(text ?? "").trim().toLowerCase();
+    if (!raw) return null;
+    if (raw === "tomorrow") return 24 * 60;
+    let total = 0;
+    let found = false;
+    USAGE_SPAN_RE.lastIndex = 0;
+    for (let match = USAGE_SPAN_RE.exec(raw); match; match = USAGE_SPAN_RE.exec(raw)) {
+      const value = Number(match[1]);
+      if (!Number.isFinite(value)) return null;
+      if (match[2].startsWith("d")) total += value * 24 * 60;
+      else if (match[2].startsWith("h")) total += value * 60;
+      else total += value;
+      found = true;
+    }
+    if (!found) return null;
+    // Осталось что-то, кроме разобранных кусков и пробелов, — значит это не та
+    // строка, которую мы понимаем.
+    if (raw.replace(USAGE_SPAN_RE, " ").replace(/[\s,]+/g, "")) return null;
+    return Math.round(total);
+  };
+  // «Fri 8:00 AM» → {day:5,hour:8,minute:0}; «12:00 AM» → полночь (00:00), а не
+  // полдень — на этой ловушке и ломаются разборы AM/PM.
+  const usageClockParts = text => {
+    const match = /^(?:(sun|mon|tue|wed|thu|fri|sat)[a-z]*\.?\s+)?(\d{1,2}):(\d{2})\s*(am|pm)?$/i.exec(String(text ?? "").trim());
+    if (!match) return null;
+    let hour = Number(match[2]);
+    const minute = Number(match[3]);
+    if (minute > 59) return null;
+    const suffix = match[4] ? match[4].toLowerCase() : "";
+    if (suffix) {
+      if (hour < 1 || hour > 12) return null;
+      hour = (hour % 12) + (suffix === "pm" ? 12 : 0);
+    } else if (hour > 23) return null;
+    return { day: match[1] ? USAGE_WEEKDAYS[match[1].slice(0, 3).toLowerCase()] : null, hour, minute };
+  };
+  // Ближайший БУДУЩИЙ момент «день недели + время» от base. Дни прибавляются
+  // календарно (setDate), чтобы перевод стрелок не сдвигал час.
+  const usageNext = (parts, base) => {
+    const at = new Date(base);
+    at.setHours(parts.hour, parts.minute, 0, 0);
+    if (parts.day == null) {
+      if (at.getTime() <= base) at.setDate(at.getDate() + 1);
+      return at.getTime();
+    }
+    let shift = (parts.day - at.getDay() + 7) % 7;
+    if (shift === 0 && at.getTime() <= base) shift = 7;
+    at.setDate(at.getDate() + shift);
+    return at.getTime();
+  };
+  // Короткая длительность, как в правой колонке панели: «4 ч 9 мин», «59 мин»,
+  // «2 ч», «1 день 3 ч», «2 дня».
+  const usageShort = minutes => {
+    const total = Math.max(0, Math.round(minutes));
+    const days = Math.floor(total / (24 * 60));
+    const hours = Math.floor((total - days * 24 * 60) / 60);
+    const mins = total - days * 24 * 60 - hours * 60;
+    const parts = [];
+    if (days) parts.push(`${days} ${usagePlural(days, "день", "дня", "дней")}`);
+    if (hours) parts.push(`${hours} ч`);
+    // Минуты при сутках не пишем: такой интервал Claude и сам даёт с точностью
+    // до дня, и «2 дня 17 мин» обещало бы точность, которой нет.
+    if (!days && mins) parts.push(`${mins} мин`);
+    return parts.length ? parts.join(" ") : "меньше минуты";
+  };
+  // Длительность словами — для своей строки над полосой недели: «3 дня
+  // 6 часов», «1 день 1 час», «5 часов 20 минут».
+  const usageLong = minutes => {
+    const total = Math.max(0, Math.round(minutes));
+    const days = Math.floor(total / (24 * 60));
+    const hours = Math.floor((total - days * 24 * 60) / 60);
+    const mins = total - days * 24 * 60 - hours * 60;
+    const parts = [];
+    if (days) parts.push(`${days} ${usagePlural(days, "день", "дня", "дней")}`);
+    if (hours) parts.push(`${hours} ${usagePlural(hours, "час", "часа", "часов")}`);
+    if (!days && mins) parts.push(`${mins} ${usagePlural(mins, "минута", "минуты", "минут")}`);
+    return parts.length ? parts.join(" ") : "меньше минуты";
+  };
+  // Подпись блока лимита. kind нужен, чтобы спрятать процент у 5-часового и
+  // взять неделю из строки «all models»: «Weekly · X» → «X».
+  const usageLabel = text => {
+    const raw = String(text ?? "").trim();
+    if (/^5-hour limit$/i.test(raw)) return { kind: "hour5", text: "5-часовой" };
+    if (/^weekly limit$/i.test(raw)) return { kind: "weekAll", text: "Недельный" };
+    const weekly = /^weekly\s*·\s*(.+)$/i.exec(raw);
+    if (!weekly) return null;
+    const rest = weekly[1].trim();
+    if (/^all models$/i.test(rest)) return { kind: "weekAll", text: "Недельный" };
+    return rest ? { kind: "week", text: rest } : null;
+  };
+  // Шапка лимитов: «Plan usage limits · Max (20x)» → «Elvisnya · Max 20x».
+  // Имени нет — «Max 20x» без имени; нет и тарифа — строку не трогаем вовсе.
+  const usageHead = (text, name) => {
+    const match = /^plan usage limits(?:\s*·\s*(.+))?$/i.exec(String(text ?? "").trim());
+    if (!match) return null;
+    const plan = String(match[1] ?? "").replace(/\s*\(([^)]*)\)\s*$/, " $1").trim();
+    const parts = [String(name ?? "").trim(), plan].filter(Boolean);
+    return parts.length ? parts.join(" · ") : null;
+  };
+  // Правая часть блока лимита. Возвращает момент сброса (at), интервал в
+  // минутах, признак «крупность в сутки» и готовый текст для форм, где времени
+  // считать не надо. Незнакомая форма — null.
+  const usageReset = (text, base) => {
+    const raw = String(text ?? "").trim();
+    if (/^limit reached$/i.test(raw)) return { at: null, minutes: null, rough: true, fixed: "Лимит исчерпан" };
+    const inside = /^resets?\s+in\s+(.+)$/i.exec(raw);
+    if (inside) {
+      const minutes = usageMinutes(inside[1]);
+      if (minutes == null) return null;
+      // Сутки и больше Claude даёт крупностью в день («Resets in 2 days»), то
+      // есть момент известен с точностью ±12 часов: часы сброса из него не
+      // вытащить, и мы их не пишем — иначе панель врёт уверенным голосом.
+      return { at: base + minutes * 60000, minutes, rough: minutes >= 24 * 60, fixed: null };
+    }
+    const rest = /^resets?\s+(.+)$/i.exec(raw);
+    if (!rest) return null;
+    let tail = rest[1].trim();
+    const when = /^(today|tomorrow)\b(?:\s+at\b)?\s*(.*)$/i.exec(tail);
+    if (when) {
+      const shift = /^tomorrow$/i.test(when[1]) ? 1 : 0;
+      const word = shift ? "завтра" : "сегодня";
+      tail = when[2].trim().replace(/^at\s+/i, "");
+      if (!tail) return { at: null, minutes: null, rough: true, fixed: word };
+      const parts = usageClockParts(tail);
+      if (!parts) return null;
+      const at = new Date(base);
+      at.setDate(at.getDate() + shift);
+      at.setHours(parts.hour, parts.minute, 0, 0);
+      return { at: at.getTime(), minutes: null, rough: false, fixed: `${word} в ${usageTwo(parts.hour)}:${usageTwo(parts.minute)}` };
+    }
+    const parts = usageClockParts(tail.replace(/^at\s+/i, ""));
+    if (!parts) return null;
+    const at = usageNext(parts, base);
+    const clock = `${usageTwo(parts.hour)}:${usageTwo(parts.minute)}`;
+    return {
+      at, minutes: null, rough: false,
+      fixed: parts.day == null ? `в ${clock}` : `${USAGE_DAYS[parts.day]} ${clock}`,
+    };
+  };
+  // Семь суток до сброса: доля каждого дня, подписи и какой день идёт сейчас.
+  // Границы календарные (setDate), а не «минус 24 часа»: у того, кто живёт с
+  // переводом стрелок, сетка иначе съезжает на час.
+  const usageWeekParts = (at, now) => {
+    const edges = [];
+    for (let step = USAGE_WEEK_PARTS; step >= 0; step -= 1) {
+      const point = new Date(at);
+      point.setDate(point.getDate() - step);
+      edges.push(point);
+    }
+    const fills = [];
+    const days = [];
+    let on = -1;
+    for (let index = 0; index < USAGE_WEEK_PARTS; index += 1) {
+      const from = edges[index].getTime();
+      const to = edges[index + 1].getTime();
+      const span = to - from;
+      fills.push(span > 0 ? Math.max(0, Math.min(1, (now - from) / span)) : 0);
+      days.push(USAGE_DAYS[edges[index].getDay()]);
+      if (now >= from && now < to) on = index;
+    }
+    return { fills, days, on };
+  };
+  // Имя аккаунта из кнопки левого меню. На входе — тексты её листьев: буква
+  // аватара и имя чаще лежат отдельными узлами («E», «Elvisnya», «·», «Max»),
+  // но бывают и слитно («EElvisnya·Max»). Слитную первую букву срезаем ТОЛЬКО
+  // когда она повторяет вторую: у имени «Anna» отъели бы букву ни за что.
+  const usageAccountName = parts => {
+    const list = (Array.isArray(parts) ? parts : [parts]).map(item => String(item ?? "").trim()).filter(Boolean);
+    if (!list.length) return "";
+    const split = list.length > 1 && list[0].length === 1;
+    let name = split ? list[1] : list[0];
+    const dot = name.indexOf("·");
+    if (dot >= 0) name = name.slice(0, dot);
+    name = name.trim();
+    if (!split && name.length >= 2 && name[0].toLowerCase() === name[1].toLowerCase()) name = name.slice(1);
+    return name.trim().slice(0, USAGE_ACCOUNT_MAX);
+  };
+
+  // ---- узлы панели ----
+  // Лист — элемент, у которого РОВНО один текстовый ребёнок и ни одного
+  // элемента. Всё прочее — «не опознали»: смешанное содержимое мы не разбираем.
+  // Текстовые узлы листа. Живая проба гейта 21.09: шапку лимитов React держит ТРЕМЯ
+  // текстовыми узлами («Plan usage limits», « · », «Max (20x)») — лист тот, у кого нет
+  // детей-элементов; читаем склейку, пишем всё в первый узел, остальным — пусто.
+  const usageTextNodes = element => {
+    const out = [];
+    const kids = element?.childNodes;
+    if (!kids) return out;
+    for (let index = 0; index < kids.length; index += 1) {
+      const kid = kids[index];
+      if (kid.nodeType === 1) return [];
+      if (kid.nodeType === 3) out.push(kid);
+    }
+    return out;
+  };
+  const usageTextNode = element => usageTextNodes(element)[0] ?? null;
+  const usageTextRead = element => usageTextNodes(element).map(node => String(node.nodeValue ?? "")).join("");
+  const usageLeaves = root => {
+    const out = [];
+    const walk = node => {
+      const kids = node?.childNodes;
+      if (!kids) return;
+      for (let index = 0; index < kids.length; index += 1) {
+        const kid = kids[index];
+        if (kid.nodeType !== 1) continue;
+        // Свою полосу недели не обходим: её текст наш и разбирать его нечем.
+        if (kid.hasAttribute?.(USAGE_WEEK_ATTRIBUTE)) continue;
+        if (usageTextNode(kid)) out.push(kid);
+        else walk(kid);
+      }
+    };
+    walk(root);
+    return out;
+  };
+  // Английский оригинал этого листа: запомненный (мы уже писали сюда, и текст с
+  // тех пор не менялся) или то, что лежит в узле сейчас.
+  const usageRaw = element => {
+    const node = usageTextNode(element);
+    if (!node) return null;
+    const value = usageTextRead(element);
+    if (element.getAttribute(USAGE_OUT_ATTRIBUTE) !== value) return value;
+    const src = element.getAttribute(USAGE_SRC_ATTRIBUTE);
+    return src == null ? value : src;
+  };
+  const usageWrite = (element, src, out) => {
+    const node = usageTextNode(element);
+    if (!node || out == null) return;
+    if (usageTextRead(element) !== out) {
+      const nodes = usageTextNodes(element);
+      nodes.forEach((each, index) => { each.nodeValue = index === 0 ? out : ""; });
+      usageState.swaps += 1;
+    }
+    if (element.getAttribute(USAGE_SRC_ATTRIBUTE) !== src) element.setAttribute(USAGE_SRC_ATTRIBUTE, src);
+    if (element.getAttribute(USAGE_OUT_ATTRIBUTE) !== out) element.setAttribute(USAGE_OUT_ATTRIBUTE, out);
+  };
+  // Текст СВОЕГО узла (полоса недели): у него ни оригинала, ни атрибутов.
+  const usageOwnText = (element, text) => {
+    const node = usageTextNode(element);
+    if (node && String(node.nodeValue ?? "") !== text) node.nodeValue = text;
+  };
+  // «Не разобрали» — событие, а не норма: строку оставляем английской, но
+  // считаем. Само слово наружу не отдаём (status() ложится на диск).
+  const usageUnknown = text => {
+    const value = String(text ?? "").trim();
+    if (value && usageState.unknown.size < USAGE_UNKNOWN_MAX) usageState.unknown.add(value);
+  };
+  const usageHide = (element, hidden) => {
+    if (!element) return;
+    if (hidden) { if (!element.hasAttribute(USAGE_HIDE_ATTRIBUTE)) element.setAttribute(USAGE_HIDE_ATTRIBUTE, ""); }
+    else if (element.hasAttribute(USAGE_HIDE_ATTRIBUTE)) element.removeAttribute(USAGE_HIDE_ATTRIBUTE);
+  };
+  const usagePanelOk = panel => {
+    if (!panel?.isConnected) return false;
+    try { return Boolean(panel.querySelector(USAGE_METER_SELECTOR) && panel.querySelector(USAGE_LINK_SELECTOR)); } catch { return false; }
+  };
+  const usagePanelIn = node => {
+    if (!node || node.nodeType !== 1) return null;
+    try {
+      const panel = node.matches(USAGE_PANEL_SELECTOR) ? node : node.querySelector(USAGE_PANEL_SELECTOR);
+      return usagePanelOk(panel) ? panel : null;
+    } catch { return null; }
+  };
+  const usageFind = () => {
+    try {
+      for (const panel of document.querySelectorAll(USAGE_PANEL_SELECTOR)) {
+        if (usagePanelOk(panel)) return panel;
+      }
+    } catch {}
+    return null;
+  };
+  // Блоки лимитов — по устройству: у каждого внутри своя полоса, а подпись
+  // названа её aria-labelledby. Классы Claude перегенерирует каждый релиз, и
+  // держаться за них нельзя.
+  const usageBlocks = panel => {
+    const out = [];
+    let bars = [];
+    try { bars = [...panel.querySelectorAll(USAGE_BAR_SELECTOR)]; } catch { return out; }
+    for (const bar of bars) {
+      const block = bar.parentElement;
+      if (!block) continue;
+      const named = bar.getAttribute("aria-labelledby");
+      let label = null;
+      try { label = named ? block.querySelector(`[id="${named}"]`) : null; } catch {}
+      if (!label) { try { label = block.querySelector("span[id]"); } catch {} }
+      const row = label?.parentElement ?? null;
+      if (!label || !row) continue;
+      out.push({ block, bar, label, row });
+    }
+    return out;
+  };
+  // Момент сброса устаивается: пока новый ответ рядом с запомненным, держим
+  // запомненный — иначе «в 01:25» дёргается на минуту при каждой перерисовке.
+  // Момент привязан к СТРОКЕ, из которой посчитан (проверка WF78, блокер 1): React
+  // строку не перерисовал — время сброса не двигается, сколько бы панель ни была
+  // открыта; иначе «в 01:25» уползало вперёд вместе с часами каждые 90 с.
+  const usageSteady = (key, src, at) => {
+    const kept = usageState.resets.get(key);
+    if (kept && kept.src === src) return kept.at;
+    const held = kept && Math.abs(at - kept.at) <= USAGE_STEADY_MS ? kept.at : at;
+    usageState.resets.set(key, { src, at: held });
+    return held;
+  };
+  const usageAccountRead = () => {
+    try { return String(localStorage.getItem(USAGE_ACCOUNT_KEY) ?? "").slice(0, USAGE_ACCOUNT_MAX); } catch { return ""; }
+  };
+  // Главное окно перезаписывает имя на каждом круге сторожа: аккаунт меняют и
+  // из него выходят, а ключ пережил бы и то и другое.
+  const usageAccountSave = () => {
+    if (!isMainWindow()) return;
+    let button = null;
+    try { button = document.querySelector(USAGE_ACCOUNT_SELECTOR); } catch {}
+    if (!button) return;
+    const own = usageTextNode(button);
+    const parts = own
+      ? [String(own.nodeValue ?? "")]
+      : usageLeaves(button).map(node => String(usageTextNode(node)?.nodeValue ?? ""));
+    const name = usageAccountName(parts.length ? parts : [String(button.textContent ?? "")]);
+    if (!name) return;
+    try { if (localStorage.getItem(USAGE_ACCOUNT_KEY) !== name) localStorage.setItem(USAGE_ACCOUNT_KEY, name); } catch {}
+  };
+
+  // ---- полоса недели ----
+  // Единственное, что мы в панели РИСУЕМ: строка «Сброс через 3 дня 6 часов» и
+  // под ней семь отрезков по дням лимитной недели. Одежду (классы) снимаем с
+  // родных блоков, чтобы полоса была той же высоты и того же цвета: свои числа
+  // тут врали бы с первым же релизом Claude.
+  const usageWeekSkin = blocks => {
+    const last = blocks[blocks.length - 1];
+    const fills = blocks.map(item => item.bar.firstElementChild).filter(Boolean);
+    const fill = fills.find(node => /accent/.test(String(node.className ?? ""))) ?? fills[0] ?? null;
+    return {
+      block: String(last.block.className ?? ""),
+      row: String(last.row.className ?? ""),
+      title: String(last.label.className ?? ""),
+      track: String(last.bar.className ?? ""),
+      fill: String(fill?.className ?? ""),
+    };
+  };
+  const usageWeekBox = (panel, blocks) => {
+    const last = blocks[blocks.length - 1];
+    const host = last.block.parentElement;
+    if (!host?.isConnected) return null;
+    let box = null;
+    try { box = panel.querySelector(`[${USAGE_WEEK_ATTRIBUTE}="block"]`); } catch {}
+    if (box && box.parentElement !== host) { box.remove(); box = null; }
+    if (box) return box;
+    const skin = usageWeekSkin(blocks);
+    const make = (tag, kind, className) => {
+      const node = document.createElement(tag);
+      node.setAttribute(USAGE_WEEK_ATTRIBUTE, kind);
+      if (className) node.className = className;
+      return node;
+    };
+    box = make("div", "block", skin.block);
+    // VoiceOver про полосу молчит: родные строки и так называют сброс, а наша
+    // читалась бы семью пустыми отрезками (как полоса прогресса, раздел 2б).
+    box.setAttribute("aria-hidden", "true");
+    const row = make("div", "row", skin.row);
+    const title = make("span", "title", skin.title);
+    title.appendChild(document.createTextNode(""));
+    row.appendChild(title);
+    box.appendChild(row);
+    const bar = make("div", "bar", "");
+    const days = make("div", "days", "");
+    for (let index = 0; index < USAGE_WEEK_PARTS; index += 1) {
+      const cell = make("div", "cell", skin.track);
+      cell.appendChild(make("div", "fill", skin.fill));
+      bar.appendChild(cell);
+      const day = make("span", "day", "");
+      day.appendChild(document.createTextNode(""));
+      days.appendChild(day);
+    }
+    box.appendChild(bar);
+    box.appendChild(days);
+    host.insertBefore(box, last.block.nextSibling);
+    return box;
+  };
+  const usageWeekClear = panel => {
+    try {
+      for (const node of panel.querySelectorAll(`[${USAGE_WEEK_ATTRIBUTE}="block"]`)) node.remove();
+    } catch {}
+  };
+  const usageWeekDraw = (panel, blocks, week, base) => {
+    // CSP не пустила наш <style> — полоса вылезла бы неоформленным блоком
+    // посреди панели; без недельной строки её не от чего считать.
+    if (!state.cssOk || !blocks.length || week?.at == null) { usageWeekClear(panel); return false; }
+    const box = usageWeekBox(panel, blocks);
+    if (!box) return false;
+    const parts = usageWeekParts(week.at, base);
+    const minutes = Math.round((week.at - base) / 60000);
+    let title = null;
+    let fills = [];
+    let days = [];
+    try {
+      title = box.querySelector(`[${USAGE_WEEK_ATTRIBUTE}="title"]`);
+      fills = [...box.querySelectorAll(`[${USAGE_WEEK_ATTRIBUTE}="fill"]`)];
+      days = [...box.querySelectorAll(`[${USAGE_WEEK_ATTRIBUTE}="day"]`)];
+    } catch { return false; }
+    if (title) usageOwnText(title, minutes > 0 ? `Сброс через ${usageLong(minutes)}` : "Сброс вот-вот");
+    for (let index = 0; index < fills.length; index += 1) {
+      const width = `${Math.round((parts.fills[index] ?? 0) * 1000) / 10}%`;
+      if (fills[index].style.getPropertyValue("width") !== width) fills[index].style.setProperty("width", width);
+    }
+    // Подписи дней — ТОЛЬКО когда неделя пришла абсолютным моментом («Resets Fri
+    // 8:00 AM»). Из интервала («Resets in 2 days») день сброса известен с
+    // точностью до суток, и все семь подписей врали бы разом: молча врущая
+    // полоса хуже полосы без подписей (макет, вариант 2).
+    const row = days[0]?.parentElement ?? null;
+    if (row) {
+      const hidden = week.rough ? "none" : "";
+      if (row.style.getPropertyValue("display") !== hidden) {
+        if (hidden) row.style.setProperty("display", hidden);
+        else row.style.removeProperty("display");
+      }
+    }
+    for (let index = 0; index < days.length; index += 1) {
+      usageOwnText(days[index], week.rough ? "" : (parts.days[index] ?? ""));
+      const on = !week.rough && index === parts.on;
+      if (on) { if (days[index].getAttribute(USAGE_WEEK_ON) !== "true") days[index].setAttribute(USAGE_WEEK_ON, "true"); }
+      else if (days[index].hasAttribute(USAGE_WEEK_ON)) days[index].removeAttribute(USAGE_WEEK_ON);
+    }
+    return true;
+  };
+
+  // ---- проход по панели ----
+  const usageApply = panel => {
+    if (!usagePanelOk(panel)) return false;
+    const base = Date.now();
+    const name = usageAccountRead();
+    const done = new Set();
+    const blocks = usageBlocks(panel);
+    let week = null;
+    for (const block of blocks) {
+      done.add(block.label);
+      const raw = usageRaw(block.label);
+      const label = raw == null ? null : usageLabel(raw);
+      if (label) usageWrite(block.label, raw, label.text);
+      else if (raw != null) usageUnknown(raw);
+      const key = label ? (label.kind === "week" ? `week:${label.text}` : label.kind) : null;
+      for (const leaf of usageLeaves(block.row)) {
+        if (done.has(leaf)) continue;
+        done.add(leaf);
+        const value = usageRaw(leaf);
+        if (value == null) continue;
+        // Процент: у 5-часового Элвис его не хочет («только полоса»), у
+        // недельных остаётся. Узел не трогаем — прячем своим атрибутом.
+        if (/^\s*\d+(?:[.,]\d+)?\s*%\s*$/.test(value)) { usageHide(leaf, label?.kind === "hour5"); continue; }
+        const reset = usageReset(value, base);
+        if (!reset) { usageUnknown(value); continue; }
+        const at = reset.at != null && key ? usageSteady(key, value, reset.at) : reset.at;
+        const text = reset.fixed ?? (reset.minutes == null ? null
+          : (reset.rough || at == null ? usageShort(reset.minutes) : `${usageShort(reset.minutes)} — в ${usageClock(at)}`));
+        if (text == null) { usageUnknown(value); continue; }
+        usageWrite(leaf, value, text);
+        // Неделю задаёт строка «all models»; её нет — первая недельная
+        // (недельных строк ДВЕ: «all models» и «Fable»).
+        if (at != null && (label?.kind === "weekAll" || (label?.kind === "week" && !week))) {
+          week = { at, rough: Boolean(reset.rough) };
+        }
+      }
+    }
+    // Всё остальное в панели: контекст, шапка аккаунта, «Статистика» и словарь
+    // раскрытого «Контекста».
+    for (const leaf of usageLeaves(panel)) {
+      if (done.has(leaf)) continue;
+      const raw = usageRaw(leaf);
+      if (raw == null) continue;
+      const text = raw.trim();
+      if (!text) continue;
+      const word = USAGE_WORDS.get(text);
+      if (word) { usageWrite(leaf, raw, raw.replace(text, word)); continue; }
+      const head = usageHead(text, name);
+      if (head) { usageWrite(leaf, raw, head); continue; }
+      const short = usageNumber(raw);
+      if (short !== raw) { usageWrite(leaf, raw, short); continue; }
+      // Осталось английское слово — это событие, а не норма: строку не трогаем
+      // (родной текст лучше сломанного), но считаем.
+      if (/[A-Za-z]{2,}/.test(text)) usageUnknown(text);
+    }
+    usageState.week = usageWeekDraw(panel, blocks, week, base);
+    return true;
+  };
+
+  // ---- наблюдатели ----
+  const usageStop = () => {
+    if (usageState.observer) { try { usageState.observer.disconnect(); } catch {} usageState.observer = null; }
+    if (usageState.timer) { clearTimeout(usageState.timer); usageState.timer = 0; }
+  };
+  const usageClose = () => {
+    usageStop();
+    usageState.panel = null;
+    usageState.week = false;
+  };
+  // Наблюдатель за самой панелью: React перерисовывает числа, мы переводим их
+  // снова. Колбэк — микрозадача в конце той же задачи, где React сделал коммит,
+  // то есть ДО кадра: английскому мелькнуть негде. takeRecords() в конце —
+  // чтобы свои же characterData-записи не вернулись вторым холостым проходом.
+  const usageHold = panel => {
+    usageStop();
+    if (typeof MutationObserver !== "function") return;
+    const observer = new MutationObserver(() => {
+      if (!usagePanelOk(panel)) { usageClose(); return; }
+      try { usageApply(panel); } catch {}
+      try { observer.takeRecords(); } catch {}
+    });
+    try { observer.observe(panel, { childList: true, subtree: true, characterData: true }); } catch { return; }
+    usageState.observer = observer;
+  };
+  const usageOpen = panel => {
+    usageState.panel = panel;
+    usageState.opens += 1;
+    usageHold(panel);
+    try { usageApply(panel); } catch {}
+  };
+  // Клик по кружку: ждём панель временным наблюдателем за body — ровно как
+  // openChromeWatch ждёт меню. Само событие не отменяется: панель открывает
+  // Claude, наше дело — успеть встать до того, как React её смонтирует.
+  const usageWatch = () => {
+    usageStop();
+    if (typeof MutationObserver !== "function") return;
+    const host = document.body ?? document.documentElement;
+    if (!host) return;
+    const observer = new MutationObserver(records => {
+      for (const record of records) {
+        for (const node of record.addedNodes ?? []) {
+          const panel = usagePanelIn(node);
+          if (panel) { usageOpen(panel); return; }
+        }
+      }
+    });
+    observer.observe(host, { childList: true, subtree: true });
+    usageState.observer = observer;
+    usageState.timer = setTimeout(() => { usageState.timer = 0; if (!usageState.panel) usageStop(); }, USAGE_WAIT_MS);
+  };
+  const onUsageRing = event => {
+    let ring = null;
+    try { ring = event.target?.closest?.(USAGE_RING_SELECTOR) ?? null; } catch {}
+    if (!ring) return;
+    // Панель открыта — этот клик её закрывает, ждать нечего.
+    if (usageState.panel?.isConnected) { usageClose(); return; }
+    usageWatch();
+  };
+  // Страховка вместо постоянного наблюдателя: один querySelector на круге
+  // сторожа (раздел 16). Ею же панель подхватывается, когда её открыли не
+  // кликом (клавиатурой) или когда инжект перезапустился при открытой панели.
+  const usageTick = () => {
+    if (usageState.panel && !usageState.panel.isConnected) usageClose();
+    const panel = usageFind();
+    if (!panel) { if (usageState.panel) usageClose(); return; }
+    if (panel !== usageState.panel) { usageOpen(panel); return; }
+    usageApply(panel);
+  };
+  // Одно снятие на весь раздел: наблюдатель со сроком, своя полоса и свои
+  // атрибуты. Текст назад не откатываем — см. шапку раздела.
+  track(() => {
+    usageClose();
+    usageState.resets.clear();
+    try {
+      for (const node of document.querySelectorAll(`[${USAGE_WEEK_ATTRIBUTE}]`)) node.remove();
+      for (const node of document.querySelectorAll(`[${USAGE_SRC_ATTRIBUTE}],[${USAGE_OUT_ATTRIBUTE}],[${USAGE_HIDE_ATTRIBUTE}]`)) {
+        node.removeAttribute(USAGE_SRC_ATTRIBUTE);
+        node.removeAttribute(USAGE_OUT_ATTRIBUTE);
+        node.removeAttribute(USAGE_HIDE_ATTRIBUTE);
+      }
+    } catch {}
+  });
+
   // ---- 13. Прокрутка ленты ------------------------------------------------
   // Команда «Прокрутить»: поставить ленту разговора на последнее сообщение.
   // В отличие от collapse/expand она адресована ВСЕМ окнам сразу, поэтому
@@ -8816,6 +9640,9 @@ nav[aria-label="Repository and pull request controls"] {
     on(document, "contextmenu", onOpenChromeMenu, true);
     // HTML-файлы — в Chrome (раздел 12д, #6618): клик по карточке глушим на захвате.
     on(document, "click", onHtmlChromeClick, true);
+    // Панель лимитов (раздел 12ж, #6738): клик по кружку контекста — повод
+    // подождать панель; событие не отменяется, панель открывает Claude.
+    on(document, "click", onUsageRing, true);
   }
   // Escape не должен останавливать выполнение (слово Элвиса 03.09 14:00: F1/F2 рядом,
   // «постоянно боюсь нажать Escape»). Глотаем Escape на захвате, но только когда на
@@ -8862,13 +9689,53 @@ nav[aria-label="Repository and pull request controls"] {
     jumpLast = height;
   };
 
+  // Самовосстановление своих узлов (#6766, слово Элвиса 21.09 00:35: «в окне
+  // ChinaAI поля ввода нету и элементов управления… разобраться, чтобы в будущем
+  // так не происходило»). Живой случай: Claude пересоздал содержимое body
+  // попапа, у body остался один ребёнок из шести — наши узлы уехали вместе со
+  // старым деревом. Страница этого не замечала (status().handleVisible говорил
+  // «есть», хотя узла в документе не было), и возвращались они только повторным
+  // запуском инжекта.
+  //
+  // Лечение дешёвое и без новых таймеров: проверка isConnected на уже
+  // существующем стороже. Узел возвращается ТОТ ЖЕ САМЫЙ — с детьми, стилями и
+  // подписками, — поэтому «поставить заново» это ровно тот же appendChild, что
+  // на инжекте, и повторять его безопасно сколько угодно раз.
+  const ownNodes = [frameNode, progressBar, progressTip, handle, rail];
+  const restoreOwnNodes = () => {
+    const host = document.body ?? document.documentElement;
+    if (!host) return false;
+    let back = 0;
+    for (const node of ownNodes) {
+      if (node.isConnected) continue;
+      host.appendChild(node);
+      back += 1;
+    }
+    // Карточка живёт внутри коробки-подсказки, а не в body: её возвращаем туда же.
+    if (!progressCard.isConnected && progressTip.isConnected) { progressTip.appendChild(progressCard); back += 1; }
+    if (!back) return false;
+    state.restored += back;
+    return true;
+  };
+
   const heartbeatTick = () => {
     if (!state.alive) return;
     try { noteJump(); } catch {}
+    // Узлы Пимпа пропали из body — вернуть и пересчитать раскладку, не дожидаясь
+    // мутации: та могла и не прийти, окно осталось бы без поля ввода.
+    let restored = false;
+    try { restored = restoreOwnNodes(); } catch {}
+    // Панель лимитов (раздел 12ж): один querySelector — страховка вместо
+    // постоянного наблюдателя. Заодно главное окно обновляет имя аккаунта.
+    try { usageTick(); } catch {}
+    try { usageAccountSave(); } catch {}
     // Лента могла смениться целиком (React пересобрал разговор): наблюдатель за
     // временем остался бы висеть на выброшенном узле и оглох — мутаций оттуда
     // больше не придёт, а значит и переехать сам он уже не сможет.
     if (state.timeTarget && !state.timeTarget.isConnected && watchTime()) scheduleShortTime();
+    // Узлы вернулись — раскладку гоняем сразу, а не через кадр: без неё ручка
+    // осталась бы стоять там, где её застало исчезновение (#6766).
+    if (restored) { try { layout(); } catch {} return; }
     if (state.scheduled) {
       // Запланированный кадр так и не пришёл (окно спрятано или перекрыто, и
       // macOS остановил requestAnimationFrame) — доводим руками.
@@ -8946,10 +9813,14 @@ nav[aria-label="Repository and pull request controls"] {
     // <style> и сама полоска.
     try { clearResizer(); } catch {}
     try {
-      for (const node of document.querySelectorAll(`[${EDITOR_ROOT_ATTRIBUTE}],[${EDITOR_ATTRIBUTE}],[${BLOCK_ATTRIBUTE}]`)) {
+      for (const node of document.querySelectorAll(`[${EDITOR_ROOT_ATTRIBUTE}],[${EDITOR_ATTRIBUTE}],[${BLOCK_ATTRIBUTE}],[${RING_PATH_ATTRIBUTE}],[${RING_ATTRIBUTE}]`)) {
         node.removeAttribute(EDITOR_ROOT_ATTRIBUTE);
         node.removeAttribute(EDITOR_ATTRIBUTE);
         node.removeAttribute(BLOCK_ATTRIBUTE);
+        // Метки кружка в режиме чтения (#6737): без них ветка осталась бы с
+        // absolute-кружком и спрятанными соседями уже без наших правил.
+        node.removeAttribute(RING_PATH_ATTRIBUTE);
+        node.removeAttribute(RING_ATTRIBUTE);
         try { node.style.removeProperty(HEIGHT_VARIABLE); } catch {}
       }
     } catch {}
@@ -9006,8 +9877,13 @@ nav[aria-label="Repository and pull request controls"] {
       autoCollapse: autoCollapseOn(),
       // Сторож дёрганья (#5978): последние смены высоты блока ввода.
       jumps: jumpLog.slice(),
-      handleVisible: handle.style.display !== "none",
+      // По ЖИВОМУ узлу (#6766): до WF78 здесь стояло одно только display, и
+      // окно, из которого узел вынесло вместе с содержимым body, бодро
+      // отвечало «полоска есть».
+      handleVisible: handle.isConnected && handle.style.display !== "none",
       handleCovered: state.handleCovered,
+      // Сколько раз сторож возвращал свои узлы в body (#6766).
+      restored: state.restored,
       // Широкий вид (раздел 2г, WF65): включён ли, ширина панели чата и правой
       // колонки в точках (в узком виде колонки нет — null); sideMin (WF68) —
       // действующая нижняя граница колонки по строке модели.
@@ -9030,6 +9906,16 @@ nav[aria-label="Repository and pull request controls"] {
         // «Копировать в буфер» (WF69): сколько раз положили и чем кончился последний.
         copies: openState.copies,
         lastCopy: openState.lastCopy,
+      },
+      // Панель лимитов (раздел 12ж, #6738): сколько раз панель открывали при
+      // нас, сколько текстов подменили, сколько РАЗНЫХ строк не разобрали и
+      // стоит ли сейчас полоса недели. Самих строк и имени аккаунта здесь нет
+      // намеренно: status() уезжает в probe-result.json на диск.
+      usage: {
+        opens: usageState.opens,
+        swaps: usageState.swaps,
+        unknown: usageState.unknown.size,
+        week: usageState.week,
       },
       layoutRuns: state.layoutRuns,
       mutationBatches: state.mutationBatches,
@@ -9186,7 +10072,10 @@ nav[aria-label="Repository and pull request controls"] {
     chatKind, chatPath, chatRowId, myChatId, readChatId, writeChatId, chatFiberId, chatFrame,
     chatsMap, chatsScan, chatsFolder,
     popoutChat, chats,
-    openChromePath, openChromeInsert, openChromeOpen, copyFileHtml, copyFileToClipboard });
+    openChromePath, openChromeInsert, openChromeOpen, copyFileHtml, copyFileToClipboard,
+    usageNumber, usageMinutes, usageClockParts, usageNext, usageShort, usageLong, usagePlural,
+    usageLabel, usageHead, usageReset, usageWeekParts, usageAccountName, usageApply, usageFind,
+    restoreOwnNodes, USAGE_WORDS });
 
   // Всё, что ниже, трогает живую страницу и может бросить на неготовой
   // разметке. Такое падение не должно оставлять в окне зомби: установка
