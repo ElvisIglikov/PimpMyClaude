@@ -52,7 +52,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf78-a-3";
+  const VERSION = "wf78-a-5";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -8721,6 +8721,9 @@ nav[aria-label="Repository and pull request controls"] {
     ["Autocompact buffer", "Запас автосжатия"],
     ["System prompt", "Системный промпт"],
     ["Free space", "Свободно"],
+    ["MCP tools (deferred)", "Инструменты MCP (отложенные)"],
+    ["System tools (deferred)", "Системные инструменты (отложенные)"],
+    ["Usage", "Расход"],
     ["Skills", "Скиллы"],
     ["Custom agents", "Свои агенты"],
   ]);
@@ -8939,19 +8942,22 @@ nav[aria-label="Repository and pull request controls"] {
   // ---- узлы панели ----
   // Лист — элемент, у которого РОВНО один текстовый ребёнок и ни одного
   // элемента. Всё прочее — «не опознали»: смешанное содержимое мы не разбираем.
-  const usageTextNode = element => {
-    let text = null;
+  // Текстовые узлы листа. Живая проба гейта 21.09: шапку лимитов React держит ТРЕМЯ
+  // текстовыми узлами («Plan usage limits», « · », «Max (20x)») — лист тот, у кого нет
+  // детей-элементов; читаем склейку, пишем всё в первый узел, остальным — пусто.
+  const usageTextNodes = element => {
+    const out = [];
     const kids = element?.childNodes;
-    if (!kids) return null;
+    if (!kids) return out;
     for (let index = 0; index < kids.length; index += 1) {
       const kid = kids[index];
-      if (kid.nodeType === 1) return null;
-      if (kid.nodeType !== 3) continue;
-      if (text) return null;
-      text = kid;
+      if (kid.nodeType === 1) return [];
+      if (kid.nodeType === 3) out.push(kid);
     }
-    return text;
+    return out;
   };
+  const usageTextNode = element => usageTextNodes(element)[0] ?? null;
+  const usageTextRead = element => usageTextNodes(element).map(node => String(node.nodeValue ?? "")).join("");
   const usageLeaves = root => {
     const out = [];
     const walk = node => {
@@ -8974,7 +8980,7 @@ nav[aria-label="Repository and pull request controls"] {
   const usageRaw = element => {
     const node = usageTextNode(element);
     if (!node) return null;
-    const value = String(node.nodeValue ?? "");
+    const value = usageTextRead(element);
     if (element.getAttribute(USAGE_OUT_ATTRIBUTE) !== value) return value;
     const src = element.getAttribute(USAGE_SRC_ATTRIBUTE);
     return src == null ? value : src;
@@ -8982,8 +8988,9 @@ nav[aria-label="Repository and pull request controls"] {
   const usageWrite = (element, src, out) => {
     const node = usageTextNode(element);
     if (!node || out == null) return;
-    if (String(node.nodeValue ?? "") !== out) {
-      node.nodeValue = out;
+    if (usageTextRead(element) !== out) {
+      const nodes = usageTextNodes(element);
+      nodes.forEach((each, index) => { each.nodeValue = index === 0 ? out : ""; });
       usageState.swaps += 1;
     }
     if (element.getAttribute(USAGE_SRC_ATTRIBUTE) !== src) element.setAttribute(USAGE_SRC_ATTRIBUTE, src);
