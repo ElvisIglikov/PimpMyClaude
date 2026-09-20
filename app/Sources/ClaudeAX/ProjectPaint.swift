@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Покраска одного окна по проекту: чем адресовать окно и какие слои поставить или снять.
@@ -136,8 +137,9 @@ final class ProjectPaint {
     /// попапов уходит на старый путь по заголовку. В `init` канал НЕ лезет: `ProjectPaint`
     /// собирают напрямую тесты, и новый параметр сломал бы им сборку (критик В6 плана WF29).
     var chatPages: () -> [ChatPage] = { [] }
-    /// Чат попапа по AX-заголовку окна: ничья по заголовку и заглушки — nil.
-    var chatForTitle: (String) -> String? = { _ in nil }
+    /// Чат попапа по AX-заголовку и РАМКЕ окна (план WF77): заголовок носят два окна —
+    /// решает рамка, а без неё ничья и nil, как до WF77. Заглушки — тоже nil.
+    var chatForTitle: (String, CGRect?) -> String? = { _, _ in nil }
     /// Отправка команды; false — не записалась, попробуем на следующем тике.
     var send: (ProjectPaintCommand) -> Bool = { _ in false }
     /// Окно красила «Раскрасить по кругу» — она сильнее проекта (критик Б3 плана WF15).
@@ -445,10 +447,14 @@ final class ProjectPaint {
     /// не трогаем. Не осталось ни одного слоя — файл удаляется, у проекта снова авто-цвет,
     /// и окно берёт его сразу, не дожидаясь тика (решение 3.3). Папки не знаем — выходим
     /// молча: выбор остаётся местным, как до WF20.
-    func noteManualChoice(title: String, theme: Layer<Theme>, font: Layer<Font>,
-                          size: Layer<Size>, frame: Layer<Bool>) {
+    ///
+    /// `windowFrame` — рамка ТОГО окна, в котором выбирали (план WF77): по ней среди
+    /// окон-однофамильцев находится нужный чат, а с ним и папка проекта. Поля `frame` тут
+    /// два, и это разные вещи: `frame: Layer<Bool>` — неоновая рамка, слой вида.
+    func noteManualChoice(title: String, windowFrame: CGRect? = nil, theme: Layer<Theme>,
+                          font: Layer<Font>, size: Layer<Size>, frame: Layer<Bool>) {
         // Тумблер выключен — покраски по проекту нет вовсе; в чужую папку тем более не пишем.
-        guard enabled, let folder = writableFolder(for: title) else { return }
+        guard enabled, let folder = writableFolder(for: title, frame: windowFrame) else { return }
         let old = store.settings(in: folder) ?? ProjectSettings()
         let name = folder.lastPathComponent
         let path = folder.standardizedFileURL.path
@@ -478,7 +484,7 @@ final class ProjectPaint {
             store.remove(from: folder)
             // Файла больше нет — у проекта снова авто-цвет, и окно-инициатор берёт его сразу,
             // иначе оно две секунды стояло бы голым Claude.
-            if let target = target(for: title) { repaint(target) }
+            if let target = target(for: title, frame: windowFrame) { repaint(target) }
             return
         } else {
             switch store.write(settings, to: folder) {
@@ -492,7 +498,7 @@ final class ProjectPaint {
         // Окну-инициатору — свежий отпечаток: выбранное на нём уже стоит, слать его обратно
         // незачем. Отпечаток берём ТОТ, что посчитает ближайший тик: иначе на битом файле
         // (вид проекта остался авто-цветом) тик тут же перекрасил бы окно.
-        guard let target = target(for: title) else { return }
+        guard let target = target(for: title, frame: windowFrame) else { return }
         marks[target.key] = Mark(match: target.match, chat: target.chat, title: target.title,
                                  folder: path, digest: wanted(in: folder)?.digest ?? "",
                                  layers: ProjectPaint.setLayers(settings))
@@ -515,11 +521,13 @@ final class ProjectPaint {
     /// Папка — строго как у записи ручного выбора (`writableFolder`): `target(for:)` чужому
     /// попапу подставляет главное окно, и его проект уехал бы в меню чужого чата (та же
     /// находка 2 проверки WF20).
-    func projectTheme(forTitle title: String) -> (name: String, theme: Theme, current: Bool)? {
+    func projectTheme(forTitle title: String, frame: CGRect? = nil)
+        -> (name: String, theme: Theme, current: Bool)? {
         // Тумблер «🗂 Цвет по проекту» выключен — пунктов проекта в меню нет вовсе (проверка
         // WF71): иначе «Окнам проекта» обещал бы проект, а `noteManualChoice` при `!enabled`
         // молча вышел бы — окно одно, файла нет, плашки нет.
-        guard enabled, let folder = writableFolder(for: title), let target = target(for: title),
+        guard enabled, let folder = writableFolder(for: title, frame: frame),
+              let target = target(for: title, frame: frame),
               let wanted = wanted(in: folder), let theme = wanted.settings.theme.value else { return nil }
         return (folder.lastPathComponent, theme, marks[target.key]?.digest == wanted.digest)
     }
@@ -528,8 +536,9 @@ final class ProjectPaint {
     /// иначе авто-цвет молча превратился бы в `.pimpmyclaude.json` (решение 3.1 плана WF20).
     /// Та же покраска, что после удаления файла: слои вида плюс снятие того, что ставил
     /// прошлый проект. Папку не знаем — молчим (сито то же, что у `projectTheme`).
-    func repaintProject(forTitle title: String) {
-        guard enabled, writableFolder(for: title) != nil, let target = target(for: title) else { return }
+    func repaintProject(forTitle title: String, frame: CGRect? = nil) {
+        guard enabled, writableFolder(for: title, frame: frame) != nil,
+              let target = target(for: title, frame: frame) else { return }
         repaint(target)
     }
 
@@ -573,22 +582,26 @@ final class ProjectPaint {
     /// запас только у безымянного окна и у заглушки «Claude» — то есть у самого главного окна;
     /// у окна с настоящим заголовком папка берётся строго из индекса, а нет её — выбор
     /// остаётся местным (решение 3.6 плана WF20, строка «Окно без папки»).
-    private func writableFolder(for title: String) -> URL? {
+    private func writableFolder(for title: String, frame: CGRect?) -> URL? {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, clean != ProjectPaint.mainWindowTitle else {
             return index.mainWindow()?.folder
         }
         // Сперва чат окна (план WF29): по нему папка верна и после переименования чата,
-        // а заголовок попапа — снимок имени на момент выноса в окно.
-        if let chat = chatForTitle(clean), let folder = index.folder(for: chat) { return folder }
+        // а заголовок попапа — снимок имени на момент выноса в окно. Заголовок носят два
+        // окна — чат выбирается рамкой (план WF77): без неё оба окна получали проект
+        // первого, и цвет в одном менялся сразу в обоих (#6734).
+        if let chat = chatForTitle(clean, frame), let folder = index.folder(for: chat) {
+            return folder
+        }
         return index.folder(forTitle: clean)
     }
 
     /// Как адресовать окно под кнопкой: назвало свой чат — полем `chat`, иначе попап — своим
     /// заголовком, а безымянное окно — путём страницы главного окна.
-    private func target(for title: String) -> ProjectTarget? {
+    private func target(for title: String, frame: CGRect?) -> ProjectTarget? {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let chat = chatForTitle(clean), let folder = index.folder(for: chat) {
+        if let chat = chatForTitle(clean, frame), let folder = index.folder(for: chat) {
             return ProjectTarget(key: ProjectPaint.chatPrefix + chat, match: nil, chat: chat,
                                  title: clean, folder: folder)
         }
@@ -604,7 +617,9 @@ final class ProjectPaint {
     /// Ключ окна по AX-заголовку — тот же резолвер, что и у целей покраски. Им панель
     /// «Своя тема» помечает, каким окном владеет (находка 5 проверки WF20): у главного окна
     /// заголовок бывает настоящим заголовком чата, а в цели покраски стоит заглушка «Claude».
-    func windowKey(forTitle title: String) -> String {
+    /// Рамка (план WF77) нужна там же, где и всюду, — развести окна-однофамильцев; её нет
+    /// (зовут из панели «Своя тема», где окна под рукой нет) — ключ по заголовку, как до WF77.
+    func windowKey(forTitle title: String, frame: CGRect? = nil) -> String {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return ProjectPaint.mainKey }
         // Заглушку «Claude» носит не только главное окно (задача #5534) — разбираем по карте.
@@ -614,7 +629,7 @@ final class ProjectPaint {
         if let main = index.mainWindow()?.session?.title, main == clean {
             return ProjectPaint.mainKey
         }
-        if let chat = chatForTitle(clean) { return ProjectPaint.chatPrefix + chat }
+        if let chat = chatForTitle(clean, frame) { return ProjectPaint.chatPrefix + chat }
         return ProjectPaint.windowPrefix + clean
     }
 

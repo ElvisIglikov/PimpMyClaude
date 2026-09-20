@@ -16,6 +16,8 @@
 - record-stamped.json — запись после шагов 5 и 6б цепочки с transfer: at, text, to:<id нового чата>, title:<заголовок строки>, stampedAt.
   Свежесть штампованной записи — от stampedAt (60 с), главное окно записи с to игнорирует всегда.
 - probe-answer-home.json — ответ chats() главного окна на домашнем экране: folder — строка; порядок ключей
-  v, nonce, kind, self, path, row, title, popouts, store, folder, at, themes (themes только у главного окна).
+  v, nonce, kind, self, path, row, title, popouts, store, folder, at, frame, themes (themes только у главного окна).
 - probe-answer-chat.json — главное окно в открытом чате: folder: null всегда (папку даёт индекс).
 - probe-answer-popout.json — попап: folder: null, themes нет.
+- frame (WF77) — [screenX, screenY, outerWidth, outerHeight] окна, целые, в ХВОСТЕ после at и перед themes.
+  Шлют только наши страницы (main, popout); у kind:"other" и когда чисел нет — поля нет вовсе.

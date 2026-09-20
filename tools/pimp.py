@@ -13,7 +13,7 @@ tests/fixtures/pimp/*.json, они же правда для Swift-половин
   pimp.py open <проект> [--at left|middle|right|below|above|x,y] [--last]
   pimp.py close <проект>
   pimp.py arrange [--layout row|4|5|5x2|last] [--order Проект,Проект,…]
-    (раскладку не назвали — «last»: повторяем ту, что Элвис выбрал плиткой)
+    (раскладку не назвали — «last»: умная расстановка, стоящих на месте не трогает)
   pimp.py layouts
   pimp.py layout save <имя>
   pimp.py layout restore <имя> [--new]
@@ -73,8 +73,9 @@ PLACE_WORDS = {
 }
 POINT_RE = re.compile(r"^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$")
 
-# Раскладки (WF21). «last» — повторить последнюю выбранную: в ответе приложение
-# называет уже применённую, поэтому словами нужны все пять.
+# Раскладки (WF21). В ответе приложение называет применённую раскладку, поэтому
+# словами нужны все пять. С WF77 голая «расставь» («last») идёт умным путём, а в
+# ответе несёт `row` — про неё say_arrange говорит своими словами, не по словарю.
 LAYOUTS = ("row", "4", "5", "5x2", "last")
 LAYOUT_WORDS = {
     "row": "как сейчас (лента)",
@@ -308,7 +309,8 @@ def say_open(request: dict, data: dict) -> str:
     skipped = data.get("skipped")
     if isinstance(skipped, int) and skipped > 0:
         # Свободной ячейки в раскладке не нашлось — окно осталось, где родилось;
-        # про место молчим, иначе соврём (WF21).
+        # про место молчим, иначе соврём (WF21). С WF77 так отвечают только явные
+        # плитки: у умной расстановки ячейка находится всегда.
         line = "Окно открыл, но в раскладке места нет — оставил поверх"
     elif place in ("below", "above") and not data.get("fromResolved"):
         line = f"{verb} {title} справа: своего чата не нашёл, «{where}» не вышло"
@@ -378,15 +380,24 @@ def say_error(request: dict, data: dict) -> str:
 def say_arrange(request: dict, data: dict) -> str:
     windows = data.get("windows") or []
     line = f"Расставил {plural(len(windows), 'окно', 'окна', 'окон')}"
-    # Раскладываем на том экране, где стоят окна Claude, — так и говорим (#5732; до 08.09
-    # тут стояло «на главном экране», и это была неправда).
-    if data.get("screen") == "windows":
-        line += " на экране, где стоят окна"
-    # Раскладку называем ту, что применилась: «last» приложение разрешает
-    # в конкретную, и Элвис должен видеть, что именно вышло (WF21).
-    layout = LAYOUT_WORDS.get(str(data.get("layout") or ""))
-    if layout:
-        line += f": {layout}"
+    # Просили «last» — приложение пошло умным путём (WF77): окна каждого экрана
+    # встали столбцами на своём экране, стоящие на месте не двинулись. В ответе у
+    # него `layout: "row"`, но «как сейчас (лента)» — другое поведение, его просят
+    # явным `--layout row`; поэтому про умный путь говорим своими словами.
+    smart = (str(request.get("layout") or "") == "last"
+             and str(data.get("layout") or "") == "row")
+    if smart:
+        line += ": стоящие на месте не трогал"
+    else:
+        # Раскладываем на том экране, где стоят окна Claude, — так и говорим (#5732; до 08.09
+        # тут стояло «на главном экране», и это была неправда).
+        if data.get("screen") == "windows":
+            line += " на экране, где стоят окна"
+        # Раскладку называем ту, что применилась: «last» приложение разрешает
+        # в конкретную, и Элвис должен видеть, что именно вышло (WF21).
+        layout = LAYOUT_WORDS.get(str(data.get("layout") or ""))
+        if layout:
+            line += f": {layout}"
     # Просили порядок проектов (WF41): кто встал первым, кого не нашли, сколько
     # окон без папки уехало в хвост. Не просили — строка прежняя.
     order = request.get("order") or []
@@ -1092,10 +1103,10 @@ def main(argv=None) -> int:
     closer = subs.add_parser("close", parents=[common], help="закрыть окно проекта")
     closer.add_argument("project", help="имя папки проекта или абсолютный путь")
     arranger = subs.add_parser("arrange", parents=[common], help="расставить окна по раскладке")
-    # Умолчание — «last»: голая «расставь» повторяет раскладку, которую Элвис выбрал
-    # плиткой, а не подменяет её лентой молча (#5745).
+    # Умолчание — «last»: голая «расставь» идёт умным путём приложения, а не
+    # подменяет его лентой молча (#5745; умная расстановка — WF77).
     arranger.add_argument("--layout", choices=LAYOUTS, default="last",
-                          help="row | 4 | 5 | 5x2 | last (по умолчанию last — как в прошлый раз)")
+                          help="row | 4 | 5 | 5x2 | last (по умолчанию last — умная расстановка)")
     arranger.add_argument("--order", type=parse_order, default=None,
                           help="какие проекты первыми, через запятую: VkusnoffKz,SkilZZZ")
     subs.add_parser("layouts", parents=[common], help="список сохранённых раскладок")

@@ -39,10 +39,14 @@ enum ArrangeLayout {
 
     /// Влезает ли раскладка на экран: ячейка не уже `minCellWidth` и не ниже
     /// `minCellHeight`. Лента влезает всегда — узкие ячейки она разводит по рядам сама.
-    static func fits(_ mode: Mode, in area: CGRect, minCellWidth: CGFloat) -> Bool {
+    ///
+    /// Зазор вычитается здесь же (критик WF77 п. 11): без него «влезает» у плитки и живая
+    /// ячейка расходились ровно на `gap`, и плитка на грани начинала врать.
+    static func fits(_ mode: Mode, in area: CGRect, minCellWidth: CGFloat,
+                     gap: CGFloat = 0) -> Bool {
         guard let grid = grid(of: mode) else { return true }
-        return area.width / CGFloat(grid.cols) >= minCellWidth
-            && area.height / CGFloat(grid.rows) >= minCellHeight
+        return (area.width - gap * CGFloat(grid.cols - 1)) / CGFloat(grid.cols) >= minCellWidth
+            && (area.height - gap * CGFloat(grid.rows - 1)) / CGFloat(grid.rows) >= minCellHeight
     }
 
     /// Годится ли раскладка при таком числе окон (#5800, слово Элвиса 08.09: «нажимаешь — и
@@ -95,7 +99,7 @@ enum ArrangeLayout {
     /// лишние ячейки остаются пустыми (окна не растягиваем), окон больше — хвост рамок
     /// не получает и остаётся где стоял (слово Элвиса 08.09: «лишние не трогаем»).
     static func frames(count: Int, in area: CGRect, mode: Mode = .ribbon,
-                       minCellWidth: CGFloat = minCellWidth) -> [CGRect] {
+                       minCellWidth: CGFloat = minCellWidth, gap: CGFloat = 0) -> [CGRect] {
         guard count > 0, area.width > 0, area.height > 0 else { return [] }
         let taken = min(count, capacity(of: mode) ?? count)
         let cols: Int, rows: Int
@@ -105,12 +109,30 @@ enum ArrangeLayout {
             cols = columns(count: taken, width: area.width, minCellWidth: minCellWidth)
             rows = Int(ceil(Double(taken) / Double(cols)))
         }
-        return (0..<taken).map { i in
+        return cells(cols: cols, rows: rows, count: taken, in: area, gap: gap)
+    }
+
+    /// Ячейки сетки `cols × rows` слева направо, сверху вниз — общая арифметика плиток,
+    /// ленты и умной расстановки.
+    ///
+    /// Зазор (план WF77, слово Элвиса 20.09: «между окнами небольшие отступы — это
+    /// специально») живёт ТОЛЬКО между окнами: у краёв рабочей области, сверху и снизу
+    /// окна прижаты к ней встык. Отсюда ширина ячейки `(W − g·(k−1)) / k`, а столбец `i`
+    /// начинается на `i·(ячейка + g)`. Умолчание 0 — прежние рамки остаются побайтно
+    /// теми же (`area.width − 0` и `+ 0` рамку не двигают).
+    static func cells(cols: Int, rows: Int, count: Int, in area: CGRect,
+                      gap: CGFloat = 0) -> [CGRect] {
+        guard count > 0, cols > 0, rows > 0 else { return [] }
+        let room = CGSize(width: area.width - gap * CGFloat(cols - 1),
+                          height: area.height - gap * CGFloat(rows - 1))
+        return (0..<count).map { i in
             let col = CGFloat(i % cols), row = CGFloat(i / cols)
-            let x0 = area.minX + (col * area.width / CGFloat(cols) + 0.5).rounded(.down)
-            let x1 = area.minX + ((col + 1) * area.width / CGFloat(cols) + 0.5).rounded(.down)
-            let y0 = area.minY + (row * area.height / CGFloat(rows) + 0.5).rounded(.down)
-            let y1 = area.minY + ((row + 1) * area.height / CGFloat(rows) + 0.5).rounded(.down)
+            let x0 = area.minX + (col * room.width / CGFloat(cols) + col * gap + 0.5).rounded(.down)
+            let x1 = area.minX
+                + ((col + 1) * room.width / CGFloat(cols) + col * gap + 0.5).rounded(.down)
+            let y0 = area.minY + (row * room.height / CGFloat(rows) + row * gap + 0.5).rounded(.down)
+            let y1 = area.minY
+                + ((row + 1) * room.height / CGFloat(rows) + row * gap + 0.5).rounded(.down)
             return CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
         }
     }
@@ -186,5 +208,154 @@ enum ArrangeLayout {
             if frames[a].minX != frames[b].minX { return frames[a].minX < frames[b].minX }
             return a < b
         }
+    }
+
+    // MARK: - умная расстановка (план WF77)
+
+    /// Больше шести столбцов не делаем никогда (слово Элвиса 20.09: «Odyssey делим
+    /// максимум на шесть частей»).
+    static let maxColumns = 6
+
+    /// Допуск «окно уже сидит в этой ячейке»: 8 pt, а не `frameTolerance` 2 — Electron
+    /// зажимает ширину окна по своему минимуму, и окно, стоящее на месте, сходится с
+    /// ячейкой не точка в точку (риск 1 плана WF77).
+    static let sitTolerance: CGFloat = 8
+
+    /// Потолок столбцов на этом экране: не больше `maxColumns` и не уже `minCellWidth`
+    /// С УЧЁТОМ зазора (критик WF77 блокер 7: при gap 40 четвёртый столбец макбука дал бы
+    /// 261 pt — Electron зажал бы окна друг на друга). Один столбец есть всегда.
+    /// Числа Элвиса: Odyssey 3008 → 6, макбук 1205 при минимуме 280 → 4.
+    static func cap(width: CGFloat, minCellWidth: CGFloat = minCellWidth,
+                    gap: CGFloat = 0) -> Int {
+        guard width > 0, minCellWidth > 0 else { return 1 }
+        return max(1, min(maxColumns, Int(((width + gap) / (minCellWidth + gap)).rounded(.down))))
+    }
+
+    /// Сколько рядов держит экран: ячейка не ниже `minCellHeight` (критик WF77 зам. 8 —
+    /// девять окон на макбуке в три ряда дали бы 267 pt, и повтор рамки этого не чинит).
+    static func capRows(height: CGFloat, gap: CGFloat = 0) -> Int {
+        guard height > 0 else { return 1 }
+        return max(1, Int(((height + gap) / (minCellHeight + gap)).rounded(.down)))
+    }
+
+    /// Окно уже стоит в этой ячейке: все четыре стороны сошлись в пределах допуска.
+    static func sits(_ frame: CGRect, in cell: CGRect,
+                     tolerance: CGFloat = sitTolerance) -> Bool {
+        abs(frame.minX - cell.minX) <= tolerance && abs(frame.minY - cell.minY) <= tolerance
+            && abs(frame.maxX - cell.maxX) <= tolerance && abs(frame.maxY - cell.maxY) <= tolerance
+    }
+
+    /// Кто из окон уже сидит в ячейках этой сетки: окно → номер ячейки. Одну ячейку
+    /// занимает одно окно — два окна друг на друге сеткой не считаются, второе пойдёт
+    /// в свободную ячейку.
+    static func seated(frames: [CGRect], in cells: [CGRect],
+                       tolerance: CGFloat = sitTolerance) -> [Int: Int] {
+        var out: [Int: Int] = [:]
+        var busy = Set<Int>()
+        for index in frames.indices {
+            guard let cell = cells.indices.first(where: {
+                !busy.contains($0) && sits(frames[index], in: cells[$0], tolerance: tolerance)
+            }) else { continue }
+            out[index] = cell
+            busy.insert(cell)
+        }
+        return out
+    }
+
+    /// Куда селить неприкаянных: занятые ячейки обязаны остаться подряд, без дыры
+    /// посередине (критик WF77 зам. 6; слово Элвиса «по ширине идут по очереди слева
+    /// направо»). Берём самый левый непрерывный отрезок из `count` ячеек, в который
+    /// попадают все занятые, и отдаём его свободные ячейки; такого отрезка нет (занятые
+    /// разошлись шире) — просто все свободные слева направо.
+    static func freeCells(count: Int, cells: Int, taken: Set<Int>) -> [Int] {
+        guard cells > 0 else { return [] }
+        let free = (0..<cells).filter { !taken.contains($0) }
+        let length = min(max(count, 0), cells)
+        guard length > 0, let lo = taken.min(), let hi = taken.max() else { return free }
+        let start = max(0, hi - length + 1)
+        guard start <= lo else { return free }
+        return free.filter { $0 >= start && $0 < start + length }
+    }
+
+    /// Умная расстановка на ОДНОМ экране (план WF77, слова Элвиса 20.09: «окна, которые
+    /// уже стояли на месте, никуда не переводить; есть свободное место и одно-два окна
+    /// болтаются неприкаянно — заполни ими свободное место»).
+    ///
+    /// Отдаёт итоговую рамку КАЖДОМУ окну в порядке входного массива: сидящему — его
+    /// собственную (его не трогают вовсе), неприкаянному — свободную ячейку, лишнему
+    /// сверх ёмкости сетки — тоже собственную («лишние не трогаем», слово Элвиса 08.09).
+    ///
+    /// Сетка выбирается так: рядов столько, сколько нужно и сколько держит высота;
+    /// столбцов — от «меньше уже не влезет» до потолка экрана, и побеждает тот вариант,
+    /// где больше окон УЖЕ сидит. Сетку шире минимальной берём, только когда сидит не
+    /// меньше половины окон: одно случайно совпавшее окно сетку не диктует. Ничья и
+    /// «никто не сидит» — наименьшее число столбцов, окна делят экран поровну.
+    ///
+    /// `order` — НАВЯЗАННЫЙ порядок (индексы входного массива): новое окно «слева» и
+    /// «посередине» просит конкретное место, и тогда окна кладутся подряд, а «сидит»
+    /// уже никого не держит. nil — обычный путь.
+    static func smart(frames: [CGRect], in area: CGRect,
+                      minCellWidth: CGFloat = minCellWidth, gap: CGFloat = 0,
+                      order: [Int]? = nil, tolerance: CGFloat = sitTolerance) -> [CGRect] {
+        guard !frames.isEmpty, area.width > 0, area.height > 0 else { return frames }
+        let top = cap(width: area.width, minCellWidth: minCellWidth, gap: gap)
+        let rows = min(capRows(height: area.height, gap: gap),
+                       Int(ceil(Double(frames.count) / Double(top))))
+        let least = min(top, max(1, Int(ceil(Double(frames.count) / Double(rows)))))
+        var best = (columns: least, sitting: [Int: Int]())
+        for columns in least...top {
+            let grid = cells(cols: columns, rows: rows, count: columns * rows, in: area, gap: gap)
+            let sitting = seated(frames: frames, in: grid, tolerance: tolerance)
+            // Порог половины: сетку шире минимальной оправдывают только сидящие окна.
+            if columns > least && sitting.count * 2 < frames.count { continue }
+            if sitting.count > best.sitting.count { best = (columns, sitting) }
+        }
+        let grid = cells(cols: best.columns, rows: rows, count: best.columns * rows,
+                         in: area, gap: gap)
+        var out = frames
+        if let order = order {
+            var queue: [Int] = []
+            var named = Set<Int>()
+            for index in order where frames.indices.contains(index) {
+                guard named.insert(index).inserted else { continue }
+                queue.append(index)
+            }
+            // Окно, которого в порядке не назвали, встаёт за названными — по своему месту.
+            queue += ArrangeLayout.order(of: frames).filter { !named.contains($0) }
+            for (cell, index) in zip(grid.indices, queue) { out[index] = grid[cell] }
+            return out
+        }
+        let restless = frames.indices.filter { best.sitting[$0] == nil }
+        let free = freeCells(count: frames.count, cells: grid.count,
+                             taken: Set(best.sitting.values))
+        // Неприкаянные упорядочены ПО СЕБЕ (замечание критика WF77): сидящие в их счёте
+        // не участвуют, иначе порядок зависел бы от окон, которых мы не двигаем.
+        let queue = ArrangeLayout.order(of: restless.map { frames[$0] }).map { restless[$0] }
+        for (index, cell) in zip(queue, free) { out[index] = grid[cell] }
+        return out
+    }
+
+    /// То же на НЕСКОЛЬКИХ экранах: окно считается на том экране, где лежит центр его
+    /// рамки, и на другой не переезжает (решение 2 плана WF77). `screens` — пары «полная
+    /// рамка экрана (по ней ловится центр) — рабочая область (по ней считается сетка)».
+    static func smart(frames: [CGRect], screens: [(full: CGRect, usable: CGRect)],
+                      minCellWidth: CGFloat = minCellWidth, gap: CGFloat = 0,
+                      order: [Int]? = nil, anchor: Int? = nil) -> [CGRect] {
+        guard !frames.isEmpty, !screens.isEmpty else { return frames }
+        let home = Screens.assign(screens: screens.map { $0.full }, frames: frames)
+        var out = frames
+        for screen in screens.indices {
+            let mine = frames.indices.filter { home[$0] == screen }
+            guard !mine.isEmpty else { continue }
+            // Порядок навязан ради НОВОГО окна (`anchor`) — только его экрану: на другом
+            // мониторе стоящие окна не перекладываем (проверка WF77, блокер 2). Якоря нет
+            // (`arrange --order`) — порядок просили для всех экранов.
+            let imposed = anchor.map { frames.indices.contains($0) && home[$0] == screen } ?? true
+            let inner = imposed ? order.map { named in named.compactMap { mine.firstIndex(of: $0) } } : nil
+            let placed = smart(frames: mine.map { frames[$0] }, in: screens[screen].usable,
+                               minCellWidth: minCellWidth, gap: gap, order: inner)
+            for (slot, index) in mine.enumerated() { out[index] = placed[slot] }
+        }
+        return out
     }
 }

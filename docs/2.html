@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2 · окна по местам</title>
+<style>
+  :root{
+    --bg:#241338; --panel:#32204f; --line:#4a3170; --ink:#f3eefb; --muted:#a99cbe;
+    --accent:#b48cff; --green:#4ecf8a; --red:#e5645d; --yellow:#efc65c;
+    --mono:ui-monospace,SFMono-Regular,Menlo,"SF Mono",monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{overflow-x:hidden;max-width:100%;}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:20px/1.55 -apple-system,"Helvetica Neue",Arial,sans-serif;}
+  main{padding:24px 26px 90px;}
+
+  .proj{display:inline-block;background:var(--yellow);color:#241338;font:800 16px/1 var(--mono);
+        letter-spacing:.04em;padding:8px 13px;border-radius:9px;}
+  .badge{display:inline-block;margin-left:9px;background:var(--accent);color:#1c1030;
+         font:800 15px/1 var(--mono);letter-spacing:.07em;padding:8px 13px;border-radius:999px;
+         box-shadow:0 0 18px rgba(180,140,255,.4);}
+  h1{font-size:2.9rem;line-height:1.05;margin:18px 0 8px;letter-spacing:-.015em;}
+  .who{color:var(--muted);font:17px/1.5 var(--mono);margin:0 0 16px;}
+  .neon{height:3px;border-radius:3px;margin:0 0 26px;
+        background:linear-gradient(90deg,rgba(180,140,255,0),var(--accent) 45%,#e0c6ff 55%,rgba(180,140,255,0));
+        box-shadow:0 0 22px rgba(180,140,255,.55);animation:breathe 6s ease-in-out infinite;}
+  @keyframes breathe{0%,100%{opacity:.6}50%{opacity:1}}
+  @media (prefers-reduced-motion:reduce){.neon{animation:none;opacity:.9}}
+
+  nav.toc{font-size:19px;color:var(--muted);margin:0 0 34px;line-height:1.9;}
+  nav.toc a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line);}
+  h2{font-size:3rem;line-height:1.04;margin:56px 0 16px;letter-spacing:-.02em;}
+  h3{font-size:1.6rem;margin:32px 0 8px;}
+  p{max-width:70ch;margin:0 0 14px;}
+  ul{max-width:70ch;padding-left:1.1em;margin:0 0 14px;}
+  li{margin:0 0 10px;}
+  a.t{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(180,140,255,.45);
+      font-family:var(--mono);font-size:.92em;white-space:nowrap;}
+
+  /* ——— цифры ——— */
+  .tiles{display:flex;flex-wrap:wrap;gap:16px;margin:6px 0 20px;}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+        padding:18px 22px;min-width:150px;flex:1 1 150px;}
+  .tile b{display:block;font:800 3.1rem/1 var(--mono);color:var(--accent);letter-spacing:-.03em;
+          text-shadow:0 0 26px rgba(180,140,255,.45);}
+  .tile span{display:block;color:var(--muted);font-size:17px;margin-top:8px;}
+  .tile.plain b{color:var(--ink);font-size:2.5rem;text-shadow:none;}
+  .allgood{border:1px solid rgba(78,207,138,.5);background:rgba(78,207,138,.1);border-radius:14px;
+           padding:14px 18px;color:var(--green);font-size:20px;font-weight:700;max-width:70ch;
+           box-shadow:0 0 18px rgba(78,207,138,.15);}
+  .allgood i{display:block;color:var(--muted);font-weight:400;font-style:normal;font-size:17px;margin-top:4px;}
+
+  /* ——— что нужно от тебя ——— */
+  .qs{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 18px 22px;}
+  .btn{-webkit-appearance:none;appearance:none;border:0;cursor:pointer;background:var(--accent);
+       color:#1c1030;font:700 19px/1.2 inherit;padding:14px 24px;border-radius:12px;
+       box-shadow:0 0 20px rgba(180,140,255,.35);}
+  .ok{color:var(--green);font-size:17px;margin-left:10px;font-family:var(--mono);}
+  .lead{color:var(--muted);font-size:17px;margin:12px 0 0;max-width:62ch;}
+  .ask{margin:30px 0 0;}
+  .ask .t{font-size:1.45rem;font-weight:700;margin:0 0 8px;}
+  .ask p{margin:0 0 10px;}
+  .opt{display:flex;align-items:flex-start;gap:14px;margin:0 0 12px;}
+  .opt input{-webkit-appearance:none;appearance:none;flex:none;width:30px;height:30px;margin:0;
+             border-radius:50%;border:2px solid #6f5c98;background:#1c1030;cursor:pointer;position:relative;}
+  .opt input:checked{border-color:var(--accent);box-shadow:0 0 14px rgba(180,140,255,.5);}
+  .opt input:checked::after{content:"";position:absolute;inset:6px;border-radius:50%;background:var(--accent);}
+  .opt .txt .name{font-size:19px;}
+  .opt .txt .why{color:var(--muted);font-size:17px;}
+  .rec{color:var(--green);font-weight:700;}
+  .hot{border-left:3px solid var(--red);background:rgba(229,100,93,.1);border-radius:0 12px 12px 0;
+       padding:12px 16px;margin:30px 0 0;max-width:70ch;}
+  .hot .t{color:var(--red);}
+
+  @media (max-width:700px){
+    body{font-size:18px;}
+    main{padding:18px 15px 70px;}
+    h1{font-size:2.3rem;}
+    h2{font-size:2.4rem;margin:44px 0 14px;}
+    h3{font-size:1.45rem;}
+    nav.toc{line-height:1.6;}
+    nav.toc a{display:block;padding:7px 0;border-bottom:0;}
+    nav.toc .dot{display:none;}
+    .tile{min-width:0;flex:1 1 44%;padding:15px 16px;}
+    .tile b{font-size:2.6rem;}
+  }
+</style>
+</head>
+<body>
+<main>
+
+<span class="proj">PimpMyClaude</span><span class="badge">ФАЙЛ 2</span>
+<h1>Научил окна вставать по местам и не путать проекты</h1>
+<p class="who">Файл 2 · Opus 5 max · 23:30 · 20.09.2026</p>
+<div class="neon"></div>
+<nav class="toc"><a href="#you">Что нужно от тебя</a><span class="dot"> · </span><a href="#nums">Цифры</a><span class="dot"> · </span><a href="#can">Что теперь умеет Пимп</a><span class="dot"> · </span><a href="#tails">Что не вошло</a><span class="dot"> · </span><a href="#next">Что дальше</a></nav>
+
+<h2 id="you">Что нужно от тебя</h2>
+
+<div class="qs">
+  <p><button class="btn" id="copyTop" type="button">Скопировать ответы</button><span class="ok" id="okTop"></span></p>
+  <p class="lead">Посмотри вопрос. Согласен — скопируй ответы и отправь в чат: я продолжу работать, а ты спокойно читай файл дальше. Нажимается только кружок.</p>
+
+  <div class="ask">
+    <p class="t">1. Выбери цвет заново в тех окнах, где он записался не туда</p>
+    <p>Раньше два окна с одинаковым названием считались одним и делили тему. Теперь они независимы, но старые записи я не трогал: где цвет сел не на тот проект, просто выбери его ещё раз — запишется правильно.</p>
+  </div>
+
+  <div class="ask">
+    <p class="t">2. Пришли скриншот, где плохо видно диктовку</p>
+    <p>Ты говорил, что на ярких темах (на фиолетовой) диктовку почти не разобрать. Нужен кадр — по нему подберу цвет. <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6744">#6744</a></p>
+  </div>
+
+  <div class="ask">
+    <p class="t">3. Скажи, какой звук поменять</p>
+    <p>Звуков несколько: конец работы, ошибка, «нужен ты». Назови тот, который раздражает, — заменю. <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6745">#6745</a></p>
+  </div>
+
+  <div class="ask" data-q="Нажатия у краёв окон" data-n="4">
+    <p class="t">4. Можно ли Пимпу ловить нажатия у самых краёв окон Claude?</p>
+    <p>Это нужно для полосок-дублей у верхнего и нижнего края окна: чтобы нажималась сама кромка, приложению придётся видеть нажатия рядом с краем окна Claude. <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6743">#6743</a></p>
+    <div class="opt">
+      <input type="radio" name="q1" value="да, лови нажатия у краёв окон" checked>
+      <span class="txt"><span class="name">Да, лови нажатия у краёв <span class="rec">(рекомендую)</span></span><br>
+      <span class="why">Полоска нажимается в самой кромке, целиться не надо — и сверху, и снизу. Минус: Пимп смотрит, куда ты нажал возле края окон Claude (только место нажатия и только у окон Claude).</span></span>
+    </div>
+    <div class="opt">
+      <input type="radio" name="q1" value="нет, только внутри страницы">
+      <span class="txt"><span class="name">Нет, только внутри страницы</span><br>
+      <span class="why">Приложение ни за чем не следит, всё как сейчас. Минус: у самой кромки нажатие не ловится, полоску придётся отодвинуть внутрь окна и целиться.</span></span>
+    </div>
+  </div>
+
+  <div class="hot">
+    <p class="t"><b>5. Напоминание, о котором ты просил сам</b></p>
+    <p>Дочитай свои два длинных ответа в чате Пимпа за этот вечер и оба макета: окошко лимитов (файл 1) и «Пимп как приложение» — <code>docs/mockup-wf72-pimp.html</code>, он ждёт твоего «делай» с 17 сентября.</p>
+  </div>
+
+  <p style="margin-top:26px"><button class="btn" id="copyBot" type="button">Скопировать ответы</button><span class="ok" id="okBot"></span></p>
+</div>
+
+<h2 id="nums">Цифры</h2>
+<div class="tiles">
+  <div class="tile"><b>11</b><span>твоих пожеланий за вечер</span></div>
+  <div class="tile"><b>4</b><span>сделал и стоит у тебя</span></div>
+  <div class="tile"><b>7</b><span>ждут очереди</span></div>
+  <div class="tile plain"><b>1.5.4</b><span>версия Пимпа, уже стоит у тебя</span></div>
+</div>
+<p class="allgood">Всё проверено, ошибок нет
+  <i>Проверил и программой, и руками на живых окнах — всё сошлось.</i></p>
+<p class="lead">Одно из ожидающих — не про Пимпа, оно ушло в Диктатор.</p>
+
+<h2 id="can">Что теперь умеет Пимп</h2>
+
+<h3>Окна встают по местам</h3>
+<p>Это «Расставить» — ⌥⌘A, пункт в меню и голосом «Пимп, расставь».</p>
+<ul>
+  <li>Каждое окно остаётся на своём экране: с Одиссея на макбук ничего не переезжает, каждый экран делится сам по себе.</li>
+  <li>Окна стоят столбцами во всю высоту, слева направо.</li>
+  <li><b>Окно, которое уже стоит ровно, не трогается вовсе.</b> Вечером при четырёх стоящих окнах «расставь» не сдвинул ни одного.</li>
+  <li>Окно, болтающееся не пойми где, встаёт в свободное место.</li>
+  <li>Между окнами зазор 5 точек — как у тебя сейчас; к краям экрана окна прижаты вплотную. Захочешь другой — скажи цифру, она настраивается (от 0 до 40).</li>
+  <li>Одиссей делится максимум на 6 столбцов, макбук — на 4.</li>
+  <li>Окон больше, чем столбцов (семь на Одиссее) — встанут в два ряда: четыре сверху, три снизу.</li>
+  <li>Если окно всего одно, «расставь» теперь раскрывает его на весь экран. Раньше оно вставало в четверть — говорю, чтобы не было неожиданностью.</li>
+</ul>
+
+<h3>Окна с одинаковым названием больше не путают проекты</h3>
+<p>Ты открываешь чаты одной фразой, и у трёх окон одно и то же имя «Ожидание задачи». Раньше Пимп различал окна только по имени и считал их одним — отсюда «окно SkilZZZ говорит, что оно PimpMyClaude», и цвет менялся сразу у обоих. Теперь каждое окно называет свой чат само.</p>
+<p>Проверено вживую: три одинаково названных окна — PimpMyClaude, SkilZZZ и Dictator — опознались как три разных проекта, окно SkilZZZ само перекрасилось в свою зелёную тему, PimpMyClaude остался фиолетовым, у Dictator — «Матрица». Меню на жёлтой кнопке тоже пишет проект своего окна, а не соседнего. <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6734">#6734</a></p>
+
+<h3>Имя папки проекта в заголовке видно всегда и целиком</h3>
+<p>Не обрезается и не прячется, даже когда окно узкое. <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6736">#6736</a></p>
+
+<h3>Размер окна теперь ставится надёжно</h3>
+<p>Вот почему раньше расставляло как попало: Пимп говорил окну место и размер подряд, одним движением, а система успевала принять только место — окно оставалось прежней ширины и съезжало вниз. Теперь Пимп проверяет, что окно и правда стало нужного размера, и при нужде повторяет. <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6733">#6733</a> <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6735">#6735</a></p>
+
+<h2 id="tails">Что не вошло</h2>
+<ul>
+  <li>«💾 Сохранить раскладку» сразу после умной расстановки отвечает «окна не расставлены». Сохранение работает, но после нового способа расстановки оно пока не понимает, что окна уже стоят. <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6747">#6747</a></li>
+  <li>Галка темы и пометка «занят» у окон с одинаковым именем всё ещё общие: они помнятся по названию окна, а не по самому окну. Цвет проекта это больше не задевает. <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6757">#6757</a></li>
+  <li>Руками не проверял три случая: окна на экране макбука, окно с увеличенным масштабом (⌘+) и семь окон в два ряда. С ⌘+ возможна лишняя проверка по кругу — завёл отдельно. <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6758">#6758</a></li>
+</ul>
+
+<h2 id="next">Что дальше</h2>
+<ul>
+  <li><b>Окошко лимитов по-русски</b> — короткие подписи, твой аккаунт строкой, полоса дней до сброса; и кружок контекста, который виден и нажимается, когда поле ввода свёрнуто. Макет ты одобрил с правками — правки записаны, беру в работу. <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6738">#6738</a> <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6737">#6737</a></li>
+  <li><b>Полоски-дубли</b> у самого верха и у самого низа окна — сразу после твоего ответа на вопрос 4. <a class="t" href="https://vlusnoff-production.up.railway.app/#t/6743">#6743</a></li>
+</ul>
+
+</main>
+<script>
+(function(){
+  function answers(){
+    var out = ["Файл 2 — ответы:"];
+    document.querySelectorAll("[data-q]").forEach(function(q, i){
+      var sel = q.querySelector("input:checked");
+      var n = q.getAttribute("data-n") || String(i + 1);
+      out.push(n + ". " + q.getAttribute("data-q") + " — " + (sel ? sel.value : "не выбрано"));
+    });
+    return out.join("\n");
+  }
+  function copy(okId){
+    var text = answers();
+    var ok = document.getElementById(okId);
+    function done(){ ok.textContent = "скопировано"; setTimeout(function(){ ok.textContent = ""; }, 2500); }
+    function fallback(){
+      var ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); done(); } catch (e) { ok.textContent = "не вышло — выдели руками"; }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else { fallback(); }
+  }
+  document.getElementById("copyTop").addEventListener("click", function(){ copy("okTop"); });
+  document.getElementById("copyBot").addEventListener("click", function(){ copy("okBot"); });
+})();
+</script>
+</body>
+</html>

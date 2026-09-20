@@ -184,8 +184,8 @@ class PimpCliTest(unittest.TestCase):
         self.assertEqual(self.app.requests[0]["from"], "")
 
     def test_arrange_request(self):
-        # Голая «расставить» повторяет последнюю выбранную раскладку, а не подменяет её
-        # лентой: иначе выбор Элвиса плиткой стирается молча (#5745).
+        # Голая «расставить» едет «last» — умным путём приложения, а не подменяет его
+        # лентой: иначе выбор Элвиса плиткой стирается молча (#5745, WF77).
         self.call("arrange", result=fixture("arrange.result.json"))
         self.assertEqual(list(self.app.requests[0].keys()),
                          list(fixture("arrange.request.json").keys()))
@@ -296,12 +296,34 @@ class PimpCliTest(unittest.TestCase):
         self.assertEqual(done.stdout.strip(), "Пимп не понял запрос")
 
     def test_arrange_ok(self):
+        # Голая «расставь» — умный путь (WF77): в ответе `row`, но лентой это не
+        # называем, говорим, что стоящие окна остались на месте.
         done = self.call("arrange", result=fixture("arrange.result.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), "Расставил 3 окна: стоящие на месте не трогал")
+
+    def test_arrange_row_asked_ok(self):
+        # Ленту попросили словом — слова прежние: это другое поведение, и Элвис
+        # должен видеть, что вышло именно оно.
+        done = self.call("arrange", "--layout", "row", result=fixture("arrange.result.json"))
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(done.stdout.strip(), "Расставил 3 окна на экране, где стоят окна: как сейчас (лента)")
 
+    def test_arrange_smart_order(self):
+        # Умный путь с порядком проектов: хвост про «сперва» остаётся (WF41).
+        order = "/Users/elvis/_ElvisProjects/VkusnoffKz,SkilZZZ"
+        answer = dict(fixture("arrange-order.result.json"))
+        answer["layout"] = "row"
+        answer["missing"] = []
+        answer["unknown"] = 0
+        done = self.call("arrange", "--order", order, result=answer)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.app.requests[0]["layout"], "last")
+        self.assertEqual(done.stdout.strip(),
+                         "Расставил 3 окна: стоящие на месте не трогал — сперва VkusnoffKz, SkilZZZ")
+
     def test_arrange_layout_and_skipped(self):
-        # Просили «как в прошлый раз» — называем ту раскладку, что применилась.
+        # Ответ назвал плитку — называем её словами (умного пути тут нет).
         answer = dict(fixture("arrange.result.json"))
         answer["layout"] = "5"
         answer["skipped"] = 2

@@ -13,6 +13,12 @@ import { readFileSync } from "node:fs";
 import { loadInject, plain } from "./load.mjs";
 
 const MAIN = "https://claude.ai/epitaxy/local_aaa";
+// Кэш ответа про свой чат — sessionStorage окна (раздел 12в inject.js).
+const CHAT_ID_KEY = "myclaude-chat-v1";
+// Рамки окон Элвиса в шестых долях Odyssey (замер 20.09): [screenX, screenY,
+// outerWidth, outerHeight]. Ими ответ probe отличает одноимённые окна (WF77).
+const FRAME_MAIN = [-792, -842, 496, 838];
+const FRAME_POPOUT = [-290, -842, 496, 838];
 
 // Главное окно со стором попапов. records — пары [id чата, заголовок окна],
 // ровно как в живой карте popoutWindows. counter.imports — сколько раз скан
@@ -293,25 +299,150 @@ test("папку называет только главное окно и тол
 });
 
 test("порядок ключей ответа — по эталонам probe-answer-*", async () => {
-  const home = homeWindow();
+  const home = homeWindow(undefined, { geometry: { frame: FRAME_MAIN } });
   await home.loaded.api.chats({ nonce: "f13" });
   await drain();
   assert.deepEqual(
     Object.keys(plain(await home.loaded.api.chats({ nonce: "f14" }))),
     Object.keys(fixture("probe-answer-home")),
-    "folder стоит после store и перед at, themes — в хвосте",
+    "folder стоит после store и перед at, дальше frame, themes — в хвосте",
   );
 
-  const parent = mainWindow([["local_4dae798d-aed9-42d7-bd1b-3631eb360c07", "VkusnoffKz 2"]]);
+  const parent = mainWindow([["local_4dae798d-aed9-42d7-bd1b-3631eb360c07", "VkusnoffKz 2"]], {
+    geometry: { frame: FRAME_MAIN },
+  });
   assert.deepEqual(
     Object.keys(plain(await parent.loaded.api.chats({ scan: true, nonce: "f15" }))),
     Object.keys(fixture("probe-answer-chat")),
   );
 
-  const popup = loadInject({ href: "about:blank", title: "VkusnoffKz 2", opener: parent.loaded.win });
+  const popup = loadInject({
+    href: "about:blank",
+    title: "VkusnoffKz 2",
+    opener: parent.loaded.win,
+    geometry: { frame: FRAME_POPOUT },
+  });
   assert.deepEqual(
     Object.keys(plain(await popup.api.chats({ scan: true, nonce: "f16" }))),
     Object.keys(fixture("probe-answer-popout")),
-    "карты тем у попапа нет — и поля themes тоже",
+    "карты тем у попапа нет — и поля themes тоже, frame стоит последним",
   );
+});
+
+// ---- Своё волокно и рамка окна (WF77, задача #6734) -------------------------
+// У Элвиса одинаковые заголовки окон — норма («Ожидание задачи» у каждого
+// попапа), а попап спрашивал свой чат у родителя ПО ЗАГОЛОВКУ: обоим доставался
+// один и тот же id, и команда уходила в оба окна разом — «меняю цвет, меняется
+// у обоих» (слово Элвиса 20.09). Теперь попап сперва читает свой sessionId из
+// СОБСТВЕННОГО React-волокна, а в ответ probe кладёт ещё и рамку окна: по ней
+// приложение различает одноимённые окна.
+const SAME_TITLE = "Ожидание задачи";
+const FIRST_ID = "local_abe07c3d";
+const SECOND_ID = "local_a4c290f1";
+
+// Цепочка волокон снизу вверх: у самого узла пропсов нет, sessionId лежит у
+// компонентов НАД панелью — как в живом Claude (проба 20.09).
+const fiberChain = (...ids) => {
+  let top = null;
+  for (const id of [...ids].reverse()) top = { memoizedProps: { sessionId: id }, return: top };
+  return { memoizedProps: { children: [] }, return: top };
+};
+
+// Попап с разметкой панели чата. ids — что лежит в волокне; пусто — волокна нет
+// вовсе (так выглядит релиз Claude, переименовавший пропс). fiberAt — на каком
+// из двух стартовых узлов оно висит: обход начинается с обоих.
+const popupWindow = ({ title = SAME_TITLE, ids = [], fiberAt = "panel", opener = null, storage, geometry } = {}) =>
+  loadInject({
+    href: "about:blank",
+    title,
+    opener,
+    storage,
+    geometry,
+    html: dom => {
+      const panel = dom.document.body.add("div", { class: "epitaxy-chat-panel" });
+      const bar = panel.add("div", { class: "epitaxy-titlebar" });
+      if (ids.length) (fiberAt === "panel" ? panel : bar).__reactFiber$test = fiberChain(...ids);
+      return { panel, bar };
+    },
+  });
+
+test("два попапа с одним заголовком называют РАЗНЫЕ чаты", async () => {
+  const parent = mainWindow([[FIRST_ID, SAME_TITLE], [SECOND_ID, SAME_TITLE]]);
+  const first = popupWindow({ ids: [FIRST_ID], opener: parent.loaded.win });
+  // Второй держит волокно на титульной полосе — обход стартует и оттуда.
+  const second = popupWindow({ ids: [SECOND_ID], fiberAt: "titlebar", opener: parent.loaded.win });
+  assert.equal(await parent.loaded.api.popoutChat(SAME_TITLE, { scan: true }), null,
+    "родитель по заголовку не назвал бы ни одного — с него и начиналась беда");
+
+  const answer = plain(await first.api.chats({ scan: true, nonce: "w1" }));
+  assert.equal(answer.self, FIRST_ID);
+  assert.equal(answer.store, "ok", "спросили источник — своё волокно");
+  assert.equal(plain(await second.api.chats({ scan: true, nonce: "w2" })).self, SECOND_ID);
+  assert.equal(first.api.status().chat.self, FIRST_ID, "и синхронный слепок тот же");
+  assert.equal(second.api.status().chat.self, SECOND_ID);
+  assert.equal(JSON.parse(first.win.sessionStorage.getItem(CHAT_ID_KEY)).id, FIRST_ID,
+    "ответ волокна лёг в кэш ещё на инжекте — переживёт перезапись inject.js");
+});
+
+test("кэш, спорящий с волокном, отбрасывается и переписывается", async () => {
+  const popup = popupWindow({
+    ids: [SECOND_ID],
+    storage: { session: { [CHAT_ID_KEY]: JSON.stringify({ id: FIRST_ID, title: SAME_TITLE }) } },
+  });
+  assert.equal(popup.inner.chatFiberId(), SECOND_ID);
+  assert.equal(popup.api.status().chat.self, SECOND_ID, "волокно сильнее кэша");
+  assert.equal(JSON.parse(popup.win.sessionStorage.getItem(CHAT_ID_KEY)).id, SECOND_ID,
+    "спорная запись переписана: она уже уводила чужую команду в это окно");
+  assert.equal(plain(await popup.api.chats({ scan: true })).self, SECOND_ID);
+});
+
+test("в волокне два разных id — ответ null, на заголовок не падаем", async () => {
+  const parent = mainWindow([[FIRST_ID, SAME_TITLE]]);
+  const popup = popupWindow({ ids: [SECOND_ID, FIRST_ID], opener: parent.loaded.win });
+  assert.equal(popup.inner.chatFiberId(), "", "согласия нет — волокно отвечает «не знаю»");
+  const answer = plain(await popup.api.chats({ scan: true, nonce: "w3" }));
+  assert.equal(answer.self, null, "чужой чат хуже, чем «не определён»");
+  assert.equal(answer.store, "ok");
+  assert.equal(popup.api.status().chat.self, null);
+});
+
+test("волокна нет — прежний путь через родителя", async () => {
+  const parent = mainWindow([["local_c4abc832", "Bro Flow продолжение"]]);
+  const popup = popupWindow({ title: "Bro Flow продолжение", opener: parent.loaded.win });
+  assert.equal(popup.inner.chatFiberId(), null, "панель есть, волокна у неё нет");
+  const answer = plain(await popup.api.chats({ scan: true, nonce: "w4" }));
+  assert.equal(answer.self, "local_c4abc832");
+  assert.equal(answer.store, "ok");
+});
+
+test("myChatId() на инжекте с пустым DOM не бросает", () => {
+  const bare = loadInject({ href: "about:blank", title: "" });
+  assert.equal(bare.error, null, "инжект прошёл целиком");
+  assert.equal(bare.failure, null);
+  assert.equal(bare.inner.chatFiberId(), null, "стартовых узлов нет — и ошибки нет");
+  assert.equal(bare.inner.myChatId(), null);
+  assert.equal(bare.api.status().chat.self, null);
+
+  // Разметка попапа приезжает ПОЗЖЕ инжекта: промах не запоминается, иначе окно
+  // осталось бы без своего id навсегда.
+  const panel = bare.document.body.add("div", { class: "epitaxy-chat-panel" });
+  panel.__reactFiber$test = fiberChain(SECOND_ID);
+  assert.equal(bare.inner.myChatId(), SECOND_ID, "панель появилась — id нашёлся");
+});
+
+test("ответ несёт рамку окна, у чужой страницы её нет", async () => {
+  const main = mainWindow([], { geometry: { frame: FRAME_MAIN } });
+  assert.deepEqual(plain(await main.loaded.api.chats({ nonce: "w5" })).frame, FRAME_MAIN,
+    "[screenX, screenY, outerWidth, outerHeight]");
+
+  const popup = popupWindow({ ids: [SECOND_ID], geometry: { frame: [-290.4, -842, 495.6, 838] } });
+  assert.deepEqual(plain(await popup.api.chats({ nonce: "w6" })).frame, FRAME_POPOUT, "числа целые");
+
+  const alien = loadInject({ href: "data:text/html,<p>артефакт</p>", geometry: { frame: FRAME_MAIN } });
+  assert.equal("frame" in plain(await alien.api.chats({ nonce: "w7" })), false,
+    "артефакт живёт в чужом окне — его рамку за свою не выдаём");
+
+  const blind = mainWindow([]);
+  assert.equal("frame" in plain(await blind.loaded.api.chats({ nonce: "w8" })), false,
+    "чисел браузер не дал — поля нет вовсе");
 });

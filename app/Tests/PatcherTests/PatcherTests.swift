@@ -227,9 +227,12 @@ final class LoaderTests: XCTestCase {
     /// Та же цифра лежит в `LiveStyle.defaultSidePadding` (таргет ClaudeAX его не видит),
     /// в `claude-patch/claude.json` и в `DEFAULTS` файла `patch-claude.mjs` — мелочь М6 критика.
     /// Ширина окна — 280 (WF45, задача #5751): на 360 две плитки раскладок из четырёх серые.
+    /// Зазор между окнами — 5 (WF77, задача #6734): столько же стоит у Элвиса живьём, и
+    /// столько же подставляет код, когда ключа в файле нет вовсе.
     func testConfigDefaultsCarryFivePixelSidePadding() {
         XCTAssertEqual(Patcher.configDefaults["sidePadding"], 5)
         XCTAssertEqual(Patcher.configDefaults["minWindowWidth"], 280)
+        XCTAssertEqual(Patcher.configDefaults["windowGap"], 5)
     }
 
     /// Задача #5723: слияние claude.css — приложение владеет только блоком между маркерами.

@@ -1,22 +1,30 @@
 {
   "plan": "docs/plan-wf77-2026-09-20.md",
-  "branch": "wf77 (ставится перед кодингом)",
-  "tag": "wf77-start (ставится перед кодингом)",
-  "status": "идёт",
+  "branch": "wf77",
+  "tag": "wf77-start",
+  "status": "финиш",
   "orchestrator": "Fable 5.1 high",
-  "roles": {"critic": "Opus max", "mockup_wf78": "Opus max", "coding": "Opus max ×2 (A страница, B Swift)", "verify": "Opus max"},
-  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/9f430f85-358c-4076-bf1b-9855fe40ee1c/workflows/scripts/wf77-critic-wf78-mockup-wf_3baeaccf-d74.js",
-  "run_id": "wf_3baeaccf-d74",
+  "roles": {
+    "critic": "Opus max",
+    "mockup_wf78": "Opus max",
+    "coding": "волна 1: A Opus max ‖ B0 Opus xhigh → B1 Opus max ‖ C Opus xhigh; волна 2: B2 Opus max",
+    "verify": "Opus max"
+  },
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/9f430f85-358c-4076-bf1b-9855fe40ee1c/workflows/scripts/wf77-docs-report-wf_02443d02-2a3.js",
+  "run_id": "wf_02443d02-2a3",
   "resumes": 0,
-  "cron": null,
+  "cron": "снят",
   "next_steps": [
-    "дождаться критика (docs/critic-wf77-2026-09-20.md) и макета WF78 (docs/mockup-wf78-limits.html) → правки плана по критику → презентация Элвису",
-    "по слову «делай»: тег wf77-start, ветка wf77, крон-сторож, волна: A (страница) ‖ B (Swift)",
-    "гейт: tools/test.sh (красное — только #6667), версия 1.5.4 (13), bundle, подмена, живой inject, документы, слияние в main",
-    "WF78 (#6737, #6738): после выбора Элвиса в макете — отдельный план (полоса страницы; ждать конца батча A)"
+    "WF78 (#6737, #6738) по макету docs/mockup-wf78-limits.html, одобренному с правками (решения — MOCKUPS.md): отдельный план; нужна живая разведка DOM панели лимитов (Элвис открывает кружок контекста)",
+    "затем #6743 (дубли суперполосы), хвосты #6747, #6757, #6758"
   ],
   "journal": [
     "21:10 · слова Элвиса: задачи #6733–#6738; #6736 (имя папки в заголовке) сделана сразу мимо конвейера — inject wf76-a-16, коммит a8c8ad3, JS-тесты зелёные, Swift красные известные (#6667)",
-    "21:27 · план WF77 написан; запущены критик WF77 и макет WF78 (Opus max ×2), run wf_3baeaccf-d74"
+    "21:27 · план WF77 написан; запущены критик WF77 и макет WF78 (Opus max ×2), run wf_3baeaccf-d74",
+    "21:50 · критик: годен с правками (9 блокеров, 19 замечаний) — docs/critic-wf77-2026-09-20.md; план дополнен разделом «После критика»; слова Элвиса: MacBook 4 столбца, зазор только между окнами, «продолжай работу» = одобрение; руками через AX выровнены 3 окна и открыт Dictator в 4-й ячейке — находка про setFrame (размер не ставится без пауз)",
+    "21:50 · тег wf77-start, ветка wf77, крон 11e87201; волна 1 запущена, run wf_6501661e-e4c",
+    "22:33 · гейт волны 1: tools/test.sh зелёный (JS 419 · CLI 74 · Swift 297, красных 0 — #6667 снят батчем B0); коммиты 6896cd3 A, 6f754f2 B0, 664ebd0 B1, ca8c992 C; слова Элвиса по макету WF78 записаны в MOCKUPS.md; правило «вопросы наверху и в макетах» — SkilZZZ 1b8f71d; волна 2 запущена, run wf_33e37760-de5",
+    "23:19 · волна 2: B2 (Swift 302/0) + проверяющий Opus max «годен с правками», 2 блокера — починены гейтом (рамка в меню на минусе; anchor у навязанного порядка, тест) + onWindowsMoved только при сдвиге; версия 1.5.4 (13), tools/test.sh зелёный (JS 419 · CLI 74 · Swift 303), коммит fe0f708; bundle, подмена в /Applications; вживую попапы не находили волокно (sessionId на 63-м прыжке) — читаем episodeKey/initialSessionId, inject wf77-a-2, коммит 03e848b; вживую: три одноимённых окна → три разных чата и проекта, SkilZZZ сам стал зелёным, «расставь» не сдвинул ни одного стоящего окна, window-themes.json цел; задачи #6757, #6758; запущены документы и отчёт",
+    "23:31 · документы (CONTRACTS, DECISIONS, CHECKLIST, AGENTS, HANDOFF → архив, потолок снят) и отчёт docs/2.html + DESIGN.md; слияние wf77 → main, крон снят, задачи #6733–#6735 закрыты; финиш"
   ]
 }

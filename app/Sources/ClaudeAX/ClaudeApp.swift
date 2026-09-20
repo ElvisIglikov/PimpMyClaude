@@ -34,6 +34,24 @@ enum Screens {
         return flip(rect: screens[index].visibleFrame)
     }
 
+    /// Экраны для умной расстановки (план WF77): полная рамка — по ней ловится центр окна,
+    /// рабочая область — по ней считается сетка. Обе в перевёрнутых координатах.
+    /// Разделять их обязательно (критик WF77 зам. 13): окно, заехавшее под док, по
+    /// `visibleFrame` оказалось бы «ни на одном экране».
+    static func all() -> [(full: CGRect, usable: CGRect)] {
+        NSScreen.screens.map { (full: flip(rect: $0.frame), usable: flip(rect: $0.visibleFrame)) }
+    }
+
+    /// Кому какой экран (план WF77): для каждой рамки — индекс экрана, внутри которого
+    /// лежит её ЦЕНТР; ни одного попадания — 0, экран с меню-баром. Чистая — её и гоняют
+    /// тесты. Окна между экранами не переезжают, каждая группа расставляется у себя.
+    static func assign(screens: [CGRect], frames: [CGRect]) -> [Int] {
+        frames.map { frame in
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            return screens.firstIndex { $0.contains(center) } ?? 0
+        }
+    }
+
     /// Чистый выбор экрана (его гоняют тесты): индекс экрана, где центров рамок больше всего;
     /// ничья — меньший индекс; ни одного попадания или рамок нет — 0 (экран с меню-баром).
     static func pick(screens: [CGRect], for frames: [CGRect]) -> Int {

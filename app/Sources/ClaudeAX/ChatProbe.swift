@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Ответ одной страницы Claude на вопрос «какой в тебе чат» (план WF29, решение 4).
@@ -23,6 +24,12 @@ struct ChatPage: Equatable {
     /// задача #5779): `"ждём"`, `"вставлено"` или `"отказ: <причина>"`. nil — страницу об
     /// этом не спрашивали (круг ушёл без `cash`), сказать ей нечего или она промолчала.
     let cashout: String?
+    /// Рамка окна, в котором живёт страница (`[screenX, screenY, outerWidth, outerHeight]`,
+    /// план WF77): те же перевёрнутые координаты, что у AX. Ею различаются два окна с
+    /// ОДИНАКОВЫМ заголовком — у Элвиса это норма (#6734). Поля в ответе нет (старая
+    /// страница, чужой origin, браузер не дал чисел) — nil, и окно опознаётся по-старому,
+    /// одним заголовком.
+    let frame: CGRect?
     /// Когда пришёл круг, в котором страница ответила.
     let at: Date
 
@@ -30,7 +37,7 @@ struct ChatPage: Equatable {
     /// остались как были (критик, мелочь 1 плана WF37). Автоматический memberwise-init для
     /// `let` со значением по умолчанию Swift не заводит — отсюда свой.
     init(kind: Kind, chat: String?, title: String, path: String = "", store: String,
-         folder: String? = nil, cashout: String? = nil, at: Date) {
+         folder: String? = nil, cashout: String? = nil, frame: CGRect? = nil, at: Date) {
         self.kind = kind
         self.chat = chat
         self.title = title
@@ -38,6 +45,7 @@ struct ChatPage: Equatable {
         self.store = store
         self.folder = folder
         self.cashout = cashout
+        self.frame = frame
         self.at = at
     }
 }
@@ -151,6 +159,11 @@ final class ChatProbe {
     /// во ВСЕХ страницах, и артефакт на чужом origin вернул бы ПУСТУЮ карту — а пустая карта
     /// значит «Элвис снял всё сам» и чистит файл.
     static let claudeOrigin = "https://claude.ai/"
+    /// Допуск сверки рамки окна с рамкой страницы (план WF77, критик блокер 6в). Сверяется
+    /// ТОЛЬКО левый верхний угол: ширину Electron зажимает своим минимумом, и по размеру
+    /// рамки не сойдутся никогда, а угол сходится точка в точку. Допуск широкий нарочно —
+    /// пока окно едет после расстановки, ближайшая страница всё равно его.
+    static let frameTolerance: CGFloat = 24
 
     /// Кто держит канал — для строки диагностики.
     private enum Channel: String {
@@ -199,6 +212,9 @@ final class ChatProbe {
     /// Требование ещё не обслужено: это повод спросить мимо пола частоты. Разовое, как
     /// `mirrored`, — снимается первым же вопросом.
     private var demandPending = false
+    /// Окна только что переехали (план WF77): рамки в карте стали вчерашними. Разовый повод,
+    /// как `mirrored`, — снимается первым же вопросом.
+    private var moved = false
 
     init(files: ChatProbeFiles = .onDisk(), now: @escaping () -> Date = Date.init,
          random: @escaping () -> Int = { Int.random(in: 0...9999) }) {
@@ -238,28 +254,82 @@ final class ChatProbe {
         return main.path == homePath && isRecent(main, at: at)
     }
 
-    /// Чат попапа по AX-заголовку окна. Заголовок пустой или заглушка — nil (такой носит
-    /// и главное окно, и безымянный попап); заголовок носят два окна — тоже nil, и неважно,
-    /// назвали они разные чаты или второе не назвало ничего: лучше не покрасить, чем
-    /// покрасить чужим цветом.
-    func chat(forTitle title: String) -> String? { ChatProbe.chat(forTitle: title, in: pages) }
+    /// Чат попапа по AX-заголовку окна и рамке окна. Заголовок пустой или заглушка — nil
+    /// (такой носит и главное окно, и безымянный попап); заголовок носят два окна — решает
+    /// РАМКА, а без неё ничья и nil: лучше не покрасить, чем покрасить чужим цветом.
+    func chat(forTitle title: String, frame: CGRect? = nil) -> String? {
+        ChatProbe.chat(forTitle: title, frame: frame, in: pages)
+    }
 
     /// То же правило чистой функцией: её же вешает `ClaudeAXController` через `chat(forTitle:)`,
     /// а покраска зовёт сиденьем — второй реализации сопоставления в проекте нет.
-    static func chat(forTitle title: String, in pages: [ChatPage]) -> String? {
-        let wanted = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    ///
+    /// Три ступени (план WF77, решение 11): страница с таким заголовком одна — она, и рамка
+    /// не нужна вовсе; одноимённые страницы назвали ОДИН чат — он (неоднозначности нет);
+    /// иначе побеждает ближайшая по левому верхнему углу к рамке окна — и только когда
+    /// победитель один. Рамки нет (её не прислали, страница старая) — nil, как до WF77.
+    static func chat(forTitle title: String, frame: CGRect? = nil, in pages: [ChatPage]) -> String? {
+        let wanted = clean(title)
         guard !wanted.isEmpty, !ProjectIndex.isStub(wanted) else { return nil }
-        var found: String?
-        for page in pages where page.kind == .popout
-            && page.title.trimmingCharacters(in: .whitespacesAndNewlines) == wanted {
-            // Страница с тем же заголовком, которая себя не назвала, — тоже ничья
-            // (находка 4 проверки WF29): иначе ручной выбор темы в неопознанном окне уехал
-            // бы в проект соседнего окна-однофамильца.
-            guard let chat = page.chat else { return nil }
-            if let known = found, known != chat { return nil }
-            found = chat
+        let twins = pages.filter { $0.kind == .popout && clean($0.title) == wanted }
+        guard !twins.isEmpty else { return nil }
+        if let agreed = ChatProbe.agreedChat(twins) { return agreed }
+        return ChatProbe.nearest(twins, to: frame)?.chat
+    }
+
+    /// Одноимённые страницы назвали один и тот же чат — рамка тут ни при чём. Хоть одна
+    /// себя не назвала (находка 4 проверки WF29) или чатов два — nil, дальше решает рамка.
+    static func agreedChat(_ pages: [ChatPage]) -> String? {
+        let named = pages.compactMap { $0.chat }
+        guard named.count == pages.count, Set(named).count == 1 else { return nil }
+        return named.first
+    }
+
+    /// Какая из одноимённых страниц показывает ИМЕННО это окно: ближайшая по левому верхнему
+    /// углу в допуске `frameTolerance` и только при единственном победителе (критик WF77,
+    /// блокер 6в). Страница одна — она, и рамки не надо; рамок нет или победителей двое — nil.
+    static func nearest(_ pages: [ChatPage], to frame: CGRect?) -> ChatPage? {
+        if pages.count == 1 { return pages.first }
+        guard let frame = frame else { return nil }
+        var best: ChatPage?
+        var least = CGFloat.greatestFiniteMagnitude
+        var tie = false
+        for page in pages {
+            guard let corner = page.frame else { continue }
+            let distance = hypot(corner.minX - frame.minX, corner.minY - frame.minY)
+            guard distance <= frameTolerance else { continue }
+            if distance < least {
+                least = distance
+                best = page
+                tie = false
+            } else if distance == least {
+                tie = true
+            }
         }
-        return found
+        return tie ? nil : best
+    }
+
+    /// Левый верхний угол рамки страницы и рамки окна сошлись в допуске.
+    static func near(_ page: CGRect, _ window: CGRect) -> Bool {
+        hypot(page.minX - window.minX, page.minY - window.minY) <= frameTolerance
+    }
+
+    /// Заголовки, которые носят два окна и больше: только по ним и работает сверка рамкой.
+    /// Пустые и заглушки («Claude», «New chat») в счёт не идут — по ним окно не адресуется
+    /// вовсе, и дёргать из-за них probe незачем.
+    static func twinTitles(_ titles: [String]) -> Set<String> {
+        var seen = Set<String>()
+        var twins = Set<String>()
+        for raw in titles {
+            let title = clean(raw)
+            guard !title.isEmpty, !ProjectIndex.isStub(title) else { continue }
+            if !seen.insert(title).inserted { twins.insert(title) }
+        }
+        return twins
+    }
+
+    static func clean(_ title: String) -> String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Карта тем страницы из последнего круга (`localStorage["myclaude-themes-v1"]`, решение 3
@@ -275,6 +345,12 @@ final class ChatProbe {
     /// догонял бы правду только зеркалом (решение 3 плана WF35). Пол частоты канала при этом
     /// остаётся прежним — шторма не будет.
     func noteMirror() { mirrored = true }
+
+    /// Окна переехали — расстановка, новое окно, перенос «Обкэшить» или рука Элвиса
+    /// (критик WF77, блокер 6б). Рамки в карте стали вчерашними, а по ним различаются
+    /// окна-однофамильцы: ближайший тик обязан спросить страницы заново. Пол частоты при
+    /// этом прежний, и на одиноком окне повода не возникает вовсе (`framesStale`).
+    func noteWindowsMoved() { moved = true }
 
     /// «Спроси страницы прямо сейчас» (задача #5770). Тумблер «🗂 Цвет по проекту» выключен —
     /// канал молчит совсем (риск 11 плана WF29), и карта чатов пуста: «💾 Сохранить раскладку»
@@ -314,9 +390,19 @@ final class ChatProbe {
 
     // MARK: - тик
 
+    /// Тик без рамок окон: окна опознаются одним заголовком, как до WF77. Живьём так уже
+    /// не зовут — путь остаётся у тестов и у сборки, где рамки окон взять неоткуда.
+    func tick(windowTitles: [String], indexRevision: Int) {
+        tick(windows: windowTitles.map { (title: $0, frame: nil) }, indexRevision: indexRevision)
+    }
+
     /// Общий тик 2 с: забрать ответ и, если есть повод, спросить заново. Своего таймера
     /// у канала нет — он живёт на том же таймере, что и покраска (решение 3 плана WF29).
-    func tick(windowTitles: [String], indexRevision: Int) {
+    ///
+    /// Окна приходят С РАМКАМИ и БЕЗ схлопывания однофамильцев (план WF77): по рамке карта
+    /// различает два окна с одинаковым заголовком, а разъехавшиеся рамки — сами по себе
+    /// повод спросить страницы заново (критик блокер 6).
+    func tick(windows: [(title: String, frame: CGRect?)], indexRevision: Int) {
         let at = now()
         // Тумблер выключен — ни записи, ни чтения: probe остаётся инструментом гейта.
         // Исключения два: живое требование (задача #5770) — о чатах окон спросили по делу,
@@ -330,17 +416,20 @@ final class ChatProbe {
         }
         if channel == .off { channel = .own }
         readAnswer(at)
-        let sorted = windowTitles.sorted()
-        let unknown = sorted.contains { !isKnown(title: $0) }
+        let sorted = windows.map { $0.title }.sorted()
+        let unknown = windows.contains { !isKnown(title: $0.title, frame: $0.frame) }
+        let stale = framesStale(windows)
         // Повод запоминаем ТОЛЬКО вместе с вопросом: окно открылось, пока шёл прошлый круг
         // или пока канал держал агент, — повод обязан дожить до первого нашего вопроса.
-        guard reason(titles: sorted, revision: indexRevision, unknown: unknown, at: at),
+        guard reason(titles: sorted, revision: indexRevision, unknown: unknown, stale: stale,
+                     at: at),
               claim(at), ask(scan: unknown, cash: cash, at: at) else { return }
         titles = sorted
         revision = indexRevision
         started = true
         mirrored = false
         demandPending = false
+        moved = false
         if unknown { askedAt = at }
     }
 
@@ -348,7 +437,8 @@ final class ChatProbe {
     /// изменился состав чатов, есть неопознанное окно и спрашивали давно, канал освободился.
     /// Четвёртый повод добавил WF35: приложение писало зеркало тем, и файл обязан догнать
     /// правду страницы. Плюс два тормоза: пол частоты и незакрытый круг.
-    private func reason(titles: [String], revision: Int, unknown: Bool, at: Date) -> Bool {
+    private func reason(titles: [String], revision: Int, unknown: Bool, stale: Bool,
+                        at: Date) -> Bool {
         // Прошлый круг не закрыт и ещё не потерян — второй не начинаем: старый ответ
         // затёр бы свежий (критик В2 плана WF29).
         if pendingNonce != nil, let wrote = lastWriteAt,
@@ -373,6 +463,11 @@ final class ChatProbe {
         // папки чипа не меняются, и спросить об этом больше некому.
         if home { return true }
         if mirrored { return true }
+        // Рамки окон разошлись с рамками карты (критик WF77, блокер 6): после расстановки
+        // и после того, как окно подвинули рукой, карта про однофамильцев врёт, а заголовки
+        // и поколение индекса при этом не меняются — без этого повода починка жила бы
+        // до первой же расстановки.
+        if stale { return true }
         if titles != self.titles { return true }
         if revision != self.revision { return true }
         if channel == .busy { return true }
@@ -382,12 +477,35 @@ final class ChatProbe {
     }
 
     /// Окно опознано? Заглушки и пустые заголовки не в счёт — по ним чат и не ищут.
-    private func isKnown(title: String) -> Bool {
-        let wanted = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Однофамильцы (план WF77): окно опознано, только когда карта отвечает именно ПРО НЕГО —
+    /// иначе покраска всё равно промолчит, и страницы надо спросить ещё раз.
+    private func isKnown(title: String, frame: CGRect?) -> Bool {
+        let wanted = ChatProbe.clean(title)
         guard !wanted.isEmpty, !ProjectIndex.isStub(wanted) else { return true }
-        return pages.contains {
-            $0.chat != nil && $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == wanted
+        let twins = pages.filter { ChatProbe.clean($0.title) == wanted }
+        guard !twins.isEmpty else { return false }
+        if ChatProbe.agreedChat(twins) != nil { return true }
+        return ChatProbe.nearest(twins, to: frame)?.chat != nil
+    }
+
+    /// Живые рамки окон разошлись с рамками карты. Смотрим ТОЛЬКО однофамильцев: одинокое
+    /// окно опознаётся заголовком, и дёргать probe на каждое его движение незачем (критик
+    /// WF77, блокер 6а). Карта про этот заголовок рамок не знает вовсе (страница старая,
+    /// ответа ещё не было) — сверять нечего, и лишний круг ничего не даст.
+    private func framesStale(_ windows: [(title: String, frame: CGRect?)]) -> Bool {
+        let twins = ChatProbe.twinTitles(windows.map { $0.title })
+        guard !twins.isEmpty else { return false }
+        // Окна ТОЛЬКО что двигали — спрашиваем, не сверяя: рамки в карте старше переезда.
+        if moved { return true }
+        for window in windows {
+            let title = ChatProbe.clean(window.title)
+            guard twins.contains(title), let frame = window.frame else { continue }
+            let known = pages.filter { ChatProbe.clean($0.title) == title }.compactMap { $0.frame }
+            guard !known.isEmpty else { continue }
+            guard !known.contains(where: { ChatProbe.near($0, frame) }) else { continue }
+            return true
         }
+        return false
     }
 
     /// Ответ на наш круг. Файл весит мегабайты (в нём `url` каждой страницы, включая
@@ -572,6 +690,7 @@ final class ChatProbe {
                                   // чужой строке значило бы покрасить окно чужим проектом.
                                   folder: kind == .main ? folderPath(result["folder"]) : nil,
                                   cashout: cashoutWord(result["cashout"]),
+                                  frame: frameRect(result["frame"]),
                                   at: at))
         }
         return (pages, themes)
@@ -588,6 +707,18 @@ final class ChatProbe {
                   .trimmingCharacters(in: .whitespacesAndNewlines),
               !said.isEmpty, said.count <= cashoutLimit else { return nil }
         return said
+    }
+
+    /// Рамка окна из ответа страницы (план WF77, решение 10): `[screenX, screenY, outerWidth,
+    /// outerHeight]`, четыре конечных числа, ширина и высота больше нуля. Разбор
+    /// НЕОБЯЗАТЕЛЬНЫЙ: поля нет, длина не та, внутри не числа — nil, и окно опознаётся
+    /// по-старому, одним заголовком (старая страница не должна ломать новое приложение).
+    static func frameRect(_ value: Any?) -> CGRect? {
+        guard let list = value as? [Any], list.count == 4 else { return nil }
+        let numbers = list.compactMap { ($0 as? NSNumber)?.doubleValue }
+        guard numbers.count == 4, numbers.allSatisfy({ $0.isFinite }),
+              numbers[2] > 0, numbers[3] > 0 else { return nil }
+        return CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3])
     }
 
     /// Папка из ответа страницы: абсолютный путь и не длиннее `folderLimit`. Всё прочее —

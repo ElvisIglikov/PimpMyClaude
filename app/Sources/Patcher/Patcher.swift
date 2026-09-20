@@ -26,7 +26,12 @@ public enum Patcher {
     /// `minWindowWidth: 280` (WF45, задача #5751) — у Элвиса в живом файле стоит 280, у команды
     /// приезжало 360, и из-за этого две плитки раскладок из четырёх были серыми (ячейка уже
     /// минимальной ширины окна). Та же цифра — в `claude-patch/claude.json`.
-    public static let configDefaults: [String: Int] = ["minWindowWidth": 280, "sidePadding": 5]
+    /// `windowGap: 5` (WF77, задача #6734) — зазор между окнами при расстановке, столько же
+    /// у Элвиса стоит живьём. Пункта меню у ключа нет, правится руками; ключа нет вовсе —
+    /// `ClaudeActions.windowGap()` подставит те же 5, так что у команды ничего не поедет.
+    public static let configDefaults: [String: Int] = [
+        "minWindowWidth": 280, "sidePadding": 5, "windowGap": 5,
+    ]
 
     public static let cssFileName = "claude.css"
     /// Маркеры авто-блока живого claude.css — побайтно те же, что `LiveStyle.markerStart/markerEnd`

@@ -65,7 +65,12 @@ public final class ClaudeAXController: ClaudeAXControlling {
         autoAllow = AutoAllow(app: app, hud: hud)
         menu = MinimizeMenu(app: app, actions: actions)
         statusFeed = StatusFeed(commands: commands)
-        actions.onWindowsMoved = { [weak self] in self?.menu.clearCache() }
+        // Окна переехали: кэш кнопки «Свернуть» протух, и вместе с ним протухли рамки в
+        // карте probe — по ним различаются окна-однофамильцы (план WF77, критик блокер 6б).
+        actions.onWindowsMoved = { [weak self] in
+            self?.menu.clearCache()
+            self?.chatProbe.noteWindowsMoved()
+        }
         // «Workflow» на сборке без комплекта — плашкой на экран (критик п. 3 фикс-батча WF9).
         actions.onWarning = { [weak self] text in self?.hud.show(text, seconds: 2.5) }
         // «🪟 Новое окно» держит плашку дольше: работа идёт до 40 с (план WF13).
@@ -103,7 +108,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
         chatProbe.isCashoutPending = { [weak self] in self?.actions.cashoutPending ?? false }
         actions.cashoutAnswers = { [weak self] in self?.chatProbe.pages ?? [] }
         projectPaint.chatPages = { [weak self] in self?.chatProbe.pages ?? [] }
-        projectPaint.chatForTitle = { [weak self] title in self?.chatProbe.chat(forTitle: title) }
+        projectPaint.chatForTitle = { [weak self] title, frame in
+            self?.chatProbe.chat(forTitle: title, frame: frame)
+        }
         // Темы на диске (план WF35): зеркало закрепляющих команд и повод спросить probe.
         // Главное окно опознаётся тем же резолвером, что и цели покраски: у него ключ `main`.
         actions.windowThemes = windowThemes
@@ -117,7 +124,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
         actions.isMainWindowTitle = { [weak self] title in
             self?.projectPaint.windowKey(forTitle: title) == ProjectPaint.mainKey
         }
-        actions.chatForTitle = { [weak self] title in self?.chatProbe.chat(forTitle: title) }
+        actions.chatForTitle = { [weak self] title, frame in
+            self?.chatProbe.chat(forTitle: title, frame: frame)
+        }
         // Проект чата: папку знает индекс Claude Code, и новое окно родится в ней — с именем,
         // цветом и записью в `projects.json`, как у пункта «🪟 Новое окно ▸ проект».
         actions.projectForChat = { [weak self] chat in
@@ -147,8 +156,9 @@ public final class ClaudeAXController: ClaudeAXControlling {
         // Ручной выбор в окне проекта молча становится видом проекта (решение 3.2 плана WF20):
         // крючок висит на `remember`, поэтому ни примерка мышью, ни «Раскрасить по кругу»
         // в файл проекта не пишут.
-        actions.onWindowViewChanged = { [weak self] title, theme, font, size, frame in
-            self?.projectPaint.noteManualChoice(title: title, theme: theme, font: font,
+        actions.onWindowViewChanged = { [weak self] title, windowFrame, theme, font, size, frame in
+            self?.projectPaint.noteManualChoice(title: title, windowFrame: windowFrame,
+                                                theme: theme, font: font,
                                                 size: size, frame: frame)
         }
         menu.project = projectPaint
@@ -228,13 +238,20 @@ public final class ClaudeAXController: ClaudeAXControlling {
             },
             arrange: { [weak self] ids, mode in
                 guard let self = self else { return ([], 0) }
-                // Раскладка запроса становится последней (план WF21): ⌥⌘A и плитка в меню
-                // повторяют её же. `last` и новое окно кладут сюда то, что и так лежит.
+                // Названная плитка становится последней (план WF21): её повторяет полоса
+                // раскладок в меню. С WF77 сюда приходит ТОЛЬКО явный `--layout 4|5|5x2|row`
+                // — умный путь плитку не трогает (критик блокер 2).
                 self.actions.themeStore.arrangeMode = mode
                 let done = self.actions.arrange(ids: ids, mode: mode)
                 return (windows: done.placed.map {
                     self.pimpWindow(id: $0.id, title: $0.title, frame: $0.frame)
                 }, skipped: done.skipped)
+            },
+            arrangeSmart: { [weak self] ids, ordered, anchor in
+                guard let self = self else { return [] }
+                return self.actions.arrangeSmart(ids: ids, ordered: ordered, anchor: anchor).map {
+                    self.pimpWindow(id: $0.id, title: $0.title, frame: $0.frame)
+                }
             },
             arrangeMode: { [weak self] in self?.actions.themeStore.arrangeMode ?? .ribbon },
             fitsLayout: { [weak self] mode in self?.actions.arrangeFits(mode) ?? true },
@@ -346,14 +363,16 @@ public final class ClaudeAXController: ClaudeAXControlling {
     /// Окно канала: к заголовку и рамке добавляются чат и папка — их знает индекс Claude
     /// и карта probe. Карта молчит (тумблер выключен, канал занят агентом) — обе строки пусты.
     private func pimpWindow(id: CGWindowID, title: String, frame: CGRect) -> PimpWindow {
-        let chat = pimpChat(forTitle: title)
+        let chat = pimpChat(forTitle: title, frame: frame)
         let folder = chat.flatMap { index.folder(for: $0) }?.path ?? ""
         return PimpWindow(id: id, title: title, chat: chat ?? "", folder: folder, frame: frame)
     }
 
-    /// Какой чат в окне с таким заголовком: главное окно носит заголовок своего чата
-    /// (тот же путь, что `ProjectPaint.windowKey`), попапы — по карте probe.
-    private func pimpChat(forTitle title: String) -> String? {
+    /// Какой чат в окне с таким заголовком и рамкой: главное окно носит заголовок своего
+    /// чата (тот же путь, что `ProjectPaint.windowKey`), попапы — по карте probe, а среди
+    /// однофамильцев нужного находит рамка окна (план WF77): без неё оба окна «Ожидание
+    /// задачи» назывались одним чатом, и раскладка возвращала не те окна (#6734).
+    private func pimpChat(forTitle title: String, frame: CGRect? = nil) -> String? {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return nil }
         // Свежий ответ самой страницы сильнее адреса из status.json (решение 8 плана WF29).
@@ -365,7 +384,7 @@ public final class ClaudeAXController: ClaudeAXControlling {
         if let session = index.mainWindow()?.session, session.title == clean {
             return session.sessionId
         }
-        if let popout = chatProbe.chat(forTitle: clean) { return popout }
+        if let popout = chatProbe.chat(forTitle: clean, frame: frame) { return popout }
         // Главное окно носит заглушку «Claude», а не имя чата (гейт WF36, живой результат
         // `fromResolved:false` на запрос из главного окна): чат берём из индекса.
         if ProjectIndex.isStub(clean) { return index.mainWindow()?.session?.sessionId }
@@ -434,9 +453,11 @@ public final class ClaudeAXController: ClaudeAXControlling {
             self.refreshHotkeys()
             // Цвет проекта — на этом же таймере, своего заводить не надо (критик М2 плана WF15).
             // Сперва канал probe: покраска берёт из него, какой чат в каком окне.
-            self.tickTitles = self.actions.paintableTitles()
-            self.chatProbe.tick(windowTitles: self.tickTitles ?? [],
-                                indexRevision: self.index.revision)
+            // Один обход окон на тик: заголовки — покраске и возврату тем, те же окна
+            // с рамками — каналу probe (план WF77, батч B2).
+            let onScreen = self.actions.paintableSnapshot()
+            self.tickTitles = onScreen.titles
+            self.chatProbe.tick(windows: onScreen.windows, indexRevision: self.index.revision)
             // Карта тем страницы приезжает тем же кругом probe (решение 3 плана WF35):
             // файл догоняет ею правду, а зеркало остаётся страховкой на время, пока канал
             // занят агентом на гейте.

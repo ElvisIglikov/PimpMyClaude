@@ -222,6 +222,8 @@ final class MinimizeMenu: NSObject {
         onWillShow?()
         // Заголовок окна нужен и команде темы (адресация, как у «Обкэшить»), и галке в подменю.
         let title = AX.string(window, kAXTitleAttribute) ?? ""
+        // Рамка — чтобы одноимённые окна разных проектов не путались (#6734).
+        let box = AX.frame(window)
         var config = MenuConfig()
         config.themes = actions.themes
         config.fonts = actions.fonts
@@ -254,10 +256,10 @@ final class MinimizeMenu: NSObject {
         // молча стал бы `.pimpmyclaude.json`. Покраска идёт очередью канала, как у тика, —
         // это закрепление, а не примерка: «конец примерки» после popUp ей не нужен.
         if let project = project {
-            config.projectTheme = project.projectTheme(forTitle: title)
+            config.projectTheme = project.projectTheme(forTitle: title, frame: box)
             config.repaintProject = {
                 committed = true
-                DispatchQueue.main.async { project.repaintProject(forTitle: title) }
+                DispatchQueue.main.async { project.repaintProject(forTitle: title, frame: box) }
             }
         }
         // Поля по бокам: значение читаем из claude.json на каждый показ — его правит и сам

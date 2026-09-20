@@ -382,21 +382,257 @@ final class ClaudeAXTests: XCTestCase {
         XCTAssertEqual(ArrangeLayout.order(of: frames), [1, 0, 2])
     }
 
-    /// ⌥⌘A и «▦ Расставить» повторяют последнюю раскладку — а выбрана она бывает на другом,
-    /// более широком экране (#5733). Не влезла — кладём лентой и говорим плашкой: плитка в
-    /// меню такую раскладку и раньше гасила, канал «Пимп» отвечал `too-small`, и только у
-    /// хоткея проверки не было — окна налезали друг на друга.
-    func testArrangeFallsBackToRibbonWhenGridDoesNotFit() {
-        XCTAssertEqual(ClaudeActions.arrangeLayout(.five, fits: true), .five)
-        XCTAssertEqual(ClaudeActions.arrangeLayout(.five, fits: false), .ribbon)
-        XCTAssertEqual(ClaudeActions.arrangeLayout(.tenGrid, fits: false), .ribbon)
-        // Лента влезает всегда — её на ленту не подменяют и плашки про неё не бывает.
-        XCTAssertEqual(ClaudeActions.arrangeLayout(.ribbon, fits: true), .ribbon)
-        // Тот самый случай: экран Элвиса при минимуме окна 360 пятёрку уже не держит.
+    /// Плитка, которая на ЭТОМ экране не влезает, гаснет (#5733), а с WF77 «влезает»
+    /// считает и зазор (критик п. 11): без него ячейка плитки и живая ячейка расходились
+    /// ровно на `gap`, и плитка на грани начинала врать. ⌥⌘A и «▦ Расставить» сюда больше
+    /// не заходят вовсе — они идут умным путём, которому экран мал не бывает.
+    func testLayoutFitsCountsTheGap() {
+        // Экран Элвиса при минимуме окна 360 пятёрку уже не держит, а четвёрку — да.
         let laptop = CGRect(x: 0, y: 34, width: 1470, height: 860)
         XCTAssertFalse(ArrangeLayout.fits(.five, in: laptop, minCellWidth: 360))
         XCTAssertTrue(ArrangeLayout.fits(.ribbon, in: laptop, minCellWidth: 360))
-        XCTAssertTrue(MenuModel.arrangeTooSmallNotice.contains("лентой"))
+        // Зазор 40: пятёрка по 294 при минимуме 280 влезала, а с зазором ячейка 262 — нет.
+        XCTAssertTrue(ArrangeLayout.fits(.five, in: laptop, minCellWidth: 280))
+        XCTAssertFalse(ArrangeLayout.fits(.five, in: laptop, minCellWidth: 280, gap: 40))
+        XCTAssertTrue(ArrangeLayout.fits(.four, in: laptop, minCellWidth: 280, gap: 40))
+        // Умолчание — прежний ответ побайтно: зазора у старых вызовов нет.
+        XCTAssertEqual(ArrangeLayout.fits(.five, in: laptop, minCellWidth: 280),
+                       ArrangeLayout.fits(.five, in: laptop, minCellWidth: 280, gap: 0))
+    }
+
+    // MARK: - умная расстановка (план WF77)
+
+    /// Числа Элвиса 20.09: Odyssey над макбуком, рабочая область x −796…2212, y −846…0.
+    private static let odyssey = CGRect(x: -796, y: -846, width: 3008, height: 846)
+    /// Макбук под ним: рабочая 1205×802.
+    private static let macbook = CGRect(x: 0, y: 30, width: 1205, height: 802)
+    private static let minCell: CGFloat = 280
+    private static let gap: CGFloat = 5
+
+    /// Потолок столбцов (слово Элвиса 20.09: «Odyssey делим максимум на шесть частей,
+    /// макбуковский — четыре») и потолок рядов. Зазор в потолке обязателен (критик
+    /// блокер 7): при gap 40 четвёртый столбец макбука дал бы 261 pt.
+    func testColumnCapFollowsScreenAndGap() {
+        let odyssey = ClaudeAXTests.odyssey, macbook = ClaudeAXTests.macbook
+        XCTAssertEqual(ArrangeLayout.cap(width: odyssey.width, minCellWidth: 280, gap: 5), 6)
+        XCTAssertEqual(ArrangeLayout.cap(width: macbook.width, minCellWidth: 280, gap: 5), 4)
+        XCTAssertEqual(ArrangeLayout.cap(width: macbook.width, minCellWidth: 280, gap: 40), 3)
+        // Экран уже одного окна — один столбец, а не ноль.
+        XCTAssertEqual(ArrangeLayout.cap(width: 200, minCellWidth: 280, gap: 5), 1)
+        XCTAssertEqual(ArrangeLayout.cap(width: 0, minCellWidth: 280, gap: 5), 1)
+        // Рядов столько, сколько держит высота при `minCellHeight` 360.
+        XCTAssertEqual(ArrangeLayout.capRows(height: odyssey.height, gap: 5), 2)
+        XCTAssertEqual(ArrangeLayout.capRows(height: macbook.height, gap: 5), 2)
+        XCTAssertEqual(ArrangeLayout.capRows(height: 400, gap: 5), 1)
+    }
+
+    /// Зазор живёт ТОЛЬКО между окнами: у краёв рабочей области, сверху и снизу окна
+    /// прижаты встык (слова Элвиса 20.09 после критика). Умолчание 0 оставляет прежние
+    /// рамки побайтно — старые эталоны и раскладки не едут.
+    func testGapLivesBetweenWindowsOnly() {
+        let area = ClaudeAXTests.odyssey
+        let cells = ArrangeLayout.cells(cols: 6, rows: 1, count: 6, in: area, gap: 5)
+        XCTAssertEqual(cells.first?.minX, area.minX, "левый край — встык")
+        XCTAssertEqual(cells.last?.maxX, area.maxX, "правый край — встык")
+        XCTAssertEqual(cells.map { $0.minY }, Array(repeating: area.minY, count: 6))
+        XCTAssertEqual(cells.map { $0.height }, Array(repeating: area.height, count: 6))
+        for i in 1..<cells.count {
+            XCTAssertEqual(cells[i].minX - cells[i - 1].maxX, 5, "зазор между \(i - 1) и \(i)")
+        }
+        // Ряды — так же по высоте.
+        let rows = ArrangeLayout.cells(cols: 4, rows: 2, count: 8, in: area, gap: 5)
+        XCTAssertEqual(rows[0].minY, area.minY)
+        XCTAssertEqual(rows[4].minY - rows[0].maxY, 5)
+        XCTAssertEqual(rows[7].maxY, area.maxY)
+
+        // Зазора нет — рамки те же, что были до WF77 (побайтно).
+        for count in [1, 2, 3, 5, 6, 12] {
+            for mode in ArrangeLayout.Mode.allCases {
+                XCTAssertEqual(ArrangeLayout.frames(count: count, in: area, mode: mode,
+                                                    minCellWidth: 280, gap: 0),
+                               ArrangeLayout.frames(count: count, in: area, mode: mode,
+                                                    minCellWidth: 280),
+                               "\(mode.rawValue) на \(count) окнах")
+            }
+        }
+    }
+
+    /// Три окна Элвиса стоят в шестых долях Odyssey — «расставить» не двигает НИКОГО
+    /// (слово Элвиса 20.09: «окна, которые уже стояли на месте, никуда не переводить»).
+    /// Сетка выбирается по ним: шесть столбцов, хотя окон три.
+    func testSmartKeepsWindowsThatAlreadySit() {
+        let area = ClaudeAXTests.odyssey
+        let sixths = ArrangeLayout.cells(cols: 6, rows: 1, count: 6, in: area, gap: 5)
+        XCTAssertEqual(sixths[0...3].map { $0.minX }, [-796, -294, 208, 711])
+        XCTAssertEqual(sixths[0...3].map { $0.width }, [497, 497, 498, 497])
+
+        let standing = Array(sixths[0..<3])
+        XCTAssertEqual(ArrangeLayout.smart(frames: standing, in: area,
+                                           minCellWidth: ClaudeAXTests.minCell, gap: 5),
+                       standing, "сидящие окна не двигаются вовсе")
+        // Живые рамки Элвиса (замер 20.09) сходятся с ячейками не точка в точку — их
+        // берёт допуск 8 pt, и это тоже «никто не двигается» (КП-2 критика).
+        let live = [CGRect(x: -792, y: -842, width: 495, height: 838),
+                    CGRect(x: -290, y: -842, width: 497, height: 838),
+                    CGRect(x: 210, y: -842, width: 497, height: 838)]
+        XCTAssertEqual(ArrangeLayout.smart(frames: live, in: area,
+                                           minCellWidth: ClaudeAXTests.minCell, gap: 5), live)
+    }
+
+    /// К трём стоящим окнам добавилось четвёртое «где попало»: трое стоят, новое встаёт
+    /// в свободную четвёртую ячейку той же сетки (слово Элвиса: «есть свободное место и
+    /// одно-два окна болтаются неприкаянно — заполни ими свободное место»).
+    func testSmartSeatsStrayWindowIntoFreeCell() {
+        let area = ClaudeAXTests.odyssey
+        let sixths = ArrangeLayout.cells(cols: 6, rows: 1, count: 6, in: area, gap: 5)
+        let frames = Array(sixths[0..<3]) + [CGRect(x: 900, y: -500, width: 820, height: 600)]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(Array(placed[0..<3]), Array(sixths[0..<3]), "трое стоят")
+        XCTAssertEqual(placed[3], CGRect(x: 711, y: -846, width: 497, height: 846))
+    }
+
+    /// Никто не сидит — окна делят экран поровну: три окна «как попало» становятся тремя
+    /// столбцами во всю ширину и высоту (ничья кандидатов — наименьшее число столбцов).
+    func testSmartSpreadsStrayWindowsEvenly() {
+        let area = ClaudeAXTests.odyssey
+        let frames = [CGRect(x: 40, y: -700, width: 900, height: 500),
+                      CGRect(x: -700, y: -800, width: 600, height: 700),
+                      CGRect(x: 1500, y: -400, width: 700, height: 300)]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        // Порядок неприкаянных — по их собственным рамкам, слева направо.
+        XCTAssertEqual(placed.map { $0.minX }, [208, -796, 1213])
+        XCTAssertEqual(placed.map { $0.width }, [1000, 999, 999])
+        XCTAssertEqual(placed.map { $0.minY }, Array(repeating: area.minY, count: 3))
+        XCTAssertEqual(placed.map { $0.height }, Array(repeating: area.height, count: 3))
+    }
+
+    /// Дырок посередине не оставляем (критик зам. 6): сидят ячейки 4 и 5 из шести, два
+    /// окна неприкаянные — они встают в 2 и 3, вплотную к сидящим, а не в 0 и 1.
+    func testSmartFillsCellsNextToSeatedOnes() {
+        let area = ClaudeAXTests.odyssey
+        let sixths = ArrangeLayout.cells(cols: 6, rows: 1, count: 6, in: area, gap: 5)
+        let frames = [sixths[4], sixths[5],
+                      CGRect(x: -700, y: -600, width: 400, height: 300),
+                      CGRect(x: 100, y: -300, width: 500, height: 200)]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(Array(placed[0..<2]), [sixths[4], sixths[5]], "сидящие стоят")
+        XCTAssertEqual(Array(placed[2..<4]), [sixths[2], sixths[3]])
+        // Сами ячейки: выбор свободных считается и отдельно от рамок.
+        XCTAssertEqual(ArrangeLayout.freeCells(count: 4, cells: 6, taken: [4, 5]), [2, 3])
+        XCTAssertEqual(ArrangeLayout.freeCells(count: 4, cells: 6, taken: []), [0, 1, 2, 3, 4, 5])
+        // Занятые разошлись шире отрезка — берём просто самые левые свободные.
+        XCTAssertEqual(ArrangeLayout.freeCells(count: 3, cells: 6, taken: [0, 5]), [1, 2, 3, 4])
+    }
+
+    /// Семь окон на Odyssey — два ряда (потолок шесть столбцов), а не семь столбиков:
+    /// при ничьей берётся наименьшее число столбцов, `ceil(7/2) = 4`.
+    func testSmartAddsSecondRowWhenWindowsDoNotFitOneRow() {
+        let area = ClaudeAXTests.odyssey
+        let frames = (0..<7).map { i in
+            CGRect(x: CGFloat(i) * 130 - 700, y: -700 + CGFloat(i) * 20, width: 600, height: 400)
+        }
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(Set(placed.map { $0.minY }).count, 2, "ровно два ряда")
+        XCTAssertEqual(Set(placed.map { $0.minX }).count, 4, "четыре столбца")
+        XCTAssertEqual(placed.map { $0.height }, [421, 421, 421, 421, 420, 420, 420])
+        XCTAssertEqual(placed.first?.minY, area.minY)
+        XCTAssertEqual(placed.last?.maxY, area.maxY)
+    }
+
+    /// Окон больше, чем мест на экране, — лишние не трогаем вовсе (слово Элвиса 08.09).
+    /// Макбук: четыре столбца × два ряда = восемь мест, девятое окно остаётся где стояло.
+    func testSmartLeavesWindowsBeyondCapacityAlone() {
+        let area = ClaudeAXTests.macbook
+        let stray = CGRect(x: 60, y: 300, width: 700, height: 420)
+        let frames = (0..<8).map { i in
+            CGRect(x: CGFloat(i % 4) * 120, y: 40 + CGFloat(i / 4) * 90, width: 640, height: 380)
+        } + [stray]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(placed[8], stray, "девятому окна места нет — его не двигают")
+        XCTAssertEqual(Set(placed[0..<8].map { $0.minX }).count, 4)
+        XCTAssertEqual(Set(placed[0..<8].map { $0.minY }).count, 2)
+        XCTAssertEqual(placed[0], CGRect(x: 0, y: 30, width: 298, height: 399))
+    }
+
+    /// Окна с разных экранов остаются каждое на своём (решение 2 плана): экран выбирается
+    /// по ЦЕНТРУ рамки в ПОЛНОЙ рамке экрана, а сетка считается по рабочей области.
+    func testSmartKeepsWindowsOnTheirOwnScreens() {
+        let odyssey = ClaudeAXTests.odyssey, macbook = ClaudeAXTests.macbook
+        let screens = [(full: CGRect(x: 0, y: 0, width: 1280, height: 832), usable: macbook),
+                       (full: odyssey, usable: odyssey)]
+        let onMac = CGRect(x: 300, y: 200, width: 600, height: 500)
+        let onBig = [CGRect(x: -700, y: -800, width: 900, height: 700),
+                     CGRect(x: 1400, y: -600, width: 800, height: 500)]
+        XCTAssertEqual(Screens.assign(screens: screens.map { $0.full },
+                                      frames: [onMac] + onBig), [0, 1, 1])
+        let placed = ArrangeLayout.smart(frames: [onMac] + onBig, screens: screens,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(placed[0], macbook, "одно окно на макбуке — во весь его экран")
+        XCTAssertEqual(placed[1].minX, odyssey.minX)
+        XCTAssertEqual(placed[2].maxX, odyssey.maxX)
+        XCTAssertEqual(placed[1].width + placed[2].width + 5, odyssey.width)
+        // Центр рамки нигде — экран с меню-баром (первый), окно с него не уезжает.
+        XCTAssertEqual(Screens.assign(screens: screens.map { $0.full },
+                                      frames: [CGRect(x: 9000, y: 9000, width: 10, height: 10)]),
+                       [0])
+    }
+
+    /// Навязанный порядок ради нового окна касается только ЕГО экрана (проверка WF77,
+    /// блокер 2): на другом мониторе окна, сидящие в правых ячейках, остаются где сидят.
+    func testSmartImposedOrderStaysOnAnchorScreen() {
+        let odyssey = ClaudeAXTests.odyssey, macbook = ClaudeAXTests.macbook
+        let screens = [(full: CGRect(x: 0, y: 0, width: 1280, height: 832), usable: macbook),
+                       (full: odyssey, usable: odyssey)]
+        let sixths = ArrangeLayout.cells(cols: 6, rows: 1, count: 6, in: odyssey, gap: 5)
+        let halves = ArrangeLayout.cells(cols: 2, rows: 1, count: 2, in: macbook, gap: 5)
+        // На Odyssey сидят ячейки 4 и 5; на макбуке окно и новое (якорь, индекс 3) поверх.
+        let fresh = CGRect(x: 40, y: 70, width: 600, height: 500)
+        let frames = [sixths[4], sixths[5], halves[0], fresh]
+        let placed = ArrangeLayout.smart(frames: frames, screens: screens,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5,
+                                         order: [3, 0, 1, 2], anchor: 3)
+        XCTAssertEqual(placed[0], sixths[4], "чужой экран не перекладывается")
+        XCTAssertEqual(placed[1], sixths[5])
+        XCTAssertEqual(placed[3], halves[0], "новое окно — первым на своём экране")
+        XCTAssertEqual(placed[2], halves[1])
+    }
+
+    /// Порог «сидящих не меньше половины» (КП-6 критика): одно случайно совпавшее окно
+    /// сетку из шести столбцов не диктует — четыре окна делят экран поровну.
+    func testSmartIgnoresSingleAccidentalMatch() {
+        let area = ClaudeAXTests.odyssey
+        let sixths = ArrangeLayout.cells(cols: 6, rows: 1, count: 6, in: area, gap: 5)
+        let frames = [sixths[2],
+                      CGRect(x: -700, y: -600, width: 400, height: 300),
+                      CGRect(x: 100, y: -300, width: 500, height: 200),
+                      CGRect(x: 1500, y: -700, width: 600, height: 400)]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(Set(placed.map { $0.minX }).count, 4, "четыре равных столбца")
+        XCTAssertNotEqual(placed[0], sixths[2], "случайно совпавшее окно тоже переехало")
+        XCTAssertEqual(placed.map { $0.height }, Array(repeating: area.height, count: 4))
+    }
+
+    /// Порядок НАВЯЗАН (новое окно «слева» и «посередине»): сетка та же, но окна кладутся
+    /// подряд — «сидит» там уже никого не держит.
+    func testSmartFollowsGivenOrder() {
+        let area = ClaudeAXTests.odyssey
+        let thirds = ArrangeLayout.cells(cols: 3, rows: 1, count: 3, in: area, gap: 5)
+        let frames = [thirds[0], thirds[1], CGRect(x: 900, y: -500, width: 820, height: 600)]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5,
+                                         order: [2, 0, 1])
+        XCTAssertEqual(placed, [thirds[1], thirds[2], thirds[0]])
+        // Окно, которого в порядке не назвали, встаёт за названными — по своему месту.
+        XCTAssertEqual(ArrangeLayout.smart(frames: frames, in: area,
+                                           minCellWidth: ClaudeAXTests.minCell, gap: 5,
+                                           order: [2]),
+                       [thirds[1], thirds[2], thirds[0]])
     }
 
     /// «Посередине» у сетки с рядами — середина ПЕРВОГО ряда, а не всего порядка (#5560):
@@ -422,28 +658,51 @@ final class ClaudeAXTests: XCTestCase {
 
     /// Повторы `setFrame` больше не спят на главной нити (#5557): сон стоял в цикле по окнам
     /// и умножался на их число — до 2,5 с замершего меню-бара на пяти окнах, а через тот же
-    /// `setFrame` ходят «Расставить», канал «Пимп» и возврат раскладок. И повторять стоит
-    /// только промах ПОЗИЦИИ: размер Electron зажимает осознанно (#5733).
+    /// `setFrame` ходят «Расставить», канал «Пимп» и возврат раскладок.
+    ///
+    /// С WF77 повторяем и промах РАЗМЕРА (находка живьём 20.09: за один заход «позиция →
+    /// размер → позиция» размер не берётся вовсе — окно остаётся прежней ширины и высоты,
+    /// и «расставило как попало» было ровно этим). Кроме ширины уже `minWidth`: её Electron
+    /// зажимает осознанно, и весь бюджет повторов уходил туда впустую (#5733).
     func testSetFrameRetriesWithoutSleepingOnMainThread() {
         let want = CGRect(x: 100, y: 100, width: 800, height: 600)
         // Позиция не встала — окно ещё едет, повтор нужен (грабли гейта WF36).
         XCTAssertTrue(ClaudeActions.needsFrameRetry(now: CGRect(x: 140, y: 100, width: 800, height: 600),
                                                     want: want))
-        // Встала позиция, но не размер — это Electron, повторять нечего.
-        XCTAssertFalse(ClaudeActions.needsFrameRetry(now: CGRect(x: 100, y: 100, width: 360, height: 600),
-                                                     want: want))
+        // Позиция встала, а размер остался прежним — повтор нужен (WF77): второй круг
+        // пишет размер уже после того, как встал верх окна, и высота наконец берётся.
+        XCTAssertTrue(ClaudeActions.needsFrameRetry(now: CGRect(x: 100, y: 100, width: 1200, height: 900),
+                                                    want: want))
+        XCTAssertTrue(ClaudeActions.needsFrameRetry(now: CGRect(x: 100, y: 100, width: 800, height: 838),
+                                                    want: want))
+        // Ячейка уже минимальной ширины окна — ширину Electron не отдаст, и это не повод
+        // для повтора: позиция и высота на месте.
+        let narrow = CGRect(x: 100, y: 100, width: 241, height: 600)
+        XCTAssertFalse(ClaudeActions.needsFrameRetry(now: CGRect(x: 100, y: 100, width: 280, height: 600),
+                                                     want: narrow, minWidth: 280))
+        XCTAssertTrue(ClaudeActions.needsFrameRetry(now: CGRect(x: 100, y: 100, width: 280, height: 600),
+                                                    want: narrow, minWidth: 240),
+                      "минимум ниже заказа — ширину спрашиваем снова")
         // Допуск тот же, что у `frameMatches`.
-        XCTAssertFalse(ClaudeActions.needsFrameRetry(now: CGRect(x: 102, y: 98, width: 800, height: 600),
+        XCTAssertFalse(ClaudeActions.needsFrameRetry(now: CGRect(x: 102, y: 98, width: 802, height: 598),
                                                      want: want))
         // Рамки нет вовсе (окно закрылось) — повторять некому.
         XCTAssertFalse(ClaudeActions.needsFrameRetry(now: nil, want: want))
+        // Кругов четыре: «позиция → пауза → размер» на этом Маке требует второго захода.
+        XCTAssertEqual(ClaudeActions.frameRetries, 4)
 
         // Вызов на окне, которого нет: AX молчит, и мы возвращаемся сразу — до WF43 здесь
-        // сгорали два `Thread.sleep` по 0,25 с прямо в главной нити.
+        // сгорали два `Thread.sleep` по 0,25 с прямо в главной нити. Минимум ширины
+        // подставляем свой: живой claude.json в прогоне не читаем.
         var scheduled: [TimeInterval] = []
         let live = ClaudeActions.frameSchedule
+        let liveMin = ClaudeActions.minFrameWidth
         ClaudeActions.frameSchedule = { delay, _ in scheduled.append(delay) }
-        defer { ClaudeActions.frameSchedule = live }
+        ClaudeActions.minFrameWidth = { 280 }
+        defer {
+            ClaudeActions.frameSchedule = live
+            ClaudeActions.minFrameWidth = liveMin
+        }
         let started = Date()
         XCTAssertFalse(ClaudeActions.setFrame(AXUIElementCreateApplication(999_999), want))
         XCTAssertLessThan(Date().timeIntervalSince(started), 0.1, "повторы всё ещё спят на нити")
@@ -473,8 +732,13 @@ final class ClaudeAXTests: XCTestCase {
         // Повтор идёт тем же порядком: `fresh` доезжает до следующего захода.
         var scheduled = 0
         let live = ClaudeActions.frameSchedule
+        let liveMin = ClaudeActions.minFrameWidth
         ClaudeActions.frameSchedule = { _, _ in scheduled += 1 }
-        defer { ClaudeActions.frameSchedule = live }
+        ClaudeActions.minFrameWidth = { 280 }
+        defer {
+            ClaudeActions.frameSchedule = live
+            ClaudeActions.minFrameWidth = liveMin
+        }
         XCTAssertFalse(ClaudeActions.setFrame(AXUIElementCreateApplication(999_999), want,
                                               fresh: true))
         XCTAssertEqual(scheduled, 0, "мёртвому окну повтор не назначаем")
@@ -1835,9 +2099,10 @@ final class ClaudeAXTests: XCTestCase {
 
     func testMyThemePreviewsOnlyPalette() throws {
         // Примерка своей темы обязана стать неотличимой от примерки темы каталога с тем же id.
-        // Записать её файлом в тесте нельзя: `sendPreview` требует AX-заголовка окна, а живой
-        // AX здесь не поднимается (шапка файла; так же устроен ProjectTests.swift:1029).
-        // Поэтому проверяем то, что видно: обе функции ведут себя на одном окне одинаково,
+        // Уйдёт ли она файлом, решает живой AX: `sendPreview` требует AX-заголовка окна, и на
+        // Маке с запущенным Claude окно в фокусе есть, а на голой машине его нет (#6667 — тест
+        // требовал, чтобы файла не было, и на Маке Элвиса краснел). Поэтому проверяем то, что
+        // верно в обоих случаях: обе функции на одном окне дают один и тот же результат,
         // и ни в одной из двух функций своей темы не осталось слоёв шрифта, размера и рамки.
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
@@ -1845,10 +2110,16 @@ final class ClaudeAXTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_757_000_000)
         let actions = actionsOnDisk(dir: dir, now: { now })
         let my = loadedMyTheme()
+        let file = dir.appendingPathComponent("command.json")
+        // Тело ушедшей примерки без `id` и времени; ничего не ушло — nil.
+        func sent(_ send: () -> Bool) throws -> String? {
+            try? FileManager.default.removeItem(at: file)
+            guard send() else { return nil }
+            return ClaudeAXTests.commandTail(try String(contentsOf: file, encoding: .utf8))
+        }
 
-        XCTAssertEqual(actions.preview(myTheme: my, window: nil),
-                       actions.previewTheme(my.theme, window: nil))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("command.json").path))
+        XCTAssertEqual(try sent { actions.preview(myTheme: my, window: nil) },
+                       try sent { actions.previewTheme(my.theme, window: nil) })
 
         let source = try String(contentsOf: ClaudeAXTests.sourceFile("ClaudeActions.swift"), encoding: .utf8)
         for head in ["func preview(myTheme:", "func apply(myTheme:"] {
@@ -2439,7 +2710,9 @@ final class ClaudeAXTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
         actions.isMainWindowTitle = { $0 == "PimpMyClaude" }
-        actions.chatForTitle = { $0 == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil }
+        actions.chatForTitle = { title, _ in
+            title == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil
+        }
         actions.mainWindowMatch = { ClaudeAXTests.cashoutMainMatch }
         let window = MenuModel.themeScopeWindow
 
@@ -2454,6 +2727,23 @@ final class ClaudeAXTests: XCTestCase {
         // Окно не опознано — как сегодня, по заголовку.
         XCTAssertNil(actions.themeAddress(scope: window, title: "Гость").match)
         XCTAssertNil(actions.themeAddress(scope: window, title: "Гость").chat)
+        // План WF77 (#6734): заголовок носят два окна — адрес выбирает РАМКА окна, и без
+        // неё это ничья. Карту рамок держит `ChatProbe`, сюда она приходит сиденьем.
+        let left = CGRect(x: -792, y: -842, width: 496, height: 838)
+        let right = CGRect(x: -290, y: -842, width: 496, height: 838)
+        actions.chatForTitle = { title, frame in
+            guard title == "Ожидание задачи", let frame = frame else { return nil }
+            return frame.minX == left.minX ? "local_left" : "local_right"
+        }
+        XCTAssertEqual(actions.themeAddress(scope: window, title: "Ожидание задачи",
+                                            frame: left).chat, "local_left")
+        XCTAssertEqual(actions.themeAddress(scope: window, title: "Ожидание задачи",
+                                            frame: right).chat, "local_right")
+        XCTAssertNil(actions.themeAddress(scope: window, title: "Ожидание задачи").chat,
+                     "рамки нет — ничья, и команда адресуется заголовком, как до WF77")
+        actions.chatForTitle = { title, _ in
+            title == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil
+        }
         // «Всем окнам» адреса не имеет вовсе, пустой заголовок значит «окно в фокусе».
         XCTAssertNil(actions.themeAddress(scope: MenuModel.themeScopeAll,
                                           title: "PimpMyClaude").match)
@@ -2809,7 +3099,9 @@ final class ClaudeAXTests: XCTestCase {
         let file = dir.appendingPathComponent("command.json")
         let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
         actions.isMainWindowTitle = { $0 == "PimpMyClaude" }
-        actions.chatForTitle = { $0 == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil }
+        actions.chatForTitle = { title, _ in
+            title == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil
+        }
         actions.mainWindowMatch = { ClaudeAXTests.cashoutMainMatch }
         var delays: [TimeInterval] = []
         actions.schedule = { delay, _ in delays.append(delay) }
@@ -2852,13 +3144,20 @@ final class ClaudeAXTests: XCTestCase {
         actions.clock = { now }
         actions.mainWindowMatch = { nil }
         var delays: [TimeInterval] = []
-        actions.schedule = { delay, _ in delays.append(delay) }
+        // Пауза фокуса — шаг живого AX: на Маке, где Claude запущен и доступ выдан,
+        // `perform` находит окно в фокусе и шлёт команду после неё (#6667 — тест считал,
+        // что в прогоне живого AX не бывает). Её прокручиваем сами, ⌘N ждём отдельно.
+        var focusSteps: [() -> Void] = []
+        actions.schedule = { delay, block in
+            if delay == actions.focusDelay { focusSteps.append(block) } else { delays.append(delay) }
+        }
 
         // Перед «Новым окном» в канал уже написали (примерка темы, цвет проекта, сводка).
         actions.perform(.scroll, on: nil)
         XCTAssertEqual(try ClaudeAXTests.action(of: file), "scroll")
 
         actions.perform(.newWindow, on: nil)
+        focusSteps.forEach { $0() }
         XCTAssertEqual(try ClaudeAXTests.action(of: file), "scroll",
                        "команда стоит в очереди — зазор канала ещё не вышел")
         XCTAssertTrue(delays.isEmpty, "⌘N нельзя жать раньше, чем команда легла на диск")
@@ -2866,7 +3165,10 @@ final class ClaudeAXTests: XCTestCase {
         // Очередь дошла до записи — только теперь отсчитываются 0,8 с до ⌘N.
         now = now.addingTimeInterval(CommandChannel.minInterval)
         XCTAssertEqual(queued.count, 1)
-        queued.removeFirst().run()
+        // Через `XCTUnwrap`, а не `removeFirst()`: на пустой очереди падал ВЕСЬ прогон
+        // (#6667) — четыре класса тестов после этой строки не исполнялись вовсе.
+        try XCTUnwrap(queued.first).run()
+        queued.removeFirst()
         XCTAssertEqual(try ClaudeAXTests.action(of: file), ClaudeCommand.newWindow.rawValue)
         XCTAssertEqual(delays, [actions.newWindowKeyDelay])
     }
@@ -2888,8 +3190,12 @@ final class ClaudeAXTests: XCTestCase {
         let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
         actions.mainWindowMatch = { nil }
         actions.chatName = { project in "\(project.name) 2" }
-        actions.schedule = { _, _ in }
+        // Как в тесте очереди (#6667): пауза фокуса живого AX прокручивается здесь же,
+        // а отложенный ⌘N остаётся невыполненным — жать клавишу в прогоне незачем.
+        var focusSteps: [() -> Void] = []
+        actions.schedule = { delay, block in if delay == actions.focusDelay { focusSteps.append(block) } }
         actions.newWindow(in: ClaudeAXTests.project("PimpMyClaude"), on: nil)
+        focusSteps.forEach { $0() }
 
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try Data(contentsOf: file))
                                     as? [String: Any])
