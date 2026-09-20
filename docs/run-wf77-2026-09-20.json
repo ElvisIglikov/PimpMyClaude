@@ -1,0 +1,22 @@
+{
+  "plan": "docs/plan-wf77-2026-09-20.md",
+  "branch": "wf77 (ставится перед кодингом)",
+  "tag": "wf77-start (ставится перед кодингом)",
+  "status": "идёт",
+  "orchestrator": "Fable 5.1 high",
+  "roles": {"critic": "Opus max", "mockup_wf78": "Opus max", "coding": "Opus max ×2 (A страница, B Swift)", "verify": "Opus max"},
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/9f430f85-358c-4076-bf1b-9855fe40ee1c/workflows/scripts/wf77-critic-wf78-mockup-wf_3baeaccf-d74.js",
+  "run_id": "wf_3baeaccf-d74",
+  "resumes": 0,
+  "cron": null,
+  "next_steps": [
+    "дождаться критика (docs/critic-wf77-2026-09-20.md) и макета WF78 (docs/mockup-wf78-limits.html) → правки плана по критику → презентация Элвису",
+    "по слову «делай»: тег wf77-start, ветка wf77, крон-сторож, волна: A (страница) ‖ B (Swift)",
+    "гейт: tools/test.sh (красное — только #6667), версия 1.5.4 (13), bundle, подмена, живой inject, документы, слияние в main",
+    "WF78 (#6737, #6738): после выбора Элвиса в макете — отдельный план (полоса страницы; ждать конца батча A)"
+  ],
+  "journal": [
+    "21:10 · слова Элвиса: задачи #6733–#6738; #6736 (имя папки в заголовке) сделана сразу мимо конвейера — inject wf76-a-16, коммит a8c8ad3, JS-тесты зелёные, Swift красные известные (#6667)",
+    "21:27 · план WF77 написан; запущены критик WF77 и макет WF78 (Opus max ×2), run wf_3baeaccf-d74"
+  ]
+}
