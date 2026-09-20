@@ -10,13 +10,12 @@
     "coding": "волна 1: A Opus max ‖ B0 Opus xhigh → B1 Opus max ‖ C Opus xhigh; волна 2: B2 Opus max",
     "verify": "Opus max"
   },
-  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/9f430f85-358c-4076-bf1b-9855fe40ee1c/workflows/scripts/wf77-wave1-wf_6501661e-e4c.js",
-  "run_id": "wf_6501661e-e4c",
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/9f430f85-358c-4076-bf1b-9855fe40ee1c/workflows/scripts/wf77-wave2-wf_33e37760-de5.js",
+  "run_id": "wf_33e37760-de5",
   "resumes": 0,
   "cron": "11e87201 (:17 каждый час)",
   "next_steps": [
-    "дождаться волны 1 (A ‖ B0→B1 ‖ C) → гейт: дифф против плана, tools/test.sh, коммиты по батчам",
-    "волна 2: B2 (окно → чат по рамке: ChatProbe, ProjectPaint, ClaudeActions адресация, ClaudeAXController, PimpChannel.windows) на эталонах A",
+    "дождаться волны 2 (B2 → проверяющий, docs/verify-wf77-2026-09-20.md) → чинить блокеры проверки → коммит B2",
     "гейт: версия 1.5.4 (13), bundle, подмена, cp inject.js, живые проверки из плана, проверяющий Opus max, документы, HANDOFF в архив, слияние в main, крон снять",
     "после всех воркфлоу — короткий HTML-отчёт Элвису в фиолетовом неоновом стиле Пимпа (HTML.md)",
     "WF78 (#6737, #6738): ждёт ответов Элвиса по макету docs/mockup-wf78-limits.html; новые задачи #6743 (дубли суперполосы), #6744 (диктовка на ярких темах), #6745 (звук — уточнить), #6747"
@@ -25,6 +24,7 @@
     "21:10 · слова Элвиса: задачи #6733–#6738; #6736 (имя папки в заголовке) сделана сразу мимо конвейера — inject wf76-a-16, коммит a8c8ad3, JS-тесты зелёные, Swift красные известные (#6667)",
     "21:27 · план WF77 написан; запущены критик WF77 и макет WF78 (Opus max ×2), run wf_3baeaccf-d74",
     "21:50 · критик: годен с правками (9 блокеров, 19 замечаний) — docs/critic-wf77-2026-09-20.md; план дополнен разделом «После критика»; слова Элвиса: MacBook 4 столбца, зазор только между окнами, «продолжай работу» = одобрение; руками через AX выровнены 3 окна и открыт Dictator в 4-й ячейке — находка про setFrame (размер не ставится без пауз)",
-    "21:50 · тег wf77-start, ветка wf77, крон 11e87201; волна 1 запущена, run wf_6501661e-e4c"
+    "21:50 · тег wf77-start, ветка wf77, крон 11e87201; волна 1 запущена, run wf_6501661e-e4c",
+    "22:33 · гейт волны 1: tools/test.sh зелёный (JS 419 · CLI 74 · Swift 297, красных 0 — #6667 снят батчем B0); коммиты 6896cd3 A, 6f754f2 B0, 664ebd0 B1, ca8c992 C; слова Элвиса по макету WF78 записаны в MOCKUPS.md; правило «вопросы наверху и в макетах» — SkilZZZ 1b8f71d; волна 2 запущена, run wf_33e37760-de5"
   ]
 }
