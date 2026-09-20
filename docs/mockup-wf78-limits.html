@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1 · лимиты по-русски и кружок в углу</title>
+<style>
+  :root{
+    --bg:#170f22; --panel:#211630; --line:#3a2b52; --ink:#f3eefb; --muted:#a99cbe;
+    --accent:#b48cff; --green:#4ecf8a; --red:#e5645d; --yellow:#efc65c;
+    --win:#3b2560; --pop:#4a3173; --popline:rgba(255,255,255,.18);
+    --track:#2a1a45; --fill:#b48cff;
+    --mono:ui-monospace,SFMono-Regular,Menlo,"SF Mono",monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{overflow-x:hidden;}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:20px/1.5 -apple-system,"Helvetica Neue",Arial,sans-serif;}
+  main{padding:24px 26px 90px;}
+  .badge{display:inline-block;background:var(--accent);color:#1a1226;font-weight:800;
+         font-size:15px;letter-spacing:.06em;padding:4px 12px;border-radius:999px;}
+  h1{font-size:2.9rem;line-height:1.05;margin:14px 0 8px;letter-spacing:-.015em;}
+  .who{color:var(--muted);font-size:18px;margin:0 0 18px;}
+  nav.toc{font-size:19px;color:var(--muted);margin:0 0 30px;line-height:1.9;}
+  nav.toc a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line);}
+  h2{font-size:3.1rem;line-height:1.03;margin:58px 0 16px;letter-spacing:-.02em;}
+  h3{font-size:1.6rem;margin:34px 0 8px;}
+  p{max-width:70ch;margin:0 0 14px;}
+  ul{max-width:70ch;padding-left:1.15em;margin:0 0 14px;}
+  li{margin:0 0 9px;}
+  .num{color:var(--accent);font-weight:800;font-size:17px;letter-spacing:.05em;margin:22px 0 6px;}
+  .row{display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start;margin:6px 0 4px;}
+  .frame{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;}
+  .cap{color:var(--muted);font-size:17px;margin:8px 0 0;max-width:46ch;}
+  .frame.f-pop{width:min(100%,366px);}
+  .frame.f-win{width:min(100%,450px);}
+  .frame .cap{max-width:100%;}
+  .cap b{color:var(--ink);font-weight:600;}
+  .tag{display:inline-block;font-size:15px;color:var(--muted);margin:0 0 8px;}
+  .tag.now{color:#e0a97c;}
+  .tag.next{color:var(--green);}
+  .note{border-left:3px solid var(--accent);background:#1d1430;border-radius:0 12px 12px 0;
+        padding:10px 16px;max-width:70ch;margin:16px 0;}
+  .btn{display:inline-block;-webkit-appearance:none;appearance:none;border:0;cursor:pointer;
+       background:var(--accent);color:#1a1226;font:700 19px/1.2 inherit;padding:13px 22px;
+       border-radius:12px;}
+  .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:600;font-size:17px;padding:9px 16px;}
+  .ok{color:var(--green);font-size:17px;margin-left:10px;}
+
+  /* ——— нарисованная панель Claude ——— */
+  .pop{width:min(100%,336px);background:var(--pop);border:1px solid var(--popline);
+       border-radius:14px;padding:11px 12px;font-family:var(--mono);font-size:12.5px;
+       color:#efe9fb;box-shadow:0 14px 34px rgba(0,0,0,.45);}
+  .pop .prow{display:flex;align-items:baseline;gap:8px;margin:2px 0 6px;}
+  .pop .l{white-space:nowrap;}
+  .pop .r{margin-left:auto;white-space:nowrap;color:#d9cff0;}
+  .pop .r b{color:#a894c9;font-weight:400;}
+  .pop .pct{color:#efe9fb;margin-left:8px;}
+  .pop .dim{color:#a894c9;}
+  .pop .dim .r{color:#a894c9;}
+  .pop .sep{height:1px;background:rgba(255,255,255,.14);margin:10px -12px;}
+  .pop .link{color:#cbbbee;margin:2px 0 1px;}
+  .pop .bar{height:5px;border-radius:3px;background:var(--track);overflow:hidden;margin:0 0 11px;}
+  .pop .bar i{display:block;height:100%;background:var(--fill);border-radius:3px;}
+  .pop .ctx{display:flex;gap:2px;height:5px;margin:0 0 4px;}
+  .pop .ctx i{display:block;height:100%;border-radius:3px;}
+  .pop .acc{color:#efe9fb;}
+  /* полоса недели */
+  .week{display:flex;gap:3px;height:5px;margin:0 0 4px;}
+  .week i{flex:1;background:var(--track);border-radius:3px;overflow:hidden;display:block;}
+  .week i b{display:block;height:100%;background:var(--fill);border-radius:3px;}
+  .wdays{display:flex;gap:3px;color:#8f81ac;font-size:10.5px;margin:0 0 7px;}
+  .wdays span{flex:1;text-align:center;}
+  .wdays span.on{color:#efe9fb;}
+  /* подсветка подменённого текста */
+  .show-swap .swap{background:rgba(180,140,255,.28);border-radius:4px;
+                   box-shadow:0 0 0 2px rgba(180,140,255,.28);}
+  .show-swap .add{background:rgba(78,207,138,.24);border-radius:4px;
+                  box-shadow:0 0 0 2px rgba(78,207,138,.24);}
+  .show-swap .addblock{outline:2px solid rgba(78,207,138,.45);outline-offset:4px;border-radius:4px;}
+
+  /* ——— нарисованное окно Claude ——— */
+  .win{position:relative;width:min(100%,420px);height:600px;background:var(--win);
+       border:1px solid #573a86;border-radius:13px;overflow:hidden;}
+  .fl,.fr{height:100%;}
+  .fl{-webkit-mask-image:radial-gradient(ellipse 152px 58px at 0 0,rgba(0,0,0,.12) 55%,#000 100%);
+      mask-image:radial-gradient(ellipse 152px 58px at 0 0,rgba(0,0,0,.12) 55%,#000 100%);}
+  .fr{-webkit-mask-image:radial-gradient(ellipse 152px 58px at 100% 0,rgba(0,0,0,.12) 55%,#000 100%);
+      mask-image:radial-gradient(ellipse 152px 58px at 100% 0,rgba(0,0,0,.12) 55%,#000 100%);}
+  .fr.low{-webkit-mask-image:radial-gradient(ellipse 152px 58px at 100% 100%,rgba(0,0,0,.12) 55%,#000 100%);
+          mask-image:radial-gradient(ellipse 152px 58px at 100% 100%,rgba(0,0,0,.12) 55%,#000 100%);}
+  .feed{padding:12px 14px 22px;color:#ddd2f2;font-size:11.5px;line-height:1.62;height:100%;overflow:hidden;}
+  .feed .me{color:#fff;background:rgba(255,255,255,.07);border-radius:9px;padding:6px 9px;margin:9px 0;}
+  .feed p{margin:0 0 9px;max-width:none;}
+  .wbtns{position:absolute;top:13px;left:14px;display:flex;gap:7px;}
+  .wbtns i{width:11px;height:11px;border-radius:50%;display:block;}
+  .ring{position:absolute;width:19px;height:19px;border-radius:50%;padding:0;border:0;cursor:pointer;
+        background:conic-gradient(var(--fill) 0 11%,rgba(255,255,255,.22) 11% 100%);}
+  .ring::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--win);}
+  .ring.top{top:12px;right:13px;}
+  .ring.bot{bottom:26px;right:13px;}
+  .handle{position:absolute;left:50%;transform:translateX(-50%);bottom:5px;width:104px;height:4px;
+          border-radius:3px;background:rgba(255,255,255,.28);}
+  .slot{position:absolute;right:11px;display:none;}
+  .slot.top{top:38px;}
+  .slot.bot{bottom:38px;}
+  .win.open .slot{display:block;}
+  .hint{color:var(--muted);font-size:15px;margin:8px 0 0;}
+
+  /* ——— вопросы ——— */
+  .qs{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 18px 22px;margin:8px 0 0;}
+  .q{margin:26px 0 0;}
+  .q .t{font-size:1.35rem;font-weight:700;margin:0 0 10px;}
+  .opt{display:flex;align-items:flex-start;gap:14px;margin:0 0 12px;}
+  .opt input{-webkit-appearance:none;appearance:none;flex:none;width:30px;height:30px;margin:0;
+             border-radius:50%;border:2px solid #6a5a8c;background:#170f22;cursor:pointer;position:relative;}
+  .opt input:checked{border-color:var(--accent);}
+  .opt input:checked::after{content:"";position:absolute;inset:6px;border-radius:50%;background:var(--accent);}
+  .opt .txt{padding-top:1px;}
+  .opt .txt .name{font-size:19px;}
+  .opt .txt .why{color:var(--muted);font-size:17px;}
+  .rec{color:var(--green);font-weight:700;}
+  .lead{color:var(--muted);font-size:17px;margin:10px 0 0;max-width:60ch;}
+
+  @media (max-width:720px){
+    body{font-size:18px;}
+    main{padding:18px 14px 70px;}
+    h1{font-size:2.4rem;}
+    h2{font-size:2.5rem;margin:46px 0 14px;}
+    h3{font-size:1.45rem;}
+    .frame{padding:11px;}
+    .win{height:560px;}
+  }
+</style>
+</head>
+<body>
+<main>
+
+<span class="badge">ФАЙЛ 1</span>
+<h1>Окошко лимитов по-русски и кружок контекста в углу</h1>
+<p class="who">макет · Opus 5 1M · 20.09.2026 · задачи #6738, #6737</p>
+<nav class="toc"><a href="#pics">Картинки</a> · <a href="#qs">Вопросы</a> · <a href="#done">Решено, не переспрашиваю</a> · <a href="#how">Как это сделано</a></nav>
+
+<h2 id="pics">Картинки</h2>
+
+<h3>Окошко лимитов: сейчас и как станет</h3>
+<div class="num">1.1</div>
+<div class="row">
+
+  <div class="frame f-pop">
+    <div class="tag now">Сейчас</div>
+    <div class="pop">
+      <div class="prow"><span class="l">Context window</span><span class="r">111.5k / 1M (11%) <b>›</b></span></div>
+      <div class="ctx">
+        <i style="flex:0 0 5%;background:#4a8fe0"></i>
+        <i style="flex:0 0 3%;background:#e0904a"></i>
+        <i style="flex:0 0 3%;background:#57c07a"></i>
+        <i style="flex:0 0 26%;background:#6b5f80"></i>
+        <i style="flex:1;background:#40385a"></i>
+      </div>
+      <div class="sep"></div>
+      <div class="prow dim"><span class="l">Plan usage limits · Max (20x)</span><span class="r">→</span></div>
+      <div class="prow"><span class="l">5-hour limit</span><span class="r">Resets in 4 hr 9 min <span class="pct">17%</span></span></div>
+      <div class="bar"><i style="width:17%"></i></div>
+      <div class="prow"><span class="l">Weekly · all models</span><span class="r">Resets Fri 8:00 AM <span class="pct">66%</span></span></div>
+      <div class="bar"><i style="width:66%"></i></div>
+      <div class="prow"><span class="l">Weekly · Fable</span><span class="r">Resets Fri 8:00 AM <span class="pct">72%</span></span></div>
+      <div class="bar"><i style="width:72%"></i></div>
+      <div class="sep"></div>
+      <div class="link">See detailed breakdown</div>
+    </div>
+    <p class="cap">Родная панель Claude — открывается кружком контекста над полем ввода.</p>
+  </div>
+
+  <div class="frame f-pop">
+    <div class="tag next">Станет</div>
+    <div class="pop" id="pop-ru">
+      <div class="prow"><span class="l"><span class="swap">Контекст</span></span><span class="r"><span class="swap">112k / 1M (11%)</span> <b>›</b></span></div>
+      <div class="ctx">
+        <i style="flex:0 0 5%;background:#4a8fe0"></i>
+        <i style="flex:0 0 3%;background:#e0904a"></i>
+        <i style="flex:0 0 3%;background:#57c07a"></i>
+        <i style="flex:0 0 26%;background:#6b5f80"></i>
+        <i style="flex:1;background:#40385a"></i>
+      </div>
+      <div class="sep"></div>
+      <div class="prow dim"><span class="l"><span class="swap acc">elvisnya · Max 20x</span></span><span class="r">→</span></div>
+      <div class="prow"><span class="l"><span class="swap">5-часовой</span></span><span class="r"><span class="swap">4 ч 9 мин — в 01:25</span></span></div>
+      <div class="bar"><i style="width:17%"></i></div>
+      <div class="prow"><span class="l"><span class="swap">Недельный</span></span><span class="r"><span class="swap">Пт 08:00</span> <span class="pct">66%</span></span></div>
+      <div class="bar"><i style="width:66%"></i></div>
+      <div class="prow"><span class="l"><span class="swap">Fable</span></span><span class="r"><span class="swap">Пт 08:00</span> <span class="pct">72%</span></span></div>
+      <div class="bar"><i style="width:72%"></i></div>
+      <div class="prow"><span class="l"><span class="add">Сброс через 3 дня 11 часов</span></span></div>
+      <div class="addblock">
+        <div class="week">
+          <i><b style="width:100%"></b></i><i><b style="width:100%"></b></i><i><b style="width:100%"></b></i>
+          <i><b style="width:55%"></b></i><i><b style="width:0"></b></i><i><b style="width:0"></b></i><i><b style="width:0"></b></i>
+        </div>
+        <div class="wdays"><span>Пт</span><span>Сб</span><span>Вс</span><span class="on">Пн</span><span>Вт</span><span>Ср</span><span>Чт</span></div>
+      </div>
+      <div class="sep"></div>
+      <div class="link"><span class="swap">Подробнее</span></div>
+    </div>
+    <p class="cap">То же окошко после нашего скрипта. Порядок строк прежний: недельный, Fable, внизу новая полоса.</p>
+  </div>
+
+</div>
+<p><button class="btn ghost" id="swapBtn" type="button">Подсветить, что подменяет скрипт</button></p>
+<p class="cap">Сиреневым — тексты, которые скрипт переписывает в родных элементах. Зелёным — единственное, что он дорисовывает сам: полоса дней.
+Цифры в макете сведены к одному моменту (понедельник, 21:16), поэтому «через 3 дня 11 часов», а не «3 дня 6 часов» — формат строки твой, число считается само.</p>
+
+<h3>Полоса недели — два варианта</h3>
+<div class="num">1.2</div>
+<div class="row">
+  <div class="frame f-pop">
+    <div class="tag">Вариант «с подписями дней»</div>
+    <div class="pop" style="padding-bottom:9px">
+      <div class="prow"><span class="l">Сброс через 3 дня 11 часов</span></div>
+      <div class="week">
+        <i><b style="width:100%"></b></i><i><b style="width:100%"></b></i><i><b style="width:100%"></b></i>
+        <i><b style="width:55%"></b></i><i><b style="width:0"></b></i><i><b style="width:0"></b></i><i><b style="width:0"></b></i>
+      </div>
+      <div class="wdays"><span>Пт</span><span>Сб</span><span>Вс</span><span class="on">Пн</span><span>Вт</span><span>Ср</span><span>Чт</span></div>
+    </div>
+    <p class="cap">Видно не только «сколько прошло», но и какой сегодня день недели лимита. Сегодняшний день — ярче.</p>
+  </div>
+  <div class="frame f-pop">
+    <div class="tag">Вариант «без подписей»</div>
+    <div class="pop" style="padding-bottom:9px">
+      <div class="prow"><span class="l">Сброс через 3 дня 11 часов</span></div>
+      <div class="week" style="margin-bottom:8px">
+        <i><b style="width:100%"></b></i><i><b style="width:100%"></b></i><i><b style="width:100%"></b></i>
+        <i><b style="width:55%"></b></i><i><b style="width:0"></b></i><i><b style="width:0"></b></i><i><b style="width:0"></b></i>
+      </div>
+    </div>
+    <p class="cap">Ровно как родные полосы выше: чище, но день недели считаешь глазами по отрезкам.</p>
+  </div>
+</div>
+<p class="cap">Неделя идёт от пятницы 08:00 до пятницы 08:00 — семь отрезков, как сегменты у полоски воркфлоу. Залитая часть — сколько недели прошло; край заливки и есть «мы сейчас».</p>
+
+<h3>Режим чтения: кружок в правом углу — два варианта</h3>
+<div class="num">1.3</div>
+<div class="row">
+
+  <div class="frame f-win">
+    <div class="tag">Вариант «правый верхний угол»</div>
+    <div class="win" data-win>
+      <div class="fl"><div class="fr"><div class="feed">
+        <p>…и тогда полоса делится на семь отрезков, по одному на день недели лимита.</p>
+        <div class="me">Покажи сначала макет, потом будем вносить.</div>
+        <p>Хорошо. Скрипт только подменяет тексты в готовых элементах Claude и дорисовывает одну полосу внизу.</p>
+        <p>Если Claude обновится и элемент не найдётся — панель останется родной, английской, ничего не сломается.</p>
+        <div class="me">А кружок чтобы всегда был виден.</div>
+        <p>Да: в режиме чтения он один живёт в правом углу, на зеркальном градиенте, и нажимается как обычно.</p>
+        <p>Проверил на узком окне 420 точек — лента не наезжает на кнопки, текст в углах уходит в тень.</p>
+        <p>Неделя лимита считается от пятницы 08:00 до пятницы 08:00, поэтому отрезков ровно семь.</p>
+        <div class="me">А проценты у пятичасового?</div>
+        <p>Убрал совсем: осталась только полоска и строка «через сколько — и во сколько сбросится».</p>
+        <p>Строку с именем аккаунта видно и в зависимых окнах — раньше там про аккаунт не было сказано нигде.</p>
+        <p>Осталось выбрать: подписывать дни под полосой или оставить чистые отрезки, как у родных полос Claude.</p>
+      </div></div></div>
+      <div class="wbtns"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+      <button class="ring top" type="button" aria-label="Контекст" data-ring></button>
+      <div class="slot top" data-slot></div>
+      <div class="handle"></div>
+    </div>
+    <p class="cap"><b>Рекомендую.</b> Зеркально кнопкам окна: два угла сверху заняты, вся остальная высота — чистый текст. Палец идёт к той же кромке, что и к кнопкам.<br>Минус: кружок уехал от привычного места над полем ввода.</p>
+  </div>
+
+  <div class="frame f-win">
+    <div class="tag">Вариант «правый нижний угол»</div>
+    <div class="win" data-win>
+      <div class="fl"><div class="fr low"><div class="feed">
+        <p>…и тогда полоса делится на семь отрезков, по одному на день недели лимита.</p>
+        <div class="me">Покажи сначала макет, потом будем вносить.</div>
+        <p>Хорошо. Скрипт только подменяет тексты в готовых элементах Claude и дорисовывает одну полосу внизу.</p>
+        <p>Если Claude обновится и элемент не найдётся — панель останется родной, английской, ничего не сломается.</p>
+        <div class="me">А кружок чтобы всегда был виден.</div>
+        <p>Да: в режиме чтения он один живёт в правом углу, на зеркальном градиенте, и нажимается как обычно.</p>
+        <p>Проверил на узком окне 420 точек — лента не наезжает на кнопки, текст в углах уходит в тень.</p>
+        <p>Неделя лимита считается от пятницы 08:00 до пятницы 08:00, поэтому отрезков ровно семь.</p>
+        <div class="me">А проценты у пятичасового?</div>
+        <p>Убрал совсем: осталась только полоска и строка «через сколько — и во сколько сбросится».</p>
+        <p>Строку с именем аккаунта видно и в зависимых окнах — раньше там про аккаунт не было сказано нигде.</p>
+        <p>Осталось выбрать: подписывать дни под полосой или оставить чистые отрезки, как у родных полос Claude.</p>
+      </div></div></div>
+      <div class="wbtns"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+      <button class="ring bot" type="button" aria-label="Контекст" data-ring></button>
+      <div class="slot bot" data-slot></div>
+      <div class="handle"></div>
+    </div>
+    <p class="cap">Кружок там же, где жил над полем ввода, — рука помнит. Панель раскрывается вверх, как сейчас.<br>Минус: рядом полоска возврата у нижней кромки — два мелких элемента в одном углу, легко промахнуться.</p>
+  </div>
+
+</div>
+<p class="hint">Нажми кружок в любом окне — откроется то самое окошко лимитов. Градиенты нарисованы как в жизни: не накладка поверх текста, а сам текст уходит в тень к углу.</p>
+
+<h2 id="qs">Вопросы</h2>
+
+<div class="qs">
+  <p><button class="btn" id="copyTop" type="button">Скопировать ответы</button><span class="ok" id="okTop"></span></p>
+  <p class="lead">Посмотри вопросы. Со всем согласен — скопируй ответы и отправь в чат: я продолжу работать, а ты спокойно читай файл дальше. Нажимается только кружок.</p>
+
+  <div class="q" data-q="Полоса недели">
+    <p class="t">1. Полоса недели — подписывать дни?</p>
+    <div class="opt">
+      <input type="radio" name="q1" value="с подписями дней (Пт Сб Вс Пн Вт Ср Чт)" checked>
+      <span class="txt"><span class="name">С подписями дней <span class="rec">(рекомендую)</span></span><br>
+      <span class="why">Сразу видно, какой сегодня день недели лимита. Минус: под полосой появляется ещё строка мелких букв.</span></span>
+    </div>
+    <div class="opt">
+      <input type="radio" name="q1" value="без подписей, чистые отрезки">
+      <span class="txt"><span class="name">Без подписей</span><br>
+      <span class="why">Панель остаётся такой же чистой, как сейчас. Минус: день недели считаешь глазами.</span></span>
+    </div>
+  </div>
+
+  <div class="q" data-q="Кружок в режиме чтения">
+    <p class="t">2. Где кружок контекста в режиме чтения?</p>
+    <div class="opt">
+      <input type="radio" name="q2" value="правый верхний угол" checked>
+      <span class="txt"><span class="name">Правый верхний угол <span class="rec">(рекомендую)</span></span><br>
+      <span class="why">Зеркально кнопкам окна, вся высота под текст. Минус: не там, где кружок жил раньше.</span></span>
+    </div>
+    <div class="opt">
+      <input type="radio" name="q2" value="правый нижний угол">
+      <span class="txt"><span class="name">Правый нижний угол</span><br>
+      <span class="why">Рука помнит это место. Минус: рядом полоска возврата, легко промахнуться.</span></span>
+    </div>
+  </div>
+
+  <div class="q" data-q="Нижняя строка">
+    <p class="t">3. Нижняя строка «See detailed breakdown»</p>
+    <div class="opt">
+      <input type="radio" name="q3" value="перевести на «Подробнее»" checked>
+      <span class="txt"><span class="name">«Подробнее» <span class="rec">(рекомендую)</span></span><br>
+      <span class="why">Вся панель тогда на русском, без единого английского слова. Минус: открывается всё равно английская страница.</span></span>
+    </div>
+    <div class="opt">
+      <input type="radio" name="q3" value="оставить «See detailed breakdown»">
+      <span class="txt"><span class="name">Оставить как есть</span><br>
+      <span class="why">Подпись совпадает с тем, что откроется. Минус: одна английская строка внизу русской панели.</span></span>
+    </div>
+  </div>
+
+  <div class="q" data-q="Имя аккаунта">
+    <p class="t">4. Как писать имя аккаунта в строке подписки?</p>
+    <div class="opt">
+      <input type="radio" name="q4" value="elvisnya (начало почты)" checked>
+      <span class="txt"><span class="name">elvisnya <span class="rec">(рекомендую)</span></span><br>
+      <span class="why">Коротко, влезает в узкое окно, сразу понятно, какой это аккаунт. Минус: это начало почты, а не имя человека.</span></span>
+    </div>
+    <div class="opt">
+      <input type="radio" name="q4" value="имя из профиля Claude">
+      <span class="txt"><span class="name">Имя из профиля</span><br>
+      <span class="why">Как ты сам назван в Claude. Минус: длинное имя обрежется в узком окне.</span></span>
+    </div>
+  </div>
+
+  <p style="margin-top:28px"><button class="btn" id="copyBot" type="button">Скопировать ответы</button><span class="ok" id="okBot"></span></p>
+</div>
+
+<h2 id="done">Решено, не переспрашиваю</h2>
+<ul>
+  <li>«Context window» → <b>Контекст</b>; число без десятых: 111,5k → <b>112k</b>, 138,7k → 139k.</li>
+  <li>«Plan usage limits · Max (20x)» → <b>elvisnya · Max 20x</b>, без скобок. Эта же строка появится и в зависимых окнах — там про аккаунт сейчас не сказано нигде.</li>
+  <li>«5-hour limit» → <b>5-часовой</b>, справа <b>4 ч 9 мин — в 01:25</b> (через сколько и во сколько, 24 часа). Процента нет, только полоса.</li>
+  <li>«Weekly · all models» → <b>Недельный</b>, справа <b>Пт 08:00</b> и процент, как сейчас. Слова «сброс» нет.</li>
+  <li>«Weekly · Fable» → <b>Fable</b>, справа <b>Пт 08:00</b> и процент.</li>
+  <li>Порядок строк прежний: недельный, Fable, внизу новая полоса дней.</li>
+  <li>В режиме чтения в правом углу — <b>только кружок контекста</b>, больше ничего; правило свёртки на него не действует.</li>
+</ul>
+
+<h2 id="how">Как это сделано</h2>
+<div class="note">
+  <p style="margin:0">Панель не перерисовывается. Скрипт страницы — <b>без нейросети</b> — находит родные элементы Claude и переписывает в них текст, а сам рисует ровно одну вещь: полосу дней внизу.</p>
+</div>
+<ul>
+  <li>Claude обновится и элемент не найдётся — панель просто останется родной, английской. Ломаться нечему.</li>
+  <li>Цифры считаются на месте, при каждом открытии: и «4 ч 9 мин — в 01:25», и «через 3 дня 11 часов», и заливка полосы дней.</li>
+  <li>Правый градиент в режиме чтения — такая же тень самой ленты, как слева, только зеркальная: кнопки и кружок ничем не закрыты.</li>
+</ul>
+<p class="cap">Сделаю по ответам на четыре вопроса выше — остальное уже решено.</p>
+
+</main>
+
+<script>
+(function(){
+  // кружок открывает панель прямо в нарисованном окне
+  var src = document.getElementById("pop-ru");
+  document.querySelectorAll("[data-slot]").forEach(function(slot){
+    var copy = src.cloneNode(true);
+    copy.removeAttribute("id");
+    copy.style.width = "290px";
+    copy.style.fontSize = "11.5px";
+    slot.appendChild(copy);
+  });
+  document.querySelectorAll("[data-ring]").forEach(function(ring){
+    ring.addEventListener("click", function(){
+      var win = ring.closest("[data-win]");
+      if (win) win.classList.toggle("open");
+    });
+  });
+
+  // подсветка подменённых текстов
+  var btn = document.getElementById("swapBtn");
+  btn.addEventListener("click", function(){
+    var on = document.body.classList.toggle("show-swap");
+    btn.textContent = on ? "Убрать подсветку" : "Подсветить, что подменяет скрипт";
+  });
+
+  // ответы
+  function answers(){
+    var out = ["Файл 1 — ответы:"];
+    document.querySelectorAll(".q").forEach(function(q, i){
+      var sel = q.querySelector("input:checked");
+      out.push((i + 1) + ". " + q.getAttribute("data-q") + " — " + (sel ? sel.value : "не выбрано"));
+    });
+    return out.join("\n");
+  }
+  function copy(okId){
+    var text = answers();
+    var ok = document.getElementById(okId);
+    function done(){ ok.textContent = "скопировано"; setTimeout(function(){ ok.textContent = ""; }, 2500); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else { fallback(); }
+    function fallback(){
+      var ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); done(); } catch (e) { ok.textContent = "не вышло — выдели руками"; }
+      document.body.removeChild(ta);
+    }
+  }
+  document.getElementById("copyTop").addEventListener("click", function(){ copy("okTop"); });
+  document.getElementById("copyBot").addEventListener("click", function(){ copy("okBot"); });
+})();
+</script>
+</body>
+</html>
