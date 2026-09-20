@@ -1,0 +1,14 @@
+{
+  "plan": "docs/plan-wf78-2026-09-21.md",
+  "branch": "wf78",
+  "tag": "wf78-start",
+  "status": "идёт",
+  "orchestrator": "Fable 5.1 high",
+  "roles": {"mockup": "Opus max (сделан, одобрен с правками 20.09)", "critic": "Opus max", "coding": "Opus max ×1 (страница)", "verify": "Opus max"},
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/9f430f85-358c-4076-bf1b-9855fe40ee1c/workflows/scripts/wf78-critic-wf_c809103c-728.js",
+  "run_id": "wf_c809103c-728",
+  "resumes": 0,
+  "cron": null,
+  "next_steps": ["критик (docs/critic-wf78-2026-09-21.md) → правки плана → крон-сторож → батч A (страница, Opus max) → проверяющий → гейт: tools/test.sh, cp inject.js, живая проверка с Элвисом (он открывает кружок), документы, слияние в main"],
+  "journal": ["00:34 · Элвис открыл панель лимитов — DOM снят пробой (docs/recon-wf78-usage-panel.md), имя аккаунта — button[data-testid=user-menu-button] главного окна; план написан, ветка wf78, тег wf78-start; критик запущен, run wf_c809103c-728. Баланс со скрина Элвиса: Fable 76 % · Вик 77 % · день 3 из 7 — все агенты на Opus"]
+}
