@@ -362,6 +362,11 @@ final class MinimizeMenu: NSObject {
         // Автопокраска адресуется всем окнам на экране, а не окну под курсором; примерку она
         // не закрепляет (`committed` не трогаем) — после popUp окну вернут сохранённое, а следом
         // придёт своя тема из очереди канала.
+        // «Автосвёртка» (#6666): настройка всех окон, окно под курсором ей не нужно.
+        config.autoCollapse = actions.autoCollapseEnabled
+        config.setAutoCollapse = { [weak self] on in
+            DispatchQueue.main.async { self?.actions.setAutoCollapse(on) }
+        }
         config.autoPaint = { [weak self] preset in
             DispatchQueue.main.async { self?.actions.autoPaint(preset: preset) }
         }
@@ -642,6 +647,9 @@ final class MinimizeMenu: NSObject {
         var editMyTheme: (MyTheme) -> Void = { _ in }
         /// «🌈 Раскрасить по кругу» (план WF10, переименовано в WF14): набор красит все окна
         /// на экране — окно под курсором ему не нужно.
+        /// «Автосвёртка» (#6666): поле ввода само сворачивается после отправки сообщения.
+        var autoCollapse = false
+        var setAutoCollapse: (Bool) -> Void = { _ in }
         var autoPaint: (AutoPaintPreset) -> Void = { _ in }
         var autoPaintAgain: () -> Void = {}
         var autoPaintReset: () -> Void = {}
@@ -778,12 +786,24 @@ final class MinimizeMenu: NSObject {
         for entry in MenuModel.entries where MenuModel.moreCommands.contains(entry.command) {
             submenu.addItem(entry.command == .newWindow ? newWindowItem(entry, config)
                                                         : commandItem(entry, config))
+            if entry.command == .collapse { submenu.addItem(autoCollapseItem(config)) }
             if MenuModel.separatorsAfter.contains(entry.command) { submenu.addItem(.separator()) }
         }
         submenu.addItem(savedLayoutsItem(config))
         submenu.addItem(.separator())
         submenu.addItem(allWindowsItem(config))
         return submenuItem(title: MenuModel.moreTitle, icon: MenuModel.moreIcon, submenu: submenu)
+    }
+
+    /// «Автосвёртка» — тумблер под «Свернуть» (#6666): отправил сообщение — поле само
+    /// сворачивается в режим чтения. Действует на все окна.
+    static func autoCollapseItem(_ config: MenuConfig) -> NSMenuItem {
+        let on = config.autoCollapse
+        let item = BlockMenuItem(title: MenuModel.autoCollapseTitle) { config.setAutoCollapse(!on) }
+        item.image = icon(MenuModel.autoCollapseIcon)
+        item.state = on ? .on : .off
+        item.toolTip = MenuModel.autoCollapseHint
+        return item
     }
 
     /// «🗂 Раскладки ▸» (план WF41, решение Р5): «💾 Сохранить эту раскладку…», под ним имена

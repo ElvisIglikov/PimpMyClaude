@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-14";
+  const VERSION = "wf76-a-15";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -5556,6 +5556,55 @@ nav[aria-label="Repository and pull request controls"] {
     }
   };
 
+  // ---- Автосвёртка (#6666) -------------------------------------------------
+  // Настройка «Автосвёртка»: сообщение ушло — поле само сворачивается в режим
+  // чтения. Флаг лежит в localStorage (у окон Claude он общий), ставит его
+  // команда приложения `auto-collapse` {on:"true"|"false"}. Отправку узнаём по
+  // факту, а не по клавише: Enter в меню подсказок или в пустом поле ничего не
+  // шлёт — сворачиваем, только если поле было непустым и опустело.
+  const AUTO_COLLAPSE_KEY = "myclaude.autoCollapse";
+  const AUTO_COLLAPSE_CHECKS_MS = [120, 350, 800];
+  const autoCollapseOn = () => {
+    try { return localStorage.getItem(AUTO_COLLAPSE_KEY) === "1"; } catch { return false; }
+  };
+  const autoCollapseSet = value => {
+    try {
+      if (value) localStorage.setItem(AUTO_COLLAPSE_KEY, "1");
+      else localStorage.removeItem(AUTO_COLLAPSE_KEY);
+    } catch {}
+  };
+  const composerFilled = editor => {
+    try {
+      if (String(editor.textContent ?? "").trim()) return true;
+      return Boolean(state.composerBlock?.querySelector?.("[data-cds-attachment]"));
+    } catch { return false; }
+  };
+  let autoCollapseTimers = [];
+  const clearAutoCollapseTimers = () => { for (const id of autoCollapseTimers.splice(0)) clearTimeout(id); };
+  const onAutoCollapseSend = event => {
+    try {
+      const editor = state.editor;
+      if (!editor?.isConnected || state.stage === STAGE_COLLAPSED || !autoCollapseOn()) return;
+      const target = event.target;
+      const sendKey = event.type === "keydown" && event.key === "Enter" && !event.shiftKey &&
+        !event.isComposing && editor.contains(target);
+      const sendClick = event.type === "click" && (target?.closest?.('[data-testid="code-prompt-send"]') ||
+        (state.composerBlock?.contains?.(target) && target?.closest?.('button[type="submit"]')));
+      if (!sendKey && !sendClick) return;
+      if (!composerFilled(editor)) return;
+      clearAutoCollapseTimers();
+      for (const delay of AUTO_COLLAPSE_CHECKS_MS) {
+        autoCollapseTimers.push(setTimeout(() => {
+          if (!autoCollapseTimers.length || state.editor !== editor || !editor.isConnected) return;
+          if (composerFilled(editor)) return;
+          clearAutoCollapseTimers();
+          if (autoCollapseOn()) setStage(STAGE_COLLAPSED);
+        }, delay));
+      }
+    } catch {}
+  };
+  track(clearAutoCollapseTimers);
+
   const onPointerDown = event => {
     if (event.button !== 0 || !state.editorRoot) return;
     // Любое новое нажатие обесценивает отложенный шаг предыдущего клика: иначе
@@ -6044,6 +6093,7 @@ nav[aria-label="Repository and pull request controls"] {
   // все синтетические клавиши.
   const onPasteKey = event => {
     onAttachmentBoundary(event);
+    onAutoCollapseSend(event);
     try {
       if (!event?.metaKey) return;
       const isV = String(event.key ?? "").toLowerCase() === "v" || event.code === "KeyV";
@@ -8544,6 +8594,8 @@ nav[aria-label="Repository and pull request controls"] {
     // команда приезжает сама, по часам приложения, а не из меню, и гасить ею
     // подменю под рукой у Элвиса нельзя.
     if (action === "themes-restore") { try { runThemesRestoreCommand(detail); } catch {} return; }
+    // «Автосвёртка» (#6666) — настройка на все окна, поля ввода ей не нужно.
+    if (action === "auto-collapse") { autoCollapseSet(String(detail?.on) === "true"); return; }
     // Любая другая команда из меню закрывает примерку: меню ушло, выбора темы не было.
     if (themeState.previewing) {
       try { restoreTheme(true); themeState.previewing = false; themeState.previewLayers = []; } catch {}
@@ -8612,6 +8664,8 @@ nav[aria-label="Repository and pull request controls"] {
     for (const type of ["click", "submit", "reset"]) {
       on(document, type, onAttachmentBoundary, true);
     }
+    // «Автосвёртка»: клик по кнопке отправки; Enter приходит через onPasteKey.
+    on(document, "click", onAutoCollapseSend, true);
     const routeChanged = () => {
       if (attachmentContext && attachmentRoute() !== attachmentContext.route) {
         invalidateAttachments();
@@ -8826,6 +8880,7 @@ nav[aria-label="Repository and pull request controls"] {
       },
       modelRow: Boolean(state.modelRow?.isConnected),
       collapsedNodes: state.collapsedNodes.length,
+      autoCollapse: autoCollapseOn(),
       // Сторож дёрганья (#5978): последние смены высоты блока ввода.
       jumps: jumpLog.slice(),
       handleVisible: handle.style.display !== "none",

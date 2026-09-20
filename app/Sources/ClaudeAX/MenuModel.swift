@@ -119,6 +119,11 @@ enum MenuModel {
     static let moreCommands: Set<ClaudeCommand> = [.workflow, .newChat, .newWindow, .popoutWindow,
                                                    .expand, .collapse, .cashout, .arrange, .show,
                                                    .scroll]
+    /// «Автосвёртка» (#6666) — тумблер под «Свернуть» в «⋯ Ещё ▸».
+    static let autoCollapseTitle = "Автосвёртка"
+    static let autoCollapseIcon = "📖"
+    static let autoCollapseHint = "Отправил сообщение — поле ввода само сворачивается. Во всех окнах."
+    static let autoCollapseKey = "autoCollapseEnabled"
     static let moreTitle = "Ещё"
     static let moreIcon = "⋯"
 

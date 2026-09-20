@@ -629,13 +629,15 @@ final class ClaudeAXTests: XCTestCase {
         let more = try moreMenu(in: menu)
         XCTAssertEqual(more.items.map { $0.isSeparatorItem ? "—" : $0.title },
                        ["Раскладки", "—", "Workflow", "Новый чат", "Новое окно",
-                        "Вынести этот чат в окно", "—", "Развернуть", "Свернуть", "—",
+                        "Вынести этот чат в окно", "—", "Развернуть", "Свернуть", "Автосвёртка", "—",
                         "Обкэшить", "Расставить", "Показать", "Прокрутить", "Раскладки", "—",
                         "Всем окнам"])
         // «Новое окно ▸» (план WF16) и оба «Раскладки» — с подменю или вьюхой, клавиш сами
         // не носят: ⌥⌘N уехала на «Здесь же» внутри подменю (сторож —
         // testNewWindowKeepsHotkeyEntry), по view-пункту клавиатура не ходит вовсе.
-        let keyed = more.items.filter { !$0.isSeparatorItem && !$0.hasSubmenu && $0.view == nil }
+        // Тумблер «Автосвёртка» (#6666) — не команда из `entries`, клавиши у него нет.
+        let keyed = more.items.filter { !$0.isSeparatorItem && !$0.hasSubmenu && $0.view == nil
+                                        && $0.title != MenuModel.autoCollapseTitle }
         XCTAssertEqual(keyed.count, MenuModel.entries.count - 1)
         XCTAssertEqual(keyed.map { $0.title },
                        ["Workflow", "Новый чат", "Вынести этот чат в окно", "Развернуть",
@@ -5044,7 +5046,7 @@ final class ClaudeAXTests: XCTestCase {
     func testCommandContractMatchesInjectJS() throws {
         let axOnly: Set<ClaudeCommand> = [.newChat, .arrange, .show]    // исполняет AX, ветки в JS нет
         // пишутся мимо enum
-        let pageOnly: Set<String> = ["theme", "status", "live-colors", "themes-restore"]
+        let pageOnly: Set<String> = ["theme", "status", "live-colors", "themes-restore", "auto-collapse"]
         // `theme`/`status` складывают ClaudeActions и StatusFeed, `live-colors` (WF18) — LiveColors.swift,
         // `themes-restore` (WF35) — WindowThemeStore: команда уходит строкой, enum ради неё
         // не расширяли (это не пункт меню и не слот хоткея).

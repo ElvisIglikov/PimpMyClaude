@@ -92,6 +92,10 @@
   пересчитывает). `ClaudeCommand` не расширяется — команда пишется строкой (`LiveColors.swift`).
 - WF19: в `size` половина может быть `null` — снимает только её (`{"answer":null}`), `"size":null` снимает обе; `new-window`/`popout-window`
   получили необязательное `match` после `title` (главное окно) — работают с любого окна; попап на `popout-window` — плашка «уже в окне».
+- `auto-collapse` (#6666, 20.09.2026): `{…,"on":"true"|"false"}` — всем окнам, поля ввода не требует. Страница кладёт
+  флаг в localStorage `myclaude.autoCollapse` (`"1"` или ключа нет; у окон он общий) и читает его в момент отправки.
+  Память приложения — UserDefaults `autoCollapseEnabled`; шлёт `ClaudeActions.setAutoCollapse` на каждом щелчке тумблера.
+  В `status()` — поле `autoCollapse`.
 - `themes-restore` (WF35): `{…,"scope":"all","entries":{<ключ>:{theme?,font?,size?,frame?}}}` — порядок полей
   побайтно `id, action, at, scope, entries`; `at` записей в команду НЕ идёт (он бухгалтерия файла), слои — те же
   объекты, что у `theme`, сброс — строкой `"none"`. Страница (`runThemesRestoreCommand`) свою память не заменяет,

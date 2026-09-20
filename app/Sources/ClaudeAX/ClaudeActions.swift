@@ -136,6 +136,15 @@ final class ClaudeActions {
 
     // MARK: - страничные команды
 
+    /// «Автосвёртка» (#6666): память — UserDefaults приложения, странице уходит команда
+    /// `auto-collapse` всем окнам; свою копию флага страница держит в localStorage.
+    var autoCollapseEnabled: Bool { UserDefaults.standard.bool(forKey: MenuModel.autoCollapseKey) }
+
+    func setAutoCollapse(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: MenuModel.autoCollapseKey)
+        commands.write(action: "auto-collapse", extra: ["on": on ? "true" : "false"])
+    }
+
     private func stage(_ action: String, _ window: AXUIElement?) {
         guard let window = window else { return }
         app.focus(window: window)
