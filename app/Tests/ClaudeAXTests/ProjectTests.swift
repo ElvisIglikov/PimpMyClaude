@@ -665,8 +665,8 @@ final class ProjectTests: XCTestCase {
 
     /// Живой `ClaudeActions` поверх стенда: команды пишутся во временный файл, а крючок
     /// «окну задали вид» ведёт в покраску по проекту — ровно так его вешает `ClaudeAXController`.
-    /// Окна Claude на машине теста нет, поэтому заголовок у команд пустой, а пустой заголовок
-    /// покраска понимает как «безымянное окно» — папка главного окна.
+    /// Окно под кнопкой стенд считает безымянным, а пустой заголовок покраска понимает как
+    /// «безымянное окно» — папка главного окна.
     private func makeActions(_ rig: PaintRig) -> ClaudeActions {
         let clock = rig.clock
         let channel = CommandChannel(path: rig.box.appendingPathComponent("command.json"),
@@ -678,8 +678,11 @@ final class ProjectTests: XCTestCase {
                                     myThemes: MyThemesStore(url: rig.box.appendingPathComponent("my.json")),
                                     autoPaintStore: AutoPaintStore(defaults: ProjectDefaults()),
                                     liveColorsStore: LiveColorsStore(defaults: ProjectDefaults()))
-        actions.onWindowViewChanged = { [unowned rig] title, theme, font, size, frame in
-            rig.paint.noteManualChoice(title: title, theme: theme, font: font, size: size,
+        actions.onWindowViewChanged = { [unowned rig] _, theme, font, size, frame in
+            // Заголовок берёт стенд, а не окно: живой AX подсовывает сюда окно Элвиса, и
+            // проверки зависели бы от того, как сейчас назван его чат (#6667). Стенд всегда
+            // говорит от безымянного окна — для покраски это и есть её главное окно.
+            rig.paint.noteManualChoice(title: "", theme: theme, font: font, size: size,
                                        frame: frame)
         }
         return actions
@@ -1127,13 +1130,17 @@ final class ProjectTests: XCTestCase {
         let actions = makeActions(rig)
 
         // Примерка мышью до `remember` не доходит вовсе — ни галок, ни файла проекта.
-        XCTAssertFalse(actions.previewTheme(ProjectTests.indigo, window: nil))
-        XCTAssertFalse(actions.previewFont(ProjectTests.menlo, window: nil))
-        XCTAssertFalse(actions.endPreview(window: nil))
+        // Ушла ли она вообще, решает живой AX: на Маке с запущенным Claude окно в фокусе
+        // есть, на голой машине нет (#6667). Проверяем то, ради чего тест и написан, — что
+        // в проект не попало ничего.
+        actions.previewTheme(ProjectTests.indigo, window: nil)
+        actions.previewFont(ProjectTests.menlo, window: nil)
+        actions.endPreview(window: nil)
         XCTAssertNil(rig.store.settings(in: pimp))
 
-        // «🌈 Раскрасить по кругу» пишет команды мимо `remember`: красить нечего, файла нет.
-        XCTAssertEqual(actions.autoPaint(preset: AutoPaint.presets[0]), 0)
+        // «🌈 Раскрасить по кругу» пишет команды мимо `remember`: сколько бы окон она ни
+        // покрасила, файла проекта после неё нет.
+        actions.autoPaint(preset: AutoPaint.presets[0])
         XCTAssertNil(rig.store.settings(in: pimp))
 
         // «Всем окнам» — тоже мимо: вид проекта задаёт только окно (`scope:"window"`).
