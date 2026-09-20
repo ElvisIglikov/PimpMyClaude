@@ -13,16 +13,16 @@ test("имя кнопки — без хвоста-подсказки клави�
   assert.equal(autoAllowLabel("Allow1⏎Enter"), "Allow");
 });
 
-test("не жмём сам: удаление, деньги, git push, запись в файл", () => {
+test("не жмём сам: удаление, деньги, git push", () => {
   for (const text of ["Allow Bash to run rm -rf build?", "git rm -r src", "find . -delete", "cd build&&rm -rf *",
-    "git push origin main", "DROP TABLE users", "echo x > file.txt", "kaspi_payment_create", "edit invoice"]) {
+    "git push origin main", "DROP TABLE users", "kaspi_payment_create", "edit invoice"]) {
     assert.ok(autoAllowBlocked(text), text);
   }
 });
 
 test("жмём: имена файлов, стрелки и 2>&1 кнопку не глушат", () => {
   for (const text of ["Claude wants to read refunds.md", "cat delete-old.sql", "npm test 2>&1 | tail -5", "ls x 2>/dev/null | head", "mdfind 'date >= $time.now(-7200)'",
-    "a -> b => c", "git pushes", "form_submit", "Allow Bash to run ls -la?"]) {
+    "a -> b => c", "echo x > file.txt", "s=re.sub(r'<h1>.*?</h1>', x, s)", "git pushes", "form_submit", "Allow Bash to run ls -la?"]) {
     assert.ok(!autoAllowBlocked(text), text);
   }
 });

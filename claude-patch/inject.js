@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-6";
+  const VERSION = "wf76-a-7";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -8143,8 +8143,9 @@ nav[aria-label="Repository and pull request controls"] {
   // его наружу (замер 20.09 05:00: AXManualAccessibility ставится без ошибки и
   // читается 0, в окне 12 узлов вместо тысяч) — кнопку снаружи не видно вовсе.
   // Страница видит её всегда. Правила — те же, что у AutoAllow.swift: «Always
-  // allow» первой, список «не жму сам» (удаление, деньги, git push, запись в
-  // файл через `>`) — только здесь он сверяется со ВСЕМ текстом диалога, а не с
+  // allow» первой, список «не жму сам» (удаление, деньги, git push; запись через
+  // `>` из списка ушла 20.09: в живых командах `>` — это HTML в heredoc, и правило
+  // глушило каждый второй диалог) — только здесь он сверяется со ВСЕМ текстом диалога, а не с
   // вынутой из заголовка командой: лишний ручной клик дешевле стёртой папки.
   const AUTO_ALLOW_TICK_MS = 700;
   const AUTO_ALLOW_PATTERNS = [/^allow once/i, /^allow$/i, /^allow for this/i, /^allow always/i, /^always allow/i, /^yes, allow/i];
@@ -8157,22 +8158,6 @@ nav[aria-label="Repository and pull request controls"] {
   const autoAllowLabel = text => String(text ?? "").replace(/\s+/g, " ").replace(/[\d⌘⇧⏎⌥⌃↵].*$/u, "").trim();
   const autoAllowWords = text => String(text).toLowerCase()
     .split(/[\s;|&`()\[\]{}"'=,<>]+/).map(word => word.replace(/^-+/, "")).filter(Boolean);
-  // Запись в файл: `> файл`, `>>`, `2>`; стрелки `->`, `=>`, `>=` и склейка `2>&1` не в счёт.
-  const autoAllowRedirect = text => {
-    const chars = [...String(text)];
-    for (let index = 0; index < chars.length; index += 1) {
-      if (chars[index] !== ">") continue;
-      const before = chars[index - 1];
-      if (before === "-" || before === "=" || before === "<") continue;
-      let next = index + 1;
-      while (next < chars.length && (chars[next] === ">" || chars[next] === " ")) next += 1;
-      if (chars[next] === "=" || chars[next] === "&") continue;
-      // `2>/dev/null` стоит в каждой второй команде и ничего не переписывает.
-      if (chars.slice(next, next + 9).join("") === "/dev/null") continue;
-      return true;
-    }
-    return false;
-  };
   // Причина отказа словом (для журнала) или "" — жать можно.
   const autoAllowBlockReason = text => {
     const lower = String(text ?? "").toLowerCase();
@@ -8181,7 +8166,6 @@ nav[aria-label="Repository and pull request controls"] {
     if (word) return word;
     const phrase = AUTO_ALLOW_BLOCK_PHRASES.find(item => new RegExp(`(^|[^\\p{L}\\p{N}_])${item}($|[^\\p{L}\\p{N}_])`, "u").test(lower));
     if (phrase) return phrase;
-    if (autoAllowRedirect(lower)) return ">";
     // Имя инструмента приходит одним словом (`kaspi_payment_create`) — узор ищется внутри.
     return words.find(item => item.includes("_") && AUTO_ALLOW_BLOCK_TOOLS.some(tool => item.includes(tool))) ?? "";
   };
