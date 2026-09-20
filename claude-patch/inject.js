@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-4";
+  const VERSION = "wf76-a-6";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -8151,13 +8151,10 @@ nav[aria-label="Repository and pull request controls"] {
   const AUTO_ALLOW_BLOCK_WORDS = ["rm", "delete", "payment", "refund", "invoice"];
   const AUTO_ALLOW_BLOCK_PHRASES = ["drop table", "drop database", "git push"];
   const AUTO_ALLOW_BLOCK_TOOLS = ["payment", "refund", "invoice"];
-  const autoAllowState = { timer: 0, lastPressAt: 0, lastBlocked: "", presses: [], blocked: 0 };
-  // Имя кнопки без хвоста-подсказки клавиши: «Always allow 2» → «Always allow».
-  const autoAllowLabel = text => {
-    const words = String(text ?? "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
-    while (words.length > 1 && !/\p{L}/u.test(words[words.length - 1])) words.pop();
-    return words.join(" ");
-  };
+  const autoAllowState = { timer: 0, lastPressAt: 0, lastBlocked: "", presses: [], blocked: 0, blockedLog: [] };
+  // Имя кнопки без хвоста-подсказки клавиши. Живой замер 20.09: текст кнопки —
+  // «Always allow2⇧Shift⌘Command⏎Enter», «Allow once2⌘Command⏎Enter» (слитно).
+  const autoAllowLabel = text => String(text ?? "").replace(/\s+/g, " ").replace(/[\d⌘⇧⏎⌥⌃↵].*$/u, "").trim();
   const autoAllowWords = text => String(text).toLowerCase()
     .split(/[\s;|&`()\[\]{}"'=,<>]+/).map(word => word.replace(/^-+/, "")).filter(Boolean);
   // Запись в файл: `> файл`, `>>`, `2>`; стрелки `->`, `=>`, `>=` и склейка `2>&1` не в счёт.
@@ -8170,19 +8167,25 @@ nav[aria-label="Repository and pull request controls"] {
       let next = index + 1;
       while (next < chars.length && (chars[next] === ">" || chars[next] === " ")) next += 1;
       if (chars[next] === "=" || chars[next] === "&") continue;
+      // `2>/dev/null` стоит в каждой второй команде и ничего не переписывает.
+      if (chars.slice(next, next + 9).join("") === "/dev/null") continue;
       return true;
     }
     return false;
   };
-  const autoAllowBlocked = text => {
+  // Причина отказа словом (для журнала) или "" — жать можно.
+  const autoAllowBlockReason = text => {
     const lower = String(text ?? "").toLowerCase();
     const words = autoAllowWords(lower);
-    if (AUTO_ALLOW_BLOCK_WORDS.some(word => words.includes(word))) return true;
-    if (AUTO_ALLOW_BLOCK_PHRASES.some(phrase => new RegExp(`(^|[^\\p{L}\\p{N}_])${phrase}($|[^\\p{L}\\p{N}_])`, "u").test(lower))) return true;
-    if (autoAllowRedirect(lower)) return true;
+    const word = AUTO_ALLOW_BLOCK_WORDS.find(item => words.includes(item));
+    if (word) return word;
+    const phrase = AUTO_ALLOW_BLOCK_PHRASES.find(item => new RegExp(`(^|[^\\p{L}\\p{N}_])${item}($|[^\\p{L}\\p{N}_])`, "u").test(lower));
+    if (phrase) return phrase;
+    if (autoAllowRedirect(lower)) return ">";
     // Имя инструмента приходит одним словом (`kaspi_payment_create`) — узор ищется внутри.
-    return words.some(word => word.includes("_") && AUTO_ALLOW_BLOCK_TOOLS.some(tool => word.includes(tool)));
+    return words.find(item => item.includes("_") && AUTO_ALLOW_BLOCK_TOOLS.some(tool => item.includes(tool))) ?? "";
   };
+  const autoAllowBlocked = text => autoAllowBlockReason(text) !== "";
   // Диалог кнопки: поднимаемся, пока предок не захватил поле ввода (черновик со
   // словом «delete» не должен глушить кнопку) и не дошёл до body.
   const autoAllowDialog = button => {
@@ -8194,6 +8197,25 @@ nav[aria-label="Repository and pull request controls"] {
     }
     return node;
   };
+  // Плашка в самом окне: снаружи приложение нажатия страницы не видит, а молчаливое
+  // «не нажал» Элвис читает как «сломалось» (слово 20.09 05:20).
+  const AUTO_ALLOW_TOAST_ID = "myclaude-auto-allow-toast";
+  let autoAllowToastTimer = 0;
+  const autoAllowToast = (text, ms) => {
+    document.getElementById(AUTO_ALLOW_TOAST_ID)?.remove();
+    const toast = document.createElement("div");
+    toast.id = AUTO_ALLOW_TOAST_ID;
+    toast.textContent = text;
+    for (const [name, value] of Object.entries({
+      position: "fixed", left: "50%", bottom: "72px", transform: "translateX(-50%)", "max-width": "80%",
+      padding: "6px 12px", "border-radius": "8px", background: "rgba(0,0,0,.82)", color: "#fff",
+      font: "12px/1.35 system-ui", "pointer-events": "none", "z-index": "2147483647",
+    })) toast.style.setProperty(name, value);
+    (document.body ?? document.documentElement).appendChild(toast);
+    clearTimeout(autoAllowToastTimer);
+    autoAllowToastTimer = setTimeout(() => toast.remove(), ms);
+  };
+  track(() => { clearTimeout(autoAllowToastTimer); document.getElementById(AUTO_ALLOW_TOAST_ID)?.remove(); });
   const autoAllowTick = () => {
     const now = Date.now();
     if (now - autoAllowState.lastPressAt < AUTO_ALLOW_TICK_MS) return;
@@ -8205,8 +8227,15 @@ nav[aria-label="Repository and pull request controls"] {
       const box = button.getBoundingClientRect();
       if (box.width <= 0 || box.height <= 0) continue;
       const text = String(autoAllowDialog(button).innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 2000);
-      if (autoAllowBlocked(text)) {
-        if (text !== autoAllowState.lastBlocked) { autoAllowState.lastBlocked = text; autoAllowState.blocked += 1; }
+      const reason = autoAllowBlockReason(text);
+      if (reason) {
+        if (text !== autoAllowState.lastBlocked) {
+          autoAllowState.lastBlocked = text;
+          autoAllowState.blocked += 1;
+          autoAllowState.blockedLog.unshift({ at: new Date(now).toISOString(), reason, dialog: text });
+          autoAllowState.blockedLog.length = Math.min(autoAllowState.blockedLog.length, 10);
+          autoAllowToast(`Пимп не жмёт сам: в команде «${reason}» — нажми Allow рукой`, 6000);
+        }
         continue;
       }
       hits.push({ button, label, text });
@@ -8215,6 +8244,7 @@ nav[aria-label="Repository and pull request controls"] {
     if (!hit) return;
     autoAllowState.lastPressAt = now;
     hit.button.click();
+    autoAllowToast(`Пимп нажал ${hit.label}`, 2400);
     autoAllowState.presses.unshift({ at: new Date(now).toISOString(), button: hit.label, dialog: hit.text.slice(0, 300) });
     autoAllowState.presses.length = Math.min(autoAllowState.presses.length, 20);
   };
@@ -8723,7 +8753,7 @@ nav[aria-label="Repository and pull request controls"] {
       // Широкий вид (раздел 2г, WF65): включён ли, ширина панели чата и правой
       // колонки в точках (в узком виде колонки нет — null); sideMin (WF68) —
       // действующая нижняя граница колонки по строке модели.
-      autoAllow: { presses: autoAllowState.presses.slice(0, 5), blocked: autoAllowState.blocked, lastBlocked: autoAllowState.lastBlocked.slice(0, 300) },
+      autoAllow: { presses: autoAllowState.presses.slice(0, 5), blocked: autoAllowState.blocked, blockedLog: autoAllowState.blockedLog.slice(0, 5) },
       layout: (() => {
         const panel = layoutPanel(state.editor);
         const wide = wideLayout(panel);

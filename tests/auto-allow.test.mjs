@@ -9,6 +9,8 @@ test("имя кнопки — без хвоста-подсказки клави�
   assert.equal(autoAllowLabel("Always allow 2"), "Always allow");
   assert.equal(autoAllowLabel("  Allow\n 1 "), "Allow");
   assert.equal(autoAllowLabel("Allow once ⌘⏎"), "Allow once");
+  assert.equal(autoAllowLabel("Always allow2⇧Shift⌘Command⏎Enter"), "Always allow");
+  assert.equal(autoAllowLabel("Allow1⏎Enter"), "Allow");
 });
 
 test("не жмём сам: удаление, деньги, git push, запись в файл", () => {
@@ -19,7 +21,7 @@ test("не жмём сам: удаление, деньги, git push, запис
 });
 
 test("жмём: имена файлов, стрелки и 2>&1 кнопку не глушат", () => {
-  for (const text of ["Claude wants to read refunds.md", "cat delete-old.sql", "npm test 2>&1 | tail -5",
+  for (const text of ["Claude wants to read refunds.md", "cat delete-old.sql", "npm test 2>&1 | tail -5", "ls x 2>/dev/null | head", "mdfind 'date >= $time.now(-7200)'",
     "a -> b => c", "git pushes", "form_submit", "Allow Bash to run ls -la?"]) {
     assert.ok(!autoAllowBlocked(text), text);
   }
