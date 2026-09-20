@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-3";
+  const VERSION = "wf76-a-4";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -8138,6 +8138,89 @@ nav[aria-label="Repository and pull request controls"] {
   htmlChromeState.timer = setInterval(() => { try { htmlChromeTick(); } catch {} }, HTML_CHROME_TICK_MS);
   track(() => { clearInterval(htmlChromeState.timer); htmlChromeState.timer = 0; });
 
+  // ---- 12е. Авто-Allow в странице (#6645) -----------------------------------
+  // До 20.09 кнопку жало приложение через AX-дерево окна. Claude перестал отдавать
+  // его наружу (замер 20.09 05:00: AXManualAccessibility ставится без ошибки и
+  // читается 0, в окне 12 узлов вместо тысяч) — кнопку снаружи не видно вовсе.
+  // Страница видит её всегда. Правила — те же, что у AutoAllow.swift: «Always
+  // allow» первой, список «не жму сам» (удаление, деньги, git push, запись в
+  // файл через `>`) — только здесь он сверяется со ВСЕМ текстом диалога, а не с
+  // вынутой из заголовка командой: лишний ручной клик дешевле стёртой папки.
+  const AUTO_ALLOW_TICK_MS = 700;
+  const AUTO_ALLOW_PATTERNS = [/^allow once/i, /^allow$/i, /^allow for this/i, /^allow always/i, /^always allow/i, /^yes, allow/i];
+  const AUTO_ALLOW_BLOCK_WORDS = ["rm", "delete", "payment", "refund", "invoice"];
+  const AUTO_ALLOW_BLOCK_PHRASES = ["drop table", "drop database", "git push"];
+  const AUTO_ALLOW_BLOCK_TOOLS = ["payment", "refund", "invoice"];
+  const autoAllowState = { timer: 0, lastPressAt: 0, lastBlocked: "", presses: [], blocked: 0 };
+  // Имя кнопки без хвоста-подсказки клавиши: «Always allow 2» → «Always allow».
+  const autoAllowLabel = text => {
+    const words = String(text ?? "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+    while (words.length > 1 && !/\p{L}/u.test(words[words.length - 1])) words.pop();
+    return words.join(" ");
+  };
+  const autoAllowWords = text => String(text).toLowerCase()
+    .split(/[\s;|&`()\[\]{}"'=,<>]+/).map(word => word.replace(/^-+/, "")).filter(Boolean);
+  // Запись в файл: `> файл`, `>>`, `2>`; стрелки `->`, `=>`, `>=` и склейка `2>&1` не в счёт.
+  const autoAllowRedirect = text => {
+    const chars = [...String(text)];
+    for (let index = 0; index < chars.length; index += 1) {
+      if (chars[index] !== ">") continue;
+      const before = chars[index - 1];
+      if (before === "-" || before === "=" || before === "<") continue;
+      let next = index + 1;
+      while (next < chars.length && (chars[next] === ">" || chars[next] === " ")) next += 1;
+      if (chars[next] === "=" || chars[next] === "&") continue;
+      return true;
+    }
+    return false;
+  };
+  const autoAllowBlocked = text => {
+    const lower = String(text ?? "").toLowerCase();
+    const words = autoAllowWords(lower);
+    if (AUTO_ALLOW_BLOCK_WORDS.some(word => words.includes(word))) return true;
+    if (AUTO_ALLOW_BLOCK_PHRASES.some(phrase => new RegExp(`(^|[^\\p{L}\\p{N}_])${phrase}($|[^\\p{L}\\p{N}_])`, "u").test(lower))) return true;
+    if (autoAllowRedirect(lower)) return true;
+    // Имя инструмента приходит одним словом (`kaspi_payment_create`) — узор ищется внутри.
+    return words.some(word => word.includes("_") && AUTO_ALLOW_BLOCK_TOOLS.some(tool => word.includes(tool)));
+  };
+  // Диалог кнопки: поднимаемся, пока предок не захватил поле ввода (черновик со
+  // словом «delete» не должен глушить кнопку) и не дошёл до body.
+  const autoAllowDialog = button => {
+    let node = button;
+    for (let depth = 0; depth < 8; depth += 1) {
+      const parent = node.parentElement;
+      if (!parent || parent === document.body || parent.querySelector?.(".ProseMirror, textarea")) break;
+      node = parent;
+    }
+    return node;
+  };
+  const autoAllowTick = () => {
+    const now = Date.now();
+    if (now - autoAllowState.lastPressAt < AUTO_ALLOW_TICK_MS) return;
+    const hits = [];
+    for (const button of document.querySelectorAll("button")) {
+      if (button.disabled || button.getAttribute("aria-disabled") === "true") continue;
+      const label = autoAllowLabel(button.textContent);
+      if (!label || label.length > 40 || !AUTO_ALLOW_PATTERNS.some(pattern => pattern.test(label))) continue;
+      const box = button.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) continue;
+      const text = String(autoAllowDialog(button).innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 2000);
+      if (autoAllowBlocked(text)) {
+        if (text !== autoAllowState.lastBlocked) { autoAllowState.lastBlocked = text; autoAllowState.blocked += 1; }
+        continue;
+      }
+      hits.push({ button, label, text });
+    }
+    const hit = hits.find(item => /always/i.test(item.label)) ?? hits[0];
+    if (!hit) return;
+    autoAllowState.lastPressAt = now;
+    hit.button.click();
+    autoAllowState.presses.unshift({ at: new Date(now).toISOString(), button: hit.label, dialog: hit.text.slice(0, 300) });
+    autoAllowState.presses.length = Math.min(autoAllowState.presses.length, 20);
+  };
+  autoAllowState.timer = setInterval(() => { try { autoAllowTick(); } catch {} }, AUTO_ALLOW_TICK_MS);
+  track(() => { clearInterval(autoAllowState.timer); autoAllowState.timer = 0; });
+
   // ---- 13. Прокрутка ленты ------------------------------------------------
   // Команда «Прокрутить»: поставить ленту разговора на последнее сообщение.
   // В отличие от collapse/expand она адресована ВСЕМ окнам сразу, поэтому
@@ -8640,6 +8723,7 @@ nav[aria-label="Repository and pull request controls"] {
       // Широкий вид (раздел 2г, WF65): включён ли, ширина панели чата и правой
       // колонки в точках (в узком виде колонки нет — null); sideMin (WF68) —
       // действующая нижняя граница колонки по строке модели.
+      autoAllow: { presses: autoAllowState.presses.slice(0, 5), blocked: autoAllowState.blocked, lastBlocked: autoAllowState.lastBlocked.slice(0, 300) },
       layout: (() => {
         const panel = layoutPanel(state.editor);
         const wide = wideLayout(panel);
@@ -8797,7 +8881,7 @@ nav[aria-label="Repository and pull request controls"] {
   // Тестовый люк: в бою этой функции нет, объект даже не собирается.
   // Ставит её только tests/load.mjs, чтобы дотянуться до чистых функций замыкания.
   // Глушителя ошибок здесь нет намеренно: переименовали функцию — люк обязан кричать, а не отдавать тестам undefined.
-  if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ htmlChromePanePath, themeCss, epitaxyCss, fontCss, sizeCss,
+  if (typeof globalThis.__myclaudeTest === "function") globalThis.__myclaudeTest({ autoAllowLabel, autoAllowBlocked, htmlChromePanePath, themeCss, epitaxyCss, fontCss, sizeCss,
     attachmentsCss, layoutCss, WIDE_PANEL_MIN, SIDE_MIN, SIDE_FLOOR, SIDE_CHIN_GAP, CHIN_ROW_SELECTOR, SIDE_MAX_SHARE, PROGRESS_GAP, TITLE_SIDE_ATTRIBUTE, TITLEBAR_CLEARANCE_LEFT, WIDE_TILE,
     frameShadow, normalizeTheme, normalizeFont, normalizeSize, normalizeSizeCommand, normalizeHex, mixHex, hslTriple,
     codeCss, codePalette, contrastRatio, readableOn,
