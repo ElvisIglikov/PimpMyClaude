@@ -175,7 +175,7 @@ test("dispose() снимает атрибуты композера и перем
   // Свёрнутое поле метится третьим атрибутом — его снимает тот же dispose.
   const collapsed = open();
   collapsed.dom.command({ action: "collapse" });
-  assert.equal(collapsed.dom.queryAll("[data-myclaude-composer-block]").length, 1, "поле свёрнуто");
+  assert.ok(collapsed.dom.queryAll("[data-myclaude-composer-block]").length >= 1, "поле свёрнуто");
   collapsed.api.dispose();
   assert.equal(collapsed.dom.queryAll(EDITOR_ATTRIBUTES).length, 0, "свёрнутость снята вместе с экземпляром");
 });

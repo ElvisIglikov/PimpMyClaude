@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-8";
+  const VERSION = "wf76-a-10";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -3538,17 +3538,16 @@ nav[aria-label="Repository and pull request controls"] {
     // Полоса сидит верхом на кромке: половина линии выше низа рамки, половина
     // ниже. На запасном якоре кромка — верх строки инструментов.
     //
-    // Свёрнутое поле — случай особый: рамка схлопнута в ноль и её низ приходится
-    // ровно туда, куда с 12.09 встала линия свёрнутой полоски, — две линии
-    // сливались бы в одну (#5866). Пока поле свёрнуто, полоса садится на низ
-    // всего блока ввода: строка модели осталась на виду и держит его низ.
-    const blockBottom = state.stage === STAGE_COLLAPSED
-      ? Math.round(block.getBoundingClientRect().bottom) : null;
-    // Под рамкой и под низом блока — с зазором PROGRESS_GAP (#6178); на запасном
-    // якоре линия по-прежнему сидит верхом на кромке строки инструментов.
-    const top = blockBottom != null || onFrame
-      ? (blockBottom ?? Math.round(rect.bottom)) + PROGRESS_GAP
-      : Math.round(rect.top) - 1;
+    // Свёрнутое поле — режим чтения (#6651, слово Элвиса 20.09: «всё скрывай,
+    // даже полоску внизу, чтобы оставалась одна полосочка»): полосы нет вовсе.
+    if (state.stage === STAGE_COLLAPSED) {
+      progressState.reason = "поле свёрнуто — режим чтения";
+      progressHide();
+      return;
+    }
+    // Под рамкой — с зазором PROGRESS_GAP (#6178); на запасном якоре линия
+    // по-прежнему сидит верхом на кромке строки инструментов.
+    const top = onFrame ? Math.round(rect.bottom) + PROGRESS_GAP : Math.round(rect.top) - 1;
     if (progressCovered(top, left, left + width)) {
       progressState.reason = "полосу закрыло меню";
       progressHide();
@@ -3559,8 +3558,7 @@ nav[aria-label="Repository and pull request controls"] {
     // ждёт первого ответа, а не «сломалась». Причину при этом называем честно —
     // её читает гейт через probe.
     progressState.reason = info ? null : "нет строки состояния — пустой контур";
-    progressState.anchor = blockBottom != null
-      ? "низ блока" : (onFrame ? "рамка" : "строка инструментов");
+    progressState.anchor = onFrame ? "рамка" : "строка инструментов";
     const shares = info ? progressShares(info, width) : [0];
     progressState.segments = shares;
     // Полоса сейчас спрятана — значит это её появление: ни первый показ при
@@ -5036,9 +5034,11 @@ nav[aria-label="Repository and pull request controls"] {
   };
 
   // ---- 6. Сворачивание ----------------------------------------------------
-  // Что именно схлопывать: рамка поля и всё, что стоит над ней (плашка проекта,
-  // вложения, строка окружения). Строка модели идёт после рамки и в список не
-  // попадает — она и остаётся видимой.
+  // Что именно схлопывать: рамка поля, всё, что стоит над ней (плашка проекта,
+  // вложения, строка окружения), строка модели под ней и шапка чата сверху —
+  // свёрнутое поле с 20.09 это режим чтения (#6651, слово Элвиса: «скрывалось
+  // вообще всё внизу… и всё, что сверху, чтобы текст шёл на самый верх»). На виду
+  // остаётся одна полоска: она живёт в body и садится на нижний край окна.
   const collapseTargets = () => {
     const block = state.composerBlock;
     if (!block?.isConnected) return [];
@@ -5054,7 +5054,10 @@ nav[aria-label="Repository and pull request controls"] {
     const targets = [];
     for (let node = block.firstElementChild; node; node = node.nextElementSibling) {
       targets.push(node);
-      if (node === state.frameChild) return targets;
+      if (node !== state.modelRow) continue;
+      const titlebar = document.querySelector(".epitaxy-titlebar");
+      if (titlebar?.isConnected) targets.push(titlebar);
+      return targets;
     }
     const shell = state.shell;
     return shell?.isConnected && block.contains(shell) && shell !== block ? [shell] : [];
@@ -5315,7 +5318,12 @@ nav[aria-label="Repository and pull request controls"] {
     if (!editor) { handle.style.display = "none"; placeSideRail(null, false); return; }
     noteEditorFound();
     applyComposerFont(editor);
-    const block = findComposerBlock(editor, state.shell);
+    // Свёрнутая строка модели нулевой высоты: ни блок (он узнаётся по соседу
+    // рамки ростом со строку), ни сама строка заново не нашлись бы, и поле тут
+    // же развернулось бы обратно. Пока она жива и схлопнута, держим найденное.
+    const rowCollapsed = state.modelRow?.isConnected && state.collapsedNodes.includes(state.modelRow) &&
+      state.composerBlock?.isConnected;
+    const block = rowCollapsed ? state.composerBlock : findComposerBlock(editor, state.shell);
     if (block !== state.composerBlock) {
       clearCollapsedNodes();
       state.composerBlock = block;
@@ -5323,7 +5331,7 @@ nav[aria-label="Repository and pull request controls"] {
     // Рамку и строку модели пересчитываем каждый проход: Claude перерисовывает
     // низ окна целиком (смена модели, вложения), и закэшированные узлы после
     // этого указывали бы в пустоту.
-    if (!state.collapsedNodes.includes(block)) {
+    if (!state.collapsedNodes.includes(block) && !rowCollapsed) {
       const parts = findComposerParts(block, state.shell);
       state.frameChild = parts?.frameChild ?? null;
       state.modelRow = parts?.modelRow ?? null;

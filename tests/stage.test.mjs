@@ -176,7 +176,7 @@ test("ступень записывается в сессию окна и отт
   // без записи ступень возвращалась бы к обычной на каждой правке файла.
   const again = open({ storage: { session: { [STAGE_KEY]: String(COLLAPSED) } } });
   assert.equal(again.api.status().stage, COLLAPSED, "окно поднялось свёрнутым");
-  assert.equal(again.api.status().collapsedNodes, 2, "и поле сразу свёрнуто, а не только помечено");
+  assert.equal(again.api.status().collapsedNodes, 3, "и поле сразу свёрнуто, а не только помечено");
 });
 
 test("сворачивается рамка поля и всё над ней, но не блок целиком", () => {
@@ -185,17 +185,18 @@ test("сворачивается рамка поля и всё над ней, н
   // Сравниваем поимённо, а не целым списком: узлы стаба живут в чужом реалме, и
   // deepEqual на них печатает дерево окна вместо понятной разницы.
   const targets = loaded.inner.collapseTargets();
-  assert.equal(targets.length, 2, "сворачиваем ровно два узла");
+  // С 20.09 (#6651) свёрнутое поле — режим чтения: уходит и строка модели.
+  assert.equal(targets.length, 3, "сворачиваем три узла");
   assert.equal(targets[0], chip, "первой идёт плашка проекта — она выше рамки");
   assert.equal(targets[1], shell, "второй сама рамка поля");
+  assert.equal(targets[2], modelRow, "третьей строка модели — «всё скрывай» (слово Элвиса 20.09)");
   assert.ok(!targets.includes(block), "блок целиком не сворачивается никогда");
-  assert.ok(!targets.includes(modelRow), "строка модели остаётся на виду");
   loaded.api.setStage(COLLAPSED);
   assert.equal(collapsed(chip), "collapsed");
   assert.equal(collapsed(shell), "collapsed");
-  assert.equal(collapsed(block), null, "иначе низ окна станет чёрной полосой");
-  assert.equal(collapsed(modelRow), null, "«Auto · Opus 5 · Max» видно и в свёрнутом поле");
-  assert.equal(loaded.api.status().collapsedNodes, 2);
+  assert.equal(collapsed(block), null, "блок сам не метится — схлопнуты его дети");
+  assert.equal(collapsed(modelRow), "collapsed", "строка модели в режиме чтения скрыта");
+  assert.equal(loaded.api.status().collapsedNodes, 3);
   loaded.api.setStage(NORMAL);
   assert.equal(collapsed(chip), null, "развернули — пометки сняты");
   assert.equal(collapsed(shell), null);
@@ -217,15 +218,20 @@ test("новая разметка Claude: сворачивается рамка 
   const { prompt, shell, modelRow } = loaded.parts;
   assert.equal(loaded.api.status().modelRow, true, "строка модели найдена под рамкой");
   const targets = loaded.inner.collapseTargets();
-  assert.equal(targets.length, 1, "сворачиваем ровно рамку поля");
+  assert.equal(targets.length, 2, "сворачиваем рамку поля и строку модели (#6651)");
   assert.equal(targets[0], shell, "и это рамка со вложениями, а не .epitaxy-prompt целиком");
+  assert.equal(targets[1], modelRow, "строка модели уходит вместе с полем");
   loaded.api.setStage(COLLAPSED);
   // Главная проверка: до правки сворачивать было нечего, и ступень откатывалась
   // в обычную — клик по полоске визуально не делал ничего.
   assert.equal(loaded.api.status().stage, COLLAPSED, "ступень держится");
   assert.equal(collapsed(shell), "collapsed");
-  assert.equal(collapsed(prompt), null, "иначе вместе с полем уедет строка модели");
-  assert.equal(collapsed(modelRow), null, "«Auto · Opus 5 · Max» видно и в свёрнутом поле");
+  assert.equal(collapsed(prompt), null, ".epitaxy-prompt целиком не метится");
+  assert.equal(collapsed(modelRow), "collapsed", "строка модели скрыта — режим чтения");
+  // Следующий проход раскладки не разворачивает поле обратно: строка нулевой
+  // высоты заново не нашлась бы (живой замер 20.09 — ступень откатывалась).
+  loaded.dom.flush?.();
+  assert.equal(loaded.api.status().stage, COLLAPSED, "ступень держится и после прохода");
 });
 
 test("узкое окно: поле уже 200 точек — полоска над ним всё равно есть", () => {
@@ -239,7 +245,7 @@ test("узкое окно: поле уже 200 точек — полоска н�
   assert.equal(status.editor, true, "поле найдено");
   assert.equal(status.handleVisible, true, "полоска показана");
   loaded.api.setStage(COLLAPSED);
-  assert.equal(loaded.api.status().collapsedNodes, 1, "и сворачивается тоже");
+  assert.equal(loaded.api.status().collapsedNodes, 2, "и сворачивается тоже");
 });
 
 test("сворачивать нечего — в свёрнутой ступени не залипаем", () => {
@@ -307,20 +313,15 @@ test("свёрнутая полоска легла на кромку строк�
     "кнопка не мешает — линия ровно на кромке строки модели");
 });
 
-test("у свёрнутого поля полоса прогресса переезжает на низ блока — линии не сливаются", () => {
+test("у свёрнутого поля полосы прогресса нет вовсе — режим чтения (#6651)", () => {
   const loaded = loadInject({ html: newBuildStand(), title: "Trelvis" });
-  const { block, shell } = loaded.parts;
+  const { shell } = loaded.parts;
   assert.equal(loaded.api.status().progress.anchor, "рамка", "на открытом поле якорь прежний");
   assert.equal(barTop(loaded), box(shell).bottom + PROGRESS_GAP, "и линия сидит под низом рамки с зазором");
   loaded.api.setStage(COLLAPSED);
-  // Свёрнутая рамка схлопнута в ноль, и её низ приходится ровно туда, куда
-  // встала линия полоски: без переезда две линии рисовались бы одна в одну.
-  assert.equal(loaded.api.status().progress.anchor, "низ блока");
-  assert.equal(barTop(loaded), box(block).bottom + PROGRESS_GAP, "полоса ушла под низ блока ввода");
-  assert.ok(barTop(loaded) - handleLine(loaded) >= PROGRESS_BAR_HEIGHT + 4,
-    `между линиями ${barTop(loaded) - handleLine(loaded)} точек — не сливаются`);
+  assert.equal(loaded.api.status().progress.reason, "поле свёрнуто — режим чтения");
   loaded.api.setStage(NORMAL);
-  assert.equal(loaded.api.status().progress.anchor, "рамка", "поле открыли — якорь вернулся");
+  assert.equal(loaded.api.status().progress.anchor, "рамка", "поле открыли — полоса вернулась");
 });
 
 test("лента доскручивается вниз после смены ступени, если стояла внизу", () => {
