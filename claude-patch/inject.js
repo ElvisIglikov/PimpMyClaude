@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf77-a-1";
+  const VERSION = "wf77-a-2";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -417,7 +417,8 @@
   // идём вверх по `return`. Стоят ЗДЕСЬ по той же причине, что ключ выше.
   // Старт — контейнеры ИМЕННО ЭТОГО чата, глубина — как у «Открыть в Chrome».
   const CHAT_FIBER_SELECTOR = ".epitaxy-titlebar,.epitaxy-chat-panel";
-  const CHAT_FIBER_DEPTH = 12;
+  const CHAT_FIBER_DEPTH = 16;
+  const CHAT_FIBER_PROPS = ["sessionId", "initialSessionId", "episodeKey"];
   // Ответ волокна до смены заголовка окна: myChatId() зовут на каждую команду и
   // на каждом круге сторожа заголовка. Промах НЕ запоминается — разметка попапа
   // приходит позже инжекта, и запомненный null остался бы с окном навсегда.
@@ -7762,10 +7763,16 @@ nav[aria-label="Repository and pull request controls"] {
       for (const node of document.querySelectorAll(CHAT_FIBER_SELECTOR)) {
         let fiber = chatFiberOf(node);
         for (let hop = 0; fiber && hop <= CHAT_FIBER_DEPTH; hop += 1, fiber = fiber.return) {
-          const id = fiber.memoizedProps?.sessionId;
-          if (typeof id !== "string" || !id.startsWith("local_")) continue;
-          if (found && found !== id) return "";
-          found = id;
+          // Живая проба гейта 20.09: сам `sessionId` лежит на 63-м прыжке от панели
+          // — за пределом; рядом с полосой заголовка тот же id носят `episodeKey`
+          // (1-й прыжок) и `initialSessionId` (11-й). Читаем все три, согласие то же.
+          const props = fiber.memoizedProps;
+          for (const name of CHAT_FIBER_PROPS) {
+            const id = props?.[name];
+            if (typeof id !== "string" || !id.startsWith("local_")) continue;
+            if (found && found !== id) return "";
+            found = id;
+          }
         }
       }
     } catch { return null; }
