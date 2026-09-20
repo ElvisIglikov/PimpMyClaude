@@ -1,4 +1,5 @@
 {
   "minWindowWidth": 280,
-  "sidePadding": 5
+  "sidePadding": 5,
+  "windowGap": 5
 }

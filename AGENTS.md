@@ -1,6 +1,6 @@
 # ⚪PimpMyClaude — памятка агенту (читать первой, до README)
 
-Обновлено 17.09.2026 (ветка `wf70`). Здесь только то, без чего нельзя начать работу: что это, устройство, сборка,
+Обновлено 20.09.2026 (ветка `wf77`). Здесь только то, без чего нельзя начать работу: что это, устройство, сборка,
 кто чем владеет. Контракты и решения — в `docs/CONTRACTS.md` и `docs/DECISIONS.md` (указатель ниже, 18.09.2026). **Где проект стоит сейчас — `HANDOFF.md`** (состояние, что ждёт Элвиса,
 решения Элвиса с датами, следующий шаг); счёт воркфлоу — `docs/status.md`. Общие правила общения и воркфлоу
 👾 Элвиса — `/Users/elvis/_ElvisProjects/SkilZZZ/AGENTS.md` и `WORKFLOW.md` (прочитать). Задачник 🟣Trelvis:
@@ -15,7 +15,7 @@
 Бывший MyClaude (переименован 03.09.2026). GitHub `ElvisIglikov/PimpMyClaude`, ветка `main`.
 
 Раздаётся как **PimpMyClaude.app** (Swift/AppKit, Developer ID «ELVIS IGLIKOV (F27N4S4NJ4)», нотаризация через
-профиль keychain `pimpmyclaude`). Версия — только из `app/Resources/Info.plist`, сейчас **1.5.1 (10)**; по ней
+профиль keychain `pimpmyclaude`). Версия — только из `app/Resources/Info.plist`, сейчас **1.5.4 (13)**; по ней
 собирается `dist/PimpMyClaude-<версия>.zip`, каталог `dist/` в `.gitignore` — архивов в репозитории нет.
 Инструкция команде — `docs/TEAM.md` (копия на рабочем столе Элвиса); какая версия у него и у команды —
 `HANDOFF.md`. У Элвиса приложение стоит в `/Applications`, старые Hammerspoon-модули из его `init.lua`
@@ -36,9 +36,10 @@
    Лоадер НЕ ТРОГАТЬ без крайней нужды: его смена = перепатч Claude у всей команды («Поставить снова»).
    Папка `~/Library/Application Support/MyClaude/` — так и называется (лоадер смотрит туда), не переименовывать.
 2. **Живые файлы в Application Support/MyClaude/**, лоадер перечитывает их по mtime без перезапуска Claude:
-   `claude.json` (minWindowWidth, sidePadding, projectsRoot; умолчания ЧИСТОЙ установки — `minWindowWidth: 280`
-   (WF45; было 360, и на нём две плитки раскладок из четырёх серые) и `sidePadding: 5`; готовый файл
-   `Patcher.ensureConfig` не перезаписывает, так что у команды 280 приедет только с новой установкой),
+   `claude.json` (minWindowWidth, sidePadding, projectsRoot, windowGap; умолчания ЧИСТОЙ установки —
+   `minWindowWidth: 280` (WF45; было 360, и на нём две плитки раскладок из четырёх серые) и `sidePadding: 5`; готовый файл
+   `Patcher.ensureConfig` не перезаписывает, так что у команды 280 приедет только с новой установкой;
+   `windowGap` (WF77) — зазор МЕЖДУ окнами при расстановке, pt, нет ключа или мусор — 5, зажим 0…40, пункта меню нет),
    `claude.css` (user-стили, `insertCSS`), **`inject.js`**
    (исполняется в каждой странице Claude при dom-ready и при каждом изменении файла; обязан быть идемпотентным —
    `window.__myclaude.dispose()`), `command.json` (команды `{id, action, at, …}`; лоадер читает раз в 500 мс и берёт
