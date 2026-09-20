@@ -1,22 +1,30 @@
 {
   "plan": "docs/plan-wf77-2026-09-20.md",
-  "branch": "wf77 (ставится перед кодингом)",
-  "tag": "wf77-start (ставится перед кодингом)",
+  "branch": "wf77",
+  "tag": "wf77-start",
   "status": "идёт",
   "orchestrator": "Fable 5.1 high",
-  "roles": {"critic": "Opus max", "mockup_wf78": "Opus max", "coding": "Opus max ×2 (A страница, B Swift)", "verify": "Opus max"},
-  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/9f430f85-358c-4076-bf1b-9855fe40ee1c/workflows/scripts/wf77-critic-wf78-mockup-wf_3baeaccf-d74.js",
-  "run_id": "wf_3baeaccf-d74",
+  "roles": {
+    "critic": "Opus max",
+    "mockup_wf78": "Opus max",
+    "coding": "волна 1: A Opus max ‖ B0 Opus xhigh → B1 Opus max ‖ C Opus xhigh; волна 2: B2 Opus max",
+    "verify": "Opus max"
+  },
+  "script_path": "/Users/elvis/.claude/projects/-Users-elvis--ElvisProjects-PimpMyClaude/9f430f85-358c-4076-bf1b-9855fe40ee1c/workflows/scripts/wf77-wave1-wf_6501661e-e4c.js",
+  "run_id": "wf_6501661e-e4c",
   "resumes": 0,
-  "cron": null,
+  "cron": "11e87201 (:17 каждый час)",
   "next_steps": [
-    "дождаться критика (docs/critic-wf77-2026-09-20.md) и макета WF78 (docs/mockup-wf78-limits.html) → правки плана по критику → презентация Элвису",
-    "по слову «делай»: тег wf77-start, ветка wf77, крон-сторож, волна: A (страница) ‖ B (Swift)",
-    "гейт: tools/test.sh (красное — только #6667), версия 1.5.4 (13), bundle, подмена, живой inject, документы, слияние в main",
-    "WF78 (#6737, #6738): после выбора Элвиса в макете — отдельный план (полоса страницы; ждать конца батча A)"
+    "дождаться волны 1 (A ‖ B0→B1 ‖ C) → гейт: дифф против плана, tools/test.sh, коммиты по батчам",
+    "волна 2: B2 (окно → чат по рамке: ChatProbe, ProjectPaint, ClaudeActions адресация, ClaudeAXController, PimpChannel.windows) на эталонах A",
+    "гейт: версия 1.5.4 (13), bundle, подмена, cp inject.js, живые проверки из плана, проверяющий Opus max, документы, HANDOFF в архив, слияние в main, крон снять",
+    "после всех воркфлоу — короткий HTML-отчёт Элвису в фиолетовом неоновом стиле Пимпа (HTML.md)",
+    "WF78 (#6737, #6738): ждёт ответов Элвиса по макету docs/mockup-wf78-limits.html; новые задачи #6743 (дубли суперполосы), #6744 (диктовка на ярких темах), #6745 (звук — уточнить), #6747"
   ],
   "journal": [
     "21:10 · слова Элвиса: задачи #6733–#6738; #6736 (имя папки в заголовке) сделана сразу мимо конвейера — inject wf76-a-16, коммит a8c8ad3, JS-тесты зелёные, Swift красные известные (#6667)",
-    "21:27 · план WF77 написан; запущены критик WF77 и макет WF78 (Opus max ×2), run wf_3baeaccf-d74"
+    "21:27 · план WF77 написан; запущены критик WF77 и макет WF78 (Opus max ×2), run wf_3baeaccf-d74",
+    "21:50 · критик: годен с правками (9 блокеров, 19 замечаний) — docs/critic-wf77-2026-09-20.md; план дополнен разделом «После критика»; слова Элвиса: MacBook 4 столбца, зазор только между окнами, «продолжай работу» = одобрение; руками через AX выровнены 3 окна и открыт Dictator в 4-й ячейке — находка про setFrame (размер не ставится без пауз)",
+    "21:50 · тег wf77-start, ветка wf77, крон 11e87201; волна 1 запущена, run wf_6501661e-e4c"
   ]
 }
