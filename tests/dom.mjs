@@ -207,6 +207,30 @@ export const createDom = ({
 
   const document = {};
 
+  // Настоящий текстовый узел (WF78): nodeValue — источник правды, textContent
+  // ходит за ним. Без этого раздел 12ж (панель лимитов) стендом не проверить:
+  // он меняет ИМЕННО nodeValue существующего узла — присваивание textContent
+  // уничтожило бы узел, за который держится React.
+  const makeText = value => {
+    const text = {
+      nodeType: 3,
+      nodeValue: String(value ?? ""),
+      ownerDocument: document,
+      parentNode: null,
+      remove() { text.parentNode?.removeChild?.(text); },
+      cloneNode() { return makeText(text.nodeValue); },
+    };
+    Object.defineProperties(text, {
+      textContent: { get: () => text.nodeValue, set: next => { text.nodeValue = String(next); } },
+      data: { get: () => text.nodeValue, set: next => { text.nodeValue = String(next); } },
+      isConnected: {
+        get: () => Boolean(text.parentNode?.isConnected),
+      },
+      parentElement: { get: () => (text.parentNode?.nodeType === 1 ? text.parentNode : null) },
+    });
+    return text;
+  };
+
   const makeNode = tag => {
     const attributes = new Map();
     const node = {
@@ -281,8 +305,10 @@ export const createDom = ({
           return false;
         },
       },
+      // Обходим childNodes, а не children: у узла бывают и текстовые дети
+      // (makeText), и порядок между ними и элементами важен.
       textContent: {
-        get: () => node.__text + node.children.map(kid => kid.textContent).join(""),
+        get: () => node.__text + node.childNodes.map(kid => (kid.nodeType === 3 ? String(kid.nodeValue ?? "") : kid.textContent)).join(""),
         set: value => { node.__text = String(value); node.childNodes = []; },
       },
       innerText: {
@@ -355,8 +381,7 @@ export const createDom = ({
         copy.rect = { ...node.rect };
         copy.computed = { ...node.computed };
         if (deep) for (const kid of node.childNodes) {
-          if (kid.nodeType === 1) copy.appendChild(kid.cloneNode(true));
-          else copy.childNodes.push({ ...kid, parentNode: copy });
+          copy.appendChild(kid.nodeType === 1 ? kid.cloneNode(true) : makeText(kid.nodeValue ?? kid.textContent));
         }
         return copy;
       },
@@ -479,7 +504,7 @@ export const createDom = ({
     adoptedStyleSheets: [],
     __listeners: new Map(),
     createElement: tag => makeNode(tag),
-    createTextNode: text => ({ nodeType: 3, textContent: String(text), parentNode: null }),
+    createTextNode: text => makeText(text),
     createRange: () => ({
       setStart() {}, setEnd() {}, collapse() {}, selectNodeContents() {},
       getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
@@ -726,6 +751,21 @@ export const createDom = ({
     animations,
     running: () => animations.filter(item => item.playState === "running"),
     node: makeNode,
+    // Элемент с НАСТОЯЩИМ текстовым узлом внутри — так устроена панель лимитов
+    // Claude (раздел 12ж): страница меняет nodeValue этого узла и только его.
+    // Возвращает сам элемент; текстовый узел у него один, как у React.
+    leaf: (parent, tag, text, options = {}) => {
+      const node = parent.add(tag, options);
+      node.appendChild(makeText(text));
+      return node;
+    },
+    // Перерисовка React-ом: текст узла возвращается к английскому оригиналу
+    // ровно тем же способом, каким это делает React, — записью в nodeValue.
+    retext: (element, text) => {
+      const node = element.childNodes.find(kid => kid.nodeType === 3);
+      if (node) node.nodeValue = String(text);
+      return node;
+    },
     // Сколько раз страницу искали по дереву за всё время жизни окна.
     queries: () => queries,
     query: selector => document.querySelector(selector),
