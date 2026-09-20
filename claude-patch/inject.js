@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-15";
+  const VERSION = "wf76-a-16";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -1277,6 +1277,29 @@ nav[aria-label="Repository and pull request controls"] {
 }
 .epitaxy-titlebar .group\\/lead[data-pills-compact] .group-data-\\[pills-compact\\]\\/lead\\:hidden {
   display: inline-block !important;
+}
+/* #6736 (слово Элвиса 20.09): имя папки проекта в заголовке видно всегда и целиком —
+   сжимается и уходит в многоточие заголовок чата, а не оно. У Claude подпись
+   truncate и в тесном заголовке sr-only; обёртки до общего с заголовком чата
+   контейнера не сжимаются. */
+.epitaxy-titlebar .group\\/lead [data-testid="epitaxy-origin-label"] {
+  position: static !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  clip: auto !important;
+  clip-path: none !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+.epitaxy-titlebar .group\\/lead :is(
+  button:has(> [data-testid="epitaxy-origin-label"]),
+  span:has(> button > [data-testid="epitaxy-origin-label"]),
+  span:has(> span > button > [data-testid="epitaxy-origin-label"])
+) {
+  flex-shrink: 0 !important;
 }
 @container tile-slot (min-width: ${WIDE_PANEL_MIN}px) {
   .epitaxy-chat-panel:has(> div > .epitaxy-titlebar):has(> div > .contents > .epitaxy-chat-panel-body [data-testid="epitaxy-virtual-transcript"]):has(.group\\/approval-dock) {
