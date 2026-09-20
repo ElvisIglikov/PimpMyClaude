@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-7";
+  const VERSION = "wf76-a-8";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -8200,10 +8200,44 @@ nav[aria-label="Repository and pull request controls"] {
     autoAllowToastTimer = setTimeout(() => toast.remove(), ms);
   };
   track(() => { clearTimeout(autoAllowToastTimer); document.getElementById(AUTO_ALLOW_TOAST_ID)?.remove(); });
+  // Журнал «почему не нажал» (слово Элвиса 20.09 05:30: каждый отказ разобрать,
+  // обойти в коде и записать). Живёт в localStorage — переживает переинжект и
+  // перезапуск Claude; читает его агент через probe (`status().autoAllow.journal`).
+  // Порядок разбора — docs/DECISIONS.md, «Авто-Allow: журнал отказов».
+  const AUTO_ALLOW_JOURNAL_KEY = "myclaude-auto-allow-journal-v1";
+  const AUTO_ALLOW_JOURNAL_MAX = 30;
+  const AUTO_ALLOW_STUCK_MS = 6000;
+  const autoAllowJournal = () => {
+    try {
+      const list = JSON.parse(localStorage.getItem(AUTO_ALLOW_JOURNAL_KEY) ?? "[]");
+      return Array.isArray(list) ? list : [];
+    } catch { return []; }
+  };
+  const autoAllowNote = (reason, dialog, buttons) => {
+    try {
+      const list = autoAllowJournal();
+      list.unshift({ at: new Date().toISOString(), version: VERSION, reason, buttons, dialog: String(dialog).slice(0, 4000) });
+      localStorage.setItem(AUTO_ALLOW_JOURNAL_KEY, JSON.stringify(list.slice(0, AUTO_ALLOW_JOURNAL_MAX)));
+    } catch {}
+  };
+  // Карточка подтверждения висит, а тик её не нажал и не отказал — кнопку не
+  // опознали (Claude сменил подпись или разметку). Пишется раз на карточку.
+  const autoAllowStuck = { card: null, since: 0, noted: false };
+  const autoAllowWatchStuck = (now, handled) => {
+    const card = document.querySelector(".epitaxy-approval-card");
+    if (!card || handled) { autoAllowStuck.card = null; return; }
+    if (card !== autoAllowStuck.card) { autoAllowStuck.card = card; autoAllowStuck.since = now; autoAllowStuck.noted = false; return; }
+    if (autoAllowStuck.noted || now - autoAllowStuck.since < AUTO_ALLOW_STUCK_MS) return;
+    autoAllowStuck.noted = true;
+    const buttons = [...card.querySelectorAll("button")].map(button => String(button.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 60));
+    autoAllowNote("кнопка не опознана", String(card.innerText ?? "").replace(/\s+/g, " ").trim(), buttons);
+    autoAllowToast("Пимп не нашёл кнопку Allow в этом диалоге — записал в журнал", 6000);
+  };
   const autoAllowTick = () => {
     const now = Date.now();
     if (now - autoAllowState.lastPressAt < AUTO_ALLOW_TICK_MS) return;
     const hits = [];
+    let refused = false;
     for (const button of document.querySelectorAll("button")) {
       if (button.disabled || button.getAttribute("aria-disabled") === "true") continue;
       const label = autoAllowLabel(button.textContent);
@@ -8213,7 +8247,9 @@ nav[aria-label="Repository and pull request controls"] {
       const text = String(autoAllowDialog(button).innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 2000);
       const reason = autoAllowBlockReason(text);
       if (reason) {
+        refused = true;
         if (text !== autoAllowState.lastBlocked) {
+          autoAllowNote(reason, text, [label]);
           autoAllowState.lastBlocked = text;
           autoAllowState.blocked += 1;
           autoAllowState.blockedLog.unshift({ at: new Date(now).toISOString(), reason, dialog: text });
@@ -8225,6 +8261,7 @@ nav[aria-label="Repository and pull request controls"] {
       hits.push({ button, label, text });
     }
     const hit = hits.find(item => /always/i.test(item.label)) ?? hits[0];
+    autoAllowWatchStuck(now, refused || Boolean(hit));
     if (!hit) return;
     autoAllowState.lastPressAt = now;
     hit.button.click();
@@ -8737,7 +8774,7 @@ nav[aria-label="Repository and pull request controls"] {
       // Широкий вид (раздел 2г, WF65): включён ли, ширина панели чата и правой
       // колонки в точках (в узком виде колонки нет — null); sideMin (WF68) —
       // действующая нижняя граница колонки по строке модели.
-      autoAllow: { presses: autoAllowState.presses.slice(0, 5), blocked: autoAllowState.blocked, blockedLog: autoAllowState.blockedLog.slice(0, 5) },
+      autoAllow: { presses: autoAllowState.presses.slice(0, 5), blocked: autoAllowState.blocked, blockedLog: autoAllowState.blockedLog.slice(0, 5), journal: autoAllowJournal().slice(0, 10) },
       layout: (() => {
         const panel = layoutPanel(state.editor);
         const wide = wideLayout(panel);
