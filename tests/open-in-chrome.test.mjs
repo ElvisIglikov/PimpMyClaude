@@ -146,7 +146,7 @@ test("меню с «Show in Finder»: Chrome первым, под ним Коп�
   const first = list.firstElementChild;
   assert.ok(first.hasAttribute(ATTRIBUTE), "наш пункт не первый");
   assert.equal(first.getAttribute("role"), "menuitem");
-  assert.equal(first.textContent, "🌐 Открыть в Chrome");
+  assert.equal(first.textContent, "🌐 Открыть в браузере");
   assert.equal(first.style.getPropertyValue("font-weight"), "600", "пункт не жирный");
   assert.equal(first.id, "", "у клона остался id пункта Claude");
   const second = list.children[1];

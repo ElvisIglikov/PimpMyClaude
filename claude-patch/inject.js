@@ -49,7 +49,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf76-a-10";
+  const VERSION = "wf76-a-12";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -4492,6 +4492,8 @@ nav[aria-label="Repository and pull request controls"] {
     `#${SIDE_RAIL_ID}>span{position:absolute;left:50%;top:0;bottom:0;width:3px;margin-left:-1.5px;border-radius:2px;background:currentColor;opacity:0;transition:opacity 160ms ease}`,
     `#${SIDE_RAIL_ID}:hover>span{opacity:.45;transition-delay:${SIDE_RAIL_REVEAL_MS}ms}`,
     `#${SIDE_RAIL_ID}[data-dragging="true"]>span{opacity:.55;transition-delay:0ms}`,
+    // Угловой фейд ленты в режиме чтения (раздел 6).
+    `[data-myclaude-corner-fade]{-webkit-mask-image:radial-gradient(ellipse var(--myclaude-fade-w) var(--myclaude-fade-h) at 0 0,transparent 70%,#000 100%);mask-image:radial-gradient(ellipse var(--myclaude-fade-w) var(--myclaude-fade-h) at 0 0,transparent 70%,#000 100%)}`,
     // Левая панель Claude ýже его минимума (раздел 2д).
     `.dframe-root[${LEFT_ATTRIBUTE}]{--df-sidebar-width:var(${LEFT_VARIABLE}) !important}`,
     // Схлопнутый узел: не display:none, а полоска нулевой высоты — редактор
@@ -5063,6 +5065,44 @@ nav[aria-label="Repository and pull request controls"] {
     return shell?.isConnected && block.contains(shell) && shell !== block ? [shell] : [];
   };
 
+  // Режим чтения: лента идёт от самого верха окна, и первые строки просвечивали
+  // сквозь кнопки окна и «Show sidebar» (слово Элвиса 20.09 06:10: «угловой фейд,
+  // не на всю длину»). Не накладка, а маска самой ленты: текст в углу плавно
+  // сходит на нет, цвет фона подбирать не надо и кнопки Claude ничем не закрыты.
+  const CORNER_FADE_ATTRIBUTE = "data-myclaude-corner-fade";
+  const CORNER_FADE_REACH_MAIN = 140;
+  const CORNER_FADE_REACH_POPOUT = 96;
+  const CORNER_FADE_DROP = 40;
+  const cornerFade = { node: null };
+  const clearCornerFade = () => {
+    const node = cornerFade.node;
+    cornerFade.node = null;
+    if (!node) return;
+    try {
+      node.removeAttribute(CORNER_FADE_ATTRIBUTE);
+      node.style.removeProperty("--myclaude-fade-w");
+      node.style.removeProperty("--myclaude-fade-h");
+    } catch {}
+  };
+  track(clearCornerFade);
+  const applyCornerFade = panel => {
+    let scroller = null;
+    try { scroller = state.stage === STAGE_COLLAPSED ? panel?.querySelector?.('[data-testid="epitaxy-virtual-transcript"]') ?? null : null; } catch {}
+    const box = scroller?.isConnected ? scroller.getBoundingClientRect() : null;
+    const reach = location.href === "about:blank" ? CORNER_FADE_REACH_POPOUT : CORNER_FADE_REACH_MAIN;
+    const width = box ? reach - box.left : 0;
+    const height = box ? CORNER_FADE_DROP - box.top : 0;
+    // Открыта боковая панель — кнопки стоят над ней, а не над лентой.
+    if (!box || box.width <= 0 || box.left >= TITLEBAR_CLEARANCE_LEFT || width <= 0 || height <= 0) { clearCornerFade(); return; }
+    if (cornerFade.node !== scroller) clearCornerFade();
+    cornerFade.node = scroller;
+    const w = `${Math.round(width * 1.4)}px`;
+    const h = `${Math.round(height * 1.9)}px`;
+    if (scroller.style.getPropertyValue("--myclaude-fade-w") !== w) scroller.style.setProperty("--myclaude-fade-w", w);
+    if (scroller.style.getPropertyValue("--myclaude-fade-h") !== h) scroller.style.setProperty("--myclaude-fade-h", h);
+    if (!scroller.hasAttribute(CORNER_FADE_ATTRIBUTE)) scroller.setAttribute(CORNER_FADE_ATTRIBUTE, "");
+  };
+
   const clearCollapsedNodes = () => {
     for (const node of state.collapsedNodes) {
       if (node.isConnected) node.removeAttribute(BLOCK_ATTRIBUTE);
@@ -5347,6 +5387,7 @@ nav[aria-label="Repository and pull request controls"] {
     applySideMin(panel, wide);
     placeSideRail(panel, wide);
     applyCollapse();
+    applyCornerFade(panel);
     if (!state.shell?.isConnected) { handle.style.display = "none"; return; }
     if (state.stage === STAGE_COLLAPSED) { placeCollapsedHandle(); return; }
     applyHeight();
@@ -7807,7 +7848,9 @@ nav[aria-label="Repository and pull request controls"] {
   // не может — только текст; файл (public.file-url, как «Скопировать» в Finder)
   // кладёт приложение (CopyFileRelay.swift): см. copyFileToClipboard ниже.
   const OPEN_CHROME_ATTRIBUTE = "data-myclaude-open-chrome";
-  const OPEN_CHROME_LABEL = "🌐 Открыть в Chrome";
+  // Браузер выбирает приложение: Vivaldi, если стоит, иначе Chrome (#6657, слово
+  // Элвиса 20.09) — страница этого не знает, поэтому подпись без имени браузера.
+  const OPEN_CHROME_LABEL = "🌐 Открыть в браузере";
   const COPY_FILE_LABEL = "📋 Копировать в буфер";
   const OPEN_CHROME_MENU_SELECTOR = '[role="menu"][data-cds="ContextMenu"]';
   const OPEN_CHROME_ITEM_SELECTOR = '[role="menuitem"]';
@@ -7910,7 +7953,13 @@ nav[aria-label="Repository and pull request controls"] {
     const list = finder?.parentNode;
     if (!list) return false;
     const first = list.firstElementChild;
-    if (found.page) list.insertBefore(openChromeItem(finder, OPEN_CHROME_LABEL, () => openChromeOpen(found.path)), first);
+    if (found.page) list.insertBefore(openChromeItem(finder, OPEN_CHROME_LABEL, () => {
+      // Тем же путём, что клик по карточке (раздел 12д): приложение ведёт вкладку
+      // и браузер; приложения нет — мост Claude, программа по умолчанию.
+      // Меню закрывает ровно один Escape: лишний, при уже закрытом меню, оборвал
+      // бы ответ Claude. На запасном пути его шлёт сам openChromeOpen.
+      htmlChromeAsk(found.path, "click", openChromeClose);
+    }), first);
     list.insertBefore(openChromeItem(finder, COPY_FILE_LABEL, () => copyFileToClipboard(found)), first);
     const separator = menu.querySelector(OPEN_CHROME_SEPARATOR_SELECTOR);
     if (separator) {
@@ -8073,13 +8122,13 @@ nav[aria-label="Repository and pull request controls"] {
   // «Просмотр»; куда именно — решает приложение по расширению.
   const HTML_CHROME_FILE_RE = /\.(html?|pdf|png|jpe?g|gif|webp|heic|tiff?|bmp)$/i;
   const htmlChromeState = { clicks: 0, autos: 0, closed: 0, last: null, lastPath: "", lastAt: 0, timer: 0 };
-  const htmlChromeAsk = (path, mode) => {
+  const htmlChromeAsk = (path, mode, done) => {
     htmlChromeState.last = { path, mode, via: "app" };
     const fallback = () => { htmlChromeState.last = { path, mode, via: "bridge" }; try { openChromeOpen(path); } catch {} };
     if (typeof fetch !== "function") { fallback(); return; }
     try {
       fetch(`http://127.0.0.1:${HTML_CHROME_PORT}/open-html?mode=${mode}&path=${encodeURIComponent(path)}`, { mode: "no-cors", cache: "no-store" })
-        .then(() => {}, fallback);
+        .then(() => { try { done?.(); } catch {} }, fallback);
     } catch { fallback(); }
   };
   const onHtmlChromeClick = event => {
