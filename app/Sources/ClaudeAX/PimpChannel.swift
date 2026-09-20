@@ -147,7 +147,7 @@ struct PimpSeats {
     /// сейчас; окна с разных экранов остаются каждое на своём, стоящие на месте не
     /// двигаются. Отдаёт ВСЕ названные окна с итоговыми рамками — ячейка есть у каждого,
     /// кто влез на экран. Второй параметр — «порядок навязан»: место названо словом.
-    var arrangeSmart: (_ ids: [CGWindowID], _ ordered: Bool) -> [PimpWindow] = { _, _ in [] }
+    var arrangeSmart: (_ ids: [CGWindowID], _ ordered: Bool, _ anchor: CGWindowID?) -> [PimpWindow] = { _, _, _ in [] }
     /// Последняя выбранная раскладка: её берут явные плитки. Умный путь её не читает и не
     /// пишет (критик WF77 блокер 2: иначе «расставь» стирала бы выбор Элвиса).
     var arrangeMode: () -> ArrangeLayout.Mode = { .ribbon }
@@ -537,7 +537,7 @@ final class PimpChannel {
         guard let mode = request.layout else {
             // Порядок назвали сами (`order`) — он и навязан; иначе окна занимают ячейки
             // сами, а стоящие на месте не двигаются вовсе.
-            let placed = seats.arrangeSmart(ids, sorted != nil)
+            let placed = seats.arrangeSmart(ids, sorted != nil, nil)
             guard !placed.isEmpty else {
                 reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue),
                       for: id)
@@ -739,14 +739,14 @@ final class PimpChannel {
         let order = ArrangeLayout.order(of: others.map { windows[$0].frame })
         guard place == .left || place == .middle else {
             let ids = order.map { windows[others[$0]].id } + [window.id]
-            return seats.arrangeSmart(ids, false).first { $0.id == window.id }?.frame
+            return seats.arrangeSmart(ids, false, nil).first { $0.id == window.id }?.frame
         }
         // Число столбцов умной сетки канал не знает (её считает приложение по экрану),
         // поэтому «посередине» — середина всего порядка, как у ленты.
         let index = ArrangeLayout.insertIndex(of: place, count: others.count)
         let full = ArrangeLayout.insert(order: order, count: others.count, at: index)
         let ids = full.map { $0 == others.count ? window.id : windows[others[$0]].id }
-        return seats.arrangeSmart(ids, true).first { $0.id == window.id }?.frame
+        return seats.arrangeSmart(ids, true, window.id).first { $0.id == window.id }?.frame
     }
 
     // MARK: - закрыть, вставить, сказать (план WF75)

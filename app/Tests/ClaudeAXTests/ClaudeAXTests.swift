@@ -582,6 +582,26 @@ final class ClaudeAXTests: XCTestCase {
                        [0])
     }
 
+    /// Навязанный порядок ради нового окна касается только ЕГО экрана (проверка WF77,
+    /// блокер 2): на другом мониторе окна, сидящие в правых ячейках, остаются где сидят.
+    func testSmartImposedOrderStaysOnAnchorScreen() {
+        let odyssey = ClaudeAXTests.odyssey, macbook = ClaudeAXTests.macbook
+        let screens = [(full: CGRect(x: 0, y: 0, width: 1280, height: 832), usable: macbook),
+                       (full: odyssey, usable: odyssey)]
+        let sixths = ArrangeLayout.cells(cols: 6, rows: 1, count: 6, in: odyssey, gap: 5)
+        let halves = ArrangeLayout.cells(cols: 2, rows: 1, count: 2, in: macbook, gap: 5)
+        // На Odyssey сидят ячейки 4 и 5; на макбуке окно и новое (якорь, индекс 3) поверх.
+        let fresh = CGRect(x: 40, y: 70, width: 600, height: 500)
+        let frames = [sixths[4], sixths[5], halves[0], fresh]
+        let placed = ArrangeLayout.smart(frames: frames, screens: screens,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5,
+                                         order: [3, 0, 1, 2], anchor: 3)
+        XCTAssertEqual(placed[0], sixths[4], "чужой экран не перекладывается")
+        XCTAssertEqual(placed[1], sixths[5])
+        XCTAssertEqual(placed[3], halves[0], "новое окно — первым на своём экране")
+        XCTAssertEqual(placed[2], halves[1])
+    }
+
     /// Порог «сидящих не меньше половины» (КП-6 критика): одно случайно совпавшее окно
     /// сетку из шести столбцов не диктует — четыре окна делят экран поровну.
     func testSmartIgnoresSingleAccidentalMatch() {
@@ -2690,7 +2710,9 @@ final class ClaudeAXTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
         actions.isMainWindowTitle = { $0 == "PimpMyClaude" }
-        actions.chatForTitle = { $0 == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil }
+        actions.chatForTitle = { title, _ in
+            title == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil
+        }
         actions.mainWindowMatch = { ClaudeAXTests.cashoutMainMatch }
         let window = MenuModel.themeScopeWindow
 
@@ -2705,6 +2727,23 @@ final class ClaudeAXTests: XCTestCase {
         // Окно не опознано — как сегодня, по заголовку.
         XCTAssertNil(actions.themeAddress(scope: window, title: "Гость").match)
         XCTAssertNil(actions.themeAddress(scope: window, title: "Гость").chat)
+        // План WF77 (#6734): заголовок носят два окна — адрес выбирает РАМКА окна, и без
+        // неё это ничья. Карту рамок держит `ChatProbe`, сюда она приходит сиденьем.
+        let left = CGRect(x: -792, y: -842, width: 496, height: 838)
+        let right = CGRect(x: -290, y: -842, width: 496, height: 838)
+        actions.chatForTitle = { title, frame in
+            guard title == "Ожидание задачи", let frame = frame else { return nil }
+            return frame.minX == left.minX ? "local_left" : "local_right"
+        }
+        XCTAssertEqual(actions.themeAddress(scope: window, title: "Ожидание задачи",
+                                            frame: left).chat, "local_left")
+        XCTAssertEqual(actions.themeAddress(scope: window, title: "Ожидание задачи",
+                                            frame: right).chat, "local_right")
+        XCTAssertNil(actions.themeAddress(scope: window, title: "Ожидание задачи").chat,
+                     "рамки нет — ничья, и команда адресуется заголовком, как до WF77")
+        actions.chatForTitle = { title, _ in
+            title == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil
+        }
         // «Всем окнам» адреса не имеет вовсе, пустой заголовок значит «окно в фокусе».
         XCTAssertNil(actions.themeAddress(scope: MenuModel.themeScopeAll,
                                           title: "PimpMyClaude").match)
@@ -3060,7 +3099,9 @@ final class ClaudeAXTests: XCTestCase {
         let file = dir.appendingPathComponent("command.json")
         let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
         actions.isMainWindowTitle = { $0 == "PimpMyClaude" }
-        actions.chatForTitle = { $0 == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil }
+        actions.chatForTitle = { title, _ in
+            title == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil
+        }
         actions.mainWindowMatch = { ClaudeAXTests.cashoutMainMatch }
         var delays: [TimeInterval] = []
         actions.schedule = { delay, _ in delays.append(delay) }

@@ -49,6 +49,9 @@ private final class PaintRig {
     /// Что страницы ответили в последнем круге probe (план WF29): «какой во мне чат».
     /// Пусто — карта несвежая, и покраска попапов идёт старым путём, по заголовку.
     var pages: [ChatPage] = []
+    /// Рамка окна, от имени которого зовут меню и ручной выбор (план WF77): ею среди
+    /// окон-однофамильцев находится нужный чат. nil — рамки нет, всё как до WF77.
+    var windowFrame: CGRect?
 
     init(box: URL) {
         self.box = box
@@ -75,19 +78,20 @@ private final class PaintRig {
         paint.showNotice = { [unowned self] text in self.notices.append(text) }
         // Ровно та же проводка, что живьём вешает ClaudeAXController на ChatProbe.
         paint.chatPages = { [unowned self] in self.pages }
-        paint.chatForTitle = { [unowned self] title in
-            ChatProbe.chat(forTitle: title, in: self.pages)
+        paint.chatForTitle = { [unowned self] title, frame in
+            ChatProbe.chat(forTitle: title, frame: frame, in: self.pages)
         }
     }
 
     func folder(_ name: String) -> URL { root.appendingPathComponent(name, isDirectory: true) }
 
     /// Ответ страницы: `at` — по часам стенда, чтобы протухание ответа было проверяемым.
+    /// `frame` (план WF77) — рамка окна страницы; ею различаются окна-однофамильцы.
     func page(_ kind: ChatPage.Kind, _ chat: String?, _ title: String,
               store: String = ChatProbe.storeOK, path: String = "",
-              folder: String? = nil) -> ChatPage {
+              folder: String? = nil, frame: CGRect? = nil) -> ChatPage {
         ChatPage(kind: kind, chat: chat, title: title, path: path, store: store, folder: folder,
-                 at: clock.now)
+                 frame: frame, at: clock.now)
     }
 
     /// Главное окно на домашнем экране (план WF37 C2): сессии у него нет вовсе, и папку
@@ -678,12 +682,12 @@ final class ProjectTests: XCTestCase {
                                     myThemes: MyThemesStore(url: rig.box.appendingPathComponent("my.json")),
                                     autoPaintStore: AutoPaintStore(defaults: ProjectDefaults()),
                                     liveColorsStore: LiveColorsStore(defaults: ProjectDefaults()))
-        actions.onWindowViewChanged = { [unowned rig] _, theme, font, size, frame in
+        actions.onWindowViewChanged = { [unowned rig] _, windowFrame, theme, font, size, frame in
             // Заголовок берёт стенд, а не окно: живой AX подсовывает сюда окно Элвиса, и
             // проверки зависели бы от того, как сейчас назван его чат (#6667). Стенд всегда
             // говорит от безымянного окна — для покраски это и есть её главное окно.
-            rig.paint.noteManualChoice(title: "", theme: theme, font: font, size: size,
-                                       frame: frame)
+            rig.paint.noteManualChoice(title: "", windowFrame: windowFrame, theme: theme,
+                                       font: font, size: size, frame: frame)
         }
         return actions
     }
@@ -1705,6 +1709,57 @@ final class ProjectTests: XCTestCase {
         XCTAssertEqual(rig.store.settings(in: rig.folder("Dictatorik"))?.theme.value?.id, "arctic")
         XCTAssertNil(rig.store.settings(in: rig.folder("PimpMyClaude")))
         XCTAssertTrue(rig.notices.isEmpty, "молча выходим: выбор остаётся местным")
+    }
+
+    /// Задача #6734, слово Элвиса 20.09: «Окно проекта SkilZZZ говорит „Тема проекта
+    /// PimpMyClaude“… меняю цвет — меняется у обоих. Разные проекты должны вести себя
+    /// независимо». Оба окна зовутся одинаково (Элвис открывает каждый чат одной фразой),
+    /// и до WF77 обоим доставался чат ПЕРВОЙ подходящей страницы. Теперь окна разводит
+    /// рамка — и ручной выбор, и пункт «🗂 <Проект>», и ключ окна.
+    func testTwinTitlesFollowWindowFrame() throws {
+        let rig = makeRig()
+        let left = CGRect(x: -792, y: -842, width: 496, height: 838)
+        let middle = CGRect(x: -290, y: -842, width: 496, height: 838)
+        putSession(rig.sessions, id: "local_p1", title: "Ожидание задачи",
+                   cwd: rig.folder("PimpMyClaude"), at: 2800)
+        putSession(rig.sessions, id: "local_d2", title: "Ожидание задачи",
+                   cwd: rig.folder("Dictatorik"), at: 2700)
+        rig.pages = [rig.page(.popout, "local_p1", "Ожидание задачи", frame: left),
+                     rig.page(.popout, "local_d2", "Ожидание задачи", frame: middle)]
+
+        // Ключ окна — своего чата у каждого; рамки нет вовсе — ключ по заголовку, как до WF77.
+        XCTAssertEqual(rig.paint.windowKey(forTitle: "Ожидание задачи", frame: left), "c:local_p1")
+        XCTAssertEqual(rig.paint.windowKey(forTitle: "Ожидание задачи", frame: middle), "c:local_d2")
+        XCTAssertEqual(rig.paint.windowKey(forTitle: "Ожидание задачи"), "w:Ожидание задачи")
+
+        // Меню на минусе показывает проект СВОЕГО окна.
+        XCTAssertEqual(rig.paint.projectTheme(forTitle: "Ожидание задачи", frame: left)?.name,
+                       "PimpMyClaude")
+        XCTAssertEqual(rig.paint.projectTheme(forTitle: "Ожидание задачи", frame: middle)?.name,
+                       "Dictatorik")
+
+        // Выбор цвета в левом окне ложится в файл ЕГО проекта и соседний не трогает.
+        rig.paint.noteManualChoice(title: "Ожидание задачи", windowFrame: left,
+                                   theme: .set(ProjectTests.arctic), font: .keep, size: .keep,
+                                   frame: .keep)
+        XCTAssertEqual(rig.store.settings(in: rig.folder("PimpMyClaude"))?.theme.value?.id, "arctic")
+        XCTAssertNil(rig.store.settings(in: rig.folder("Dictatorik")),
+                     "цвет одного окна уехал в проект соседнего — ровно то, на что Элвис жаловался")
+
+        // А выбор в правом окне — в свой, и первый проект остаётся как был.
+        rig.paint.noteManualChoice(title: "Ожидание задачи", windowFrame: middle,
+                                   theme: .set(ProjectTests.indigo), font: .keep, size: .keep,
+                                   frame: .keep)
+        XCTAssertEqual(rig.store.settings(in: rig.folder("Dictatorik"))?.theme.value?.id, "indigo")
+        XCTAssertEqual(rig.store.settings(in: rig.folder("PimpMyClaude"))?.theme.value?.id, "arctic")
+
+        // Рамки нет (панель «Своя тема» окна не знает) — ничья, и выбор остаётся местным:
+        // лучше не записать, чем записать в чужой проект.
+        rig.notices = []
+        rig.paint.noteManualChoice(title: "Ожидание задачи", theme: .set(ProjectTests.indigo),
+                                   font: .keep, size: .keep, frame: .keep)
+        XCTAssertEqual(rig.store.settings(in: rig.folder("PimpMyClaude"))?.theme.value?.id, "arctic")
+        XCTAssertTrue(rig.notices.isEmpty, "молча выходим: папку окна не знаем")
     }
 
     /// Тест 28 плана: чат главного окна берётся из ответа самой страницы, а ответ старше

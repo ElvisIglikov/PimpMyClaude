@@ -340,14 +340,18 @@ enum ArrangeLayout {
     /// рамка экрана (по ней ловится центр) — рабочая область (по ней считается сетка)».
     static func smart(frames: [CGRect], screens: [(full: CGRect, usable: CGRect)],
                       minCellWidth: CGFloat = minCellWidth, gap: CGFloat = 0,
-                      order: [Int]? = nil) -> [CGRect] {
+                      order: [Int]? = nil, anchor: Int? = nil) -> [CGRect] {
         guard !frames.isEmpty, !screens.isEmpty else { return frames }
         let home = Screens.assign(screens: screens.map { $0.full }, frames: frames)
         var out = frames
         for screen in screens.indices {
             let mine = frames.indices.filter { home[$0] == screen }
             guard !mine.isEmpty else { continue }
-            let inner = order.map { named in named.compactMap { mine.firstIndex(of: $0) } }
+            // Порядок навязан ради НОВОГО окна (`anchor`) — только его экрану: на другом
+            // мониторе стоящие окна не перекладываем (проверка WF77, блокер 2). Якоря нет
+            // (`arrange --order`) — порядок просили для всех экранов.
+            let imposed = anchor.map { frames.indices.contains($0) && home[$0] == screen } ?? true
+            let inner = imposed ? order.map { named in named.compactMap { mine.firstIndex(of: $0) } } : nil
             let placed = smart(frames: mine.map { frames[$0] }, in: screens[screen].usable,
                                minCellWidth: minCellWidth, gap: gap, order: inner)
             for (slot, index) in mine.enumerated() { out[index] = placed[slot] }

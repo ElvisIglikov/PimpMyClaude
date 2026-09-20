@@ -65,13 +65,17 @@ private final class ProbeBox {
 
     /// Ответ страницы на наш круг. `path` и `folder` (план WF37, часть C) страница шлёт
     /// всегда и только у главного окна соответственно — в тесте они необязательные.
+    /// `frame` (план WF77) — рамка окна `[screenX, screenY, outerWidth, outerHeight]`;
+    /// не передали — поля в ответе нет вовсе, как у страницы до WF77.
     func page(kind: String, chat: String?, title: String, store: String,
-              nonce: String? = nil, path: String? = nil, folder: Any? = nil) -> [String: Any] {
+              nonce: String? = nil, path: String? = nil, folder: Any? = nil,
+              frame: [Int]? = nil) -> [String: Any] {
         var payload: [String: Any] = ["v": 1, "nonce": nonce ?? self.nonce ?? "", "kind": kind,
                                       "title": title, "store": store]
         if let chat = chat { payload["self"] = chat }
         if let path = path { payload["path"] = path }
         if let folder = folder { payload["folder"] = folder }
+        if let frame = frame { payload["frame"] = frame }
         return ["id": 1, "url": kind == "main" ? "https://claude.ai/epitaxy/\(chat ?? "")"
                                                : "about:blank", "result": payload]
     }
@@ -353,6 +357,238 @@ final class ChatProbeTests: XCTestCase {
         XCTAssertNil(ChatProbe.chat(forTitle: "PimpMyClaude", in: [
             ChatPage(kind: .main, chat: "local_a1", title: "PimpMyClaude", store: "ok", at: clock.now),
         ]))
+    }
+
+    // MARK: - окно → чат по рамке (план WF77, задача #6734)
+
+    /// Рамки окон Элвиса: три шестых доли Odyssey (замер 20.09, диагноз плана WF77).
+    private static let left = CGRect(x: -792, y: -842, width: 496, height: 838)
+    private static let middle = CGRect(x: -290, y: -842, width: 496, height: 838)
+    private static let right = CGRect(x: 210, y: -842, width: 496, height: 838)
+
+    private func popout(_ chat: String?, _ title: String, _ frame: CGRect?,
+                        at: Date) -> ChatPage {
+        ChatPage(kind: .popout, chat: chat, title: title, store: ChatProbe.storeOK, frame: frame,
+                 at: at)
+    }
+
+    /// Слово Элвиса 20.09: «Окно проекта SkilZZZ говорит „Тема проекта PimpMyClaude“…
+    /// меняю цвет — меняется у обоих». Оба попапа у него зовутся «Ожидание задачи», и до
+    /// WF77 `chat(forTitle:)` брал ПЕРВУЮ страницу с таким заголовком. Теперь окна
+    /// различает рамка — и только она: сошлось сразу две или не сошлось ни одной, значит
+    /// ничья, и лучше не покрасить, чем покрасить чужим.
+    func testChatForTitleSplitsTwinsByFrame() {
+        let at = Date(timeIntervalSince1970: 1_757_100_000)
+        let twins = [popout("local_left", "Ожидание задачи", ChatProbeTests.left, at: at),
+                     popout("local_right", "Ожидание задачи", ChatProbeTests.middle, at: at)]
+
+        XCTAssertEqual(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.left,
+                                      in: twins), "local_left")
+        XCTAssertEqual(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.middle,
+                                      in: twins), "local_right")
+        // Окно подвинули на 10 pt — угол в допуске, и это всё ещё оно (после расстановки
+        // и пока окно едет, рамка карты отстаёт на считаные точки).
+        XCTAssertEqual(ChatProbe.chat(forTitle: "Ожидание задачи",
+                                      frame: ChatProbeTests.left.offsetBy(dx: 10, dy: -10),
+                                      in: twins), "local_left")
+        // Ширину Electron зажал своим минимумом — по размеру рамки не сходятся никогда,
+        // а сверяется только левый верхний угол.
+        XCTAssertEqual(ChatProbe.chat(forTitle: "Ожидание задачи",
+                                      frame: CGRect(x: -792, y: -842, width: 280, height: 600),
+                                      in: twins), "local_left")
+        // Рамки окна нет вовсе (зовут из панели «Своя тема») — ничья, как до WF77.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи", in: twins))
+        // Рамка далеко от обеих страниц: карта про это окно ничего не знает.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.right,
+                                    in: twins))
+        // Страницы рамок не прислали (Claude со старым inject.js) — тоже ничья.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.left,
+                                    in: [popout("local_left", "Ожидание задачи", nil, at: at),
+                                         popout("local_right", "Ожидание задачи", nil, at: at)]))
+        // Окна стоят друг на друге — победителя нет, и чужой чат окну не достанется.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.left,
+                                    in: [popout("local_left", "Ожидание задачи",
+                                                ChatProbeTests.left, at: at),
+                                         popout("local_right", "Ожидание задачи",
+                                                ChatProbeTests.left, at: at)]))
+        // Ближайшая страница себя не назвала — чата у окна нет (её id чужой).
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.left,
+                                    in: [popout(nil, "Ожидание задачи", ChatProbeTests.left, at: at),
+                                         popout("local_right", "Ожидание задачи",
+                                                ChatProbeTests.middle, at: at)]))
+
+        // Страница с таким заголовком ОДНА — она, и рамка не нужна вовсе (ни своя, ни её).
+        XCTAssertEqual(ChatProbe.chat(forTitle: "Ожидание задачи",
+                                      in: [popout("local_left", "Ожидание задачи",
+                                                  ChatProbeTests.left, at: at)]), "local_left")
+        XCTAssertEqual(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.right,
+                                      in: [popout("local_left", "Ожидание задачи", nil, at: at)]),
+                       "local_left")
+        // Одноимённые страницы назвали ОДИН чат — неоднозначности нет, рамка ни при чём.
+        XCTAssertEqual(ChatProbe.chat(forTitle: "Ожидание задачи",
+                                      in: [popout("local_one", "Ожидание задачи",
+                                                  ChatProbeTests.left, at: at),
+                                           popout("local_one", "Ожидание задачи",
+                                                  ChatProbeTests.middle, at: at)]), "local_one")
+    }
+
+    /// Рамка в ответе страницы (решение 10 плана WF77): хвостовое поле, разбор
+    /// НЕОБЯЗАТЕЛЬНЫЙ — поля нет, и всё работает по-старому. Эталоны батча A читаем как есть.
+    func testParseAnswerWindowFrame() throws {
+        let clock = ProbeClock()
+        let popout = try loaderAnswer("probe-answer-popout.json", url: "about:blank")
+        XCTAssertEqual(ChatProbe.parseAnswer(popout.data, nonce: popout.nonce,
+                                             at: clock.now).pages.first?.frame,
+                       CGRect(x: -290, y: -842, width: 496, height: 838))
+        let home = try loaderAnswer("probe-answer-home.json", url: "https://claude.ai/epitaxy")
+        XCTAssertEqual(ChatProbe.parseAnswer(home.data, nonce: home.nonce,
+                                             at: clock.now).pages.first?.frame,
+                       CGRect(x: -792, y: -842, width: 496, height: 838))
+        let chat = try loaderAnswer("probe-answer-chat.json",
+                                    url: "https://claude.ai/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74")
+        XCTAssertNotNil(ChatProbe.parseAnswer(chat.data, nonce: chat.nonce,
+                                              at: clock.now).pages.first?.frame)
+
+        // Ответ БЕЗ рамки (страница до WF77): поле nil, и окно опознаётся заголовком.
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        probe.tick(windowTitles: ["Bro Flow продолжение"], indexRevision: 1)
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "Bro Flow продолжение",
+                             store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Bro Flow продолжение"], indexRevision: 1)
+        XCTAssertNil(probe.pages.first?.frame)
+        XCTAssertEqual(probe.chat(forTitle: "Bro Flow продолжение"), "local_b2")
+
+        // Сито разбора: не четыре числа, не числа вовсе, нулевой размер — поля нет.
+        XCTAssertEqual(ChatProbe.frameRect([-792, -842, 496, 838]), ChatProbeTests.left)
+        XCTAssertNil(ChatProbe.frameRect(nil))
+        XCTAssertNil(ChatProbe.frameRect("-792,-842,496,838"))
+        XCTAssertNil(ChatProbe.frameRect([-792, -842, 496]))
+        XCTAssertNil(ChatProbe.frameRect([-792, -842, 496, 838, 1]))
+        XCTAssertNil(ChatProbe.frameRect([-792, -842, "496", 838]))
+        XCTAssertNil(ChatProbe.frameRect([-792, -842, 0, 838]))
+    }
+
+    /// Критик WF77, блокер 6: без нового повода починка живёт до первой расстановки —
+    /// рамки в карте протухают, заголовки и поколение индекса при этом те же, и спросить
+    /// страницы заново некому.
+    func testChatProbeAsksWhenFramesDiverge() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        let twins: [(title: String, frame: CGRect?)] = [
+            (title: "Ожидание задачи", frame: ChatProbeTests.left),
+            (title: "Ожидание задачи", frame: ChatProbeTests.middle),
+        ]
+        let answer = {
+            box.answer([box.page(kind: "popout", chat: "local_left", title: "Ожидание задачи",
+                                 store: "ok", frame: [-792, -842, 496, 838]),
+                        box.page(kind: "popout", chat: "local_right", title: "Ожидание задачи",
+                                 store: "ok", frame: [-290, -842, 496, 838])])
+        }
+
+        probe.tick(windows: twins, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+        let asked = clock.now
+        answer()
+        clock.advance(2)
+        probe.tick(windows: twins, indexRevision: 1)
+        XCTAssertEqual(probe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.left),
+                       "local_left")
+
+        // Рамки карты сходятся с живыми — вопросов нет.
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windows: twins, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+
+        // Окно переехало (⌥⌘A, канал, рука Элвиса) — рамки разошлись, спрашиваем заново.
+        // Часы при этом НЕ двигаем: тик тот же, окна те же, изменились только рамки —
+        // значит вопрос поднимает именно новый повод, а не пол «неопознанного окна»
+        // (он в минуту, и она ещё не вышла — проверка строкой ниже).
+        XCTAssertLessThan(clock.now.timeIntervalSince(asked), ChatProbe.unknownInterval)
+        let moved: [(title: String, frame: CGRect?)] = [
+            (title: "Ожидание задачи", frame: ChatProbeTests.left),
+            (title: "Ожидание задачи", frame: ChatProbeTests.right),
+        ]
+        probe.tick(windows: moved, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 2)
+        XCTAssertTrue(try XCTUnwrap(box.writes.last).contains("api.chats({ scan: true"),
+                      "окно, про которое карта врёт, считается неопознанным")
+
+        // Страницы ответили новыми рамками — и снова тишина, сколько ни тикай.
+        box.answer([box.page(kind: "popout", chat: "local_left", title: "Ожидание задачи",
+                             store: "ok", frame: [-792, -842, 496, 838]),
+                    box.page(kind: "popout", chat: "local_right", title: "Ожидание задачи",
+                             store: "ok", frame: [210, -842, 496, 838])])
+        clock.advance(2)
+        probe.tick(windows: moved, indexRevision: 1)
+        XCTAssertEqual(probe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.right),
+                       "local_right")
+        for _ in 0..<5 {
+            clock.advance(ChatProbe.askInterval + 1)
+            probe.tick(windows: moved, indexRevision: 1)
+        }
+        XCTAssertEqual(box.writes.count, 2)
+
+        // `onWindowsMoved` поднимает тот же повод СРАЗУ, не дожидаясь сверки: приложение
+        // само только что двигало окна, и рамки карты старше переезда. Окна тут опознаны,
+        // рамки сходятся — объяснить этот круг больше нечем.
+        probe.noteWindowsMoved()
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windows: moved, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 3)
+        // Повод разовый: обслужили — и снова тишина.
+        box.answer([box.page(kind: "popout", chat: "local_left", title: "Ожидание задачи",
+                             store: "ok", frame: [-792, -842, 496, 838]),
+                    box.page(kind: "popout", chat: "local_right", title: "Ожидание задачи",
+                             store: "ok", frame: [210, -842, 496, 838])])
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windows: moved, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 3)
+
+        // Рамок в карте нет вовсе (страница до WF77) — сверять нечего, и лишнего круга
+        // не будет: окна остаются неопознанными, и их держит прежний пол в минуту.
+        let old = ProbeBox(clock: clock)
+        let plain = makeProbe(old, clock: clock)
+        plain.tick(windows: twins, indexRevision: 1)
+        old.answer([old.page(kind: "popout", chat: "local_left", title: "Ожидание задачи",
+                             store: "ok"),
+                    old.page(kind: "popout", chat: "local_right", title: "Ожидание задачи",
+                             store: "ok")])
+        clock.advance(2)
+        plain.tick(windows: twins, indexRevision: 1)
+        clock.advance(ChatProbe.askInterval + 1)
+        plain.tick(windows: twins, indexRevision: 1)
+        XCTAssertEqual(old.writes.count, 1, "сверять нечем — круг ничего не изменит")
+    }
+
+    /// Одинокое окно рамкой не опознаётся и опознаваться не должно: probe нельзя дёргать
+    /// на каждое движение мышью (критик WF77, блокер 6а).
+    func testLoneWindowMoveDoesNotAskProbe() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        let alone: [(title: String, frame: CGRect?)] = [
+            (title: "Bro Flow продолжение", frame: ChatProbeTests.left),
+        ]
+
+        probe.tick(windows: alone, indexRevision: 1)
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "Bro Flow продолжение",
+                             store: "ok", frame: [-792, -842, 496, 838])])
+        clock.advance(2)
+        probe.tick(windows: alone, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+
+        // Окно уехало на другой край экрана и приложение об этом знает — вопроса всё равно
+        // нет: заголовок у окна один на весь экран, рамка ему не нужна.
+        probe.noteWindowsMoved()
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windows: [(title: "Bro Flow продолжение", frame: ChatProbeTests.right)],
+                   indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+        XCTAssertEqual(probe.chat(forTitle: "Bro Flow продолжение", frame: ChatProbeTests.right),
+                       "local_b2", "одинокая страница остаётся своим окном где угодно")
     }
 
     // MARK: - домашний экран (план WF37, части C2 и C3, задача #5576)

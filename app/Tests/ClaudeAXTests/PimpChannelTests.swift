@@ -71,7 +71,7 @@ private final class PimpRig {
                 self.opened.append((project: project, origin: origin))
             },
             arrange: { [unowned self] ids, mode in self.arrange(ids, mode) },
-            arrangeSmart: { [unowned self] ids, ordered in self.arrangeSmart(ids, ordered) },
+            arrangeSmart: { [unowned self] ids, ordered, _ in self.arrangeSmart(ids, ordered) },
             arrangeMode: { [unowned self] in self.mode },
             fitsLayout: { [unowned self] _ in self.fits },
             place: { [unowned self] moves in self.place(moves) },

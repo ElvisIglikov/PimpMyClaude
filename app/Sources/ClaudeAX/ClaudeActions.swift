@@ -162,7 +162,8 @@ final class ClaudeActions {
             let title = AX.string(window, kAXTitleAttribute) ?? ""
             switch ClaudeActions.cashoutRoute(title: title,
                                               isMainTitle: self.isMainWindowTitle(title),
-                                              knownChat: self.chatForTitle(title)) {
+                                              knownChat: self.chatForTitle(title,
+                                                                           AX.frame(window))) {
             case .main:
                 // Как и было по смыслу, только адрес точнее: путь страницы главного окна
                 // (`match`) не даст команде уйти веером безымянным попапам (критик Б1 WF15).
@@ -431,10 +432,11 @@ final class ClaudeActions {
         return clean.isEmpty || clean == ProjectPaint.mainWindowTitle
     }
 
-    /// Чат окна по AX-заголовку — карта probe (план WF29). Живьём вешает контроллер;
-    /// карта несвежая или тумблер «🗂 Цвет по проекту» выключен — nil, и попап адресуется
-    /// заголовком, как до WF37.
-    var chatForTitle: (String) -> String? = { _ in nil }
+    /// Чат окна по AX-заголовку и РАМКЕ окна — карта probe (план WF29, рамка с WF77).
+    /// Живьём вешает контроллер; карта несвежая или тумблер «🗂 Цвет по проекту» выключен —
+    /// nil, и попап адресуется заголовком, как до WF37. Рамка решает, когда заголовок носят
+    /// два окна: без неё это ничья и nil (#6734).
+    var chatForTitle: (String, CGRect?) -> String? = { _, _ in nil }
     /// Проект чата: папка из индекса Claude Code. Живьём вешает контроллер; nil — папки
     /// не знаем, и новое окно откроется «Здесь же».
     var projectForChat: (String) -> Project? = { _ in nil }
@@ -744,17 +746,20 @@ final class ClaudeActions {
         noteUserCommand()
         let target = window ?? focusedWindow()
         let title = target.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
+        // Рамку снимаем ЗДЕСЬ, пока окно под рукой (план WF77): ею карта probe различает
+        // два окна с одинаковым заголовком — и в адресе команды, и в записи вида проекта.
+        let box = target.flatMap { AX.frame($0) }
         let send: () -> Bool = { [weak self] in
             guard let self = self else { return false }
-            let address = self.themeAddress(scope: scope, title: title)
+            let address = self.themeAddress(scope: scope, title: title, frame: box)
             let fields = ClaudeActions.themeFields(scope: scope, title: title,
                                                    match: address.match, chat: address.chat,
                                                    theme: theme,
                                                    font: font, size: size, frame: frame)
             guard self.commands.write(action: "theme", fields: fields) else { return false }
             self.recordTheme(fields: fields)
-            self.remember(scope: scope, title: title, theme: theme, font: font, size: size,
-                          frame: frame, toProject: toProject)
+            self.remember(scope: scope, title: title, windowFrame: box, theme: theme, font: font,
+                          size: size, frame: frame, toProject: toProject)
             return true
         }
         if title.isEmpty, let target = target {
@@ -776,10 +781,11 @@ final class ClaudeActions {
     /// заголовок тоже: он значит «окно в фокусе», и какое это окно, приложение не знает.
     /// Не `private` только ради тестов: живой AX они не поднимают, а заголовок окна берётся
     /// из него — иначе развилку не проверить.
-    func themeAddress(scope: String, title: String) -> (match: String?, chat: String?) {
+    func themeAddress(scope: String, title: String,
+                      frame: CGRect? = nil) -> (match: String?, chat: String?) {
         guard scope == MenuModel.themeScopeWindow, !title.isEmpty else { return (nil, nil) }
         switch ClaudeActions.cashoutRoute(title: title, isMainTitle: isMainWindowTitle(title),
-                                          knownChat: chatForTitle(title)) {
+                                          knownChat: chatForTitle(title, frame)) {
         case .main: return (mainWindowMatch(), nil)
         case .popout(let chat): return (nil, chat)
         }
@@ -911,7 +917,8 @@ final class ClaudeActions {
     /// окна и галки те же, а вид проекта не меняется. Отпечаток покраски при этом не
     /// трогается, поэтому окно держит выбор, пока не изменится вид проекта или не
     /// перезапустится приложение — после перезапуска оно красится по проекту.
-    private func remember(scope: String, title: String, theme: Layer<Theme>, font: Layer<Font>,
+    private func remember(scope: String, title: String, windowFrame: CGRect? = nil,
+                          theme: Layer<Theme>, font: Layer<Font>,
                           size: SizeLayer, frame: Layer<Bool>, toProject: Bool = true) {
         // Размер окна ЦЕЛЫМ слоем — таким он и уйдёт в файл проекта (крючок в конце).
         var windowSize: Layer<Size> = .keep
@@ -963,13 +970,16 @@ final class ClaudeActions {
         // всем» (находка 6 проверки WF20): третий scope, который однажды появится, ушёл бы
         // в файл проекта молча.
         guard scope == MenuModel.themeScopeWindow, toProject else { return }
-        onWindowViewChanged?(title, theme, font, windowSize, frame)
+        onWindowViewChanged?(title, windowFrame, theme, font, windowSize, frame)
     }
 
-    /// Окну задали вид руками: заголовок и четыре слоя. Вешает `ClaudeAXController` — на
-    /// `ProjectPaint.noteManualChoice`, которая молча кладёт выбор в `.pimpmyclaude.json`
-    /// (решение 3.2 плана WF20). Размер приходит целым слоем: `.reset` — «как у Claude».
-    var onWindowViewChanged: ((String, Layer<Theme>, Layer<Font>, Layer<Size>, Layer<Bool>) -> Void)?
+    /// Окну задали вид руками: заголовок, рамка окна и четыре слоя. Вешает
+    /// `ClaudeAXController` — на `ProjectPaint.noteManualChoice`, которая молча кладёт выбор
+    /// в `.pimpmyclaude.json` (решение 3.2 плана WF20). Размер приходит целым слоем:
+    /// `.reset` — «как у Claude». Рамка (план WF77) находит папку среди окон-однофамильцев:
+    /// без неё выбор в одном окне уезжал в проект соседнего (#6734).
+    var onWindowViewChanged: ((String, CGRect?, Layer<Theme>, Layer<Font>,
+                               Layer<Size>, Layer<Bool>) -> Void)?
 
     /// Что записать окну после команды размера (критик В4 плана WF19): база слияния — своя
     /// запись окна, а её нет — запись «всем окнам». Страница мержит по той же цепочке
@@ -1040,7 +1050,9 @@ final class ClaudeActions {
         guard !title.isEmpty else { return false }
         // Примерка адресуется так же, как закрепляющая команда (#5715): иначе цвет под
         // курсором ехал бы на все окна с этим именем чата, а «конец примерки» — тоже.
-        let address = themeAddress(scope: MenuModel.themeScopeWindow, title: title)
+        // Рамка окна — часть адреса с WF77: по ней различаются окна-однофамильцы.
+        let address = themeAddress(scope: MenuModel.themeScopeWindow, title: title,
+                                   frame: target.flatMap { AX.frame($0) })
         let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: title,
                                                match: address.match, chat: address.chat,
                                                preview: preview, theme: theme, font: font,
@@ -1128,24 +1140,28 @@ final class ClaudeActions {
     /// тема живёт на чате, и двум окнам одного чата достанется один цвет.
     /// Счётчики считаются по факту (хвост WF10): `shared` — окна, которым своего цвета не
     /// досталось (окна − уникальные заголовки − пропущенные), `skipped` — окна без заголовка.
-    private func paintableWindows() -> (titles: [String], onScreen: Int, shared: Int, skipped: Int) {
-        guard let pid = app.pid else { return ([], 0, 0, 0) }
+    private func paintableWindows() -> (titles: [String], named: [(title: String, frame: CGRect?)],
+                                        onScreen: Int, shared: Int, skipped: Int) {
+        guard let pid = app.pid else { return ([], [], 0, 0, 0) }
         let windows = ClaudeApp.onScreenFrames(pid: pid)
-        guard !windows.isEmpty else { return ([], 0, 0, 0) }
+        guard !windows.isEmpty else { return ([], [], 0, 0, 0) }
         var seen = Set<String>()
         var titles: [String] = []
+        var named: [(title: String, frame: CGRect?)] = []
         var skipped = 0
         for index in ArrangeLayout.order(of: windows.map { $0.frame }) {
-            let title = app.window(matching: windows[index].frame)
+            let frame = windows[index].frame
+            let title = app.window(matching: frame)
                 .flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
             guard !title.isEmpty else {
                 skipped += 1
                 continue
             }
+            named.append((title: title, frame: frame))
             guard seen.insert(title).inserted else { continue }
             titles.append(title)
         }
-        return (titles, windows.count, windows.count - titles.count - skipped, skipped)
+        return (titles, named, windows.count, windows.count - titles.count - skipped, skipped)
     }
 
     // MARK: - живые цвета (план WF18)
@@ -1294,6 +1310,15 @@ final class ClaudeActions {
     /// заголовка окно не адресовать, одинаковые схлопнуты.
     func paintableTitles() -> [String] { paintableWindows().titles }
 
+    /// Тот же обход окон на один тик, но двумя списками (план WF77): заголовки со схлопнутыми
+    /// однофамильцами — ими адресуются команды и ключуется память вида, и те же окна с
+    /// рамками и БЕЗ схлопывания — ими канал probe различает два окна с одним заголовком.
+    /// Один вызов вместо двух: обход стоит `CGWindowList` плюс AX-заголовок на каждое окно.
+    func paintableSnapshot() -> (titles: [String], windows: [(title: String, frame: CGRect?)]) {
+        let seen = paintableWindows()
+        return (seen.titles, seen.named)
+    }
+
     /// Окно красила «Раскрасить по кругу» — цвет у него сгенерированный, и проект такое окно
     /// не трогает (критик Б3 плана WF15). Ручной выбор из меню (`ThemeStore`) окно больше
     /// НЕ занимает: с WF20 он и есть вид проекта (решение 3.2), а старая защита не дала бы
@@ -1316,7 +1341,8 @@ final class ClaudeActions {
     /// Заголовок приходит снаружи (его читает `perform`) — так развилку видно тестам.
     func newChatCommand(_ window: AXUIElement?, title: String) {
         switch ClaudeActions.cashoutRoute(title: title, isMainTitle: isMainWindowTitle(title),
-                                          knownChat: chatForTitle(title)) {
+                                          knownChat: chatForTitle(title,
+                                                                  window.flatMap { AX.frame($0) })) {
         case .main:
             newChat(window)
         case .popout(let chat):
@@ -1350,13 +1376,16 @@ final class ClaudeActions {
         let frames = windows.map { AX.frame($0) ?? .zero }
         let placed = ArrangeLayout.smart(frames: frames, screens: Screens.all(),
                                          minCellWidth: cellWidth(), gap: cellGap())
+        var moved = 0
         for (index, window) in windows.enumerated() {
             // Сидящему окну рамку не пишем ВОВСЕ: лишняя запись в AX дёргает окно даже на
             // тех же координатах, а Элвис просил таких не трогать.
             guard !ClaudeActions.frameMatches(frames[index], placed[index]) else { continue }
             ClaudeActions.setFrame(window, placed[index])
+            moved += 1
         }
-        onWindowsMoved?()
+        // Никто не сдвинулся — и probe переспрашивать незачем (как у `place`).
+        if moved > 0 { onWindowsMoved?() }
     }
 
     /// Ровная сетка по главному экрану, раскладка задана плиткой в меню. Порядок окон
@@ -1630,7 +1659,7 @@ final class ClaudeActions {
     /// Ячейка находится каждому, кто влез на экран, поэтому `skipped` у этого пути не
     /// бывает. `ordered` — порядок навязан: место названо словом («слева», «посередине»).
     @discardableResult
-    func arrangeSmart(ids: [CGWindowID], ordered: Bool)
+    func arrangeSmart(ids: [CGWindowID], ordered: Bool, anchor: CGWindowID? = nil)
         -> [(id: CGWindowID, title: String, frame: CGRect)] {
         let windows = pimpWindows()
         let listed = ids.compactMap { id in windows.first { $0.id == id } }
@@ -1639,7 +1668,8 @@ final class ClaudeActions {
         // Окна уже идут в том порядке, о котором просили, — навязанный порядок это он и есть.
         let placed = ArrangeLayout.smart(frames: frames, screens: Screens.all(),
                                          minCellWidth: cellWidth(), gap: cellGap(),
-                                         order: ordered ? Array(frames.indices) : nil)
+                                         order: ordered ? Array(frames.indices) : nil,
+                                         anchor: anchor.flatMap { id in listed.firstIndex { $0.id == id } })
         var out: [(id: CGWindowID, title: String, frame: CGRect)] = []
         for (index, entry) in listed.enumerated() {
             if !ClaudeActions.frameMatches(frames[index], placed[index]) {
