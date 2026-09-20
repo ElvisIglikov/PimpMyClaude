@@ -332,6 +332,11 @@ enum ArrangeLayout {
         // не участвуют, иначе порядок зависел бы от окон, которых мы не двигаем.
         let queue = ArrangeLayout.order(of: restless.map { frames[$0] }).map { restless[$0] }
         for (index, cell) in zip(queue, free) { out[index] = grid[cell] }
+        // Сидящему — ТОЧНАЯ рамка его ячейки (слово Элвиса 20.09: «они не совсем ровно
+        // стоят, не идеальные размеры — ты должен это без моих слов делать»; живой случай
+        // 21.09: окна встык без зазора «сидели» по допуску 8 pt и зазора не получали).
+        // Сошлась точка в точку — рамку окну не пишут вовсе (`frameMatches`, 2 pt).
+        for (index, cell) in best.sitting { out[index] = grid[cell] }
         return out
     }
 

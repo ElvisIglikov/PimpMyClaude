@@ -15,7 +15,7 @@
 Бывший MyClaude (переименован 03.09.2026). GitHub `ElvisIglikov/PimpMyClaude`, ветка `main`.
 
 Раздаётся как **PimpMyClaude.app** (Swift/AppKit, Developer ID «ELVIS IGLIKOV (F27N4S4NJ4)», нотаризация через
-профиль keychain `pimpmyclaude`). Версия — только из `app/Resources/Info.plist`, сейчас **1.5.4 (13)**; по ней
+профиль keychain `pimpmyclaude`). Версия — только из `app/Resources/Info.plist`, сейчас **1.5.4 (14)**; по ней
 собирается `dist/PimpMyClaude-<версия>.zip`, каталог `dist/` в `.gitignore` — архивов в репозитории нет.
 Инструкция команде — `docs/TEAM.md` (копия на рабочем столе Элвиса); какая версия у него и у команды —
 `HANDOFF.md`. У Элвиса приложение стоит в `/Applications`, старые Hammerspoon-модули из его `init.lua`
