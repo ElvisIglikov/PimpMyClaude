@@ -12,7 +12,7 @@
 // конце файла, — четыре жалобы Элвиса 12.09 на низ окна (WF57).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadInject, loadInner } from "./load.mjs";
+import { loadInject } from "./load.mjs";
 
 const BLOCK_ATTRIBUTE = "data-myclaude-composer-block";
 const HEIGHT_VARIABLE = "--myclaude-input-height";
@@ -62,8 +62,9 @@ const noModelRowStand = dom => {
 // Claude «вниз к последнему сообщению» висит НАД строкой модели отдельным
 // слоем — position:absolute, z-index:1, вне .epitaxy-prompt. Свёрнутая полоска
 // стояла ровно на этой кнопке (#5866, #5867).
-const newBuildStand = ({ left = 100, width = 1000, editorWidth = null, scrollButtonTop = 714 } = {}) => dom => {
+const newBuildStand = ({ left = 100, width = 1000, editorWidth = null, scrollButtonTop = 714, modelRowHeight = 22 } = {}) => dom => {
   const inner = editorWidth ?? width - 20;
+  const shellHeight = 260 - modelRowHeight;
   const prompt = dom.document.body.add("div", {
     class: "epitaxy-prompt", rect: { left, top: 500, width, height: 260 },
   });
@@ -71,7 +72,7 @@ const newBuildStand = ({ left = 100, width = 1000, editorWidth = null, scrollBut
     class: "flex w-full min-w-0 flex-col font-sans", rect: { left, top: 500, width, height: 260 },
   });
   const shell = block.add("div", {
-    class: "bg-surface-3", rect: { left, top: 500, width, height: 238 },
+    class: "bg-surface-3", rect: { left, top: 500, width, height: shellHeight },
     computed: { borderBottomWidth: "1px" },
   });
   const files = shell.add("div", {
@@ -86,7 +87,7 @@ const newBuildStand = ({ left = 100, width = 1000, editorWidth = null, scrollBut
     rect: { left: left + 10, top: 566, width: inner, height: 150 },
   });
   const modelRow = block.add("div", {
-    class: "model-row", rect: { left, top: 738, width, height: 22 },
+    class: "model-row", rect: { left, top: 500 + shellHeight, width, height: modelRowHeight },
   });
   const scrollButton = dom.document.body.add("button", {
     attrs: { "aria-label": "Scroll to bottom" },
@@ -108,8 +109,6 @@ const handleOf = loaded => loaded.dom.query("#myclaude-input-handle");
 const handleTop = loaded => parseFloat(handleOf(loaded).style.top);
 const handleLine = loaded => handleTop(loaded) + HANDLE_HEIGHT / 2;
 const barTop = loaded => parseFloat(loaded.dom.query("#myclaude-progress-bar").style.top);
-// Зазор между кромкой рамки и линией полосы (WF65, #6178) — из люка, не дублируем число.
-const { PROGRESS_GAP } = loadInner({ title: "Trelvis" }).inner;
 // Одиночный клик шагает не сразу: 260 мс он ждёт возможного второго. Таймеры в
 // стабе сами не идут — дёргаем ровно тот, что поставил этот клик.
 const clickHandle = loaded => {
@@ -313,11 +312,24 @@ test("свёрнутая полоска легла на кромку строк�
     "кнопка не мешает — линия ровно на кромке строки модели");
 });
 
+test("полоса липнет к коробке поля и при высокой строке модели (#6890)", () => {
+  // Живой замер 21.09: строка модели 26 точек при допуске рамки 24 — прежний
+  // поиск называл рамкой сам .epitaxy-prompt, и полоса уезжала ПОД строку
+  // модели, к самому низу блока ввода. Теперь кромку даёт коробка, в которой
+  // живёт редактор, и высота строки под ней ничего не решает.
+  const loaded = loadInject({ html: newBuildStand({ modelRowHeight: 40 }), title: "Trelvis" });
+  const { shell, prompt } = loaded.parts;
+  assert.equal(loaded.api.status().progress.anchor, "рамка");
+  assert.equal(barTop(loaded), box(shell).bottom - PROGRESS_BAR_HEIGHT, "полоса не на кромке поля");
+  assert.ok(barTop(loaded) < box(prompt).bottom - 30, "полоса уехала под строку модели");
+});
+
 test("у свёрнутого поля полосы прогресса нет вовсе — режим чтения (#6651)", () => {
   const loaded = loadInject({ html: newBuildStand(), title: "Trelvis" });
   const { shell } = loaded.parts;
   assert.equal(loaded.api.status().progress.anchor, "рамка", "на открытом поле якорь прежний");
-  assert.equal(barTop(loaded), box(shell).bottom + PROGRESS_GAP, "и линия сидит под низом рамки с зазором");
+  assert.equal(barTop(loaded), box(shell).bottom - PROGRESS_BAR_HEIGHT,
+    "и линия прилипла к рамке: её низ — низ рамки (#6890)");
   loaded.api.setStage(COLLAPSED);
   assert.equal(loaded.api.status().progress.reason, "поле свёрнуто — режим чтения");
   loaded.api.setStage(NORMAL);

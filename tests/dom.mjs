@@ -114,6 +114,36 @@ const selectorHit = (node, selector) => {
   return false;
 };
 
+// ---- канал между окнами ----------------------------------------------------
+// BroadcastChannel: им окна Claude передают друг другу шаг ступени (раздел 10
+// inject.js, #6900). Реестр каналов общий на МОДУЛЬ, а не на окно: два
+// loadInject в одном тесте — это два окна одного Claude, и канал у них обязан
+// быть один, иначе проверять «нажал с Shift в одном окне — повторили все»
+// нечем. Правила как в браузере: своего сообщения отправитель не слышит,
+// close() снимает канал с реестра.
+const broadcastChannels = new Map();
+class BroadcastChannel {
+  constructor(name) {
+    this.name = String(name);
+    this.onmessage = null;
+    this.closed = false;
+    const list = broadcastChannels.get(this.name) ?? [];
+    list.push(this);
+    broadcastChannels.set(this.name, list);
+  }
+  postMessage(data) {
+    if (this.closed) return;
+    for (const other of [...(broadcastChannels.get(this.name) ?? [])]) {
+      if (other === this || other.closed) continue;
+      other.onmessage?.({ data });
+    }
+  }
+  close() {
+    this.closed = true;
+    broadcastChannels.set(this.name, (broadcastChannels.get(this.name) ?? []).filter(item => item !== this));
+  }
+}
+
 // ---- окно ------------------------------------------------------------------
 export const createDom = ({
   title = "",
@@ -677,6 +707,7 @@ export const createDom = ({
     devicePixelRatio: 2,
     performance: { now: () => Date.now(), getEntriesByType: () => [] },
     CSSStyleSheet,
+    BroadcastChannel,
     MutationObserver,
     DataTransfer,
     Blob,
@@ -807,27 +838,29 @@ export const createDom = ({
     sheets: () => document.adoptedStyleSheets.map(sheet => sheet.cssText).join("\n"),
     // Композер Claude Code: рамка поля, редактор .ProseMirror и строка модели —
     // ровно то дерево, которое ищут findEditor/findShell/findComposerBlock.
-    composer: ({ text = "", top = 620 } = {}) => {
-      const block = body.add("div", { class: "epitaxy-composer-width", rect: { left: 100, top, width: 1000, height: 160 } });
+    // left и width — для тех проверок, где поле стоит НЕ по центру окна
+    // (открытая боковая панель уводит его вправо): по умолчанию стенд прежний.
+    composer: ({ text = "", top = 620, left = 100, width = 1000 } = {}) => {
+      const block = body.add("div", { class: "epitaxy-composer-width", rect: { left, top, width, height: 160 } });
       const shell = block.add("div", {
         class: "epitaxy-prompt",
-        rect: { left: 100, top, width: 1000, height: 120 },
+        rect: { left, top, width, height: 120 },
         computed: { borderTopLeftRadius: "10px" },
       });
       const root = shell.add("div", {
         class: "editor-root",
-        rect: { left: 110, top: top + 10, width: 980, height: 100 },
+        rect: { left: left + 10, top: top + 10, width: width - 20, height: 100 },
         computed: { overflowY: "auto" },
       });
       const editor = root.add("div", {
         class: "ProseMirror",
         attrs: { contenteditable: "true" },
-        rect: { left: 110, top: top + 10, width: 980, height: 100 },
+        rect: { left: left + 10, top: top + 10, width: width - 20, height: 100 },
       });
       editor.__text = text;
       const modelRow = block.add("div", {
         class: "model-row",
-        rect: { left: 100, top: top + 124, width: 1000, height: 28 },
+        rect: { left, top: top + 124, width, height: 28 },
       });
       return { block, shell, root, editor, modelRow };
     },
