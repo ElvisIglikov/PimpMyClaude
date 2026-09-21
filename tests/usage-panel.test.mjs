@@ -251,9 +251,11 @@ test("панель переводится целиком: подписи, циф
   assert.equal(textOf(parts.rows[0].name), "5-часовой");
   assert.match(textOf(parts.rows[0].when), /^4 ч 9 мин — в \d\d:\d\d$/);
   assert.equal(textOf(parts.rows[1].name), "Недельный");
-  assert.equal(textOf(parts.rows[1].when), "Пт 08:00");
+  // Слово Элвиса 21.09: у недельных процент стоит в той же строке через длинное
+  // тире — «Пт 08:00 — 66%», как у 5-часового «4 ч 9 мин — в 01:25».
+  assert.equal(textOf(parts.rows[1].when), "Пт 08:00 — 66%");
   assert.equal(textOf(parts.rows[2].name), "Fable");
-  assert.equal(textOf(parts.rows[2].when), "Пт 08:00");
+  assert.equal(textOf(parts.rows[2].when), "Пт 08:00 — 72%");
   assert.equal(textOf(parts.more), "Статистика");
   // Ни одного английского СЛОВА панели: имя аккаунта, тариф и название модели
   // латиницей — это не перевод, их Claude и в русском окне пишет так же.
@@ -310,13 +312,21 @@ test("React вернул английское число — следующий 
   assert.match(textOf(parts.rows[0].when), /^59 мин — в \d\d:\d\d$/);
 });
 
-test("процент 5-часового спрятан атрибутом, недельные остаются", () => {
+test("процент спрятан своим атрибутом: у 5-часового совсем, у недельных — уехал в строку сброса", () => {
   const { loaded, parts } = open();
   beat(loaded);
   assert.equal(parts.rows[0].pct.hasAttribute(HIDE), true, "процент 5-часового виден");
   assert.equal(textOf(parts.rows[0].pct), "17%", "узел процента остаётся на месте — его не удаляют");
-  assert.equal(parts.rows[1].pct.hasAttribute(HIDE), false);
-  assert.equal(parts.rows[2].pct.hasAttribute(HIDE), false);
+  assert.equal(parts.rows[1].pct.hasAttribute(HIDE), true, "процент недельного задвоился: он уже в строке сброса");
+  assert.equal(textOf(parts.rows[1].pct), "66%", "узел процента остаётся на месте — его не удаляют");
+  assert.equal(parts.rows[2].pct.hasAttribute(HIDE), true);
+});
+
+test("время сброса не разобрали — процент остаётся на месте, а не пропадает", () => {
+  const { loaded, parts } = open({ panel: { weekly: "Resets when it resets" } });
+  beat(loaded);
+  assert.equal(textOf(parts.rows[1].when), "Resets when it resets", "незнакомое лучше не трогать");
+  assert.equal(parts.rows[1].pct.hasAttribute(HIDE), false, "процент спрятали, а уехать ему было некуда");
 });
 
 test("полоса недели: одна, семь отрезков, подписи от дня сброса, сегодняшний ярче", () => {
@@ -330,8 +340,14 @@ test("полоса недели: одна, семь отрезков, подпи
   assert.equal(days[0], "Пт", "подписи начинаются со дня сброса");
   assert.deepEqual(days, ["Пт", "Сб", "Вс", "Пн", "Вт", "Ср", "Чт"]);
   assert.equal(loaded.dom.queryAll("[data-myclaude-week-on]").length, 1, "ярче ровно один день");
+  // Слово Элвиса 21.09: слева «Сброс», справа срок — тонким шрифтом правой
+  // колонки, как у родных строк лимитов.
   const title = loaded.dom.query(`[${WEEK}="title"]`);
-  assert.match(textOf(title), /^Сброс через /, `строка над полосой: ${textOf(title)}`);
+  assert.equal(textOf(title), "Сброс");
+  const value = loaded.dom.query(`[${WEEK}="value"]`);
+  assert.match(textOf(value), /^\d+ (день|дня|дней)( \d+ (час|часа|часов))?$/, `срок справа: ${textOf(value)}`);
+  assert.equal(value.className, loaded.parts.rows[2].pct.parentElement.className,
+    "одежда правой колонки снята не с родной строки лимита");
   // Одежда снята с родных блоков, а не выдумана числами.
   assert.equal(loaded.dom.query(`[${WEEK}="cell"]`).className.includes("rounded-full"), true);
   assert.equal(loaded.api.status().usage.week, true);
@@ -344,6 +360,18 @@ test("недельная строка интервалом: полоса ест�
   assert.deepEqual(loaded.dom.queryAll(`[${WEEK}="day"]`).map(textOf), ["", "", "", "", "", "", ""],
     "из интервала день сброса известен с точностью до суток — подписи врали бы все семь");
   assert.equal(loaded.dom.query(`[${WEEK}="day"]`).parentElement.style.getPropertyValue("display"), "none");
+});
+
+test("пустой чат: метра долей контекста нет, панель всё равно переводится", () => {
+  // Пока разговора нет, строка контекста рисуется простой полосой без долей —
+  // и до 21.09 панель в новом чате оставалась английской (слово Элвиса).
+  const { loaded, parts } = open({ account: "Elvisnya", panel: { meter: false } });
+  beat(loaded);
+  assert.equal(textOf(parts.contextLabel), "Контекст");
+  assert.equal(textOf(parts.headNode), "Elvisnya · Max 20x");
+  assert.equal(textOf(parts.rows[0].name), "5-часовой");
+  assert.equal(textOf(parts.more), "Статистика");
+  assert.equal(loaded.api.status().usage.week, true, "полоса недели в новом чате не нарисовалась");
 });
 
 test("панель без примет (нет метра и ссылки) не трогается вовсе", () => {

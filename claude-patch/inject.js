@@ -52,7 +52,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf78-a-5";
+  const VERSION = "wf78-a-6";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -8706,6 +8706,10 @@ nav[aria-label="Repository and pull request controls"] {
   const USAGE_WEEK_PARTS = 7;
   const USAGE_DAYS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
   const USAGE_WEEKDAYS = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+  // Процент лимита отдельным узлом справа. У 5-часового он спрятан (слово
+  // Элвиса 20.09: «только полоса»), у недельных с 21.09 уезжает в конец строки
+  // сброса через длинное тире — «Пт 08:00 — 92%», как у 5-часового «11 мин — в 14:10».
+  const USAGE_PERCENT_RE = /^\s*\d+(?:[.,]\d+)?\s*%\s*$/;
   // Словарь панели. Отдельного слоя, конфига и файла с текстами не заводим
   // (правило «Раздувание»): десяток строк живёт прямо здесь. Совпадение точное —
   // чего в словаре нет, остаётся как есть.
@@ -9012,9 +9016,17 @@ nav[aria-label="Repository and pull request controls"] {
     if (hidden) { if (!element.hasAttribute(USAGE_HIDE_ATTRIBUTE)) element.setAttribute(USAGE_HIDE_ATTRIBUTE, ""); }
     else if (element.hasAttribute(USAGE_HIDE_ATTRIBUTE)) element.removeAttribute(USAGE_HIDE_ATTRIBUTE);
   };
+  // Примет две: ссылка на страницу статистики и хоть одна полоса. Метр цветных
+  // долей контекста был обязательным до 21.09 — и в ПУСТОМ чате панель
+  // оставалась английской (слово Элвиса 21.09: «если чат новенький, окошко
+  // старое»): пока разговора нет, строка контекста рисуется простой полосой без
+  // долей, и метра в панели нет вовсе (живая проба 21.09, главное окно).
   const usagePanelOk = panel => {
     if (!panel?.isConnected) return false;
-    try { return Boolean(panel.querySelector(USAGE_METER_SELECTOR) && panel.querySelector(USAGE_LINK_SELECTOR)); } catch { return false; }
+    try {
+      if (!panel.querySelector(USAGE_LINK_SELECTOR)) return false;
+      return Boolean(panel.querySelector(USAGE_METER_SELECTOR) || panel.querySelector(USAGE_BAR_SELECTOR));
+    } catch { return false; }
   };
   const usagePanelIn = node => {
     if (!node || node.nodeType !== 1) return null;
@@ -9091,10 +9103,18 @@ nav[aria-label="Repository and pull request controls"] {
     const last = blocks[blocks.length - 1];
     const fills = blocks.map(item => item.bar.firstElementChild).filter(Boolean);
     const fill = fills.find(node => /accent/.test(String(node.className ?? ""))) ?? fills[0] ?? null;
+    // Правая колонка (слово Элвиса 21.09: «шрифт сделай тоненький, как справа»):
+    // одежду берём с ГРУППЫ справа в родной строке — это она держит и размер, и
+    // приглушённый цвет. Лист там последний (процент или время), группа — его
+    // родитель; лежит лист прямо в строке — значит группы нет, и берём его.
+    const leaves = usageLeaves(last.row);
+    const tail = leaves[leaves.length - 1] ?? null;
+    const group = tail && tail.parentElement && tail.parentElement !== last.row ? tail.parentElement : tail;
     return {
       block: String(last.block.className ?? ""),
       row: String(last.row.className ?? ""),
       title: String(last.label.className ?? ""),
+      value: String(group?.className ?? ""),
       track: String(last.bar.className ?? ""),
       fill: String(fill?.className ?? ""),
     };
@@ -9106,6 +9126,10 @@ nav[aria-label="Repository and pull request controls"] {
     let box = null;
     try { box = panel.querySelector(`[${USAGE_WEEK_ATTRIBUTE}="block"]`); } catch {}
     if (box && box.parentElement !== host) { box.remove(); box = null; }
+    // Коробка от прежнего инжекта без правого узла (до 21.09 срок стоял в самом
+    // слове «Сброс») — пересобираем: дописать узел в чужую по возрасту коробку
+    // стоило бы отдельной ветки, а живёт она секунды.
+    if (box && !box.querySelector(`[${USAGE_WEEK_ATTRIBUTE}="value"]`)) { box.remove(); box = null; }
     if (box) return box;
     const skin = usageWeekSkin(blocks);
     const make = (tag, kind, className) => {
@@ -9122,6 +9146,9 @@ nav[aria-label="Repository and pull request controls"] {
     const title = make("span", "title", skin.title);
     title.appendChild(document.createTextNode(""));
     row.appendChild(title);
+    const value = make("span", "value", skin.value);
+    value.appendChild(document.createTextNode(""));
+    row.appendChild(value);
     box.appendChild(row);
     const bar = make("div", "bar", "");
     const days = make("div", "days", "");
@@ -9152,14 +9179,19 @@ nav[aria-label="Repository and pull request controls"] {
     const parts = usageWeekParts(week.at, base);
     const minutes = Math.round((week.at - base) / 60000);
     let title = null;
+    let value = null;
     let fills = [];
     let days = [];
     try {
       title = box.querySelector(`[${USAGE_WEEK_ATTRIBUTE}="title"]`);
+      value = box.querySelector(`[${USAGE_WEEK_ATTRIBUTE}="value"]`);
       fills = [...box.querySelectorAll(`[${USAGE_WEEK_ATTRIBUTE}="fill"]`)];
       days = [...box.querySelectorAll(`[${USAGE_WEEK_ATTRIBUTE}="day"]`)];
     } catch { return false; }
-    if (title) usageOwnText(title, minutes > 0 ? `Сброс через ${usageLong(minutes)}` : "Сброс вот-вот");
+    // Слово слева, срок справа — как в родных строках лимитов (слово Элвиса
+    // 21.09). До этого вся фраза стояла слева одним куском.
+    if (title) usageOwnText(title, "Сброс");
+    if (value) usageOwnText(value, minutes > 0 ? usageLong(minutes) : "вот-вот");
     for (let index = 0; index < fills.length; index += 1) {
       const width = `${Math.round((parts.fills[index] ?? 0) * 1000) / 10}%`;
       if (fills[index].style.getPropertyValue("width") !== width) fills[index].style.setProperty("width", width);
@@ -9200,20 +9232,29 @@ nav[aria-label="Repository and pull request controls"] {
       if (label) usageWrite(block.label, raw, label.text);
       else if (raw != null) usageUnknown(raw);
       const key = label ? (label.kind === "week" ? `week:${label.text}` : label.kind) : null;
-      for (const leaf of usageLeaves(block.row)) {
-        if (done.has(leaf)) continue;
+      // Процент читаем ДО прохода: в строке он стоит после времени сброса, а
+      // уехать должен в конец этого самого времени («Пт 08:00 — 92%»).
+      const leaves = usageLeaves(block.row).filter(leaf => !done.has(leaf));
+      const pctLeaf = leaves.find(leaf => USAGE_PERCENT_RE.test(String(usageRaw(leaf) ?? ""))) ?? null;
+      const pct = pctLeaf ? String(usageRaw(pctLeaf) ?? "").trim() : "";
+      // Процент прячем только когда он и правда уехал в строку сброса: время не
+      // разобрали — пусть остаётся на месте, иначе процент пропал бы ни за что.
+      let merged = false;
+      for (const leaf of leaves) {
         done.add(leaf);
         const value = usageRaw(leaf);
         if (value == null) continue;
-        // Процент: у 5-часового Элвис его не хочет («только полоса»), у
-        // недельных остаётся. Узел не трогаем — прячем своим атрибутом.
-        if (/^\s*\d+(?:[.,]\d+)?\s*%\s*$/.test(value)) { usageHide(leaf, label?.kind === "hour5"); continue; }
+        // Узел процента не трогаем — прячем своим атрибутом: у 5-часового Элвис
+        // его не хочет («только полоса»), у недельных он теперь в строке сброса.
+        if (leaf === pctLeaf) { usageHide(leaf, label?.kind === "hour5" || merged); continue; }
         const reset = usageReset(value, base);
         if (!reset) { usageUnknown(value); continue; }
         const at = reset.at != null && key ? usageSteady(key, value, reset.at) : reset.at;
-        const text = reset.fixed ?? (reset.minutes == null ? null
+        const plain = reset.fixed ?? (reset.minutes == null ? null
           : (reset.rough || at == null ? usageShort(reset.minutes) : `${usageShort(reset.minutes)} — в ${usageClock(at)}`));
-        if (text == null) { usageUnknown(value); continue; }
+        if (plain == null) { usageUnknown(value); continue; }
+        const text = label && label.kind !== "hour5" && pct ? `${plain} — ${pct}` : plain;
+        if (text !== plain) merged = true;
         usageWrite(leaf, value, text);
         // Неделю задаёт строка «all models»; её нет — первая недельная
         // (недельных строк ДВЕ: «all models» и «Fable»).
