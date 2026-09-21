@@ -52,7 +52,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf78-a-6";
+  const VERSION = "wf78-a-7";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -116,6 +116,20 @@
   // Отступ свёрнутой полоски от краёв рамки: её собственное скругление плюс
   // пара точек, но не меньше этого.
   const HANDLE_MIN_INSET = 10;
+  // Дубли полоски у краёв окна (#6743, слово Элвиса 20.09 и 21.09: «полос три —
+  // снизу, на поле ввода и сверху… прижал, нажал, прижал, нажал»). Только
+  // нажималки: тянуть за них нельзя — рука ушла бы за край окна вместе с полем.
+  // Стоят по центру ОКНА, а не поля (слово Элвиса 21.09), уже основной на 30 % и
+  // бледнее — «чтоб едва заметные были».
+  const SUPER_TOP_ID = "myclaude-super-top";
+  const SUPER_BOTTOM_ID = "myclaude-super-bottom";
+  // Зона захвата ниже, чем у основной полоски: она сидит НА кромке окна, и
+  // поднимать её выше некуда. Крайние точки у края забирает себе macOS под
+  // изменение размера окна — до страницы нажатие там не доходит вовсе, поэтому
+  // зона начинается вплотную к краю и берёт всё, что остаётся.
+  const SUPER_HEIGHT = 14;
+  const SUPER_WIDTH_SCALE = 0.7;
+  const SUPER_MIN_WIDTH = 48;
   // Потолок высоты поля, запасное значение: плитка окна отступает от края на 9
   // точек, титульная полоса .epitaxy-titlebar занимает 32. Меряем саму полосу —
   // на части экранов Claude её просто нет, и константа врала бы.
@@ -3717,9 +3731,12 @@ nav[aria-label="Repository and pull request controls"] {
     // захвате, до самой ручки. С 12.09 линии разведены (ручка на кромке строки
     // модели, полоса на низе блока), но уступка остаётся: их разводит
     // геометрия, а она у Claude меняется без предупреждения.
+    // Дубли у краёв окна (#6743) стоят там же, где полоса на свёрнутом поле, и
+    // уступка им нужна ровно по той же причине, что и ручке.
     try {
-      if (handle.style.display !== "none") {
-        const rect = handle.getBoundingClientRect();
+      for (const node of [handle, superTop, superBottom]) {
+        if (node.style.display === "none") continue;
+        const rect = node.getBoundingClientRect();
         if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return false;
       }
     } catch {}
@@ -4535,6 +4552,13 @@ nav[aria-label="Repository and pull request controls"] {
     `#${HANDLE_ID}:hover>span,#${HANDLE_ID}[data-dragging="true"]>span{height:3px;opacity:.45}`,
     // Свёрнутое поле чаще возвращают кликом, поэтому курсор там не «тянуть», а
     // обычная рука, и сама полоска заметнее. Тяга вверх при этом тоже работает.
+    // Дубли у краёв окна (#6743): та же линия, только бледнее и без курсора
+    // тяги. `-webkit-app-region:no-drag` обязателен верхнему: он садится на
+    // титульную полосу Claude, а она таскает окно — без этого нажатие уезжало
+    // бы в перетаскивание окна.
+    `#${SUPER_TOP_ID},#${SUPER_BOTTOM_ID}{position:fixed;display:none;align-items:center;justify-content:center;height:${SUPER_HEIGHT}px;padding:0;border:0;background:transparent;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-app-region:no-drag;touch-action:none;z-index:2147483646}`,
+    `#${SUPER_TOP_ID}>span,#${SUPER_BOTTOM_ID}>span{display:block;width:100%;height:2px;border-radius:999px;background:currentColor;opacity:.07;pointer-events:none;transition:height 120ms ease,opacity 120ms ease}`,
+    `#${SUPER_TOP_ID}:hover>span,#${SUPER_BOTTOM_ID}:hover>span{height:3px;opacity:.35}`,
     `#${HANDLE_ID}[data-collapsed="true"]{cursor:pointer}`,
     `#${HANDLE_ID}[data-collapsed="true"]>span{height:3px;opacity:.30}`,
     `#${HANDLE_ID}[data-collapsed="true"]:hover>span{height:4px;opacity:.45}`,
@@ -4638,6 +4662,20 @@ nav[aria-label="Repository and pull request controls"] {
   handle.appendChild(document.createElement("span"));
   (document.body ?? document.documentElement).appendChild(handle);
   track(() => handle.remove());
+  // Дубли полоски у краёв окна (#6743) — тем же приёмом, что и ручка: свой узел
+  // в body, ставится по координатам. Роль у них кнопочная: тянуть нельзя.
+  const makeSuperRail = id => {
+    const node = document.createElement("div");
+    node.id = id;
+    node.setAttribute("role", "button");
+    node.setAttribute("aria-label", "Свернуть или вернуть поле ввода");
+    node.appendChild(document.createElement("span"));
+    (document.body ?? document.documentElement).appendChild(node);
+    track(() => node.remove());
+    return node;
+  };
+  const superTop = makeSuperRail(SUPER_TOP_ID);
+  const superBottom = makeSuperRail(SUPER_BOTTOM_ID);
   // Рейка ширины правой колонки (раздел 2г) — тем же приёмом: один узел на окно,
   // в body, ставится по координатам; в узком виде спрятана.
   const rail = document.createElement("div");
@@ -4667,6 +4705,13 @@ nav[aria-label="Repository and pull request controls"] {
     for (const [name, value] of Object.entries(box)) handle.style.setProperty(name, value);
     const span = handle.firstElementChild;
     if (span) for (const [name, value] of Object.entries(line)) span.style.setProperty(name, value);
+    for (const node of [superTop, superBottom]) {
+      for (const [name, value] of Object.entries({
+        ...box, height: `${SUPER_HEIGHT}px`, cursor: "pointer",
+      })) node.style.setProperty(name, value);
+      const own = node.firstElementChild;
+      if (own) for (const [name, value] of Object.entries({ ...line, opacity: ".07" })) own.style.setProperty(name, value);
+    }
     for (const [name, value] of Object.entries({
       position: "fixed", display: "none", width: `${SIDE_RAIL_WIDTH}px`, padding: "0", border: "0",
       background: "transparent", cursor: "col-resize", "user-select": "none", "touch-action": "none",
@@ -5500,6 +5545,39 @@ nav[aria-label="Repository and pull request controls"] {
     if (state.handleCovered) handle.style.display = "none";
   };
 
+  // Дубли полоски у краёв окна (#6743). Ширина и место считаются от ОКНА:
+  // основная полоска ходит за полем, а эти две всегда стоят по центру окна —
+  // «чтобы они всегда были по центру окна» (слово Элвиса 21.09).
+  // Видны ровно там, где у поля есть ступени: редактор нашёлся и вид узкий. В
+  // широком виде ступеней нет вовсе (syncWide), и нажималка свернула бы поле,
+  // которое нечем вернуть.
+  const placeSuperRails = () => {
+    // Поле спрашиваем САМИ, а не ждём, пока его найдёт этот проход: полоски
+    // ставятся до всех ранних выходов, и на первом же проходе после установки
+    // state.editor ещё пуст — без своего вопроса они появлялись бы только со
+    // второго прохода. findEditor держит свой кэш, так что вопрос дешёвый.
+    const editor = state.editor?.isConnected ? state.editor : findEditor();
+    const live = state.alive && state.watching && !wideState.on &&
+      (editor != null || state.stage === STAGE_COLLAPSED);
+    // Ширину берём ЧЁТНОЙ: при нечётной центр полоски приходится на половину
+    // точки, и она стоит не по центру окна, а на полточки правее.
+    const room = Math.max(SUPER_MIN_WIDTH,
+      Math.min(HANDLE_NARROW_WIDTH * SUPER_WIDTH_SCALE, innerWidth - HANDLE_MIN_INSET * 2));
+    const width = Math.round(room / 2) * 2;
+    const left = Math.round((innerWidth - width) / 2);
+    const seats = [[superTop, 0], [superBottom, Math.round(innerHeight - SUPER_HEIGHT)]];
+    for (const [node, top] of seats) {
+      if (!live) {
+        if (node.style.getPropertyValue("display") !== "none") node.style.setProperty("display", "none");
+        continue;
+      }
+      node.style.setProperty("display", "flex");
+      node.style.setProperty("left", `${left}px`);
+      node.style.setProperty("width", `${width}px`);
+      node.style.setProperty("top", `${top}px`);
+    }
+  };
+
   const noteEditorFound = () => {
     if (state.editorFound) return;
     state.editorFound = true;
@@ -5519,6 +5597,9 @@ nav[aria-label="Repository and pull request controls"] {
     // (свёрнутое поле, потерянный редактор), и в самом конце — чтобы во время
     // тяги она не отставала на проход от только что изменённой высоты.
     placeProgress();
+    // Дубли полоски стоят по окну, а не по полю: им всё равно, каким путём
+    // кончится этот проход, — поэтому ставим их здесь, до всех ранних выходов.
+    placeSuperRails();
     restoreLeft();
     const editor = findEditor();
     // Страховка от мигания: даже если редактор потерялся, свёрнутое состояние не
@@ -5871,6 +5952,16 @@ nav[aria-label="Repository and pull request controls"] {
       if (state.dragging || !state.alive) return;
       setStage(state.stage === STAGE_COLLAPSED ? STAGE_NORMAL : STAGE_COLLAPSED);
     }, CLICK_STEP_DELAY);
+  };
+
+  // Дубли у краёв окна (#6743): тот же шаг, что и одиночный клик по основной
+  // полоске, но без задержки на двойной — за них не тянут и не «двоят», Элвис
+  // жмёт их подряд («прижал, нажал, прижал, нажал»).
+  const onSuperClick = event => {
+    event.preventDefault();
+    cancelClickStep();
+    if (!state.alive) return;
+    setStage(state.stage === STAGE_COLLAPSED ? STAGE_NORMAL : STAGE_COLLAPSED);
   };
 
   // ---- 11. Разворот до потолка -------------------------------------------
@@ -9618,6 +9709,9 @@ nav[aria-label="Repository and pull request controls"] {
   on(handle, "pointerdown", onPointerDown);
   on(handle, "click", onClick);
   on(handle, "dblclick", onDoubleClick);
+  // Дубли у краёв окна (#6743): только нажатие — ни тяги, ни двойного.
+  on(superTop, "click", onSuperClick);
+  on(superBottom, "click", onSuperClick);
   on(document, "pointermove", onPointerMove, { capture: true });
   on(document, "pointerup", finishDrag, { capture: true });
   on(document, "pointercancel", finishDrag, { capture: true });
@@ -9742,7 +9836,7 @@ nav[aria-label="Repository and pull request controls"] {
   // существующем стороже. Узел возвращается ТОТ ЖЕ САМЫЙ — с детьми, стилями и
   // подписками, — поэтому «поставить заново» это ровно тот же appendChild, что
   // на инжекте, и повторять его безопасно сколько угодно раз.
-  const ownNodes = [frameNode, progressBar, progressTip, handle, rail];
+  const ownNodes = [frameNode, progressBar, progressTip, handle, rail, superTop, superBottom];
   const restoreOwnNodes = () => {
     const host = document.body ?? document.documentElement;
     if (!host) return false;
@@ -9922,6 +10016,9 @@ nav[aria-label="Repository and pull request controls"] {
       // окно, из которого узел вынесло вместе с содержимым body, бодро
       // отвечало «полоска есть».
       handleVisible: handle.isConnected && handle.style.display !== "none",
+      // Дубли полоски у краёв окна (#6743): на гейте по ним видно, что обе на месте.
+      superVisible: superTop.isConnected && superBottom.isConnected &&
+        superTop.style.display !== "none" && superBottom.style.display !== "none",
       handleCovered: state.handleCovered,
       // Сколько раз сторож возвращал свои узлы в body (#6766).
       restored: state.restored,

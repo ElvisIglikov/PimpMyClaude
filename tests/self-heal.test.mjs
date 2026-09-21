@@ -19,10 +19,12 @@ import assert from "node:assert/strict";
 import { loadInject } from "./load.mjs";
 
 const HEARTBEAT_MS = 500;
-// Шесть узлов, которые инжект держит в окне (тот же список, что стережёт
+// Восемь узлов, которые инжект держит в окне (тот же список, что стережёт
 // tests/idempotent.test.mjs). Карточка сегмента живёт внутри подсказки.
 const NODE_IDS = [
   "myclaude-input-handle",
+  "myclaude-super-top",
+  "myclaude-super-bottom",
   "myclaude-side-rail",
   "myclaude-progress-bar",
   "myclaude-progress-tip",

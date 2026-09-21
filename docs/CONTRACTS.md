@@ -638,6 +638,14 @@
   `status().usage = {opens, swaps, unknown, week}`. Имя аккаунта: главное окно пишет `localStorage` `myclaude-account-v1` из
   `button[data-testid="user-menu-button"]`; имя НЕ попадает в `status()`, `probe-result.json` и журналы. `dispose()` текст назад
   не откатывает.
+- **Дубли полоски у краёв окна (#6743, 21.09.2026; раздел 9 `inject.js`)**: два своих узла в `body` —
+  `#myclaude-super-top` и `#myclaude-super-bottom`, по 14 pt зоны захвата, линия 2 pt с прозрачностью .07 (наведение — .35).
+  Ширина ЧЁТНАЯ, 70 % от `HANDLE_NARROW_WIDTH`, место — по центру ОКНА (не поля), верхняя на `top: 0`, нижняя на
+  `innerHeight − 14`. Верхней обязателен `-webkit-app-region:no-drag` (садится на титульную полосу Claude). Поведение одно —
+  клик переключает ступень поля (`STAGE_COLLAPSED ⇄ STAGE_NORMAL`) БЕЗ задержки на двойной; ни тяги, ни `dblclick` у них нет.
+  Видны, когда есть поле ввода (или оно свёрнуто) и вид узкий; в широком виде и без поля — `display:none`, как у основной
+  полоски. `progressHit` уступает им так же, как ручке; оба узла лечатся `restoreOwnNodes` и снимаются `dispose()`.
+  Крайний ряд точек у края окна забирает macOS под изменение размера — это вне страницы, зона берёт всё остальное.
 - **Кружок контекста в режиме чтения (WF78, #6737)**: ветка `composerBlock`, в которой лежит кружок, метится
   `data-myclaude-composer-block="collapsed-ring"` (свёртка без `opacity`), путь до кнопки — `data-myclaude-ring-path`, сама
   кнопка — `data-myclaude-ring` (`position:absolute`, z-index ниже ручки), зеркальный угловой фейд — `data-myclaude-ring-fade`
