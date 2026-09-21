@@ -18,7 +18,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { loadInject } from "./load.mjs";
 
-// Восемь узлов, которые инжект держит в окне. Ручка и два её дубля у краёв окна
+// Девять узлов, которые инжект держит в окне. Ручка и два её дубля у краёв окна
 // (#6743) ставятся разделом 9, полоса прогресса, её коробка-подсказка и карточка
 // сегмента (WF22) — разделом 2б, рамка окна — разделом 2а, рейка ширины правой
 // колонки (WF65) — разделом 2г; узлы живут независимо от того, включён ли слой,
@@ -27,6 +27,7 @@ const NODE_IDS = [
   "myclaude-input-handle",
   "myclaude-super-top",
   "myclaude-super-bottom",
+  "myclaude-mic",
   "myclaude-side-rail",
   "myclaude-progress-bar",
   "myclaude-progress-tip",

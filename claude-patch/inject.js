@@ -52,7 +52,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf78-a-9";
+  const VERSION = "wf79-a-1";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -86,13 +86,39 @@
   const RING_ATTRIBUTE = "data-myclaude-ring";
   const RING_PATH_ATTRIBUTE = "data-myclaude-ring-path";
   const RING_FADE_ATTRIBUTE = "data-myclaude-ring-fade";
+  // Пока мышь на кружке, родная подсказка Claude не показывается (#6906).
+  const RING_HOVER_ATTRIBUTE = "data-myclaude-ring-hover";
   const USAGE_RING_SELECTOR = '[aria-haspopup="dialog"][aria-label^="Usage:"]';
   // Куда кружок садится в свёрнутом поле: «на своём месте остаётся стоять,
   // просто плавает» (слово Элвиса 20.09) — то есть у правого нижнего угла, где
   // он и живёт в открытом поле. Отступы маленькие: ближе к углу — дальше от
   // полоски возврата, которая стоит по центру низа.
   const RING_INSET_RIGHT = 10;
-  const RING_INSET_BOTTOM = 4;
+  // Ниже нуля намеренно (#6905, слово Элвиса 21.09: «по вертикали его ещё
+  // пониже можно»): считается отступ от низа СВЁРНУТОГО блока ввода, а он сам
+  // стоит на 9 точек выше низа окна — при нуле кружок висел бы в воздухе.
+  // Ветке кружка правило свёртки оставляет overflow:visible, вылезти ему есть
+  // куда.
+  const RING_INSET_BOTTOM = -5;
+  // Свой микрофон рядом с кружком (#6907, слово Элвиса 21.09: «рядышком левее
+  // этого кругляшка, значок микрофона… нажал — включилась диктовка, нажал ещё
+  // раз — отправилось»). Кнопку диктовки и отправку жмёт Claude — мы только
+  // нажимаем их за Элвиса, когда поле ввода свёрнуто и своей строки не видно.
+  const MIC_ID = "myclaude-mic";
+  const MIC_SIZE = 20;
+  const MIC_GAP = 6;
+  const DICTATE_SELECTOR = 'button[aria-label="Press and hold to record"],button[aria-label="Stop dictation"]';
+  const DICTATE_LIVE_LABEL = "Stop dictation";
+  const SEND_SELECTOR = '[data-testid="code-prompt-send"]';
+  // Расшифровка приезжает не сразу и печатается кусками: ждём её до 12 с и жмём
+  // «отправить», когда текст постоял неизменным три круга.
+  const MIC_WAIT_MS = 12000;
+  const MIC_TICK_MS = 150;
+  const MIC_STEADY = 3;
+  // Наведение на кружок открывает панель лимитов (#6906): столько держим, чтобы
+  // случайный проход мышью её не дёргал, и столько ждём после ухода мыши.
+  const RING_HOVER_OPEN_MS = 320;
+  const RING_HOVER_CLOSE_MS = 260;
   const HEIGHT_VARIABLE = "--myclaude-input-height";
   // Высота и ступень — в sessionStorage. Отступление от донора (у него высота в
   // localStorage) намеренное: профиль у всех окон Claude общий, и новое окно
@@ -4642,6 +4668,14 @@ nav[aria-label="Repository and pull request controls"] {
     // Сам кружок: на своём месте справа внизу, видимый и нажимаемый. z-index
     // НИЖЕ ручки (2147483646) намеренно: иначе кружок перехватил бы клик по
     // полоске возврата, и вернуть поле стало бы нечем.
+    // Свой микрофон у кружка (#6907) и глушилка родной подсказки на кружке
+    // (#6906: «при наведении не надо показывать стандартную подсказку» —
+    // вместо неё открывается сама панель лимитов).
+    `#${MIC_ID}{position:fixed;display:none;align-items:center;justify-content:center;width:${MIC_SIZE}px;height:${MIC_SIZE}px;padding:0;border:0;background:transparent;cursor:pointer;opacity:.45;-webkit-app-region:no-drag;user-select:none;-webkit-user-select:none;touch-action:none;z-index:2147483645}`,
+    `#${MIC_ID}:hover{opacity:.95}`,
+    `#${MIC_ID}[data-live="true"]{opacity:1;color:#ef4444}`,
+    `#${MIC_ID}>svg{display:block;width:14px;height:14px;pointer-events:none}`,
+    `html[data-myclaude-ring-hover] [role="tooltip"],html[data-myclaude-ring-hover] [data-cds="Tooltip"]{display:none !important}`,
     `[${RING_ATTRIBUTE}]{position:absolute !important;right:${RING_INSET_RIGHT}px !important;bottom:${RING_INSET_BOTTOM}px !important;opacity:1 !important;pointer-events:auto !important;z-index:2147483645 !important}`,
     // Растягиваем скролл-контейнер, а сам редактор освобождаем от его
     // собственного максимума (в Claude Code это max-h-[218px] на .tiptap) —
@@ -5661,6 +5695,10 @@ nav[aria-label="Repository and pull request controls"] {
     // Дубли полоски стоят по окну, а не по полю: им всё равно, каким путём
     // кончится этот проход, — поэтому ставим их здесь, до всех ранних выходов.
     placeSuperRails();
+    // Микрофон у кружка (#6907) — там же и по той же причине: он привязан к
+    // кружку, а не к полю. Раздел 12з объявлен ниже, но зовётся он только из
+    // живого прохода, а тот идёт уже после установки.
+    try { placeMic(); micPaint(); } catch {}
     restoreLeft();
     const editor = findEditor();
     // Страховка от мигания: даже если редактор потерялся, свёрнутое состояние не
@@ -8930,6 +8968,9 @@ nav[aria-label="Repository and pull request controls"] {
   const USAGE_UNKNOWN_MAX = 20;
   const usageState = {
     observer: null, timer: 0, panel: null,
+    // Наведение на кружок (#6906): hoverOpen — панель открыли мы, pinned —
+    // Элвис нажал рукой и панель держится до следующего нажатия.
+    hoverTimer: 0, leaveTimer: 0, hoverOpen: false, pinned: false, over: false,
     opens: 0, swaps: 0, week: false,
     // Нераспознанные строки — множеством: счётчик «сколько раз» рос бы каждым
     // проходом и ничего не значил. Сами строки наружу не отдаём, только число.
@@ -9488,6 +9529,8 @@ nav[aria-label="Repository and pull request controls"] {
     usageStop();
     usageState.panel = null;
     usageState.week = false;
+    usageState.hoverOpen = false;
+    usageState.pinned = false;
   };
   // Наблюдатель за самой панелью: React перерисовывает числа, мы переводим их
   // снова. Колбэк — микрозадача в конце той же задачи, где React сделал коммит,
@@ -9534,8 +9577,27 @@ nav[aria-label="Repository and pull request controls"] {
     let ring = null;
     try { ring = event.target?.closest?.(USAGE_RING_SELECTOR) ?? null; } catch {}
     if (!ring) return;
+    // Настоящее нажатие по кружку, пока панель открыта наведением, её
+    // ЗАКРЕПЛЯЕТ (#6906: «нажал — появилось и исчезнет только после повторного
+    // нажатия»): клик гасим, иначе Claude тут же свернул бы свою же панель.
+    if (event.isTrusted === true && usageState.hoverOpen && !usageState.pinned &&
+      usageState.panel?.isConnected) {
+      usageState.pinned = true;
+      usageState.hoverOpen = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     // Панель открыта — этот клик её закрывает, ждать нечего.
-    if (usageState.panel?.isConnected) { usageClose(); return; }
+    if (usageState.panel?.isConnected) {
+      usageState.pinned = false;
+      usageState.hoverOpen = false;
+      usageClose();
+      return;
+    }
+    // Открыли рукой — держим до следующего нажатия; открыли наведением —
+    // отпускаем, когда мышь уйдёт.
+    usageState.pinned = event.isTrusted === true;
     usageWatch();
   };
   // Страховка вместо постоянного наблюдателя: один querySelector на круге
@@ -9562,6 +9624,227 @@ nav[aria-label="Repository and pull request controls"] {
       }
     } catch {}
   });
+
+  // ---- 12з. Микрофон у кружка и панель лимитов по наведению (#6906, #6907) --
+  // Слово Элвиса 21.09: «у меня просто в углу будет кнопка диктовки, я на неё
+  // буду нажимать и буду доволен» — в режиме чтения строки поля ввода не видно
+  // вовсе, и до родного микрофона Claude не дотянуться. Свой значок встаёт
+  // ЛЕВЕЕ кружка контекста и в одну линию с ним, а жмёт за Элвиса родные
+  // кнопки Claude: диктовку и отправку. Своей записи звука у нас нет и не будет.
+  //
+  // Нажатие «как мышью» (замер 21.09): Claude слушает не сам <button>, а то,
+  // что лежит под точкой, — на кнопке кружка панель не открывалась ни кликом,
+  // ни Enter, а на её <svg> открылась с первого раза. Поэтому бьём в
+  // elementFromPoint, а если узел спрятан (свёрнутое поле) — прямо в него.
+  const pressLikeMouse = node => {
+    if (!node?.isConnected) return false;
+    const rect = node.getBoundingClientRect();
+    const x = Math.round(rect.left + rect.width / 2);
+    const y = Math.round(rect.top + rect.height / 2);
+    let target = node;
+    if (rect.width > 0 && rect.height > 0) {
+      let hit = null;
+      try { hit = document.elementFromPoint(x, y); } catch {}
+      if (hit && (hit === node || node.contains(hit))) target = hit;
+    }
+    const at = { clientX: x, clientY: y, screenX: x, screenY: y, bubbles: true, cancelable: true, composed: true, view: window };
+    const pointer = (type, extra) => {
+      try { target.dispatchEvent(new PointerEvent(type, { ...at, pointerId: 1, isPrimary: true, pointerType: "mouse", ...extra })); } catch {}
+    };
+    const mouse = (type, extra) => {
+      try { target.dispatchEvent(new MouseEvent(type, { ...at, ...extra })); } catch {}
+    };
+    pointer("pointerover", { buttons: 0 }); mouse("mouseover", {});
+    pointer("pointermove", { buttons: 0 }); mouse("mousemove", {});
+    pointer("pointerdown", { button: 0, buttons: 1 }); mouse("mousedown", { button: 0, buttons: 1 });
+    pointer("pointerup", { button: 0, buttons: 0 }); mouse("mouseup", { button: 0, buttons: 0 });
+    mouse("click", { button: 0, detail: 1 });
+    return true;
+  };
+
+  // Родная кнопка диктовки Claude. В свёрнутом поле она спрятана вместе со всей
+  // строкой, но живая: нажатие до неё доходит (проверено живьём 21.09).
+  const dictateButton = () => {
+    try { return document.querySelector(DICTATE_SELECTOR); } catch { return null; }
+  };
+  const dictateLive = node => {
+    const label = node?.getAttribute?.("aria-label") ?? "";
+    return label === DICTATE_LIVE_LABEL || /stop dictation/i.test(label);
+  };
+  const micState = { timer: 0, until: 0, last: null, steady: 0, sends: 0, starts: 0 };
+  const micStopWait = () => {
+    if (micState.timer) { clearTimeout(micState.timer); micState.timer = 0; }
+    micState.last = null;
+    micState.steady = 0;
+  };
+  track(micStopWait);
+
+  const micNode = (() => {
+    const node = document.createElement("div");
+    node.id = MIC_ID;
+    node.setAttribute("role", "button");
+    node.setAttribute("aria-label", "Диктовка: нажать — начать, нажать ещё раз — отправить");
+    // Значок рисуем узлами, а не разметкой строкой: у страницы Claude свой CSP,
+    // и innerHTML — лишний повод в него упереться. Осечка рисования не имеет
+    // права утащить за собой всю установку: без значка кнопка просто пустая.
+    try {
+      const ns = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(ns, "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      const body = document.createElementNS(ns, "rect");
+      body.setAttribute("x", "9"); body.setAttribute("y", "2");
+      body.setAttribute("width", "6"); body.setAttribute("height", "11");
+      body.setAttribute("rx", "3");
+      const arc = document.createElementNS(ns, "path");
+      arc.setAttribute("d", "M5 11a7 7 0 0 0 14 0");
+      const stand = document.createElementNS(ns, "path");
+      stand.setAttribute("d", "M12 18v3");
+      svg.append(body, arc, stand);
+      node.appendChild(svg);
+    } catch {}
+    (document.body ?? document.documentElement).appendChild(node);
+    track(() => node.remove());
+    return node;
+  })();
+
+  // Кружок контекста этого окна — по нему считается место значка.
+  const ringNode = () => {
+    if (ringState.button?.isConnected) return ringState.button;
+    try { return document.querySelector(USAGE_RING_SELECTOR); } catch { return null; }
+  };
+
+  // Значок стоит ровно слева от кружка и по его середине — «чтоб они выровнены
+  // были». Виден только в режиме чтения: в открытом поле слева от кружка стоят
+  // «Opus 5» и «Max», и зона значка съедала бы нажатия по ним, а родной
+  // микрофон Claude там и так на виду.
+  const placeMic = () => {
+    const ring = state.stage === STAGE_COLLAPSED ? ringNode() : null;
+    const rect = ring?.isConnected ? ring.getBoundingClientRect() : null;
+    const live = state.alive && state.watching && rect != null && rect.width > 0 && rect.height > 0 &&
+      rect.top >= 0 && rect.bottom <= innerHeight + MIC_SIZE && dictateButton() != null;
+    if (!live) {
+      if (micNode.style.getPropertyValue("display") !== "none") micNode.style.setProperty("display", "none");
+      return;
+    }
+    micNode.style.setProperty("display", "flex");
+    micNode.style.setProperty("left", `${Math.round(rect.left - MIC_GAP - MIC_SIZE)}px`);
+    micNode.style.setProperty("top", `${Math.round(rect.top + (rect.height - MIC_SIZE) / 2)}px`);
+  };
+
+  // Расшифровка приезжает после остановки и печатается кусками: ждём, пока
+  // текст появится и постоит неизменным, и только тогда жмём «отправить».
+  // Пусто за всё ожидание — не шлём ничего: пустое сообщение хуже молчания.
+  const micSendWhenReady = () => {
+    micStopWait();
+    micState.until = now() + MIC_WAIT_MS;
+    const tick = () => {
+      micState.timer = 0;
+      if (!state.alive) return;
+      const editor = state.editor?.isConnected ? state.editor : findEditor();
+      const text = String(editor?.textContent ?? "").trim();
+      if (text !== "" && text === micState.last) micState.steady += 1;
+      else micState.steady = 0;
+      micState.last = text;
+      if (micState.steady >= MIC_STEADY) {
+        let send = null;
+        try { send = document.querySelector(SEND_SELECTOR); } catch {}
+        if (send && send.disabled !== true) { micState.sends += 1; pressLikeMouse(send); }
+        micStopWait();
+        return;
+      }
+      if (now() >= micState.until) { micStopWait(); return; }
+      micState.timer = setTimeout(tick, MIC_TICK_MS);
+    };
+    micState.timer = setTimeout(tick, MIC_TICK_MS);
+  };
+
+  const micToggle = () => {
+    const button = dictateButton();
+    if (!button) return;
+    const live = dictateLive(button);
+    if (!pressLikeMouse(button)) return;
+    if (live) { micSendWhenReady(); return; }
+    micState.starts += 1;
+    micStopWait();
+  };
+  on(micNode, "click", event => {
+    event.preventDefault();
+    if (!state.alive) return;
+    try { micToggle(); } catch {}
+  });
+  // Значок горит красным, пока идёт запись. Спрашиваем у самой кнопки Claude, а
+  // не у своей памяти: диктовку могли включить и выключить мимо нас.
+  const micPaint = () => {
+    const on = dictateLive(dictateButton());
+    const value = on ? "true" : "false";
+    if (micNode.dataset.live !== value) micNode.dataset.live = value;
+  };
+
+  // Панель лимитов по наведению (#6906). Родная подсказка на время наведения
+  // глушится правилом в разделе 4, а вместо неё открывается сама панель: мышь
+  // ушла — панель закрылась, нажали рукой — держится до следующего нажатия.
+  const ringHoverStop = () => {
+    if (usageState.hoverTimer) { clearTimeout(usageState.hoverTimer); usageState.hoverTimer = 0; }
+    if (usageState.leaveTimer) { clearTimeout(usageState.leaveTimer); usageState.leaveTimer = 0; }
+  };
+  const ringHoverMark = on => {
+    try {
+      const root = document.documentElement;
+      if (on) root.setAttribute(RING_HOVER_ATTRIBUTE, "");
+      else root.removeAttribute(RING_HOVER_ATTRIBUTE);
+    } catch {}
+  };
+  track(() => { ringHoverStop(); ringHoverMark(false); });
+  const ringPanelClose = () => {
+    const ring = ringNode();
+    if (usageState.panel?.isConnected && ring) pressLikeMouse(ring);
+    usageState.hoverOpen = false;
+    usageClose();
+  };
+  const onRingOver = event => {
+    let ring = null;
+    let panel = null;
+    try { ring = event.target?.closest?.(USAGE_RING_SELECTOR) ?? null; } catch {}
+    try { panel = event.target?.closest?.(USAGE_PANEL_SELECTOR) ?? null; } catch {}
+    if (!ring && !panel) return;
+    usageState.over = true;
+    if (usageState.leaveTimer) { clearTimeout(usageState.leaveTimer); usageState.leaveTimer = 0; }
+    if (ring) ringHoverMark(true);
+    if (!ring || usageState.pinned || usageState.panel?.isConnected || usageState.hoverTimer) return;
+    usageState.hoverTimer = setTimeout(() => {
+      usageState.hoverTimer = 0;
+      const node = ringNode();
+      if (!usageState.over || !node || usageState.panel?.isConnected) return;
+      usageState.hoverOpen = true;
+      usageWatch();
+      pressLikeMouse(node);
+    }, RING_HOVER_OPEN_MS);
+  };
+  const onRingOut = event => {
+    let from = null;
+    try { from = event.target?.closest?.(`${USAGE_RING_SELECTOR},${USAGE_PANEL_SELECTOR}`) ?? null; } catch {}
+    if (!from) return;
+    // Ушли внутрь той же кнопки или в саму панель — это не уход.
+    let to = null;
+    try { to = event.relatedTarget?.closest?.(`${USAGE_RING_SELECTOR},${USAGE_PANEL_SELECTOR}`) ?? null; } catch {}
+    if (to) return;
+    usageState.over = false;
+    ringHoverMark(false);
+    if (usageState.hoverTimer) { clearTimeout(usageState.hoverTimer); usageState.hoverTimer = 0; }
+    if (usageState.pinned || !usageState.hoverOpen || usageState.leaveTimer) return;
+    usageState.leaveTimer = setTimeout(() => {
+      usageState.leaveTimer = 0;
+      if (usageState.over || usageState.pinned) return;
+      ringPanelClose();
+    }, RING_HOVER_CLOSE_MS);
+  };
+  on(document, "pointerover", onRingOver, true);
+  on(document, "pointerout", onRingOut, true);
 
   // ---- 13. Прокрутка ленты ------------------------------------------------
   // Команда «Прокрутить»: поставить ленту разговора на последнее сообщение.
@@ -9939,7 +10222,7 @@ nav[aria-label="Repository and pull request controls"] {
   // существующем стороже. Узел возвращается ТОТ ЖЕ САМЫЙ — с детьми, стилями и
   // подписками, — поэтому «поставить заново» это ровно тот же appendChild, что
   // на инжекте, и повторять его безопасно сколько угодно раз.
-  const ownNodes = [frameNode, progressBar, progressTip, handle, rail, superTop, superBottom];
+  const ownNodes = [frameNode, progressBar, progressTip, handle, rail, superTop, superBottom, micNode];
   const restoreOwnNodes = () => {
     const host = document.body ?? document.documentElement;
     if (!host) return false;
@@ -10125,6 +10408,15 @@ nav[aria-label="Repository and pull request controls"] {
       superVisible: superTop.isConnected && superTop.style.display !== "none",
       superBottomVisible: superBottom.isConnected && superBottom.style.display !== "none",
       handleCovered: state.handleCovered,
+      // Микрофон у кружка (#6907): виден ли значок, идёт ли запись, сколько раз
+      // он включал диктовку и отправлял расшифровку.
+      mic: {
+        visible: micNode.isConnected && micNode.style.display !== "none",
+        live: micNode.dataset.live === "true",
+        starts: micState.starts,
+        sends: micState.sends,
+        button: dictateButton() != null,
+      },
       // Сколько раз сторож возвращал свои узлы в body (#6766).
       restored: state.restored,
       // Широкий вид (раздел 2г, WF65): включён ли, ширина панели чата и правой

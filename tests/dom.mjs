@@ -381,6 +381,10 @@ export const createDom = ({
         node.childNodes.push(kid);
         return kid;
       },
+      // Значок микрофона (раздел 12з) складывает свои три фигуры одним append.
+      append(...kids) {
+        for (const kid of kids) node.appendChild(kid);
+      },
       insertBefore(kid, anchor) {
         kid.parentNode?.removeChild?.(kid);
         kid.parentNode = node;
@@ -534,6 +538,9 @@ export const createDom = ({
     adoptedStyleSheets: [],
     __listeners: new Map(),
     createElement: tag => makeNode(tag),
+    // Значок микрофона (раздел 12з) рисуется узлами SVG: пространство имён стабу
+    // безразлично, узел тот же.
+    createElementNS: (ns, tag) => makeNode(tag),
     createTextNode: text => makeText(text),
     createRange: () => ({
       setStart() {}, setEnd() {}, collapse() {}, selectNodeContents() {},
@@ -708,6 +715,7 @@ export const createDom = ({
     performance: { now: () => Date.now(), getEntriesByType: () => [] },
     CSSStyleSheet,
     BroadcastChannel,
+    PointerEvent: eventClass({ pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0, buttons: 0, clientX: 0, clientY: 0 }),
     MutationObserver,
     DataTransfer,
     Blob,
