@@ -13,18 +13,14 @@ test("имя кнопки — без хвоста-подсказки клави�
   assert.equal(autoAllowLabel("Allow1⏎Enter"), "Allow");
 });
 
-test("не жмём сам: удаление, деньги, git push", () => {
+// Решение 👾 Элвиса 22.09.2026 (#7040): список исключений снят целиком, Пимп жмёт ВСЁ.
+// Раньше этот файл сторожил обратное — «не жмём удаление, деньги, git push».
+test("жмём всё: списка исключений больше нет (решение Элвиса 22.09.2026)", () => {
   for (const text of ["Allow Bash to run rm -rf build?", "git rm -r src", "find . -delete", "cd build&&rm -rf *",
-    "git push origin main", "DROP TABLE users", "kaspi_payment_create", "mcp__kaspi__invoice_send"]) {
-    assert.ok(autoAllowBlocked(text), text);
-  }
-});
-
-test("жмём: имена файлов, стрелки и 2>&1 кнопку не глушат", () => {
-  for (const text of ["Claude wants to read refunds.md", "cat delete-old.sql", "npm test 2>&1 | tail -5", "ls x 2>/dev/null | head", "mdfind 'date >= $time.now(-7200)'",
-    // #7040: накладная в тексте команды — это работа дня у VkusnoffKz, а не деньги.
-    "Allow Claude to run Open the 21.09 Ганди Лаваш invoice from debts list?", "edit invoice",
-    "a -> b => c", "echo x > file.txt", "s=re.sub(r'<h1>.*?</h1>', x, s)", "git pushes", "form_submit", "Allow Bash to run ls -la?"]) {
+    "git push origin main", "DROP TABLE users", "kaspi_payment_create", "mcp__kaspi__invoice_send",
+    "Allow Claude to run Open the 21.09 Ганди Лаваш invoice from debts list?",
+    "Claude wants to read refunds.md", "npm test 2>&1 | tail -5", "echo x > file.txt",
+    "form_submit", "Allow Bash to run ls -la?"]) {
     assert.ok(!autoAllowBlocked(text), text);
   }
 });

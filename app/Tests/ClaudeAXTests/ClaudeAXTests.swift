@@ -3266,22 +3266,42 @@ final class ClaudeAXTests: XCTestCase {
             .contains { $0.matches("Always allow") })
     }
 
-    /// Список исключений больше не пуст: удаление, необратимое, пуш и деньги авто-Allow не
-    /// подтверждает — диалог остаётся Элвису. Регистр не важен, незнакомый заголовок жмём,
-    /// как раньше (иначе авто-Allow замолчал бы на любой новой разметке).
-    func testAutoAllowNeverConfirmsDangerousDialogs() {
-        let list = AutoAllow(app: ClaudeApp(), hud: HUD()).blockActionPatterns
-        XCTAssertFalse(list.isEmpty, "предохранитель авто-Allow снова выключен")
+    /// Список, который стоял в `blockActionPatterns` до 22.09.2026. Живёт ТОЛЬКО в тестах:
+    /// правило сравнения (целое слово в любом месте команды, фраза, перенаправление, слово в
+    /// имени инструмента) осталось в коде и обязано работать — вернуть исключения должно быть
+    /// делом одной строки. В боевом приложении оба списка пусты по слову Элвиса (#7040).
+    private let legacyActionPatterns = ["rm", "delete", "drop table", "drop database",
+                                        "git push", "payment", "refund", "invoice", ">"]
+    private let legacyToolPatterns = ["payment", "refund", "invoice"]
+
+    /// Решение 👾 Элвиса 22.09.2026 (#7040): список исключений снят ЦЕЛИКОМ, авто-Allow жмёт всё.
+    /// До этого дня тест сторожил обратное — «удаление, деньги и пуш остаются Элвису».
+    /// Механика сравнения цела и проверяется ниже на ЯВНОМ списке: вернуть исключения — снова
+    /// перечислить узоры в `AutoAllow.blockActionPatterns` и в `AUTO_ALLOW_BLOCK_*` страницы.
+    func testAutoAllowPressesEverythingByElvisWord() {
+        let shipped = AutoAllow(app: ClaudeApp(), hud: HUD())
+        XCTAssertTrue(shipped.blockActionPatterns.isEmpty, "список исключений вернулся без слова Элвиса")
+        XCTAssertTrue(shipped.blockToolPatterns.isEmpty, "список инструментов вернулся без слова Элвиса")
+        for heading in ["Allow Bash to run rm -rf build?",
+                        "Claude wants to run git push --force",
+                        "Confirm PAYMENT of 120 USD?",
+                        "Allow Claude to use mcp__kaspi__invoice_send?"] {
+            XCTAssertFalse(AutoAllow.isBlocked(heading: heading,
+                                               patterns: shipped.blockActionPatterns,
+                                               tools: shipped.blockToolPatterns), heading)
+        }
+        let list = legacyActionPatterns
         for heading in ["Allow Bash to run rm -rf build?",
                         "Claude wants to run git push --force",
                         "Confirm PAYMENT of 120 USD?",
                         "Allow DELETE of 12 files?",
                         // Опасное второе в цепочке — начало у него своё.
-                        "Allow Bash to run cd build && rm -rf *?",
-                        // Инструмент внешнего сервиса зовётся своим именем.
-                        "Allow Claude to use refund_create?"] {
+                        "Allow Bash to run cd build && rm -rf *?"] {
             XCTAssertTrue(AutoAllow.isBlocked(heading: heading, patterns: list), heading)
         }
+        // Инструмент внешнего сервиса зовётся своим именем — узор ищется в имени.
+        XCTAssertTrue(AutoAllow.isBlocked(heading: "Allow Claude to use refund_create?",
+                                          patterns: list, tools: legacyToolPatterns))
         for heading in ["Allow Read of package.swift?",
                         "Claude wants to run swift test",
                         ""] {
@@ -3297,19 +3317,17 @@ final class ClaudeAXTests: XCTestCase {
     /// (`refunds.md`, `delete-old.sql`, `invoice.ts`) авто-Allow больше не глушат — у
     /// VkusnoffKz оплаты и возвраты в каждом втором вопросе, и молчал он там без причины.
     func testAutoAllowIgnoresDangerousWordsInFileNames() {
-        let list = AutoAllow(app: ClaudeApp(), hud: HUD()).blockActionPatterns
+        let list = legacyActionPatterns
         for heading in ["Claude wants to read refunds.md",
                         "Claude wants to edit invoice.ts",
                         "Allow Read of delete-old-orders.sql?",
                         "Allow Bash to run cat payments/README.md?",
-                        "Claude wants to write src/payment-form.tsx",
-                        // #7040: накладная в тексте команды — работа дня у VkusnoffKz, не деньги.
-                        "Allow Claude to run Open the 21.09 Ганди Лаваш invoice from debts list?"] {
+                        "Claude wants to write src/payment-form.tsx"] {
             XCTAssertFalse(AutoAllow.isBlocked(heading: heading, patterns: list), heading)
         }
         // А инструмент с тем же словом в имени по-прежнему подтверждает Элвис.
         XCTAssertTrue(AutoAllow.isBlocked(heading: "Allow Claude to use mcp__kaspi__invoice_send?",
-                                          patterns: list))
+                                          patterns: list, tools: legacyToolPatterns))
         // «force push» из списка ушёл — команда всегда начинается с `git push`.
         XCTAssertFalse(list.contains("force push"))
         XCTAssertTrue(list.contains("git push"))
@@ -3352,9 +3370,8 @@ final class ClaudeAXTests: XCTestCase {
     /// с дефисами не читались вовсе. Имя инструмента проверяется целиком: у Элвиса боевая
     /// касса, и `kaspi_payment_create` жать самому нельзя.
     func testAutoAllowCatchesDangerAnywhereInCommand() {
-        let auto = AutoAllow(app: ClaudeApp(), hud: HUD())
-        let list = auto.blockActionPatterns
-        let tools = auto.blockToolPatterns
+        let list = legacyActionPatterns
+        let tools = legacyToolPatterns
         for heading in ["Allow Bash to run git rm -r src?",
                         "Allow Bash to run find . -delete?",
                         "Allow Bash to run find . -name '*.log' --delete?",

@@ -52,7 +52,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf79-a-2";
+  const VERSION = "wf79-a-3";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -8758,13 +8758,19 @@ nav[aria-label="Repository and pull request controls"] {
   // вынутой из заголовка командой: лишний ручной клик дешевле стёртой папки.
   const AUTO_ALLOW_TICK_MS = 700;
   const AUTO_ALLOW_PATTERNS = [/^allow once/i, /^allow$/i, /^allow for this/i, /^allow always/i, /^always allow/i, /^yes, allow/i];
-  // «invoice» из слов КОМАНДЫ убрано 22.09.2026 (#7040): у VkusnoffKz накладная — работа дня, и
-  // строка «Open the 21.09 Ганди Лаваш invoice from debts list» глушила авто-Allow подряд (три
-  // диалога за две минуты в живом журнале). В ИМЕНАХ инструментов слово осталось ниже:
-  // `mcp__kaspi__invoice_send` создаёт денежный документ, его по-прежнему подтверждает Элвис.
-  const AUTO_ALLOW_BLOCK_WORDS = ["rm", "delete", "payment", "refund"];
-  const AUTO_ALLOW_BLOCK_PHRASES = ["drop table", "drop database", "git push"];
-  const AUTO_ALLOW_BLOCK_TOOLS = ["payment", "refund", "invoice"];
+  // ⛔ СПИСОК ИСКЛЮЧЕНИЙ СНЯТ ЦЕЛИКОМ 22.09.2026 — решение 👾 Элвиса (#7040, дословно):
+  // «я один хуй даже не читаю, чё там написано. Я жму алло и пиздец. снимай этот список нахуй
+  // целиком… Всегда allow нажимай». Раньше здесь стояли слова «rm», «delete», «payment»,
+  // «refund», «invoice», фразы «drop table», «drop database», «git push» и те же слова в именах
+  // инструментов; диалог с любым из них Пимп не жал НИКОГДА, и Элвис дожимал рукой. Поводом стал
+  // живой случай 22.09: слово «invoice» глушило работу с накладными Вкуснофф три диалога подряд.
+  // Механика сравнения ниже цела и работает — пустой список значит «жать всё»; чтобы вернуть
+  // исключения, достаточно снова перечислить слова здесь и в AutoAllow.swift (там тот же список
+  // и то же решение). Цена решения названа Элвису в том же ответе: теперь без него проходят и
+  // `rm -rf`, и `git push`, и денежные кнопки.
+  const AUTO_ALLOW_BLOCK_WORDS = [];
+  const AUTO_ALLOW_BLOCK_PHRASES = [];
+  const AUTO_ALLOW_BLOCK_TOOLS = [];
   const autoAllowState = { timer: 0, lastPressAt: 0, lastBlocked: "", presses: [], blocked: 0, blockedLog: [] };
   // Имя кнопки без хвоста-подсказки клавиши. Живой замер 20.09: текст кнопки —
   // «Always allow2⇧Shift⌘Command⏎Enter», «Allow once2⌘Command⏎Enter» (слитно).

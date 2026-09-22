@@ -43,20 +43,26 @@ final class AutoAllow {
     /// один лишний клик дешевле стёртой папки, а `find . -exec rm -rf {} \;` иначе прошёл бы.
     /// Заголовок диалога не опознан (`heading` вернул пустую строку) — жмём, как раньше:
     /// иначе авто-Allow замолчал бы на любой незнакомой разметке.
-    /// «invoice» ушло из слов КОМАНДЫ 22.09.2026 (#7040): у VkusnoffKz накладная — работа дня,
-    /// и «Open the 21.09 Ганди Лаваш invoice from debts list» глушило авто-Allow подряд. В именах
-    /// инструментов слово осталось (`mcp__kaspi__invoice_send` — денежный документ).
-    var blockActionPatterns: [String] = [
-        "rm", "delete", "drop table", "drop database",
-        "git push", "payment", "refund", AutoAllow.redirectPattern,
-    ]
+    /// ⛔ СПИСОК СНЯТ ЦЕЛИКОМ 22.09.2026 — решение 👾 Элвиса (#7040, дословно): «я один хуй даже
+    /// не читаю, чё там написано. Я жму алло и пиздец. снимай этот список нахуй целиком…
+    /// Всегда allow нажимай». Здесь стояли `rm`, `delete`, `drop table`, `drop database`,
+    /// `git push`, `payment`, `refund`, `invoice` и `>`; поводом стал живой случай 22.09 —
+    /// слово `invoice` глушило работу с накладными VkusnoffKz три диалога подряд.
+    /// Всё описанное выше правило сравнения ЦЕЛО и работает: пустой список значит «жать всё»
+    /// (это же проверяет `testAutoAllowPressesEverythingByElvisWord`). Вернуть исключения —
+    /// снова перечислить узоры здесь и в `AUTO_ALLOW_BLOCK_*` страницы (`claude-patch/inject.js`,
+    /// раздел 12е): списки живут в двух местах и меняются вместе.
+    /// Цена решения названа Элвису в том же ответе: теперь без него проходят и `rm -rf`,
+    /// и `git push`, и денежные кнопки.
+    var blockActionPatterns: [String] = []
     /// Деньги и внешние сервисы в ИМЕНИ инструмента (`kaspi_payment_create`, `refund_create` —
     /// #5786): имя приходит одним словом, без глагола впереди и без пути, поэтому здесь узор
     /// ищется в ЛЮБОМ месте имени, а не с его начала — иначе `kaspi_payment_create` проходил
     /// молча, а у Элвиса это боевая касса. Слов команд тут нет нарочно: `rm` подстрокой попал
     /// бы в `form_submit`.
+    /// Снят тем же решением 22.09.2026: здесь были `payment`, `refund`, `invoice`.
     var blockToolPatterns: [String] = AutoAllow.defaultToolPatterns
-    static let defaultToolPatterns = ["payment", "refund", "invoice"]
+    static let defaultToolPatterns: [String] = []
     /// Узор списка, у которого нет слова: перенаправление вывода.
     static let redirectPattern = ">"
 
