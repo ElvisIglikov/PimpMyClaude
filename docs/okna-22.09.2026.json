@@ -1,0 +1,97 @@
+{
+  "snyato": "2026-09-23 00:20",
+  "ekran": "Odyssey 2560x720 pt",
+  "glavnoe_okno": "Claude",
+  "okna": [
+    {
+      "nomer": 1,
+      "proekt": "PimpMyClaude",
+      "papka": "/Users/elvis/_ElvisProjects/PimpMyClaude",
+      "chat": "local_bbc150a5-1cfa-4732-a315-aa4594684709",
+      "zagolovok": "Claude",
+      "ramka": [
+        -3360,
+        -575,
+        427,
+        720
+      ],
+      "model": "claude-opus-5",
+      "effort": "xhigh"
+    },
+    {
+      "nomer": 2,
+      "proekt": "SkilZZZ",
+      "papka": "/Users/elvis/_ElvisProjects/SkilZZZ",
+      "chat": "local_e963fad1-393d-4806-b0bd-4939c8019a24",
+      "zagolovok": "Сообщения в чатах: улучшение оформления",
+      "ramka": [
+        -2933,
+        -575,
+        425,
+        720
+      ],
+      "model": "claude-opus-5",
+      "effort": "high"
+    },
+    {
+      "nomer": 3,
+      "proekt": "Dictator",
+      "papka": "/Users/elvis/_ElvisProjects/Dictator",
+      "chat": "local_497b566a-8a47-4b02-a241-a222462fd2e5",
+      "zagolovok": "Плашки, свечение, затемнение, масштаб",
+      "ramka": [
+        -2507,
+        -575,
+        427,
+        720
+      ],
+      "model": "claude-opus-5",
+      "effort": "xhigh"
+    },
+    {
+      "nomer": 4,
+      "proekt": "VkusnoffKz",
+      "papka": "/Users/elvis/_ElvisProjects/VkusnoffKz",
+      "chat": "local_2b99af67-c7c7-43be-95b7-1f48ddf64b48",
+      "zagolovok": "Проект Вкуснов",
+      "ramka": [
+        -2080,
+        -575,
+        427,
+        720
+      ],
+      "model": "claude-fable-5-1",
+      "effort": "high"
+    },
+    {
+      "nomer": 5,
+      "proekt": "Rick",
+      "papka": "/Users/elvis/_ElvisProjects/Rick",
+      "chat": "local_efb06e54-6eef-4136-a175-f3f6240dbc8e",
+      "zagolovok": "Синтез голоса Рика Санчеза",
+      "ramka": [
+        -1652,
+        -575,
+        424,
+        720
+      ],
+      "model": "claude-opus-5",
+      "effort": "xhigh"
+    },
+    {
+      "nomer": 6,
+      "proekt": "Geyboard",
+      "papka": "/Users/elvis/_ElvisProjects/Geyboard",
+      "chat": "local_c52c4e68-270c-432c-a652-170ca5b3e1f1",
+      "zagolovok": "Ожидание задачи",
+      "ramka": [
+        -1227,
+        -575,
+        427,
+        720
+      ],
+      "model": "claude-fable-5-1",
+      "effort": "xhigh"
+    }
+  ]
+}
