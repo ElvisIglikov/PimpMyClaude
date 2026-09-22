@@ -52,7 +52,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf79-a-1";
+  const VERSION = "wf79-a-2";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -8758,7 +8758,11 @@ nav[aria-label="Repository and pull request controls"] {
   // вынутой из заголовка командой: лишний ручной клик дешевле стёртой папки.
   const AUTO_ALLOW_TICK_MS = 700;
   const AUTO_ALLOW_PATTERNS = [/^allow once/i, /^allow$/i, /^allow for this/i, /^allow always/i, /^always allow/i, /^yes, allow/i];
-  const AUTO_ALLOW_BLOCK_WORDS = ["rm", "delete", "payment", "refund", "invoice"];
+  // «invoice» из слов КОМАНДЫ убрано 22.09.2026 (#7040): у VkusnoffKz накладная — работа дня, и
+  // строка «Open the 21.09 Ганди Лаваш invoice from debts list» глушила авто-Allow подряд (три
+  // диалога за две минуты в живом журнале). В ИМЕНАХ инструментов слово осталось ниже:
+  // `mcp__kaspi__invoice_send` создаёт денежный документ, его по-прежнему подтверждает Элвис.
+  const AUTO_ALLOW_BLOCK_WORDS = ["rm", "delete", "payment", "refund"];
   const AUTO_ALLOW_BLOCK_PHRASES = ["drop table", "drop database", "git push"];
   const AUTO_ALLOW_BLOCK_TOOLS = ["payment", "refund", "invoice"];
   const autoAllowState = { timer: 0, lastPressAt: 0, lastBlocked: "", presses: [], blocked: 0, blockedLog: [] };

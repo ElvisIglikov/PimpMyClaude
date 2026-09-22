@@ -3302,9 +3302,14 @@ final class ClaudeAXTests: XCTestCase {
                         "Claude wants to edit invoice.ts",
                         "Allow Read of delete-old-orders.sql?",
                         "Allow Bash to run cat payments/README.md?",
-                        "Claude wants to write src/payment-form.tsx"] {
+                        "Claude wants to write src/payment-form.tsx",
+                        // #7040: накладная в тексте команды — работа дня у VkusnoffKz, не деньги.
+                        "Allow Claude to run Open the 21.09 Ганди Лаваш invoice from debts list?"] {
             XCTAssertFalse(AutoAllow.isBlocked(heading: heading, patterns: list), heading)
         }
+        // А инструмент с тем же словом в имени по-прежнему подтверждает Элвис.
+        XCTAssertTrue(AutoAllow.isBlocked(heading: "Allow Claude to use mcp__kaspi__invoice_send?",
+                                          patterns: list))
         // «force push» из списка ушёл — команда всегда начинается с `git push`.
         XCTAssertFalse(list.contains("force push"))
         XCTAssertTrue(list.contains("git push"))

@@ -43,9 +43,12 @@ final class AutoAllow {
     /// один лишний клик дешевле стёртой папки, а `find . -exec rm -rf {} \;` иначе прошёл бы.
     /// Заголовок диалога не опознан (`heading` вернул пустую строку) — жмём, как раньше:
     /// иначе авто-Allow замолчал бы на любой незнакомой разметке.
+    /// «invoice» ушло из слов КОМАНДЫ 22.09.2026 (#7040): у VkusnoffKz накладная — работа дня,
+    /// и «Open the 21.09 Ганди Лаваш invoice from debts list» глушило авто-Allow подряд. В именах
+    /// инструментов слово осталось (`mcp__kaspi__invoice_send` — денежный документ).
     var blockActionPatterns: [String] = [
         "rm", "delete", "drop table", "drop database",
-        "git push", "payment", "refund", "invoice", AutoAllow.redirectPattern,
+        "git push", "payment", "refund", AutoAllow.redirectPattern,
     ]
     /// Деньги и внешние сервисы в ИМЕНИ инструмента (`kaspi_payment_create`, `refund_create` —
     /// #5786): имя приходит одним словом, без глагола впереди и без пути, поэтому здесь узор

@@ -15,13 +15,15 @@ test("имя кнопки — без хвоста-подсказки клави�
 
 test("не жмём сам: удаление, деньги, git push", () => {
   for (const text of ["Allow Bash to run rm -rf build?", "git rm -r src", "find . -delete", "cd build&&rm -rf *",
-    "git push origin main", "DROP TABLE users", "kaspi_payment_create", "edit invoice"]) {
+    "git push origin main", "DROP TABLE users", "kaspi_payment_create", "mcp__kaspi__invoice_send"]) {
     assert.ok(autoAllowBlocked(text), text);
   }
 });
 
 test("жмём: имена файлов, стрелки и 2>&1 кнопку не глушат", () => {
   for (const text of ["Claude wants to read refunds.md", "cat delete-old.sql", "npm test 2>&1 | tail -5", "ls x 2>/dev/null | head", "mdfind 'date >= $time.now(-7200)'",
+    // #7040: накладная в тексте команды — это работа дня у VkusnoffKz, а не деньги.
+    "Allow Claude to run Open the 21.09 Ганди Лаваш invoice from debts list?", "edit invoice",
     "a -> b => c", "echo x > file.txt", "s=re.sub(r'<h1>.*?</h1>', x, s)", "git pushes", "form_submit", "Allow Bash to run ls -la?"]) {
     assert.ok(!autoAllowBlocked(text), text);
   }

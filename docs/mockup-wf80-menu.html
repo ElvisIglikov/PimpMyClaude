@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3 · PimpMyClaude</title>
+<style>
+  :root{
+    --bg:#241338; --panel:#32204f; --line:#4a3170; --ink:#f3eefb; --muted:#a99cbe;
+    --accent:#b48cff; --green:#4ecf8a; --red:#e5645d; --yellow:#efc65c;
+  }
+  *{box-sizing:border-box;}
+  html,body{overflow-x:hidden;}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:20px/1.5 -apple-system,"Helvetica Neue",Arial,sans-serif;}
+  main{padding:24px 26px 90px;}
+  .badge{display:inline-block;background:var(--accent);color:#1a1226;font-weight:800;
+         font-size:15px;letter-spacing:.06em;padding:4px 12px;border-radius:999px;}
+  h1{font-size:2.9rem;line-height:1.05;margin:14px 0 8px;letter-spacing:-.015em;}
+  .who{color:var(--muted);font-size:18px;margin:0 0 6px;}
+  .neon{height:3px;border-radius:3px;margin:0 0 22px;
+        background:linear-gradient(90deg,rgba(180,140,255,0),var(--accent),rgba(180,140,255,0));
+        box-shadow:0 0 22px rgba(180,140,255,.55);animation:breathe 6s ease-in-out infinite;}
+  @keyframes breathe{0%,100%{opacity:.55}50%{opacity:1}}
+  nav.toc{font-size:19px;color:var(--muted);margin:0 0 30px;line-height:1.9;}
+  nav.toc a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line);}
+  h2{font-size:3.1rem;line-height:1.03;margin:58px 0 16px;letter-spacing:-.02em;}
+  h3{font-size:1.6rem;margin:36px 0 8px;}
+  p{max-width:70ch;margin:0 0 14px;}
+  ul{max-width:70ch;padding-left:1.15em;margin:0 0 14px;}
+  li{margin:0 0 9px;}
+  b{font-weight:600;}
+  .num{color:var(--accent);font-weight:800;font-size:17px;letter-spacing:.05em;margin:20px 0 6px;
+       text-shadow:0 0 18px rgba(180,140,255,.45);}
+  .row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start;margin:6px 0 4px;}
+  .frame{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px;
+         overflow-x:auto;max-width:100%;}
+  .tag{display:block;font-size:15px;color:var(--muted);margin:2px 0 9px;}
+  .cap{color:var(--muted);font-size:17px;margin:10px 0 0;max-width:62ch;}
+  .cap b{color:var(--ink);}
+  .note{border-left:3px solid var(--accent);background:#2b1a46;border-radius:0 12px 12px 0;
+        padding:10px 16px;max-width:70ch;margin:18px 0;}
+  .btn{display:inline-block;-webkit-appearance:none;appearance:none;border:0;cursor:pointer;
+       background:var(--accent);color:#1a1226;font:700 19px/1.2 inherit;padding:13px 22px;
+       border-radius:12px;box-shadow:0 0 20px rgba(180,140,255,.35);}
+  .ok{color:var(--green);font-size:17px;margin-left:10px;}
+
+  /* ——————————————— нарисованное меню macOS ——————————————— */
+  .stage{min-width:332px;border-radius:9px;overflow:visible;padding:0 0 18px;
+         font:13.5px/1 -apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif;}
+  .stage.wide{padding-right:172px;padding-bottom:104px;}
+  .stage.light{background:linear-gradient(160deg,#ced6e5,#aab6cc 60%,#94a3bd);}
+  .stage.dark{background:linear-gradient(160deg,#2c2740,#1e1a2c 60%,#141222);}
+  .mbar{display:flex;align-items:center;justify-content:flex-end;gap:13px;height:26px;padding:0 11px;
+        border-radius:9px 9px 0 0;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);}
+  .light .mbar{background:rgba(255,255,255,.60);color:#1d1d1f;}
+  .dark  .mbar{background:rgba(22,22,26,.55);color:rgba(255,255,255,.92);}
+  .si{display:inline-flex;align-items:center;justify-content:center;width:22px;height:20px;
+      border-radius:4px;font-size:13px;line-height:1;}
+  .light .si.open{background:rgba(0,0,0,.14);}
+  .dark  .si.open{background:rgba(255,255,255,.20);}
+  .si.g{color:#137a36;} .dark .si.g{color:#45d97f;}
+  .si.r{color:#c3362b;} .dark .si.r{color:#ff6b5e;}
+  .bt{display:inline-block;width:20px;height:10px;border:1px solid currentColor;border-radius:3px;
+      opacity:.75;position:relative;}
+  .bt::before{content:"";position:absolute;inset:1.5px;right:7px;background:currentColor;border-radius:1px;}
+  .bt::after{content:"";position:absolute;top:3px;right:-3px;width:2px;height:4px;
+             background:currentColor;border-radius:0 1px 1px 0;}
+  .clock{font-size:12.5px;opacity:.9;white-space:nowrap;}
+  .drop{display:flex;justify-content:flex-end;padding:0 8px;}
+
+  .menu{min-width:232px;width:-webkit-max-content;width:max-content;padding:5px 0;border-radius:10px;
+        -webkit-backdrop-filter:blur(26px) saturate(180%);backdrop-filter:blur(26px) saturate(180%);}
+  .light .menu{background:rgba(246,246,248,.88);border:.5px solid rgba(0,0,0,.14);color:#1d1d1f;
+               box-shadow:0 12px 36px rgba(0,0,0,.32);}
+  .dark  .menu{background:rgba(50,50,55,.85);border:.5px solid rgba(255,255,255,.15);color:rgba(255,255,255,.93);
+               box-shadow:0 14px 40px rgba(0,0,0,.6);}
+  .mi{position:relative;display:flex;align-items:center;height:22px;margin:0 5px;padding:0 11px 0 3px;
+      border-radius:5px;white-space:nowrap;}
+  .ck{flex:none;width:17px;text-align:center;font-size:12.5px;}
+  .lb{flex:1 1 auto;}
+  .kq{flex:none;margin-left:24px;opacity:.55;}
+  .ar{flex:none;margin-left:22px;font-size:15px;opacity:.55;line-height:1;}
+  .sp{height:1px;margin:5px 11px;}
+  .light .sp{background:rgba(0,0,0,.13);} .dark .sp{background:rgba(255,255,255,.16);}
+  .light .mi.off{color:rgba(0,0,0,.30);} .dark .mi.off{color:rgba(255,255,255,.32);}
+  .light .mi.green .lb{color:#137a36;}   .dark .mi.green .lb{color:#45d97f;}
+  .light .mi.red   .lb{color:#c3362b;}   .dark .mi.red   .lb{color:#ff6b5e;}
+  .mi.deepgreen .lb{color:#137a36;}
+  .tl.amber{color:#a5620a;} .dark .tl.amber{color:#ffb84d;}
+  .mi.hi{background:#0a64d6;color:#fff;}
+  .mi.hi>.lb,.mi.hi>.ar,.mi.hi>.ck{color:#fff;opacity:1;}
+  .menu.sub{position:absolute;left:100%;top:-5px;margin-left:3px;min-width:0;}
+
+  /* ——————————————— вопросы ——————————————— */
+  .qs{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 18px 22px;}
+  .q{margin:28px 0 0;}
+  .q .t{font-size:1.35rem;font-weight:700;margin:0 0 4px;}
+  .q .go{font-size:16px;margin:0 0 12px;}
+  .q .go a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(180,140,255,.4);}
+  .opt{display:flex;align-items:flex-start;gap:14px;margin:0 0 12px;}
+  .opt input{-webkit-appearance:none;appearance:none;flex:none;width:30px;height:30px;margin:0;
+             border-radius:50%;border:2px solid #7a68a0;background:#241338;cursor:pointer;position:relative;}
+  .opt input:checked{border-color:var(--accent);box-shadow:0 0 14px rgba(180,140,255,.5);}
+  .opt input:checked::after{content:"";position:absolute;inset:6px;border-radius:50%;background:var(--accent);}
+  .opt .txt{padding-top:1px;}
+  .opt .txt .name{font-size:19px;}
+  .opt .txt .why{color:var(--muted);font-size:17px;}
+  .rec{color:var(--green);font-weight:700;}
+  .lead{color:var(--muted);font-size:17px;margin:10px 0 0;max-width:62ch;}
+
+  @media (max-width:720px){
+    body{font-size:18px;}
+    main{padding:18px 14px 70px;}
+    h1{font-size:2.4rem;}
+    h2{font-size:2.5rem;margin:46px 0 14px;}
+    h3{font-size:1.45rem;}
+    .frame{padding:10px;}
+    nav.toc{line-height:2.2;}
+  }
+</style>
+</head>
+<body>
+<main>
+
+<span class="badge">ФАЙЛ 3</span>
+<h1>Меню Пимпа у часов — по-человечески</h1>
+<p class="who">макет · Opus 5 max · 22.09.2026 · задачи #6596, #6595, #6597</p>
+<div class="neon"></div>
+<nav class="toc"><a href="#qs">Вопросы</a> · <a href="#pics">Картинки</a> · <a href="#varianty">Где я не уверен</a> · <a href="#done">Решено, не переспрашиваю</a> · <a href="#limits">Чего меню не умеет</a></nav>
+
+<h2 id="qs">Вопросы</h2>
+<div class="qs">
+  <p><button class="btn" id="copyTop" type="button">Скопировать ответы</button><span class="ok" id="okTop"></span></p>
+  <p class="lead">Посмотри вопросы. Со всем согласен — скопируй ответы и отправь в чат: я продолжу работать, а ты спокойно читай файл дальше. Нажимается только кружок.</p>
+
+  <div class="q" data-q="Зелёный на тёмной строке меню">
+    <p class="t">1. Зелёный на тёмной строке меню</p>
+    <p class="go">Смотри картинку <a href="#p7">3.7</a></p>
+    <div class="opt">
+      <input type="radio" name="q1" value="на тёмной строке меню зелёный чуть светлее" checked>
+      <span class="txt"><span class="name">На тёмной — чуть светлее <span class="rec">(рекомендую)</span></span><br>
+      <span class="why">Почему: тёмно-зелёный на тёмном фоне почти не виден, а эта строка должна ловиться взглядом сразу. Минус: на тёмной теме это уже не «тёмно-зелёный», а просто зелёный.</span></span>
+    </div>
+    <div class="opt">
+      <input type="radio" name="q1" value="один и тот же тёмно-зелёный везде">
+      <span class="txt"><span class="name">Один и тот же тёмно-зелёный везде</span><br>
+      <span class="why">Почему: цвет ровно один, как ты и просил. Минус: на тёмной строке меню приходится присматриваться.</span></span>
+    </div>
+  </div>
+
+  <div class="q" data-q="Номер патча в зелёной строке">
+    <p class="t">2. Писать ли в зелёной строке номер патча</p>
+    <p class="go">Смотри картинку <a href="#p8">3.8</a></p>
+    <div class="opt">
+      <input type="radio" name="q2" value="писать «патч 7»" checked>
+      <span class="txt"><span class="name">Писать «патч 7» <span class="rec">(рекомендую)</span></span><br>
+      <span class="why">Почему: ты просил видеть семёрку — сразу ясно, какой патч внутри Claude. Минус: цифра ничего не говорит тому, кто не знает, зачем она.</span></span>
+    </div>
+    <div class="opt">
+      <input type="radio" name="q2" value="не писать номер патча, только версию Claude">
+      <span class="txt"><span class="name">Не писать, оставить только Claude</span><br>
+      <span class="why">Почему: строка короче и читается как обычная фраза. Минус: номер видно только в «Служебное → Статус патча».</span></span>
+    </div>
+  </div>
+
+  <div class="q" data-q="Состояние одной строкой или двумя">
+    <p class="t">3. Состояние — одной строкой или двумя</p>
+    <p class="go">Смотри картинку <a href="#p9">3.9</a></p>
+    <div class="opt">
+      <input type="radio" name="q3" value="одной строкой" checked>
+      <span class="txt"><span class="name">Одной строкой <span class="rec">(рекомендую)</span></span><br>
+      <span class="why">Почему: в меню на строку меньше, всё главное в одной фразе. Минус: фраза длинная, и меню от неё шире.</span></span>
+    </div>
+    <div class="opt">
+      <input type="radio" name="q3" value="двумя строками: зелёная фраза, под ней серая про Claude">
+      <span class="txt"><span class="name">Двумя: зелёная фраза, под ней серая про Claude</span><br>
+      <span class="why">Почему: зелёное ловится мгновенно, подробности не мешают. Минус: в меню на строку больше.</span></span>
+    </div>
+  </div>
+
+  <div class="q" data-q="Пункт «Обновить Claude»">
+    <p class="t">4. Пункт «Обновить Claude»</p>
+    <p class="go">Смотри картинки <a href="#p1">3.1</a> и <a href="#p2">3.2</a></p>
+    <div class="opt">
+      <input type="radio" name="q4" value="всегда в меню" checked>
+      <span class="txt"><span class="name">Всегда в меню <span class="rec">(рекомендую)</span></span><br>
+      <span class="why">Почему: можно нажать в любой момент и проверить самому, не дожидаясь. Минус: чаще всего жать нечего — обновления нет.</span></span>
+    </div>
+    <div class="opt">
+      <input type="radio" name="q4" value="появляется, только когда обновление есть">
+      <span class="txt"><span class="name">Появляется, только когда обновление есть</span><br>
+      <span class="why">Почему: меню короче, а появился пункт — значит, есть смысл жать. Минус: сам проверить не сможешь, только ждать.</span></span>
+    </div>
+  </div>
+
+  <div class="q" data-q="Когда патч слетел">
+    <p class="t">5. Когда патч слетел</p>
+    <p class="go">Смотри картинку <a href="#p10">3.10</a></p>
+    <div class="opt">
+      <input type="radio" name="q5" value="красная строка сама возвращает патч" checked>
+      <span class="txt"><span class="name">Красная строка сама возвращает патч <span class="rec">(рекомендую)</span></span><br>
+      <span class="why">Почему: одно движение — увидел красное, нажал на него. Минус: не сразу понятно, что по строке вообще можно нажать.</span></span>
+    </div>
+    <div class="opt">
+      <input type="radio" name="q5" value="красная строка и отдельный пункт «Вернуть патч»">
+      <span class="txt"><span class="name">Красная строка и отдельный пункт «Вернуть патч»</span><br>
+      <span class="why">Почему: видно, куда именно жать. Минус: в меню на строку больше, и оно два раза говорит об одном.</span></span>
+    </div>
+  </div>
+
+  <p style="margin-top:28px"><button class="btn" id="copyBot" type="button">Скопировать ответы</button><span class="ok" id="okBot"></span></p>
+</div>
+
+<h2 id="pics">Картинки</h2>
+<p>Меню нарисовано в настоящий размер — таким ты его и увидишь. Слева светлая строка меню, справа тёмная.</p>
+
+<h3 id="p1">Всё хорошо: патч стоит, Claude последней версии</h3>
+<div class="num">3.1</div>
+<div class="row">
+  <div class="frame"><span class="tag">Светлая строка меню</span><div data-menu="A" data-mode="light"></div></div>
+  <div class="frame"><span class="tag">Тёмная строка меню</span><div data-menu="A" data-mode="dark"></div></div>
+</div>
+<p class="cap">Первой строкой — зелёное «Патч стоит». По ней можно нажать: откроется то же окно, что раньше пряталось за пунктом «Статус…». Галочки у трёх тумблеров стоят сразу после установки — их ставит сам Пимп, руками включать ничего не нужно.</p>
+
+<h3 id="p2">У Claude есть обновление</h3>
+<div class="num">3.2</div>
+<div class="row">
+  <div class="frame"><span class="tag">Светлая строка меню</span><div data-menu="B" data-mode="light"></div></div>
+  <div class="frame"><span class="tag">Тёмная строка меню</span><div data-menu="B" data-mode="dark"></div></div>
+</div>
+<p class="cap">Патч цел — строка остаётся зелёной, но хвост у неё рыжий: <b>есть обновление</b>. Ниже пункт прямо называет версию — нажал, и Claude обновляется сам, как если бы ты полез к нему в меню «Проверить обновления». Пока Claude сам не сказал, что он последний, слово «последняя» мы не пишем: врать нельзя.</p>
+
+<h3 id="p3">Патч слетел</h3>
+<div class="num">3.3</div>
+<div class="row">
+  <div class="frame"><span class="tag">Светлая строка меню</span><div data-menu="C" data-mode="light"></div></div>
+  <div class="frame"><span class="tag">Тёмная строка меню</span><div data-menu="C" data-mode="dark"></div></div>
+</div>
+<p class="cap">Красная строка и значок у часов красный. Нажал — Claude закроется и через несколько секунд откроется с патчем. Если Claude в этот момент закрыт, Пимп вернёт патч сам и молча, а тебе покажет табличку постфактум.</p>
+
+<h3 id="p4">Claude не найден</h3>
+<div class="num">3.4</div>
+<div class="row">
+  <div class="frame"><span class="tag">Светлая строка меню</span><div data-menu="D" data-mode="light"></div></div>
+  <div class="frame"><span class="tag">Тёмная строка меню</span><div data-menu="D" data-mode="dark"></div></div>
+</div>
+<p class="cap">Под красной строкой — серая подсказка, что делать. «Обновить Claude» серое: обновлять нечего. «Блок ⌘Q» и остальные тумблеры остаются на месте — они от Claude не зависят.</p>
+
+<h3 id="p5">Подменю «Служебное»</h3>
+<div class="num">3.5</div>
+<div class="row">
+  <div class="frame"><span class="tag">Светлая строка меню</span><div data-menu="E" data-mode="light" data-wide="1"></div></div>
+  <div class="frame"><span class="tag">Тёмная строка меню</span><div data-menu="E" data-mode="dark" data-wide="1"></div></div>
+</div>
+<p class="cap">Три пугающие кнопки никуда не делись — они уехали внутрь. Туда же ушло «О программе». На гейте и у команды ими пользуются, но каждый день они не нужны.</p>
+
+<h3 id="p6">Claude закрыт</h3>
+<div class="num">3.6</div>
+<div class="row">
+  <div class="frame"><span class="tag">Светлая строка меню</span><div data-menu="F" data-mode="light"></div></div>
+</div>
+<p class="cap">«Обновить Claude» жмёт проверку обновлений внутри самого Claude. Claude закрыт — жать нечего, пункт серый.</p>
+
+<h2 id="varianty">Где я не уверен</h2>
+<p>Два варианта рядом. Ткни в один — в вопросах наверху. Ниже показан только верх меню: всё остальное в обоих вариантах одинаковое.</p>
+
+<h3 id="p7">Вопрос 1. Зелёный на тёмной строке меню</h3>
+<div class="num">3.7</div>
+<div class="row">
+  <div class="frame"><span class="tag">Чуть светлее на тёмной (рекомендую)</span><div data-menu="G1" data-mode="dark"></div></div>
+  <div class="frame"><span class="tag">Тот же тёмно-зелёный, что на светлой</span><div data-menu="G2" data-mode="dark"></div></div>
+</div>
+<p class="cap">На светлой строке меню цвет в обоих вариантах один и тот же — тёмно-зелёный. Спор только про тёмную.</p>
+
+<h3 id="p8">Вопрос 2. Номер патча</h3>
+<div class="num">3.8</div>
+<div class="row">
+  <div class="frame"><span class="tag">С номером: «патч 7» (рекомендую)</span><div data-menu="H1" data-mode="light"></div></div>
+  <div class="frame"><span class="tag">Без номера</span><div data-menu="H2" data-mode="light"></div></div>
+</div>
+
+<h3 id="p9">Вопрос 3. Одной строкой или двумя</h3>
+<div class="num">3.9</div>
+<div class="row">
+  <div class="frame"><span class="tag">Одной строкой (рекомендую)</span><div data-menu="I1" data-mode="light"></div></div>
+  <div class="frame"><span class="tag">Двумя строками</span><div data-menu="I2" data-mode="light"></div></div>
+</div>
+<p class="cap">Во втором варианте вторая строка серая и не нажимается — она просто рассказывает.</p>
+
+<h3 id="p10">Вопрос 5. Когда патч слетел</h3>
+<div class="num">3.10</div>
+<div class="row">
+  <div class="frame"><span class="tag">Красная строка сама чинит (рекомендую)</span><div data-menu="J1" data-mode="light"></div></div>
+  <div class="frame"><span class="tag">Плюс отдельный пункт</span><div data-menu="J2" data-mode="light"></div></div>
+</div>
+
+<h2 id="done">Решено, не переспрашиваю</h2>
+<ul>
+  <li>«Поставить…», «Снять…» и «Статус…» с виду убраны — они в подменю <b>«Служебное»</b>, вместе с «О программе». Внутри пишем понятнее: «Поставить патч…», «Снять патч…», «Статус патча…».</li>
+  <li>«Настроить разрешения…» становится просто <b>«Разрешения»</b>, «История авто-Allow…» — <b>«История авто-Allow»</b>. Многоточий нет.</li>
+  <li>Галочки у «Авто-Allow», «Меню на кнопке» и «Блок ⌘Q» стоят сразу после установки: Пимп включает их сам, а в меню их видно.</li>
+  <li>Зелёная строка нажимается и открывает окно со всеми подробностями. Красная нажимается и возвращает патч.</li>
+  <li>Галочка в начале зелёной строки — часть самого текста, поэтому она тоже зелёная.</li>
+  <li>Слово <b>«последняя»</b> пишем, только когда Claude сам подтвердил, что обновлений нет. Не знаем — пишем просто версию, без обещаний.</li>
+  <li>«Выйти» остаётся в самом низу, с ⌘Q справа.</li>
+  <li>Значок у часов как был: зелёная галочка — всё хорошо, красный знак — патч слетел.</li>
+</ul>
+
+<h2 id="limits">Чего меню не умеет</h2>
+<div class="note">
+  <p style="margin:0">Это обычное меню macOS. В нём бывают только строки текста, галочка слева, черта-разделитель и подменю. Цвет строке задать можно — этим и пользуемся.</p>
+</div>
+<p>Кнопок, ползунков, карточек и картинок внутри такого меню быть не может: всё, что мы хотим сказать, говорится словом и цветом. Поэтому «дружелюбнее» здесь — это короткие человеческие фразы и зелёное вместо серого, а не новые красивые элементы.</p>
+
+</main>
+
+<script>
+(function(){
+  function el(tag, cls, txt){
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (txt != null) n.textContent = txt;
+    return n;
+  }
+
+  function buildMenu(spec, extra){
+    var m = el("div", "menu" + (extra ? " " + extra : ""));
+    spec.forEach(function(it){
+      if (it.sep) { m.appendChild(el("div", "sp")); return; }
+      var cls = "mi";
+      if (it.off) cls += " off";
+      if (it.hi) cls += " hi";
+      if (it.tone) cls += " " + it.tone;
+      var row = el("div", cls);
+      row.appendChild(el("span", "ck", it.check ? "✓" : ""));
+      var lb = el("span", "lb", it.t);
+      if (it.tail) lb.appendChild(el("span", "tl " + (it.tail.tone || ""), it.tail.t));
+      row.appendChild(lb);
+      if (it.key) row.appendChild(el("span", "kq", it.key));
+      if (it.sub) row.appendChild(el("span", "ar", "›"));
+      if (it.menu) row.appendChild(buildMenu(it.menu, "sub"));
+      m.appendChild(row);
+    });
+    return m;
+  }
+
+  function buildStage(mode, icon, spec, wide){
+    var s = el("div", "stage " + mode + (wide ? " wide" : ""));
+    var bar = el("div", "mbar");
+    var si = el("span", "si open " + (icon.tone || ""), icon.g);
+    bar.appendChild(si);
+    bar.appendChild(el("span", "bt"));
+    bar.appendChild(el("span", "clock", "Вт 22 сент 20:41"));
+    s.appendChild(bar);
+    var drop = el("div", "drop");
+    drop.appendChild(buildMenu(spec));
+    s.appendChild(drop);
+    return s;
+  }
+
+  // ——— куски, повторяющиеся во всех состояниях ———
+  var TOGGLES = [
+    {t:"Авто-Allow", check:1},
+    {t:"Меню на кнопке", check:1},
+    {t:"Блок ⌘Q", check:1},
+    {t:"Запускать при входе", check:1}
+  ];
+  var SERVICE = [
+    {t:"Поставить патч…"},
+    {t:"Снять патч…"},
+    {t:"Статус патча…"},
+    {sep:1},
+    {t:"О программе"}
+  ];
+  function tail(update, hi){
+    return [
+      {sep:1}
+    ].concat(TOGGLES, [
+      {sep:1},
+      {t:"Разрешения"},
+      {t:"История авто-Allow"},
+      update,
+      {sep:1},
+      hi
+        ? {t:"Служебное", sub:1, hi:1, menu:SERVICE}
+        : {t:"Служебное", sub:1},
+      {sep:1},
+      {t:"Выйти", key:"⌘Q"}
+    ]);
+  }
+
+  var UPD      = {t:"Обновить Claude"};
+  var UPD_OFF  = {t:"Обновить Claude", off:1};
+  var UPD_VER  = {t:"Обновить Claude до 2.2554.0"};
+
+  var OK_LINE   = {t:"✓ Патч стоит · патч 7 · Claude 2.2553.1 · последняя", tone:"green"};
+  var UPD_LINE  = {t:"✓ Патч стоит · патч 7 · Claude 2.2553.1 · ", tone:"green",
+                   tail:{t:"есть обновление", tone:"amber"}};
+  var LOST_LINE = {t:"⚠︎ Патч слетел — нажми, и вернётся", tone:"red"};
+  var GONE_LINE = {t:"✕ Claude не найден", tone:"red"};
+  var GONE_HINT = {t:"Открой Claude или скачай его с claude.ai", off:1};
+
+  var ICO_OK   = {g:"✓", tone:"g"};
+  var ICO_BAD  = {g:"⚠︎", tone:"r"};
+
+  var MENUS = {
+    A: {icon:ICO_OK,  spec:[OK_LINE].concat(tail(UPD, false))},
+    B: {icon:ICO_OK,  spec:[UPD_LINE].concat(tail(UPD_VER, false))},
+    C: {icon:ICO_BAD, spec:[LOST_LINE].concat(tail(UPD, false))},
+    D: {icon:ICO_BAD, spec:[GONE_LINE, GONE_HINT].concat(tail(UPD_OFF, false))},
+    E: {icon:ICO_OK,  spec:[OK_LINE].concat(tail(UPD, true))},
+    F: {icon:ICO_OK,  spec:[OK_LINE].concat(tail(UPD_OFF, false))}
+  };
+
+  // короткие куски-сравнения: только верх меню
+  function top(line, extra){
+    return [line].concat(extra || [], [{sep:1}], TOGGLES.slice(0, 3), [{sep:1}, {t:"Разрешения"}]);
+  }
+  var GREEN_DARK = {t:"✓ Патч стоит · патч 7 · Claude 2.2553.1 · последняя", tone:"deepgreen"};
+  var NO_NUM     = {t:"✓ Патч стоит · Claude 2.2553.1 · последняя", tone:"green"};
+  var TWO_TOP    = {t:"✓ Патч стоит", tone:"green"};
+  var TWO_BOT    = {t:"патч 7 · Claude 2.2553.1 · последняя", off:1};
+  var FIX_ITEM   = {t:"Вернуть патч"};
+
+  MENUS.G1 = {icon:ICO_OK,  spec:top(OK_LINE)};
+  MENUS.G2 = {icon:ICO_OK,  spec:top(GREEN_DARK)};
+  MENUS.H1 = {icon:ICO_OK,  spec:top(OK_LINE)};
+  MENUS.H2 = {icon:ICO_OK,  spec:top(NO_NUM)};
+  MENUS.I1 = {icon:ICO_OK,  spec:top(OK_LINE)};
+  MENUS.I2 = {icon:ICO_OK,  spec:top(TWO_TOP, [TWO_BOT])};
+  MENUS.J1 = {icon:ICO_BAD, spec:top(LOST_LINE)};
+  MENUS.J2 = {icon:ICO_BAD, spec:top({t:"⚠︎ Патч слетел", tone:"red"}, [FIX_ITEM])};
+
+  document.querySelectorAll("[data-menu]").forEach(function(box){
+    var def = MENUS[box.getAttribute("data-menu")];
+    if (!def) return;
+    box.appendChild(buildStage(box.getAttribute("data-mode"), def.icon, def.spec, box.getAttribute("data-wide")));
+  });
+
+  // ——— ответы ———
+  function answers(){
+    var out = ["Файл 3 — ответы:"];
+    document.querySelectorAll(".q").forEach(function(q, i){
+      var sel = q.querySelector("input:checked");
+      out.push((i + 1) + ". " + q.getAttribute("data-q") + " — " + (sel ? sel.value : "не выбрано"));
+    });
+    return out.join("\n");
+  }
+  function copy(okId){
+    var text = answers();
+    var ok = document.getElementById(okId);
+    function done(){ ok.textContent = "скопировано"; setTimeout(function(){ ok.textContent = ""; }, 2500); }
+    function fallback(){
+      var ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); done(); } catch (e) { ok.textContent = "не вышло — выдели руками"; }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else { fallback(); }
+  }
+  document.getElementById("copyTop").addEventListener("click", function(){ copy("okTop"); });
+  document.getElementById("copyBot").addEventListener("click", function(){ copy("okBot"); });
+})();
+</script>
+</body>
+</html>
