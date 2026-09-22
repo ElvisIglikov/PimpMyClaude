@@ -92,22 +92,29 @@
   .mi.hi>.lb,.mi.hi>.ar,.mi.hi>.ck{color:#fff;opacity:1;}
   .menu.sub{position:absolute;left:100%;top:-5px;margin-left:3px;min-width:0;}
 
-  /* ——————————————— вопросы ——————————————— */
+  /* ——————————————— вопросы: ряд картинок ——————————————— */
   .qs{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 18px 22px;}
-  .q{margin:28px 0 0;}
-  .q .t{font-size:1.35rem;font-weight:700;margin:0 0 4px;}
-  .q .go{font-size:16px;margin:0 0 12px;}
-  .q .go a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(180,140,255,.4);}
-  .opt{display:flex;align-items:flex-start;gap:14px;margin:0 0 12px;}
-  .opt input{-webkit-appearance:none;appearance:none;flex:none;width:30px;height:30px;margin:0;
-             border-radius:50%;border:2px solid #7a68a0;background:#241338;cursor:pointer;position:relative;}
-  .opt input:checked{border-color:var(--accent);box-shadow:0 0 14px rgba(180,140,255,.5);}
-  .opt input:checked::after{content:"";position:absolute;inset:6px;border-radius:50%;background:var(--accent);}
-  .opt .txt{padding-top:1px;}
-  .opt .txt .name{font-size:19px;}
-  .opt .txt .why{color:var(--muted);font-size:17px;}
-  .rec{color:var(--green);font-weight:700;}
   .lead{color:var(--muted);font-size:17px;margin:10px 0 0;max-width:62ch;}
+  .q{margin:34px 0 0;}
+  .q .t{font-size:1.45rem;font-weight:700;margin:0 0 10px;max-width:none;}
+  .opts{display:flex;gap:16px;align-items:stretch;overflow-x:auto;padding:3px 3px 10px;
+        scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;}
+  .card{flex:0 0 372px;scroll-snap-align:start;display:flex;flex-direction:column;cursor:pointer;
+        background:#2b1a46;border:2px solid var(--line);border-radius:18px;padding:12px 12px 14px;
+        transition:border-color .15s,box-shadow .15s;}
+  .card input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;}
+  .card.on{border-color:var(--accent);box-shadow:0 0 24px rgba(180,140,255,.45);}
+  .shot{overflow-x:auto;border-radius:9px;}
+  .pick{display:flex;align-items:center;gap:12px;margin:auto 2px 0;padding-top:13px;}
+  .no{flex:none;width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      font:800 19px/1 ui-monospace,Menlo,monospace;color:var(--ink);background:#241338;border:2px solid #7a68a0;}
+  .card.on .no{background:var(--accent);color:#1a1226;border-color:var(--accent);
+               box-shadow:0 0 16px rgba(180,140,255,.55);}
+  .pick .name{font-size:18px;line-height:1.25;}
+  .rec{color:var(--green);font-weight:700;}
+  .say{color:var(--ink);font-size:17px;margin:2px 0 0;}
+  .say i{color:var(--muted);font-style:normal;}
+  .say a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(180,140,255,.4);}
 
   @media (max-width:720px){
     body{font-size:18px;}
@@ -117,6 +124,8 @@
     h3{font-size:1.45rem;}
     .frame{padding:10px;}
     nav.toc{line-height:2.2;}
+    .qs{padding:14px 12px 18px;}
+    .q .t{font-size:1.3rem;}
   }
 </style>
 </head>
@@ -127,89 +136,99 @@
 <h1>Меню Пимпа у часов — по-человечески</h1>
 <p class="who">макет · Opus 5 max · 22.09.2026 · задачи #6596, #6595, #6597</p>
 <div class="neon"></div>
-<nav class="toc"><a href="#qs">Вопросы</a> · <a href="#pics">Картинки</a> · <a href="#varianty">Где я не уверен</a> · <a href="#done">Решено, не переспрашиваю</a> · <a href="#limits">Чего меню не умеет</a></nav>
+<nav class="toc"><a href="#qs">Вопросы</a> · <a href="#pics">Картинки</a> · <a href="#done">Решено, не переспрашиваю</a> · <a href="#limits">Чего меню не умеет</a></nav>
 
 <h2 id="qs">Вопросы</h2>
 <div class="qs">
   <p><button class="btn" id="copyTop" type="button">Скопировать ответы</button><span class="ok" id="okTop"></span></p>
-  <p class="lead">Посмотри вопросы. Со всем согласен — скопируй ответы и отправь в чат: я продолжу работать, а ты спокойно читай файл дальше. Нажимается только кружок.</p>
+  <p class="lead">Каждый вариант нарисован — это и есть то, что ты увидишь. Ткни пальцем в картинку или просто скажи номера в чат. Со всем согласен — жми «Скопировать ответы» и отправь: я продолжу работать, а ты спокойно читай файл дальше.</p>
 
   <div class="q" data-q="Зелёный на тёмной строке меню">
-    <p class="t">1. Зелёный на тёмной строке меню</p>
-    <p class="go">Смотри картинку <a href="#p7">3.7</a></p>
-    <div class="opt">
-      <input type="radio" name="q1" value="на тёмной строке меню зелёный чуть светлее" checked>
-      <span class="txt"><span class="name">На тёмной — чуть светлее <span class="rec">(рекомендую)</span></span><br>
-      <span class="why">Почему: тёмно-зелёный на тёмном фоне почти не виден, а эта строка должна ловиться взглядом сразу. Минус: на тёмной теме это уже не «тёмно-зелёный», а просто зелёный.</span></span>
+    <p class="t">1. Какой зелёный на тёмной строке меню</p>
+    <div class="opts">
+      <label class="card">
+        <input type="radio" name="q1" data-no="1" value="чуть светлее" checked>
+        <div class="shot"><div data-menu="Q1A" data-mode="dark"></div></div>
+        <div class="pick"><span class="no">1</span><span class="name">Чуть светлее <span class="rec">рекомендую</span></span></div>
+      </label>
+      <label class="card">
+        <input type="radio" name="q1" data-no="2" value="тот же тёмно-зелёный">
+        <div class="shot"><div data-menu="Q1B" data-mode="dark"></div></div>
+        <div class="pick"><span class="no">2</span><span class="name">Тот же тёмно-зелёный</span></div>
+      </label>
     </div>
-    <div class="opt">
-      <input type="radio" name="q1" value="один и тот же тёмно-зелёный везде">
-      <span class="txt"><span class="name">Один и тот же тёмно-зелёный везде</span><br>
-      <span class="why">Почему: цвет ровно один, как ты и просил. Минус: на тёмной строке меню приходится присматриваться.</span></span>
-    </div>
+    <p class="say">Скажи номер <i>· виден верх меню, ниже всё одинаково · меню целиком — <a href="#p1">3.1</a></i></p>
   </div>
 
   <div class="q" data-q="Номер патча в зелёной строке">
-    <p class="t">2. Писать ли в зелёной строке номер патча</p>
-    <p class="go">Смотри картинку <a href="#p8">3.8</a></p>
-    <div class="opt">
-      <input type="radio" name="q2" value="писать «патч 7»" checked>
-      <span class="txt"><span class="name">Писать «патч 7» <span class="rec">(рекомендую)</span></span><br>
-      <span class="why">Почему: ты просил видеть семёрку — сразу ясно, какой патч внутри Claude. Минус: цифра ничего не говорит тому, кто не знает, зачем она.</span></span>
+    <p class="t">2. Писать ли в строке «патч 7»</p>
+    <div class="opts">
+      <label class="card">
+        <input type="radio" name="q2" data-no="1" value="писать «патч 7»" checked>
+        <div class="shot"><div data-menu="Q2A" data-mode="dark"></div></div>
+        <div class="pick"><span class="no">1</span><span class="name">С номером патча <span class="rec">рекомендую</span></span></div>
+      </label>
+      <label class="card">
+        <input type="radio" name="q2" data-no="2" value="без номера патча">
+        <div class="shot"><div data-menu="Q2B" data-mode="dark"></div></div>
+        <div class="pick"><span class="no">2</span><span class="name">Без номера</span></div>
+      </label>
     </div>
-    <div class="opt">
-      <input type="radio" name="q2" value="не писать номер патча, только версию Claude">
-      <span class="txt"><span class="name">Не писать, оставить только Claude</span><br>
-      <span class="why">Почему: строка короче и читается как обычная фраза. Минус: номер видно только в «Служебное → Статус патча».</span></span>
-    </div>
+    <p class="say">Скажи номер <i>· виден верх меню, ниже всё одинаково</i></p>
   </div>
 
   <div class="q" data-q="Состояние одной строкой или двумя">
     <p class="t">3. Состояние — одной строкой или двумя</p>
-    <p class="go">Смотри картинку <a href="#p9">3.9</a></p>
-    <div class="opt">
-      <input type="radio" name="q3" value="одной строкой" checked>
-      <span class="txt"><span class="name">Одной строкой <span class="rec">(рекомендую)</span></span><br>
-      <span class="why">Почему: в меню на строку меньше, всё главное в одной фразе. Минус: фраза длинная, и меню от неё шире.</span></span>
+    <div class="opts">
+      <label class="card">
+        <input type="radio" name="q3" data-no="1" value="одной строкой" checked>
+        <div class="shot"><div data-menu="Q3A" data-mode="dark"></div></div>
+        <div class="pick"><span class="no">1</span><span class="name">Одной строкой <span class="rec">рекомендую</span></span></div>
+      </label>
+      <label class="card">
+        <input type="radio" name="q3" data-no="2" value="двумя строками">
+        <div class="shot"><div data-menu="Q3B" data-mode="dark"></div></div>
+        <div class="pick"><span class="no">2</span><span class="name">Двумя строками</span></div>
+      </label>
     </div>
-    <div class="opt">
-      <input type="radio" name="q3" value="двумя строками: зелёная фраза, под ней серая про Claude">
-      <span class="txt"><span class="name">Двумя: зелёная фраза, под ней серая про Claude</span><br>
-      <span class="why">Почему: зелёное ловится мгновенно, подробности не мешают. Минус: в меню на строку больше.</span></span>
-    </div>
+    <p class="say">Скажи номер <i>· во втором вторая строка серая, она не нажимается</i></p>
   </div>
 
   <div class="q" data-q="Пункт «Обновить Claude»">
-    <p class="t">4. Пункт «Обновить Claude»</p>
-    <p class="go">Смотри картинки <a href="#p1">3.1</a> и <a href="#p2">3.2</a></p>
-    <div class="opt">
-      <input type="radio" name="q4" value="всегда в меню" checked>
-      <span class="txt"><span class="name">Всегда в меню <span class="rec">(рекомендую)</span></span><br>
-      <span class="why">Почему: можно нажать в любой момент и проверить самому, не дожидаясь. Минус: чаще всего жать нечего — обновления нет.</span></span>
+    <p class="t">4. Пункт «Обновить Claude», когда обновления нет</p>
+    <div class="opts">
+      <label class="card">
+        <input type="radio" name="q4" data-no="1" value="всегда в меню" checked>
+        <div class="shot"><div data-menu="Q4A" data-mode="dark"></div></div>
+        <div class="pick"><span class="no">1</span><span class="name">Всегда на месте <span class="rec">рекомендую</span></span></div>
+      </label>
+      <label class="card">
+        <input type="radio" name="q4" data-no="2" value="появляется только с обновлением">
+        <div class="shot"><div data-menu="Q4B" data-mode="dark"></div></div>
+        <div class="pick"><span class="no">2</span><span class="name">Появляется с обновлением</span></div>
+      </label>
     </div>
-    <div class="opt">
-      <input type="radio" name="q4" value="появляется, только когда обновление есть">
-      <span class="txt"><span class="name">Появляется, только когда обновление есть</span><br>
-      <span class="why">Почему: меню короче, а появился пункт — значит, есть смысл жать. Минус: сам проверить не сможешь, только ждать.</span></span>
-    </div>
+    <p class="say">Скажи номер <i>· как выглядит, когда обновление есть, — <a href="#p2">3.2</a></i></p>
   </div>
 
   <div class="q" data-q="Когда патч слетел">
     <p class="t">5. Когда патч слетел</p>
-    <p class="go">Смотри картинку <a href="#p10">3.10</a></p>
-    <div class="opt">
-      <input type="radio" name="q5" value="красная строка сама возвращает патч" checked>
-      <span class="txt"><span class="name">Красная строка сама возвращает патч <span class="rec">(рекомендую)</span></span><br>
-      <span class="why">Почему: одно движение — увидел красное, нажал на него. Минус: не сразу понятно, что по строке вообще можно нажать.</span></span>
+    <div class="opts">
+      <label class="card">
+        <input type="radio" name="q5" data-no="1" value="красная строка сама возвращает патч" checked>
+        <div class="shot"><div data-menu="Q5A" data-mode="dark"></div></div>
+        <div class="pick"><span class="no">1</span><span class="name">Жмётся красная строка <span class="rec">рекомендую</span></span></div>
+      </label>
+      <label class="card">
+        <input type="radio" name="q5" data-no="2" value="красная строка и отдельный пункт «Вернуть патч»">
+        <div class="shot"><div data-menu="Q5B" data-mode="dark"></div></div>
+        <div class="pick"><span class="no">2</span><span class="name">Плюс отдельный пункт</span></div>
+      </label>
     </div>
-    <div class="opt">
-      <input type="radio" name="q5" value="красная строка и отдельный пункт «Вернуть патч»">
-      <span class="txt"><span class="name">Красная строка и отдельный пункт «Вернуть патч»</span><br>
-      <span class="why">Почему: видно, куда именно жать. Минус: в меню на строку больше, и оно два раза говорит об одном.</span></span>
-    </div>
+    <p class="say">Скажи номер <i>· то же на светлой строке меню — <a href="#p3">3.3</a></i></p>
   </div>
 
-  <p style="margin-top:28px"><button class="btn" id="copyBot" type="button">Скопировать ответы</button><span class="ok" id="okBot"></span></p>
+  <p style="margin-top:30px"><button class="btn" id="copyBot" type="button">Скопировать ответы</button><span class="ok" id="okBot"></span></p>
 </div>
 
 <h2 id="pics">Картинки</h2>
@@ -261,39 +280,6 @@
   <div class="frame"><span class="tag">Светлая строка меню</span><div data-menu="F" data-mode="light"></div></div>
 </div>
 <p class="cap">«Обновить Claude» жмёт проверку обновлений внутри самого Claude. Claude закрыт — жать нечего, пункт серый.</p>
-
-<h2 id="varianty">Где я не уверен</h2>
-<p>Два варианта рядом. Ткни в один — в вопросах наверху. Ниже показан только верх меню: всё остальное в обоих вариантах одинаковое.</p>
-
-<h3 id="p7">Вопрос 1. Зелёный на тёмной строке меню</h3>
-<div class="num">3.7</div>
-<div class="row">
-  <div class="frame"><span class="tag">Чуть светлее на тёмной (рекомендую)</span><div data-menu="G1" data-mode="dark"></div></div>
-  <div class="frame"><span class="tag">Тот же тёмно-зелёный, что на светлой</span><div data-menu="G2" data-mode="dark"></div></div>
-</div>
-<p class="cap">На светлой строке меню цвет в обоих вариантах один и тот же — тёмно-зелёный. Спор только про тёмную.</p>
-
-<h3 id="p8">Вопрос 2. Номер патча</h3>
-<div class="num">3.8</div>
-<div class="row">
-  <div class="frame"><span class="tag">С номером: «патч 7» (рекомендую)</span><div data-menu="H1" data-mode="light"></div></div>
-  <div class="frame"><span class="tag">Без номера</span><div data-menu="H2" data-mode="light"></div></div>
-</div>
-
-<h3 id="p9">Вопрос 3. Одной строкой или двумя</h3>
-<div class="num">3.9</div>
-<div class="row">
-  <div class="frame"><span class="tag">Одной строкой (рекомендую)</span><div data-menu="I1" data-mode="light"></div></div>
-  <div class="frame"><span class="tag">Двумя строками</span><div data-menu="I2" data-mode="light"></div></div>
-</div>
-<p class="cap">Во втором варианте вторая строка серая и не нажимается — она просто рассказывает.</p>
-
-<h3 id="p10">Вопрос 5. Когда патч слетел</h3>
-<div class="num">3.10</div>
-<div class="row">
-  <div class="frame"><span class="tag">Красная строка сама чинит (рекомендую)</span><div data-menu="J1" data-mode="light"></div></div>
-  <div class="frame"><span class="tag">Плюс отдельный пункт</span><div data-menu="J2" data-mode="light"></div></div>
-</div>
 
 <h2 id="done">Решено, не переспрашиваю</h2>
 <ul>
@@ -379,8 +365,8 @@
     ].concat(TOGGLES, [
       {sep:1},
       {t:"Разрешения"},
-      {t:"История авто-Allow"},
-      update,
+      {t:"История авто-Allow"}
+    ], update ? [update] : [], [
       {sep:1},
       hi
         ? {t:"Служебное", sub:1, hi:1, menu:SERVICE}
@@ -413,7 +399,7 @@
     F: {icon:ICO_OK,  spec:[OK_LINE].concat(tail(UPD_OFF, false))}
   };
 
-  // короткие куски-сравнения: только верх меню
+  // ——— варианты к вопросам: те же меню, разница нарисована ———
   function top(line, extra){
     return [line].concat(extra || [], [{sep:1}], TOGGLES.slice(0, 3), [{sep:1}, {t:"Разрешения"}]);
   }
@@ -423,14 +409,16 @@
   var TWO_BOT    = {t:"патч 7 · Claude 2.2553.1 · последняя", off:1};
   var FIX_ITEM   = {t:"Вернуть патч"};
 
-  MENUS.G1 = {icon:ICO_OK,  spec:top(OK_LINE)};
-  MENUS.G2 = {icon:ICO_OK,  spec:top(GREEN_DARK)};
-  MENUS.H1 = {icon:ICO_OK,  spec:top(OK_LINE)};
-  MENUS.H2 = {icon:ICO_OK,  spec:top(NO_NUM)};
-  MENUS.I1 = {icon:ICO_OK,  spec:top(OK_LINE)};
-  MENUS.I2 = {icon:ICO_OK,  spec:top(TWO_TOP, [TWO_BOT])};
-  MENUS.J1 = {icon:ICO_BAD, spec:top(LOST_LINE)};
-  MENUS.J2 = {icon:ICO_BAD, spec:top({t:"⚠︎ Патч слетел", tone:"red"}, [FIX_ITEM])};
+  MENUS.Q1A = {icon:ICO_OK,  spec:top(OK_LINE)};
+  MENUS.Q1B = {icon:ICO_OK,  spec:top(GREEN_DARK)};
+  MENUS.Q2A = {icon:ICO_OK,  spec:top(OK_LINE)};
+  MENUS.Q2B = {icon:ICO_OK,  spec:top(NO_NUM)};
+  MENUS.Q3A = {icon:ICO_OK,  spec:top(OK_LINE)};
+  MENUS.Q3B = {icon:ICO_OK,  spec:top(TWO_TOP, [TWO_BOT])};
+  MENUS.Q4A = {icon:ICO_OK,  spec:[OK_LINE].concat(tail(UPD, false))};
+  MENUS.Q4B = {icon:ICO_OK,  spec:[OK_LINE].concat(tail(null, false))};
+  MENUS.Q5A = {icon:ICO_BAD, spec:[LOST_LINE].concat(tail(UPD, false))};
+  MENUS.Q5B = {icon:ICO_BAD, spec:[{t:"⚠︎ Патч слетел", tone:"red"}, FIX_ITEM].concat(tail(UPD, false))};
 
   document.querySelectorAll("[data-menu]").forEach(function(box){
     var def = MENUS[box.getAttribute("data-menu")];
@@ -438,12 +426,25 @@
     box.appendChild(buildStage(box.getAttribute("data-mode"), def.icon, def.spec, box.getAttribute("data-wide")));
   });
 
+  // ——— выбор: ткнул в картинку — вариант загорелся ———
+  function paint(){
+    document.querySelectorAll(".card").forEach(function(c){
+      var inp = c.querySelector("input");
+      c.classList.toggle("on", !!(inp && inp.checked));
+    });
+  }
+  document.querySelectorAll(".card input").forEach(function(inp){
+    inp.addEventListener("change", paint);
+  });
+  paint();
+
   // ——— ответы ———
   function answers(){
     var out = ["Файл 3 — ответы:"];
     document.querySelectorAll(".q").forEach(function(q, i){
       var sel = q.querySelector("input:checked");
-      out.push((i + 1) + ". " + q.getAttribute("data-q") + " — " + (sel ? sel.value : "не выбрано"));
+      out.push((i + 1) + ". " + q.getAttribute("data-q") + " — вариант "
+        + (sel ? sel.getAttribute("data-no") + " (" + sel.value + ")" : "не выбран"));
     });
     return out.join("\n");
   }

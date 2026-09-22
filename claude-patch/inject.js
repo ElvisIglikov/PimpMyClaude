@@ -52,7 +52,7 @@
 // панель, шрифты.
 "use strict";
 (() => {
-  const VERSION = "wf79-a-3";
+  const VERSION = "wf79-a-4";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -4645,6 +4645,13 @@ nav[aria-label="Repository and pull request controls"] {
     // Прозрачность у каждой подписи своя, а не у ряда: opacity на родителе
     // создаёт группу, и сегодняшний день из неё уже не «ярче».
     `[data-myclaude-lim-hide]{display:none !important}`,
+    // Дорожки полос видны на ЛЮБОЙ теме (#7064, слово Элвиса 22.09: «на розовой не видно
+    // полосок, а важно, чтобы их было видно»). Цвет дорожки у Claude свой, и светлые темы
+    // Пимпа красят фон панели почти в него — полоса пропадала целиком. Берём не фиксированный
+    // серый (он потерялся бы на тёмных), а 14 % ТЕКУЩЕГО ЦВЕТА ТЕКСТА: на светлой теме текст
+    // тёмный и дорожка тёмная, на тёмной — наоборот. Одно правило на все темы разом, проверять
+    // каждую не нужно. Заливка внутри — своя, её не трогаем.
+    `[data-myclaude-lim-panel] [role="progressbar"],[data-myclaude-week="cell"]{background-color:color-mix(in srgb,currentColor 14%,transparent) !important;background-image:none !important}`,
     `[data-myclaude-week="bar"]{display:flex;gap:1px;align-items:stretch;margin-bottom:3px}`,
     `[data-myclaude-week="bar"]>*{flex:1 1 0;min-width:0}`,
     `[data-myclaude-week="days"]{display:flex;gap:1px;font-size:10px;line-height:1.5}`,
@@ -8933,6 +8940,9 @@ nav[aria-label="Repository and pull request controls"] {
   const USAGE_OUT_ATTRIBUTE = "data-myclaude-lim-out";
   const USAGE_HIDE_ATTRIBUTE = "data-myclaude-lim-hide";
   const USAGE_WEEK_ATTRIBUTE = "data-myclaude-week";
+  // Метка опознанной панели (#7064): по ней правило в RULES делает дорожки полос видимыми на
+  // любой теме. Ставится только на панель, которую мы уже разобрали, снимается в dispose().
+  const USAGE_PANEL_ATTRIBUTE = "data-myclaude-lim-panel";
   const USAGE_WEEK_ON = "data-myclaude-week-on";
   // Имя аккаунта: кнопка с ним есть только в ГЛАВНОМ окне и только при открытой
   // боковой панели, а localStorage у окон Claude общий — главное окно кладёт имя
@@ -9465,6 +9475,7 @@ nav[aria-label="Repository and pull request controls"] {
   // ---- проход по панели ----
   const usageApply = panel => {
     if (!usagePanelOk(panel)) return false;
+    if (!panel.hasAttribute(USAGE_PANEL_ATTRIBUTE)) panel.setAttribute(USAGE_PANEL_ATTRIBUTE, "");
     const base = Date.now();
     const name = usageAccountRead();
     const done = new Set();
@@ -9631,6 +9642,9 @@ nav[aria-label="Repository and pull request controls"] {
         node.removeAttribute(USAGE_SRC_ATTRIBUTE);
         node.removeAttribute(USAGE_OUT_ATTRIBUTE);
         node.removeAttribute(USAGE_HIDE_ATTRIBUTE);
+      }
+      for (const node of document.querySelectorAll(`[${USAGE_PANEL_ATTRIBUTE}]`)) {
+        node.removeAttribute(USAGE_PANEL_ATTRIBUTE);
       }
     } catch {}
   });
