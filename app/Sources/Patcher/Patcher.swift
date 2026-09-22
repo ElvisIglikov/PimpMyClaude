@@ -79,6 +79,32 @@ public enum Patcher {
         line.trimmingCharacters(in: .whitespaces) == marker
     }
 
+    /// Редакция страницы из её же текста: строка `const VERSION = "wf79-a-1";` → (79, "a", 1).
+    /// Метки нет или она незнакомого вида — nil.
+    public static func injectVersion(of text: String) -> (Int, String, Int)? {
+        guard let head = text.range(of: "const VERSION = \"") else { return nil }
+        let rest = text[head.upperBound...]
+        guard let tail = rest.firstIndex(of: "\"") else { return nil }
+        let parts = rest[rest.startIndex..<tail].components(separatedBy: "-")
+        guard parts.count == 3, parts[0].hasPrefix("wf"), !parts[1].isEmpty,
+              let wave = Int(parts[0].dropFirst(2)), let step = Int(parts[2]) else { return nil }
+        return (wave, parts[1], step)
+    }
+
+    /// Установка не отнимает фичи (задача #7035, случай 22.09.2026): приложение несёт копию
+    /// `inject.js` с той минуты, когда его собрали, а живую страницу с тех пор могли поправить
+    /// не одну волну. Живая редакция СТАРШЕ той, что в сборке, — живую оставляем: «Поставить»
+    /// после обновления Claude чинит патч, а не откатывает страницу на две волны назад.
+    /// Редакция не читается хоть у одного из двоих — кладём файл из сборки, как было до WF79.
+    public static func injectKeepsLive(bundled: String, live: String?) -> Bool {
+        guard let live = live,
+              let liveVersion = injectVersion(of: live),
+              let bundledVersion = injectVersion(of: bundled) else { return false }
+        if liveVersion.0 != bundledVersion.0 { return liveVersion.0 > bundledVersion.0 }
+        if liveVersion.1 != bundledVersion.1 { return liveVersion.1 > bundledVersion.1 }
+        return liveVersion.2 > bundledVersion.2
+    }
+
     public static var defaultSupportDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support", isDirectory: true)
@@ -608,7 +634,15 @@ public struct ClaudePatcher {
         guard let directory = resourcesDirectory else { return }
         let inject = directory.appendingPathComponent("inject.js")
         if FileManager.default.fileExists(atPath: inject.path) {
-            try Data(contentsOf: inject).write(to: supportDirectory.appendingPathComponent("inject.js"), options: .atomic)
+            let target = supportDirectory.appendingPathComponent("inject.js")
+            let bundled = try Data(contentsOf: inject)
+            let liveText = try? String(contentsOf: target, encoding: .utf8)
+            if let bundledText = String(data: bundled, encoding: .utf8),
+               Patcher.injectKeepsLive(bundled: bundledText, live: liveText) {
+                progress("Живая страница новее, чем в сборке, — оставил её.")
+            } else {
+                try bundled.write(to: target, options: .atomic)
+            }
         }
         try installLiveCSS(from: directory, progress: progress)
         try installWorkflowKit(from: directory)

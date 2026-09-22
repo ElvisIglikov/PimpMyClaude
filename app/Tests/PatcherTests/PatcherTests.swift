@@ -249,6 +249,24 @@ final class LoaderTests: XCTestCase {
         XCTAssertEqual(Patcher.mergeCSS(bundled: block + "\n", live: doubled), "/* моё */\n" + block + "\n")
     }
 
+    /// Задача #7035: «Поставить» больше не откатывает живую страницу на версию из сборки.
+    func testInstallKeepsLivePageWhenItIsNewer() {
+        let bundled = "  const VERSION = \"wf77-a-2\";\n"
+        XCTAssertEqual(Patcher.injectVersion(of: bundled)?.0, 77)
+        XCTAssertEqual(Patcher.injectVersion(of: bundled)?.1, "a")
+        XCTAssertEqual(Patcher.injectVersion(of: bundled)?.2, 2)
+        // Живая страница новее на волну, на букву и на шаг — остаётся живая.
+        XCTAssertTrue(Patcher.injectKeepsLive(bundled: bundled, live: "  const VERSION = \"wf79-a-1\";"))
+        XCTAssertTrue(Patcher.injectKeepsLive(bundled: bundled, live: "  const VERSION = \"wf77-b-1\";"))
+        XCTAssertTrue(Patcher.injectKeepsLive(bundled: bundled, live: "  const VERSION = \"wf77-a-3\";"))
+        // Ровесница, старее, живой страницы нет, метка не читается — кладём файл из сборки.
+        XCTAssertFalse(Patcher.injectKeepsLive(bundled: bundled, live: bundled))
+        XCTAssertFalse(Patcher.injectKeepsLive(bundled: bundled, live: "  const VERSION = \"wf9-a-1\";"))
+        XCTAssertFalse(Patcher.injectKeepsLive(bundled: bundled, live: nil))
+        XCTAssertFalse(Patcher.injectKeepsLive(bundled: bundled, live: "// без метки"))
+        XCTAssertNil(Patcher.injectVersion(of: "const VERSION = \"невнятно\";"))
+    }
+
     func testLoaderMarkersAreVersionSeven() {
         XCTAssertTrue(claudeLoaderSource.hasPrefix("/* [MyClaude:v7:start] */\n"))
         XCTAssertTrue(claudeLoaderSource.hasSuffix("/* [MyClaude:v7:end] */\n"))
