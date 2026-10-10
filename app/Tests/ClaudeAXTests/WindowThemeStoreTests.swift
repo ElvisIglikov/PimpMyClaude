@@ -1,0 +1,666 @@
+import XCTest
+@testable import ClaudeAX
+
+/// Часы под рукой: `at` записей и зазор рассылки проверяются по секундам, а не по живому времени.
+private final class ThemeClock {
+    var now = Date(timeIntervalSince1970: 1_757_100_000)
+    func advance(_ seconds: TimeInterval) { now = now.addingTimeInterval(seconds) }
+}
+
+/// Темы окон на диске (план WF35, задача #5473): файл `window-themes.json`, зеркало
+/// закрепляющих команд `theme`, карта страницы из ответа probe и возврат командой
+/// `themes-restore`. Живого Claude тут нет — файл лежит во временной папке, часы подставные.
+final class WindowThemeStoreTests: XCTestCase {
+    // MARK: - песочница
+
+    private func makeTemp() -> URL {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("themestore-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    private func makeStore(_ clock: ThemeClock, in box: URL? = nil)
+        -> (store: WindowThemeStore, url: URL) {
+        let url = (box ?? makeTemp()).appendingPathComponent(WindowThemeStore.fileName)
+        return (WindowThemeStore(url: url, now: { clock.now }), url)
+    }
+
+    private func text(of url: URL) -> String {
+        (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+    }
+
+    private static let ocean = Theme(id: "ocean", name: "Океан", type: "dark",
+                                     palette: ["accent": "#3af", "background": "#012"])
+    private static let sand = Theme(id: "sand", name: "Песок", type: "light",
+                                    palette: ["accent": "#a71", "background": "#fed"])
+    private static let menlo = Font(id: "menlo", family: "Menlo", category: .mono,
+                                    displayName: "Menlo")
+
+    /// Полная запись: палитра, шрифт, обе половины размера и рамка — та самая, по которой
+    /// считался байтовый потолок (≈ 360 байт, решение 1 плана WF35).
+    private func fullEntry(at: Int) -> WindowThemeEntry {
+        WindowThemeEntry(layers: [
+            "theme": .value(Theme(id: "long-theme-id", name: "Тема с длинным именем",
+                                  type: "dark",
+                                  palette: ["accent": "#3af8c1", "background": "#01122a",
+                                            "foreground": "#e8f0ff", "sidebar": "#061a33",
+                                            "panel": "#0a2140", "muted": "#7f93ad"]).commandValue),
+            "font": .value(WindowThemeStoreTests.menlo.commandValue),
+            "size": .value(Size(answer: 16, question: 14).commandValue),
+            "frame": .value(.bool(true)),
+        ], at: at)
+    }
+
+    // MARK: - снятые эффекты (WF220, #9440)
+
+    func testRetiredFrameAndNeonAreSwitchedOffOncePerAnswer() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.beginGeneration()
+        // Чистая карта — гасить нечего.
+        rig.store.absorb(page: WindowThemeStore.map(from: ["chat:A": ["look": ["dense": true]]]), at: clock.now)
+        XCTAssertTrue(WindowThemeStore.retired(in: rig.store.entries).isEmpty)
+        XCTAssertFalse(rig.store.retireTick(titles: ["A"], at: clock.now, send: { _ in true }, restore: { _ in true }))
+
+        // Рамка у закрытого чата, неон у «всем окнам» и у окна с плотным текстом.
+        rig.store.absorb(page: WindowThemeStore.map(from: [
+            "*": ["look": ["aurora": true, "neon": true, "scheme": "sea"]],
+            "chat:A": ["frame": true, "look": ["neon": true, "dense": true]],
+            "chat:B": ["look": ["neon": true]],
+        ]), at: clock.now)
+        let found = WindowThemeStore.retired(in: rig.store.entries)
+        XCTAssertTrue(found.frame)
+        XCTAssertTrue(found.neon)
+        XCTAssertEqual(found.all, Look(aurora: true, scheme: "sea"), "«всем окнам» — тот же вид без неона")
+        XCTAssertEqual(found.looks.keys.sorted(), ["chat:A"], "у окна Б кроме неона ничего не было — доливать нечего")
+
+        // Claude не на экране — молчим; на экране — одна общая команда и долив своих видов.
+        var sent: [WindowThemeStore.Retired] = []
+        var restored: [String] = []
+        let send: (WindowThemeStore.Retired) -> Bool = { found in
+            sent.append(found)
+            // Как живьём: общая команда зеркалится в файл и снимает слой у всех записей.
+            rig.store.record(fields: ClaudeActions.themeFields(
+                scope: MenuModel.themeScopeAll, title: "", theme: .keep, font: .keep,
+                frame: .reset, look: found.all.layer))
+            return true
+        }
+        let restore: ([(key: String, value: CommandValue)]) -> Bool = { fields in
+            restored.append(CommandValue.object(fields).json)
+            return true
+        }
+        XCTAssertFalse(rig.store.retireTick(titles: [], at: clock.now, send: send, restore: restore))
+        XCTAssertTrue(rig.store.retireTick(titles: ["A"], at: clock.now, send: send, restore: restore))
+        XCTAssertEqual(sent.count, 1)
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertTrue(restored[0].contains(#""chat:A":{"look":{"aurora":false,"neon":false,"dense":true},"at":"#), restored[0])
+        // Файл: рамки и неона нет, плотный текст окна А на месте.
+        XCTAssertTrue(WindowThemeStore.retired(in: rig.store.entries).isEmpty)
+        XCTAssertEqual(rig.store.entries["chat:A"]?.layers["look"], .value(Look(dense: true).commandValue))
+        XCTAssertNil(rig.store.entries["chat:A"]?.layers["frame"])
+        XCTAssertNil(rig.store.entries["chat:B"])
+        clock.advance(10)
+        XCTAssertFalse(rig.store.retireTick(titles: ["A"], at: clock.now, send: send, restore: restore), "погашено — молчим")
+    }
+
+    // MARK: - 19. байты файла
+
+    func testWindowThemeStoreJSONIsByteExact() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis", chat: "local_ab12",
+            theme: .set(WindowThemeStoreTests.ocean), font: .set(WindowThemeStoreTests.menlo),
+            size: .halves(answer: .set(16), question: .keep), frame: .set(true)))
+
+        let entry = """
+        {"theme":{"id":"ocean","name":"Океан","type":"dark",\
+        "palette":{"accent":"#3af","background":"#012"}},\
+        "font":{"id":"menlo","family":"Menlo","mono":true},\
+        "size":{"answer":16},"frame":true,"at":1757100000000}
+        """
+        // Порядок побайтно: version, at, entries; внутри записи — theme, font, size, frame, at.
+        // Ключей два: id чата главный, заголовок — тень для окна, которое id ещё не знает.
+        XCTAssertEqual(text(of: rig.url), """
+        {"version":1,"at":"2025-09-05T19:20:00Z","entries":\
+        {"chat:Trelvis":\(entry),"id:local_ab12":\(entry)}}
+        """)
+
+        // «Как у Claude» хранится маркером "none" — но только когда у слоя есть запись «всем
+        // окнам»: иначе запись лишняя, и слой просто уходит (то же правило, что у страницы).
+        clock.advance(60)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeAll, title: "", theme: .keep,
+            font: .set(WindowThemeStoreTests.menlo)))
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis", chat: "local_ab12",
+            theme: .keep, font: .reset))
+        XCTAssertTrue(text(of: rig.url).contains("\"id:local_ab12\":{\"theme\":"),
+                      "тема осталась на месте")
+        XCTAssertTrue(text(of: rig.url).contains("\"font\":\"none\""), "сброс пишется маркером")
+        XCTAssertEqual(text(of: rig.url).components(separatedBy: "\"font\":\"none\"").count - 1, 2,
+                       "сброс лёг в оба ключа окна")
+    }
+
+    // MARK: - вид (план WF83)
+
+    func testWindowThemeStoreCarriesLookAfterFrame() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis", chat: "local_ab12",
+            theme: .keep, font: .keep, frame: .set(true), look: .set(Look(aurora: true))))
+        let entry = """
+        {"frame":true,"look":{"aurora":true,"neon":false,"dense":false},"at":1757100000000}
+        """
+        XCTAssertEqual(text(of: rig.url), """
+        {"version":1,"at":"2025-09-05T19:20:00Z","entries":\
+        {"chat:Trelvis":\(entry),"id:local_ab12":\(entry)}}
+        """)
+
+        // Карта страницы: объект вида в любом порядке ключей ложится по порядку контракта.
+        let page = WindowThemeStore.map(from: [
+            "main": ["look": ["dense": true, "neon": false, "aurora": false]],
+            "*": ["look": "none"],
+        ])
+        XCTAssertEqual(page["main"]?.layers["look"]?.commandValue.json,
+                       "{\"aurora\":false,\"neon\":false,\"dense\":true}")
+        XCTAssertEqual(page["*"]?.layers["look"], .reset)
+
+        // Возврат несёт вид так же, как рамку; снятый вид без записи «всем» просто уходит.
+        XCTAssertTrue(CommandValue.object(WindowThemeStore.restoreFields(rig.store.entries)).json
+            .contains("\"frame\":true,\"look\":{\"aurora\":true,\"neon\":false,\"dense\":false}"))
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis", chat: "local_ab12",
+            theme: .keep, font: .keep, look: .reset))
+        XCTAssertNil(rig.store.entries["id:local_ab12"]?.layers["look"])
+        XCTAssertEqual(rig.store.entries["id:local_ab12"]?.layers["frame"], .value(.bool(true)))
+    }
+
+    // MARK: - 20. круг «записали → прочитали»
+
+    func testWindowThemeStoreParsesOwnOutput() {
+        let clock = ThemeClock()
+        let box = makeTemp()
+        let first = makeStore(clock, in: box)
+        first.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis", chat: "local_ab12",
+            theme: .set(WindowThemeStoreTests.ocean), font: .set(WindowThemeStoreTests.menlo),
+            size: .halves(answer: .set(16), question: .set(14)), frame: .set(true)))
+        first.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeAll, title: "", theme: .set(WindowThemeStoreTests.sand),
+            font: .keep))
+
+        // Новый запуск приложения читает файл — и получает ровно то, что записал.
+        let second = makeStore(clock, in: box)
+        XCTAssertEqual(second.store.entries, first.store.entries)
+        XCTAssertEqual(WindowThemeStore.body(second.store.entries, at: clock.now),
+                       text(of: first.url), "перезапись тем же содержимым даёт те же байты")
+
+        // Битый файл читается как пустой и НЕ удаляется: в нём могли остаться чужие ключи.
+        let broken = makeTemp().appendingPathComponent(WindowThemeStore.fileName)
+        try? Data("{\"version\":1,\"entries\":".utf8).write(to: broken)
+        let store = WindowThemeStore(url: broken, now: { clock.now })
+        XCTAssertTrue(store.entries.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: broken.path))
+    }
+
+    // MARK: - 21. ключи по полям команды
+
+    func testWindowThemeStoreKeysFromCommand() {
+        let isMain: (String) -> Bool = { $0 == "Claude" || $0 == "Главное" }
+
+        // 1. Окно назвало свой чат: id главный, `main` — потому что это главное окно,
+        //    заголовок — тень.
+        XCTAssertEqual(WindowThemeStore.keys(title: "Главное", match: nil, chat: "local_ab12",
+                                             isMainWindow: isMain),
+                       ["id:local_ab12", "main", "chat:Главное"])
+        // 2. Попап с чатом: id и тень, `main` тут не при чём.
+        XCTAssertEqual(WindowThemeStore.keys(title: "Trelvis", match: nil, chat: "local_ab12",
+                                             isMainWindow: isMain),
+                       ["id:local_ab12", "chat:Trelvis"])
+        // 3. Главное окно адресовано путём страницы, id неизвестен: заголовок пустой — только `main`.
+        XCTAssertEqual(WindowThemeStore.keys(title: "", match: "/epitaxy/local_ab12", chat: nil,
+                                             isMainWindow: isMain),
+                       ["main"])
+        // 4. Обычный заголовок без id — ключ чата по заголовку.
+        XCTAssertEqual(WindowThemeStore.keys(title: "Trelvis", match: nil, chat: nil,
+                                             isMainWindow: isMain),
+                       ["chat:Trelvis"])
+        // 5. Заголовок-заглушка: у главного окна это `main`, у безымянного попапа — ничего.
+        XCTAssertEqual(WindowThemeStore.keys(title: "Claude", match: nil, chat: nil,
+                                             isMainWindow: isMain), ["main"])
+        XCTAssertEqual(WindowThemeStore.keys(title: "New chat", match: nil, chat: nil,
+                                             isMainWindow: isMain), [])
+        // 6. Адресация фокусом (заголовка нет вовсе) — какое это окно, неизвестно.
+        XCTAssertEqual(WindowThemeStore.keys(title: "", match: nil, chat: nil,
+                                             isMainWindow: isMain), [])
+
+        // Третья точка зеркала: «Раскрасить по кругу» собирает команду сама, мимо applyTheme —
+        // и обязана доходить до файла ровно так же.
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis",
+            theme: .set(WindowThemeStoreTests.ocean), font: .keep))
+        XCTAssertEqual(Array(rig.store.entries.keys), ["chat:Trelvis"])
+        XCTAssertEqual(rig.store.entries["chat:Trelvis"]?.layers["theme"],
+                       .value(WindowThemeStoreTests.ocean.commandValue))
+    }
+
+    // MARK: - 22. примерка в файл не идёт
+
+    func testWindowThemeStorePreviewIsNotRecorded() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis", preview: true,
+            theme: .set(WindowThemeStoreTests.ocean), font: .keep))
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis", preview: false,
+            theme: .keep, font: .keep))
+        XCTAssertTrue(rig.store.entries.isEmpty, "примерка это экран, а не выбор")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rig.url.path),
+                       "пустого файла не заводим вовсе")
+    }
+
+    // MARK: - 23. «всем окнам» снимает слой у остальных
+
+    func testWindowThemeStoreAllScopeStripsLayerEverywhere() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis",
+            theme: .set(WindowThemeStoreTests.ocean), font: .set(WindowThemeStoreTests.menlo)))
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Dictatorik",
+            theme: .set(WindowThemeStoreTests.sand), font: .keep))
+
+        clock.advance(10)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeAll, title: "", theme: .set(WindowThemeStoreTests.sand),
+            font: .keep))
+        // Тема теперь общая: у окон свой слой снят, а запись без слоёв выброшена целиком.
+        XCTAssertEqual(rig.store.entries.keys.sorted(), ["*", "chat:Trelvis"])
+        XCTAssertNil(rig.store.entries["chat:Trelvis"]?.layers["theme"])
+        XCTAssertEqual(rig.store.entries["chat:Trelvis"]?.layers["font"],
+                       .value(WindowThemeStoreTests.menlo.commandValue))
+        XCTAssertEqual(rig.store.entries["*"]?.layers["theme"],
+                       .value(WindowThemeStoreTests.sand.commandValue))
+
+        // «Как у Claude (все окна)» убирает слой и из общей записи — ровно как страница.
+        clock.advance(10)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeAll, title: "", theme: .reset, font: .keep))
+        XCTAssertEqual(rig.store.entries.keys.sorted(), ["chat:Trelvis"])
+    }
+
+    // MARK: - 24. вытеснение по потолку
+
+    func testWindowThemeStoreEvictsOldest() {
+        var map: [String: WindowThemeEntry] = [:]
+        for index in 0..<200 {
+            map[String(format: "id:local_%04d", index)] = fullEntry(at: 1_757_100_000_000 + index)
+        }
+        XCTAssertGreaterThan(WindowThemeStore.bodySize(map), WindowThemeStore.bodyLimit,
+                             "200 полных записей заведомо больше 32 КБ — иначе проверка пустая")
+        WindowThemeStore.trim(&map)
+        XCTAssertLessThanOrEqual(WindowThemeStore.bodySize(map), WindowThemeStore.bodyLimit)
+        XCTAssertFalse(map.keys.contains("id:local_0000"), "самое старое по at ушло первым")
+        XCTAssertTrue(map.keys.contains("id:local_0199"), "свежие записи целы")
+        XCTAssertGreaterThan(map.count, 50, "потолок байтовый, а не «пять записей»")
+
+        // Страховочный потолок: ровно столько ключей принимает страница.
+        var many: [String: WindowThemeEntry] = [:]
+        for index in 0..<250 {
+            many[String(format: "id:local_%04d", index)] =
+                WindowThemeEntry(layers: ["frame": .value(.bool(true))], at: 1_000 + index)
+        }
+        WindowThemeStore.trim(&many)
+        XCTAssertEqual(many.count, WindowThemeStore.keyLimit)
+        XCTAssertFalse(many.keys.contains("id:local_0000"))
+    }
+
+    // MARK: - 25, 26, 26а. карта страницы
+
+    func testWindowThemeStoreAbsorbReplacesWhenPageNotEmpty() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.beginGeneration()
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis",
+            theme: .set(WindowThemeStoreTests.ocean), font: .keep))
+
+        // Карта страницы — источник правды: в ней и то, что Элвис выбирал до этого воркфлоу,
+        // и то, что он снял руками. Она заменяет записи ЦЕЛИКОМ, а не доливается.
+        let page = WindowThemeStore.map(from: [
+            "id:local_ab12": ["theme": ["id": "sand", "name": "Песок", "type": "light",
+                                        "palette": ["accent": "#a71", "background": "#fed"]],
+                              "frame": true],
+            "main": ["font": "none"],
+            "hack": ["theme": "none"],
+        ])
+        clock.advance(5)
+        rig.store.absorb(page: page, at: clock.now)
+        XCTAssertEqual(rig.store.entries.keys.sorted(), ["id:local_ab12", "main"],
+                       "чужой ключ отброшен, старая запись зеркала заменена")
+        XCTAssertEqual(rig.store.entries["id:local_ab12"]?.layers["theme"],
+                       .value(WindowThemeStoreTests.sand.commandValue))
+        XCTAssertEqual(rig.store.entries["main"]?.layers["font"], .reset)
+        XCTAssertEqual(rig.store.entries["id:local_ab12"]?.at, 0, "An old page map without an age must not refresh the archive")
+
+        // Поля `themes` в круге не было вовсе — файл не трогаем и ответом это не считаем.
+        rig.store.absorb(page: nil, at: clock.now)
+        XCTAssertEqual(rig.store.entries.count, 2)
+    }
+
+    func testWindowThemeStoreAbsorbKeepsFileWhenFirstAnswerEmpty() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis",
+            theme: .set(WindowThemeStoreTests.ocean), font: .keep))
+        rig.store.beginGeneration()
+
+        // Первый ответ поколения пустой — это и есть переустановка Claude: терять нечего,
+        // возвращать есть что.
+        rig.store.absorb(page: [:], at: clock.now)
+        XCTAssertEqual(rig.store.entries.keys.sorted(), ["chat:Trelvis"])
+        XCTAssertTrue(text(of: rig.url).contains("chat:Trelvis"))
+    }
+
+    func testWindowThemeStoreAbsorbClearsFileWhenLaterAnswerEmpty() {
+        let clock = ThemeClock()
+        let box = makeTemp()
+        let rig = makeStore(clock, in: box)
+        let backup = box.appendingPathComponent(WindowThemeStore.backupFileName)
+        rig.store.beginGeneration()
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis",
+            theme: .set(WindowThemeStoreTests.ocean), font: .keep))
+        rig.store.absorb(page: WindowThemeStore.map(from: ["chat:Trelvis": ["frame": true]]),
+                         at: clock.now)
+
+        // Один пустой ответ ничего не доказывает: команда возврата могла не застать инжект,
+        // и тогда пустая карта — потерянная страница, а не выбор Элвиса.
+        clock.advance(5)
+        rig.store.absorb(page: [:], at: clock.now)
+        XCTAssertEqual(rig.store.entries.keys.sorted(), ["chat:Trelvis"],
+                       "первый пустой ответ файл не трогает")
+        XCTAssertEqual(text(of: backup), "", "копии рядом ещё нет")
+
+        // Пусто на живом Claude значит «Элвис снял всё сам»: два клика «Как у Claude (все окна)»
+        // доводят карту страницы до нуля ключей, и файл обязан это повторить — но прежнее тело
+        // остаётся рядом.
+        clock.advance(5)
+        rig.store.absorb(page: [:], at: clock.now)
+        XCTAssertTrue(rig.store.entries.isEmpty)
+        XCTAssertEqual(text(of: rig.url),
+                       "{\"version\":1,\"at\":\"2025-09-05T19:20:10Z\",\"entries\":{}}")
+        XCTAssertTrue(text(of: backup).contains("chat:Trelvis"), "прежняя карта лежит рядом")
+
+        // Непустой ответ копию не трогает: она с того круга, где карту обнулили.
+        let saved = text(of: backup)
+        clock.advance(5)
+        rig.store.absorb(page: WindowThemeStore.map(from: ["chat:Trelvis": ["frame": true]]),
+                         at: clock.now)
+        XCTAssertEqual(text(of: backup), saved)
+
+        // Смена pid Claude открывает новое поколение — и счёт пустых ответов начинается заново.
+        rig.store.beginGeneration()
+        rig.store.absorb(page: [:], at: clock.now)
+        XCTAssertEqual(rig.store.entries.keys.sorted(), ["chat:Trelvis"])
+    }
+
+    // MARK: - 26б. `themes` только у claude.ai
+
+    func testChatProbeTakesThemesOnlyFromClaudeAi() {
+        let at = Date(timeIntervalSince1970: 1_757_100_000)
+        let themes: [String: Any] = ["chat:Trelvis": ["frame": true]]
+        func result(_ url: String, _ kind: String, withThemes: Bool) -> [String: Any] {
+            var payload: [String: Any] = ["v": 1, "nonce": "n1", "kind": kind, "title": "Trelvis",
+                                          "store": "ok"]
+            if withThemes { payload["themes"] = themes }
+            return ["id": 1, "url": url, "result": payload]
+        }
+        func answer(_ results: [[String: Any]]) -> Data {
+            (try? JSONSerialization.data(withJSONObject: ["at": "2026-09-06T04:07:00Z",
+                                                          "results": results.map(ProbeSourceFixture.entry)])) ?? Data()
+        }
+
+        // Карту берём только у страницы claude.ai: probe лоадер гоняет во ВСЕХ страницах,
+        // и пустая карта чужого origin запустила бы очистку файла.
+        let mixed = ChatProbe.parseAnswer(answer([
+            result("about:blank", "popout", withThemes: true),
+            result("data:text/html,x", "other", withThemes: true),
+            result("https://claude.ai/epitaxy/local_a1", "main", withThemes: true),
+        ]), nonce: "n1", at: at)
+        XCTAssertEqual(mixed.pages.count, 2)
+        XCTAssertEqual(mixed.themes?.keys.sorted(), ["chat:Trelvis"])
+
+        // Тот же ответ без claude.ai — поля нет вовсе, и это не «пустая карта».
+        let foreign = ChatProbe.parseAnswer(answer([
+            result("about:blank", "popout", withThemes: true),
+            result("data:text/html,x", "other", withThemes: true),
+        ]), nonce: "n1", at: at)
+        XCTAssertNil(foreign.themes)
+
+        // Главное окно ответило без карты (страница старой версии) — тоже nil.
+        let silent = ChatProbe.parseAnswer(answer([
+            result("https://claude.ai/epitaxy/local_a1", "main", withThemes: false),
+        ]), nonce: "n1", at: at)
+        XCTAssertNil(silent.themes)
+        XCTAssertEqual(silent.pages.count, 1)
+    }
+
+    // MARK: - 27. байты команды возврата
+
+    func testThemesRestoreCommandFields() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis", chat: "local_ab12",
+            theme: .set(WindowThemeStoreTests.ocean), font: .keep))
+
+        var sent: [String] = []
+        rig.store.beginGeneration()
+        rig.store.restoreTick(titles: ["Trelvis"], at: clock.now) { fields in
+            sent.append(CommandChannel.payload(action: WindowThemeStore.restoreAction,
+                                               fields: fields, id: "1757100000000-0001",
+                                               at: clock.now))
+            return true
+        }
+        let entry = """
+        {"theme":{"id":"ocean","name":"Океан","type":"dark",\
+        "palette":{"accent":"#3af","background":"#012"}},"at":1757100000000}
+        """
+        XCTAssertEqual(sent, ["""
+        {"id":"1757100000000-0001","action":"themes-restore","at":"2025-09-05T19:20:00Z",\
+        "scope":"all","entries":{"chat:Trelvis":\(entry),"id:local_ab12":\(entry)}}
+        """], "Restore carries original ages so retention remains stable after reinstall")
+    }
+
+    /// G1 WF101 (z1-r01): владелец тени `by` переживает Swift-копию карты — absorb, файл и
+    /// `themes-restore`. У ключа не `chat:` владельца не бывает.
+    func testThemesRestoreKeepsShadowOwner() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.absorb(page: WindowThemeStore.map(from: [
+            "chat:Trelvis": ["frame": true, "by": "local_ab12"],
+            "id:local_ab12": ["frame": true, "by": "local_zz"],
+        ]), at: clock.now)
+        let reread = WindowThemeStore(url: rig.url, now: { clock.now })
+        XCTAssertEqual(reread.entries["chat:Trelvis"]?.by, "local_ab12", "файл хранит владельца")
+        let payload = CommandChannel.payload(action: WindowThemeStore.restoreAction,
+                                             fields: WindowThemeStore.restoreFields(reread.entries),
+                                             id: "1", at: clock.now)
+        XCTAssertTrue(payload.contains(#""chat:Trelvis":{"frame":true,"by":"local_ab12","at":0}"#), payload)
+        XCTAssertTrue(payload.contains(#""id:local_ab12":{"frame":true,"at":0}"#), payload)
+    }
+
+    // MARK: - 28, 29. рассылка по поколениям
+
+    func testThemesRestoreGenerationSendsAtMostThree() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis",
+            theme: .set(WindowThemeStoreTests.ocean), font: .keep))
+        rig.store.beginGeneration()
+
+        var sent = 0
+        func tick(_ titles: [String]) {
+            rig.store.restoreTick(titles: titles, at: clock.now) { _ in
+                sent += 1
+                return true
+            }
+        }
+
+        // Первый тик поколения, где Claude есть на экране.
+        tick(["Trelvis"])
+        XCTAssertEqual(sent, 1)
+        // Окно открылось, но с прошлой команды не прошло и 5 с — ждём.
+        clock.advance(2)
+        tick(["Trelvis", "Dictatorik"])
+        XCTAssertEqual(sent, 1)
+        clock.advance(4)
+        tick(["Trelvis", "Dictatorik"])
+        XCTAssertEqual(sent, 2)
+        // Набор окон не менялся — молчим, сколько бы тиков ни прошло.
+        clock.advance(10)
+        tick(["Trelvis", "Dictatorik"])
+        XCTAssertEqual(sent, 2)
+        clock.advance(6)
+        tick(["Trelvis", "Dictatorik", "Vkusnoff"])
+        XCTAssertEqual(sent, 3)
+        // Больше трёх за поколение — это шторм, а не восстановление.
+        clock.advance(6)
+        tick(["Trelvis"])
+        XCTAssertEqual(sent, 3)
+
+        // Смена pid Claude открывает новое поколение — счёт начинается заново.
+        rig.store.beginGeneration()
+        clock.advance(6)
+        tick(["Trelvis"])
+        XCTAssertEqual(sent, 4)
+    }
+
+    /// kimi/c1/f01 (WF101): окна те же, а страница ответила пустой картой — возврат не застал
+    /// инжект; повтор уходит через 5 с один раз за поколение, а не никогда.
+    func testThemesRestoreRepeatsOnceAfterFirstEmptyAnswer() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis",
+            theme: .set(WindowThemeStoreTests.ocean), font: .keep))
+        rig.store.beginGeneration()
+        var sent = 0
+        func tick() {
+            rig.store.restoreTick(titles: ["Trelvis"], at: clock.now) { _ in sent += 1; return true }
+        }
+        tick()
+        XCTAssertEqual(sent, 1)
+        rig.store.absorb(page: [:], at: clock.now)
+        clock.advance(2)
+        tick()
+        XCTAssertEqual(sent, 1, "не чаще раза в 5 с")
+        clock.advance(4)
+        tick()
+        XCTAssertEqual(sent, 2, "первый пустой ответ — повтор при том же составе окон")
+        rig.store.absorb(page: ["chat:Trelvis": fullEntry(at: 1)], at: clock.now)
+        rig.store.absorb(page: [:], at: clock.now)
+        clock.advance(6)
+        tick()
+        XCTAssertEqual(sent, 2, "повтор по пустому ответу — один на поколение")
+    }
+
+    func testThemesRestoreSilentWhenEmpty() {
+        let clock = ThemeClock()
+        let rig = makeStore(clock)
+        rig.store.beginGeneration()
+
+        var sent = 0
+        let send: ([(key: String, value: CommandValue)]) -> Bool = { _ in
+            sent += 1
+            return true
+        }
+        // Файла нет вовсе.
+        rig.store.restoreTick(titles: ["Trelvis"], at: clock.now, send: send)
+        XCTAssertEqual(sent, 0)
+
+        // Записи есть, но Claude не запущен — окон на экране нет.
+        rig.store.record(fields: ClaudeActions.themeFields(
+            scope: MenuModel.themeScopeWindow, title: "Trelvis",
+            theme: .set(WindowThemeStoreTests.ocean), font: .keep))
+        rig.store.restoreTick(titles: [], at: clock.now, send: send)
+        XCTAssertEqual(sent, 0)
+
+        // Команда не записалась (диск, права) — попытку не засчитываем, попробуем на следующем тике.
+        rig.store.restoreTick(titles: ["Trelvis"], at: clock.now) { _ in false }
+        rig.store.restoreTick(titles: ["Trelvis"], at: clock.now, send: send)
+        XCTAssertEqual(sent, 1)
+    }
+
+    // MARK: - 30. `ProjectPaint.forget()`
+
+    func testProjectPaintForgetDropsMarksWithoutCommands() {
+        let box = makeTemp()
+        let root = box.appendingPathComponent("Projects", isDirectory: true)
+        let alpha = root.appendingPathComponent("Alpha", isDirectory: true)
+        try? FileManager.default.createDirectory(at: alpha.appendingPathComponent(".git"),
+                                                 withIntermediateDirectories: true)
+        let sessions = box.appendingPathComponent("sessions/4646c58f/8cb117af", isDirectory: true)
+        try? FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        let session: [String: Any] = ["sessionId": "local_a1", "title": "Alpha",
+                                      "titleSource": "user", "cwd": alpha.path,
+                                      "originCwd": alpha.path, "lastFocusedAt": 3000,
+                                      "lastActivityAt": 3000, "isArchived": false]
+        try? (try? JSONSerialization.data(withJSONObject: session))?
+            .write(to: sessions.appendingPathComponent("local_a1.json"))
+        let status = box.appendingPathComponent("status.json")
+        let statusBody: [String: Any] = [
+            "at": "2026-09-06T04:07:00Z", "loader": 7, "windows": [],
+            "webContents": [["id": 2, "url": "https://claude.ai/epitaxy/local_a1"]],
+        ]
+        try? (try? JSONSerialization.data(withJSONObject: statusBody))?.write(to: status)
+
+        let clock = ThemeClock()
+        let index = ProjectIndex(sessionsDirectory: box.appendingPathComponent("sessions"),
+                                 statusURL: status, projectsRoot: root, home: box,
+                                 now: { clock.now })
+        let paint = ProjectPaint(index: index,
+                                 store: ProjectSettingsStore(
+                                     registryURL: box.appendingPathComponent("projects.json")),
+                                 defaults: MemoryThemeDefaults(), now: { clock.now })
+        var sent: [ProjectPaintCommand] = []
+        paint.send = { command in
+            sent.append(command)
+            return true
+        }
+        paint.tick()
+        XCTAssertEqual(sent.count, 1, "окно проекта покрашено — отпечаток на месте")
+        clock.advance(10)
+        paint.tick()
+        XCTAssertEqual(sent.count, 1, "ни папка, ни вид не изменились")
+
+        // Claude перезапустился: страницы голые, а отпечатки прежние. Забываем их МОЛЧА —
+        // команд снятия тут быть не должно (в отличие от выключения тумблера).
+        paint.forget()
+        XCTAssertEqual(sent.count, 1)
+        clock.advance(10)
+        paint.tick()
+        XCTAssertEqual(sent.count, 2, "ближайший тик красит окно заново")
+    }
+}
+
+/// UserDefaults в памяти: тумблер покраски не должен попадать в живые настройки приложения.
+private final class MemoryThemeDefaults: ThemeDefaults {
+    private var values: [String: Any] = [:]
+    func string(forKey key: String) -> String? { values[key] as? String }
+    func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
+    func object(forKey key: String) -> Any? { values[key] }
+    func set(_ value: Any?, forKey key: String) { values[key] = value }
+    func removeObject(forKey key: String) { values.removeValue(forKey: key) }
+}

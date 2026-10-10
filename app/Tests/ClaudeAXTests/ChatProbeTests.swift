@@ -1,0 +1,1006 @@
+import XCTest
+@testable import ClaudeAX
+
+/// Часы канала: тик общий, 2 с, а пол частоты — 15 с, поэтому время в тесте двигают руками.
+private final class ProbeClock {
+    var now = Date(timeIntervalSince1970: 1_757_100_000)
+    func advance(_ seconds: TimeInterval) { now = now.addingTimeInterval(seconds) }
+}
+
+/// Два файла канала в памяти: диска в тестах нет, а правило владения и разбор ответа —
+/// чистые части (решение 7 плана WF29). Заодно считает записи: лишний круг стоит лоадеру
+/// обхода всех страниц Claude.
+private final class ProbeBox {
+    let clock: ProbeClock
+    /// Что лежит в `probe.js` и когда его правили.
+    var script: String?
+    var scriptModified: Date?
+    var scriptVersion = 0
+    /// Что лежит в `probe-result.json`.
+    var result: Data?
+    var resultVersion = 0
+    /// Все записи приложения в probe.js.
+    var writes: [String] = []
+    var writable = true
+
+    init(clock: ProbeClock) { self.clock = clock }
+
+    func files() -> ChatProbeFiles {
+        ChatProbeFiles(
+            scriptInfo: { [unowned self] in
+                guard self.script != nil, let at = self.scriptModified else { return nil }
+                return ("\(self.scriptVersion)", at)
+            },
+            readScript: { [unowned self] in self.script },
+            writeScript: { [unowned self] text in
+                guard self.writable else { return false }
+                self.put(text)
+                self.writes.append(text)
+                return true
+            },
+            resultInfo: { [unowned self] in self.result == nil ? nil : "\(self.resultVersion)" },
+            readResult: { [unowned self] in self.result })
+    }
+
+    /// Положить в probe.js текст — свой или чужой (агент на гейте).
+    func put(_ text: String?, at: Date? = nil) {
+        script = text
+        scriptModified = text == nil ? nil : (at ?? clock.now)
+        scriptVersion += 1
+    }
+
+    /// Метка круга из последнего записанного скрипта: первая строка `// myclaude-chats v1 <nonce>`.
+    var nonce: String? {
+        guard let head = writes.last?.split(separator: "\n").first else { return nil }
+        let parts = head.split(separator: " ")
+        return parts.count >= 4 ? String(parts[3]) : nil
+    }
+
+    /// Ответ лоадера: `{at, results:[{id,url,result|error}]}`.
+    func answer(_ results: [[String: Any]]) {
+        let body: [String: Any] = ["at": "2026-09-06T04:07:00Z", "results": results.map(ProbeSourceFixture.entry)]
+        result = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
+        resultVersion += 1
+    }
+
+    /// Ответ страницы на наш круг. `path` и `folder` (план WF37, часть C) страница шлёт
+    /// всегда и только у главного окна соответственно — в тесте они необязательные.
+    /// `frame` (план WF77) — рамка окна `[screenX, screenY, outerWidth, outerHeight]`;
+    /// не передали — поля в ответе нет вовсе, как у страницы до WF77.
+    func page(kind: String, chat: String?, title: String, store: String,
+              nonce: String? = nil, path: String? = nil, folder: Any? = nil,
+              frame: [Int]? = nil) -> [String: Any] {
+        var payload: [String: Any] = ["v": 1, "nonce": nonce ?? self.nonce ?? "", "kind": kind,
+                                      "title": title, "store": store]
+        if let chat = chat { payload["self"] = chat }
+        if let path = path { payload["path"] = path }
+        if let folder = folder { payload["folder"] = folder }
+        if let frame = frame { payload["frame"] = frame }
+        return ["id": 1, "url": kind == "main" ? "https://claude.ai/epitaxy/\(chat ?? "")"
+                                               : "about:blank", "result": payload]
+    }
+
+    /// Главное окно на домашнем экране: путь `/epitaxy`, чата нет, папка — из чипа.
+    func home(folder: String = "/Users/dev/Projects/PimpMyClaude") -> [String: Any] {
+        page(kind: "main", chat: nil, title: "Claude", store: "ok", path: ChatProbe.homePath,
+             folder: folder)
+    }
+}
+
+/// Канал probe (план WF29): приложение спрашивает страницы, какой в них чат, и уступает
+/// канал агенту на гейте. Живого Claude тут нет — файлы в памяти, часы подставные.
+final class ChatProbeTests: XCTestCase {
+    private func makeProbe(_ box: ProbeBox, clock: ProbeClock) -> ChatProbe {
+        var seed = 0
+        return ChatProbe(files: box.files(), now: { clock.now }, random: {
+            seed += 1
+            return seed
+        })
+    }
+
+    /// Тест 16 плана: разбор ответа — только свои записи, `error` мимо, `kind` по местам.
+    func testChatProbeParsesAnswers() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+
+        probe.tick(windowTitles: ["Bro Flow продолжение"], indexRevision: 1)
+        let nonce = try XCTUnwrap(box.nonce, "первый тик обязан спросить страницы")
+        // Первая строка — метка владения: по ней и приложение, и человек на гейте видят,
+        // чей это скрипт (`head -1 probe.js`).
+        XCTAssertTrue(try XCTUnwrap(box.writes.last).hasPrefix("\(ChatProbe.mark) \(nonce)\n"))
+        XCTAssertTrue(try XCTUnwrap(box.writes.last).contains("api.chats({ scan: true"),
+                      "неизвестное окно — просим страницу поискать стор")
+
+        box.answer([
+            box.page(kind: "main", chat: "local_a1", title: "PimpMyClaude", store: "ok"),
+            box.page(kind: "popout", chat: "local_b2", title: "Bro Flow продолжение", store: "ok"),
+            // Чужой круг (наш прошлый или скрипт агента) — не разбираем вовсе.
+            box.page(kind: "popout", chat: "local_c3", title: "Чужой круг", store: "ok",
+                     nonce: "chats-0-0000"),
+            // Страница упала — записи с error пропускаем.
+            ["id": 9, "url": "data:text/html,%3C", "error": "Script failed"],
+            // Артефакты и панель браузера отвечают «не наша страница».
+            box.page(kind: "other", chat: nil, title: "", store: "skip"),
+            // id не из мира Claude в поле `chat` команды попасть не должен.
+            box.page(kind: "popout", chat: "../../etc/passwd", title: "Кривой", store: "ok"),
+        ])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Bro Flow продолжение"], indexRevision: 1)
+
+        // Чужие страницы в карте не нужны — их у живого Claude четыре пятых.
+        XCTAssertEqual(probe.pages.map { $0.title }, ["PimpMyClaude", "Bro Flow продолжение", "Кривой"])
+        XCTAssertEqual(probe.pages.map { $0.kind }, [.main, .popout, .popout])
+        XCTAssertTrue(probe.isFresh)
+        XCTAssertEqual(probe.mainChat, "local_a1")
+        XCTAssertEqual(probe.chat(forTitle: "Bro Flow продолжение"), "local_b2")
+        XCTAssertNil(probe.chat(forTitle: "Чужой круг"), "ответ на чужой nonce попал в карту")
+        XCTAssertNil(probe.chat(forTitle: "Кривой"), "id не из мира Claude")
+        XCTAssertEqual(probe.status, "own/3/2")
+
+        // Ответ главного окна старше минуты не сильнее адреса из status.json (решение 8).
+        clock.advance(ChatProbe.mainChatSeconds + 1)
+        XCTAssertNil(probe.mainChat)
+        XCTAssertEqual(probe.pages.count, 3, "карта осталась — протух только ответ главного окна")
+
+        // Разбор чистой функцией: чужой nonce не берём, даже если записи больше не с кем сверить.
+        XCTAssertTrue(ChatProbe.parse(box.result, nonce: "нет такого", at: clock.now).isEmpty)
+        XCTAssertNil(ChatProbe.parse(nil, nonce: nonce, at: clock.now).first)
+    }
+
+    /// Тест 17 плана: правило владения каналом — чужой свежий скрипт не переписываем.
+    func testChatProbeSkipsForeignProbe() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+
+        probe.tick(windowTitles: ["Bro Flow продолжение"], indexRevision: 1)
+        let mine = try XCTUnwrap(box.writes.last)
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "Bro Flow продолжение",
+                             store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Bro Flow продолжение"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+        XCTAssertTrue(probe.isFresh)
+
+        // Агент на гейте положил свой скрипт: приложение молчит, а карта помечена несвежей —
+        // покраска уходит на старый путь по заголовку.
+        box.put("document.title")
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windowTitles: ["Bro Flow продолжение", "Новое окно"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1, "приложение переписало чужой probe.js")
+        XCTAssertFalse(probe.isFresh)
+        XCTAssertTrue(probe.pages.isEmpty)
+        XCTAssertNil(probe.chat(forTitle: "Bro Flow продолжение"))
+        XCTAssertEqual(probe.status, "busy/1/1", "карта прежняя, но канал не наш")
+
+        // Скрипт на месте, минута молчания не вышла — файл даже не перечитываем.
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windowTitles: ["Bro Flow продолжение", "Новое окно"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+
+        // Тот же файл, но брошенный: старше 10 минут — канал забираем. Повод у всех
+        // проверок ниже один и тот же и явный: изменился состав чатов.
+        box.put("document.title", at: clock.now.addingTimeInterval(-ChatProbe.foreignStale - 1))
+        clock.advance(ChatProbe.foreignQuiet + 1)
+        probe.tick(windowTitles: ["Bro Flow продолжение", "Новое окно"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 2, "брошенный чужой скрипт держит канал вечно")
+
+        // Наш побайтно (лоадер переписал файл, а мы не заметили) — тоже наш.
+        box.put(mine)
+        clock.advance(ChatProbe.askInterval + ChatProbe.answerTimeout + 1)
+        probe.tick(windowTitles: ["Bro Flow продолжение", "Новое окно"], indexRevision: 3)
+        XCTAssertEqual(box.writes.count, 3)
+
+        // Метка та же, а тело чужое (задача #5741): агент на гейте взял наш файл за основу
+        // и дописал своё. Одной метки для «своего» мало — канал не наш, молчим минуту.
+        box.put("\(ChatProbe.mark) chats-1-0001\n(function () { return 1 })()")
+        clock.advance(ChatProbe.askInterval + ChatProbe.answerTimeout + 1)
+        probe.tick(windowTitles: ["Bro Flow продолжение", "Новое окно"], indexRevision: 4)
+        XCTAssertEqual(box.writes.count, 3, "чужое тело под нашей меткой переписано")
+        XCTAssertFalse(probe.isFresh)
+        XCTAssertFalse(ChatProbe.isOwnScript("\(ChatProbe.mark) chats-1-0001\nвсё остальное"))
+        XCTAssertFalse(ChatProbe.isOwnScript("document.title"))
+
+        // Скрипт от прошлого запуска приложения: узнаём по метке — она даёт круг, а по кругу
+        // скрипт собирается заново и сходится побайтно.
+        box.put(ChatProbe.script(nonce: "chats-1-0001", scan: false))
+        XCTAssertTrue(ChatProbe.isOwnScript(ChatProbe.script(nonce: "chats-1-0001", scan: false)))
+        XCTAssertTrue(ChatProbe.isOwnScript(ChatProbe.script(nonce: "chats-1-0001", scan: true)))
+        clock.advance(1)
+        probe.tick(windowTitles: ["Bro Flow продолжение", "Новое окно"], indexRevision: 4)
+        XCTAssertEqual(box.writes.count, 4, "свой скрипт от прошлого запуска не узнали")
+
+        // Файла нет вовсе — канал свободен сразу, без минуты молчания (гейт, п. 4: `rm probe.js`).
+        box.put(nil)
+        clock.advance(ChatProbe.askInterval + ChatProbe.answerTimeout + 1)
+        probe.tick(windowTitles: ["Bro Flow продолжение", "Новое окно"], indexRevision: 5)
+        XCTAssertEqual(box.writes.count, 5)
+    }
+
+    /// Тест 18 плана: спрашиваем только по поводу и не чаще раза в 15 с.
+    func testChatProbeAsksOnlyOnReason() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        var on = true
+        let probe = makeProbe(box, clock: clock)
+        probe.isEnabled = { on }
+
+        // Тумблер «🗂 Цвет по проекту» выключен — канала не касаемся вовсе (риск 11 плана).
+        on = false
+        probe.tick(windowTitles: ["Bro Flow продолжение"], indexRevision: 1)
+        XCTAssertTrue(box.writes.isEmpty)
+        XCTAssertEqual(probe.status, "off/0/0")
+        on = true
+
+        // Первый тик после старта — спрашиваем.
+        probe.tick(windowTitles: ["Bro Flow продолжение"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+
+        // Прошлый круг не закрыт, а с записи прошло меньше 30 с — второго не начинаем:
+        // поздно завершившийся старый круг затёр бы свежий ответ (критик В2 плана WF29).
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windowTitles: ["Bro Flow продолжение", "Ещё окно"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 1)
+
+        // Круг потерян (30 с) — спрашиваем заново.
+        clock.advance(ChatProbe.answerTimeout + 1)
+        probe.tick(windowTitles: ["Bro Flow продолжение", "Ещё окно"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 2)
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "Bro Flow продолжение",
+                             store: "ok"),
+                    box.page(kind: "popout", chat: "local_c3", title: "Ещё окно", store: "ok")])
+        clock.advance(1)
+        probe.tick(windowTitles: ["Bro Flow продолжение", "Ещё окно"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 2)
+
+        // Всё опознано и ничего не менялось — в покое вопросов ноль, сколько ни тикай.
+        for _ in 0..<10 {
+            clock.advance(ChatProbe.askInterval + 1)
+            probe.tick(windowTitles: ["Bro Flow продолжение", "Ещё окно"], indexRevision: 2)
+        }
+        XCTAssertEqual(box.writes.count, 2)
+        // И порядок окон на экране поводом не считается — набор тот же.
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windowTitles: ["Ещё окно", "Bro Flow продолжение"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 2)
+
+        // Состав чатов изменился (сменилась папка, чат переименовали) — спрашиваем.
+        clock.advance(1)
+        probe.tick(windowTitles: ["Ещё окно", "Bro Flow продолжение"], indexRevision: 3)
+        XCTAssertEqual(box.writes.count, 3)
+        XCTAssertTrue(try XCTUnwrap(box.writes.last).contains("api.chats({ scan: false"),
+                      "неизвестных окон нет — стор искать незачем")
+
+        // Чаще раза в 15 с не спрашиваем, даже когда поводов много.
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "Bro Flow продолжение",
+                             store: "ok"),
+                    box.page(kind: "popout", chat: "local_c3", title: "Ещё окно", store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Ещё окно"], indexRevision: 4)
+        XCTAssertEqual(box.writes.count, 3)
+
+        // Новое окно, чата которого мы не знаем: спрашиваем со `scan`, и не чаще раза в минуту.
+        clock.advance(ChatProbe.askInterval)
+        probe.tick(windowTitles: ["Ещё окно", "Незнакомое"], indexRevision: 4)
+        XCTAssertEqual(box.writes.count, 4)
+        XCTAssertTrue(try XCTUnwrap(box.writes.last).contains("api.chats({ scan: true"))
+        box.answer([box.page(kind: "popout", chat: "local_c3", title: "Ещё окно", store: "ok"),
+                    box.page(kind: "popout", chat: nil, title: "Незнакомое", store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Ещё окно", "Незнакомое"], indexRevision: 4)
+        XCTAssertEqual(box.writes.count, 4)
+        // Окно не опознаётся в принципе (попап обычного чата claude.ai) — минуту молчим.
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windowTitles: ["Ещё окно", "Незнакомое"], indexRevision: 4)
+        XCTAssertEqual(box.writes.count, 4)
+        clock.advance(ChatProbe.unknownInterval)
+        probe.tick(windowTitles: ["Ещё окно", "Незнакомое"], indexRevision: 4)
+        XCTAssertEqual(box.writes.count, 5)
+        box.answer([box.page(kind: "popout", chat: "local_c3", title: "Ещё окно", store: "ok"),
+                    box.page(kind: "popout", chat: nil, title: "Незнакомое", store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Ещё окно", "Незнакомое"], indexRevision: 4)
+
+        // Заглушки заголовка неизвестными окнами не считаются: их носит и главное окно,
+        // и безымянный попап. Набор окон сменился — один вопрос, и дальше тишина.
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windowTitles: ["Ещё окно", "Claude", "New chat"], indexRevision: 4)
+        box.answer([box.page(kind: "popout", chat: "local_c3", title: "Ещё окно", store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Ещё окно", "Claude", "New chat"], indexRevision: 4)
+        let asked = box.writes.count
+        clock.advance(ChatProbe.unknownInterval + ChatProbe.askInterval)
+        probe.tick(windowTitles: ["Ещё окно", "Claude", "New chat"], indexRevision: 4)
+        XCTAssertEqual(box.writes.count, asked)
+    }
+
+    /// Тест 19 плана: два окна с одним заголовком и заглушки id не дают.
+    func testChatProbeTitleCollisionIsUnknown() {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+
+        probe.tick(windowTitles: ["Workflow продолжение"], indexRevision: 1)
+        box.answer([
+            box.page(kind: "popout", chat: "local_b2", title: "Workflow продолжение", store: "ok"),
+            box.page(kind: "popout", chat: "local_c3", title: "Workflow продолжение", store: "ok"),
+            box.page(kind: "popout", chat: "local_d4", title: "Claude", store: "ok"),
+            box.page(kind: "popout", chat: "local_e5", title: "New chat", store: "ok"),
+            box.page(kind: "popout", chat: "local_f6", title: "  ", store: "ok"),
+        ])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Workflow продолжение"], indexRevision: 1)
+
+        XCTAssertNil(probe.chat(forTitle: "Workflow продолжение"),
+                     "ничья по заголовку: лучше не покрасить, чем покрасить чужим цветом")
+        XCTAssertNil(probe.chat(forTitle: "Claude"))
+        XCTAssertNil(probe.chat(forTitle: "New chat"))
+        XCTAssertNil(probe.chat(forTitle: "Новый чат"))
+        XCTAssertNil(probe.chat(forTitle: " "))
+        // Ничья именно ничья: то же имя у ОДНОГО чата помехой не считается.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Один чат", in: [
+            ChatPage(kind: .popout, chat: "local_z9", title: "Один чат", store: "ok", at: clock.now),
+            ChatPage(kind: .popout, chat: "local_z9", title: "Один чат", store: "ok", at: clock.now),
+        ]))
+        // Заголовок носят два окна, а id назвало только одно — тоже ничья (находка 4
+        // проверки WF29): иначе ручной выбор темы в неопознанном окне уехал бы в чужой проект.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Двойник", in: [
+            ChatPage(kind: .popout, chat: "local_z9", title: "Двойник", store: "ok", at: clock.now),
+            ChatPage(kind: .popout, chat: nil, title: "Двойник", store: "ok", at: clock.now),
+        ]))
+        XCTAssertNil(ChatProbe.chat(forTitle: "Двойник", in: [
+            ChatPage(kind: .popout, chat: nil, title: "Двойник", store: "none", at: clock.now),
+            ChatPage(kind: .popout, chat: "local_z9", title: "Двойник", store: "ok", at: clock.now),
+        ]))
+        // Главное окно по заголовку не адресуется вовсе — только `match` (критик Б1 плана WF15).
+        XCTAssertNil(ChatProbe.chat(forTitle: "PimpMyClaude", in: [
+            ChatPage(kind: .main, chat: "local_a1", title: "PimpMyClaude", store: "ok", at: clock.now),
+        ]))
+    }
+
+    // MARK: - окно → чат по рамке (план WF77, задача #6734)
+
+    /// Рамки окон Элвиса: три шестых доли Odyssey (замер 20.09, диагноз плана WF77).
+    private static let left = CGRect(x: -792, y: -842, width: 496, height: 838)
+    private static let middle = CGRect(x: -290, y: -842, width: 496, height: 838)
+    private static let right = CGRect(x: 210, y: -842, width: 496, height: 838)
+
+    private func popout(_ chat: String?, _ title: String, _ frame: CGRect?,
+                        at: Date) -> ChatPage {
+        ChatPage(kind: .popout, chat: chat, title: title, store: ChatProbe.storeOK, frame: frame,
+                 at: at)
+    }
+
+    /// Слово Элвиса 20.09: «Окно проекта SkilZZZ говорит „Тема проекта PimpMyClaude“…
+    /// меняю цвет — меняется у обоих». Оба попапа у него зовутся «Ожидание задачи», и до
+    /// WF77 `chat(forTitle:)` брал ПЕРВУЮ страницу с таким заголовком. Теперь окна
+    /// различает рамка — и только она: сошлось сразу две или не сошлось ни одной, значит
+    /// ничья, и лучше не покрасить, чем покрасить чужим.
+    func testChatForTitleSplitsTwinsByFrame() {
+        let at = Date(timeIntervalSince1970: 1_757_100_000)
+        let twins = [popout("local_left", "Ожидание задачи", ChatProbeTests.left, at: at),
+                     popout("local_right", "Ожидание задачи", ChatProbeTests.middle, at: at)]
+
+        XCTAssertEqual(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.left,
+                                      in: twins), "local_left")
+        XCTAssertEqual(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.middle,
+                                      in: twins), "local_right")
+        // Окно подвинули на 10 pt — угол в допуске, и это всё ещё оно (после расстановки
+        // и пока окно едет, рамка карты отстаёт на считаные точки).
+        XCTAssertEqual(ChatProbe.chat(forTitle: "Ожидание задачи",
+                                      frame: ChatProbeTests.left.offsetBy(dx: 10, dy: -10),
+                                      in: twins), "local_left")
+        // Ширину Electron зажал своим минимумом — по размеру рамки не сходятся никогда,
+        // а сверяется только левый верхний угол.
+        XCTAssertEqual(ChatProbe.chat(forTitle: "Ожидание задачи",
+                                      frame: CGRect(x: -792, y: -842, width: 280, height: 600),
+                                      in: twins), "local_left")
+        // Рамки окна нет вовсе (зовут из панели «Своя тема») — ничья, как до WF77.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи", in: twins))
+        // Рамка далеко от обеих страниц: карта про это окно ничего не знает.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.right,
+                                    in: twins))
+        // Страницы рамок не прислали (Claude со старым inject.js) — тоже ничья.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.left,
+                                    in: [popout("local_left", "Ожидание задачи", nil, at: at),
+                                         popout("local_right", "Ожидание задачи", nil, at: at)]))
+        // Окна стоят друг на друге — победителя нет, и чужой чат окну не достанется.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.left,
+                                    in: [popout("local_left", "Ожидание задачи",
+                                                ChatProbeTests.left, at: at),
+                                         popout("local_right", "Ожидание задачи",
+                                                ChatProbeTests.left, at: at)]))
+        // Ближайшая страница себя не назвала — чата у окна нет (её id чужой).
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.left,
+                                    in: [popout(nil, "Ожидание задачи", ChatProbeTests.left, at: at),
+                                         popout("local_right", "Ожидание задачи",
+                                                ChatProbeTests.middle, at: at)]))
+
+        // Страница с таким заголовком ОДНА — она, и рамка не нужна вовсе (ни своя, ни её).
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи",
+                                    in: [popout("local_left", "Ожидание задачи",
+                                                ChatProbeTests.left, at: at)]))
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.right,
+                                    in: [popout("local_left", "Ожидание задачи", nil, at: at)]))
+        // Одноимённые страницы назвали ОДИН чат — неоднозначности нет, рамка ни при чём.
+        XCTAssertNil(ChatProbe.chat(forTitle: "Ожидание задачи",
+                                    in: [popout("local_one", "Ожидание задачи", ChatProbeTests.left, at: at),
+                                         popout("local_one", "Ожидание задачи", ChatProbeTests.middle, at: at)]),
+                     "один id в двух окнах не разрешает выбрать окно без рамки")
+    }
+
+    /// Рамка в ответе страницы (решение 10 плана WF77): хвостовое поле, разбор
+    /// НЕОБЯЗАТЕЛЬНЫЙ — поля нет, и всё работает по-старому. Эталоны батча A читаем как есть.
+    func testParseAnswerWindowFrame() throws {
+        let clock = ProbeClock()
+        let popout = try loaderAnswer("probe-answer-popout.json", url: "about:blank")
+        XCTAssertEqual(ChatProbe.parseAnswer(popout.data, nonce: popout.nonce,
+                                             at: clock.now).pages.first?.frame,
+                       CGRect(x: -290, y: -842, width: 496, height: 838))
+        let home = try loaderAnswer("probe-answer-home.json", url: "https://claude.ai/epitaxy")
+        XCTAssertEqual(ChatProbe.parseAnswer(home.data, nonce: home.nonce,
+                                             at: clock.now).pages.first?.frame,
+                       CGRect(x: -792, y: -842, width: 496, height: 838))
+        let chat = try loaderAnswer("probe-answer-chat.json",
+                                    url: "https://claude.ai/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74")
+        XCTAssertNotNil(ChatProbe.parseAnswer(chat.data, nonce: chat.nonce,
+                                              at: clock.now).pages.first?.frame)
+
+        // Ответ БЕЗ рамки (страница до WF77): поле nil, и окно опознаётся заголовком.
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        probe.tick(windowTitles: ["Bro Flow продолжение"], indexRevision: 1)
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "Bro Flow продолжение",
+                             store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Bro Flow продолжение"], indexRevision: 1)
+        XCTAssertNil(probe.pages.first?.frame)
+        XCTAssertEqual(probe.chat(forTitle: "Bro Flow продолжение"), "local_b2")
+
+        // Сито разбора: не четыре числа, не числа вовсе, нулевой размер — поля нет.
+        XCTAssertEqual(ChatProbe.frameRect([-792, -842, 496, 838]), ChatProbeTests.left)
+        XCTAssertNil(ChatProbe.frameRect(nil))
+        XCTAssertNil(ChatProbe.frameRect("-792,-842,496,838"))
+        XCTAssertNil(ChatProbe.frameRect([-792, -842, 496]))
+        XCTAssertNil(ChatProbe.frameRect([-792, -842, 496, 838, 1]))
+        XCTAssertNil(ChatProbe.frameRect([-792, -842, "496", 838]))
+        XCTAssertNil(ChatProbe.frameRect([-792, -842, 0, 838]))
+    }
+
+    /// Критик WF77, блокер 6: без нового повода починка живёт до первой расстановки —
+    /// рамки в карте протухают, заголовки и поколение индекса при этом те же, и спросить
+    /// страницы заново некому.
+    func testChatProbeAsksWhenFramesDiverge() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        let twins: [(title: String, frame: CGRect?)] = [
+            (title: "Ожидание задачи", frame: ChatProbeTests.left),
+            (title: "Ожидание задачи", frame: ChatProbeTests.middle),
+        ]
+        let answer = {
+            box.answer([box.page(kind: "popout", chat: "local_left", title: "Ожидание задачи",
+                                 store: "ok", frame: [-792, -842, 496, 838]),
+                        box.page(kind: "popout", chat: "local_right", title: "Ожидание задачи",
+                                 store: "ok", frame: [-290, -842, 496, 838])])
+        }
+
+        probe.tick(windows: twins, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+        let asked = clock.now
+        answer()
+        clock.advance(2)
+        probe.tick(windows: twins, indexRevision: 1)
+        XCTAssertEqual(probe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.left),
+                       "local_left")
+
+        // Рамки карты сходятся с живыми — вопросов нет.
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windows: twins, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+
+        // Окно переехало (⌥⌘A, канал, рука Элвиса) — рамки разошлись, спрашиваем заново.
+        // Часы при этом НЕ двигаем: тик тот же, окна те же, изменились только рамки —
+        // значит вопрос поднимает именно новый повод, а не пол «неопознанного окна»
+        // (он в минуту, и она ещё не вышла — проверка строкой ниже).
+        XCTAssertLessThan(clock.now.timeIntervalSince(asked), ChatProbe.unknownInterval)
+        let moved: [(title: String, frame: CGRect?)] = [
+            (title: "Ожидание задачи", frame: ChatProbeTests.left),
+            (title: "Ожидание задачи", frame: ChatProbeTests.right),
+        ]
+        probe.tick(windows: moved, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 2)
+        XCTAssertTrue(try XCTUnwrap(box.writes.last).contains("api.chats({ scan: true"),
+                      "окно, про которое карта врёт, считается неопознанным")
+
+        // Страницы ответили новыми рамками — и снова тишина, сколько ни тикай.
+        box.answer([box.page(kind: "popout", chat: "local_left", title: "Ожидание задачи",
+                             store: "ok", frame: [-792, -842, 496, 838]),
+                    box.page(kind: "popout", chat: "local_right", title: "Ожидание задачи",
+                             store: "ok", frame: [210, -842, 496, 838])])
+        clock.advance(2)
+        probe.tick(windows: moved, indexRevision: 1)
+        XCTAssertEqual(probe.chat(forTitle: "Ожидание задачи", frame: ChatProbeTests.right),
+                       "local_right")
+        for _ in 0..<5 {
+            clock.advance(ChatProbe.askInterval + 1)
+            probe.tick(windows: moved, indexRevision: 1)
+        }
+        XCTAssertEqual(box.writes.count, 2)
+
+        // `onWindowsMoved` поднимает тот же повод СРАЗУ, не дожидаясь сверки: приложение
+        // само только что двигало окна, и рамки карты старше переезда. Окна тут опознаны,
+        // рамки сходятся — объяснить этот круг больше нечем.
+        probe.noteWindowsMoved()
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windows: moved, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 3)
+        // Повод разовый: обслужили — и снова тишина.
+        box.answer([box.page(kind: "popout", chat: "local_left", title: "Ожидание задачи",
+                             store: "ok", frame: [-792, -842, 496, 838]),
+                    box.page(kind: "popout", chat: "local_right", title: "Ожидание задачи",
+                             store: "ok", frame: [210, -842, 496, 838])])
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windows: moved, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 3)
+
+        // Рамок в карте нет вовсе (страница до WF77) — сверять нечего, и лишнего круга
+        // не будет: окна остаются неопознанными, и их держит прежний пол в минуту.
+        let old = ProbeBox(clock: clock)
+        let plain = makeProbe(old, clock: clock)
+        plain.tick(windows: twins, indexRevision: 1)
+        old.answer([old.page(kind: "popout", chat: "local_left", title: "Ожидание задачи",
+                             store: "ok"),
+                    old.page(kind: "popout", chat: "local_right", title: "Ожидание задачи",
+                             store: "ok")])
+        clock.advance(2)
+        plain.tick(windows: twins, indexRevision: 1)
+        clock.advance(ChatProbe.askInterval + 1)
+        plain.tick(windows: twins, indexRevision: 1)
+        XCTAssertEqual(old.writes.count, 1, "сверять нечем — круг ничего не изменит")
+    }
+
+    /// Одинокое окно рамкой не опознаётся и опознаваться не должно: probe нельзя дёргать
+    /// на каждое движение мышью (критик WF77, блокер 6а).
+    func testLoneWindowMoveDoesNotAskProbe() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        let alone: [(title: String, frame: CGRect?)] = [
+            (title: "Bro Flow продолжение", frame: ChatProbeTests.left),
+        ]
+
+        probe.tick(windows: alone, indexRevision: 1)
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "Bro Flow продолжение",
+                             store: "ok", frame: [-792, -842, 496, 838])])
+        clock.advance(2)
+        probe.tick(windows: alone, indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+
+        // Окно уехало на другой край экрана и приложение об этом знает — вопроса всё равно
+        // нет: заголовок у окна один на весь экран, рамка ему не нужна.
+        probe.noteWindowsMoved()
+        clock.advance(ChatProbe.askInterval + 1)
+        probe.tick(windows: [(title: "Bro Flow продолжение", frame: ChatProbeTests.right)],
+                   indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+        XCTAssertNil(probe.chat(forTitle: "Bro Flow продолжение", frame: ChatProbeTests.right),
+                     "противоречащую рамку нельзя перекрыть заголовком")
+    }
+
+    // MARK: - домашний экран (план WF37, части C2 и C3, задача #5576)
+
+    /// Эталоны ответа страницы лежат в репозитории — те же файлы читает батч страницы.
+    private static var fixtures: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("tests/fixtures/cashout", isDirectory: true)
+    }
+
+    /// Ответ лоадера с одной страницей: эталон кладётся внутрь как есть, побайтно.
+    private func loaderAnswer(_ name: String, url: String) throws -> (data: Data, nonce: String) {
+        let raw = try Data(contentsOf: ChatProbeTests.fixtures.appendingPathComponent(name))
+        let page = try XCTUnwrap(JSONSerialization.jsonObject(with: raw) as? [String: Any])
+        let nonce = try XCTUnwrap(page["nonce"] as? String)
+        let body: [String: Any] = ["at": "2026-09-07T18:00:00Z",
+                                   "results": [["id": 1, "url": url, "source": ProbeSourceFixture.metadata(url: url), "result": page]]]
+        return (try JSONSerialization.data(withJSONObject: body), nonce)
+    }
+
+    /// Папку из ответа принимаем только у главного окна: у попапа её и не бывает, а верить
+    /// чужой строке нельзя — на ней стоит цвет окна.
+    func testParseAnswerFolderMainOnly() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        box.answer([
+            box.home(),
+            box.page(kind: "popout", chat: "local_b2", title: "VkusnoffKz 2", store: "cache",
+                     path: "blank", folder: "/Users/dev/Projects/VkusnoffKz"),
+        ])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+
+        XCTAssertEqual(probe.pages.map { $0.path }, [ChatProbe.homePath, "blank"])
+        XCTAssertEqual(probe.pages.first?.folder, "/Users/dev/Projects/PimpMyClaude")
+        XCTAssertNil(probe.pages.last?.folder, "папку берём только у главного окна")
+
+        // Эталоны контракта побайтно: домашний экран, открытый чат и попап.
+        let home = try loaderAnswer("probe-answer-home.json", url: "https://claude.ai/epitaxy")
+        let atHome = ChatProbe.parseAnswer(home.data, nonce: home.nonce, at: clock.now)
+        XCTAssertEqual(atHome.pages.first?.kind, .main)
+        XCTAssertEqual(atHome.pages.first?.path, ChatProbe.homePath)
+        XCTAssertEqual(atHome.pages.first?.folder, "/Users/dev/Projects/PimpMyClaude")
+        XCTAssertNil(atHome.pages.first?.chat, "на домашнем экране чата нет вовсе")
+
+        let chat = try loaderAnswer("probe-answer-chat.json",
+                                    url: "https://claude.ai/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74")
+        let inChat = ChatProbe.parseAnswer(chat.data, nonce: chat.nonce, at: clock.now)
+        XCTAssertNil(inChat.pages.first?.folder, "в открытом чате папку даёт индекс, а не страница")
+        XCTAssertEqual(inChat.pages.first?.path,
+                       "/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74")
+
+        let popout = try loaderAnswer("probe-answer-popout.json", url: "about:blank")
+        let inPopout = ChatProbe.parseAnswer(popout.data, nonce: popout.nonce, at: clock.now)
+        XCTAssertEqual(inPopout.pages.first?.kind, .popout)
+        XCTAssertNil(inPopout.pages.first?.folder)
+        XCTAssertEqual(inPopout.pages.first?.path, "blank")
+    }
+
+    /// Сито папки: только абсолютный путь и не длиннее потолка. Всё прочее — nil.
+    func testParseAnswerFolderRejectsRelative() throws {
+        XCTAssertNil(ChatProbe.folderPath("Projects/PimpMyClaude"))
+        XCTAssertNil(ChatProbe.folderPath("~/Projects/PimpMyClaude"))
+        XCTAssertNil(ChatProbe.folderPath(""))
+        XCTAssertNil(ChatProbe.folderPath(nil))
+        XCTAssertNil(ChatProbe.folderPath(42), "не строка — не папка")
+        XCTAssertNil(ChatProbe.folderPath("/" + String(repeating: "a", count: ChatProbe.folderLimit)))
+        XCTAssertEqual(ChatProbe.folderPath("/" + String(repeating: "a",
+                                                         count: ChatProbe.folderLimit - 1))?.count,
+                       ChatProbe.folderLimit)
+        XCTAssertEqual(ChatProbe.folderPath("  /Users/dev/Projects/PimpMyClaude \n"),
+                       "/Users/dev/Projects/PimpMyClaude")
+
+        // То же через полный разбор ответа: кривую папку страница присылает — карта её не берёт.
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        box.answer([box.page(kind: "main", chat: nil, title: "Claude", store: "ok",
+                             path: ChatProbe.homePath, folder: "Projects/PimpMyClaude")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(probe.pages.count, 1)
+        XCTAssertNil(probe.pages.first?.folder)
+        XCTAssertEqual(probe.pages.first?.path, ChatProbe.homePath)
+    }
+
+    /// Частота 4 с — только пока последний свежий ответ ГЛАВНОГО окна говорит «я на домашнем
+    /// экране» (критик, важно 5): уехало окно в чат — снова 15 с.
+    func testHomeIntervalOnlyWhileMainAtHome() throws {
+        XCTAssertLessThan(ChatProbe.homeInterval, ChatProbe.askInterval)
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+        box.answer([box.home()])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1, "пол частоты на домашнем экране — 4 с, прошло 2")
+
+        // Домашний экран — повод сам по себе: заголовок окна там заглушка, состав чатов
+        // при смене папки чипа не меняется, и спросить об этом больше некому.
+        clock.advance(ChatProbe.homeInterval)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 2)
+
+        // Элвис открыл чат — путь другой, и частота возвращается к прежним 15 с.
+        box.answer([box.page(kind: "main", chat: "local_a1", title: "Claude", store: "ok",
+                             path: "/epitaxy/local_a1")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 2)
+        clock.advance(ChatProbe.homeInterval + 1)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 2, "в открытом чате 4 с не действуют")
+        clock.advance(ChatProbe.askInterval)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 2, "и повода спрашивать в покое нет вовсе")
+        // Канал при этом живой: настоящий повод (сменился состав чатов) слышен сразу.
+        probe.tick(windowTitles: ["Claude"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 3)
+
+        // Правило признака отдельно: протухший ответ и попап домашним экраном не считаются.
+        let fresh = ChatPage(kind: .main, chat: nil, title: "Claude", path: ChatProbe.homePath,
+                             store: "ok", folder: "/tmp/Проект", at: clock.now)
+        XCTAssertTrue(ChatProbe.isMainAtHome([fresh], at: clock.now))
+        XCTAssertFalse(ChatProbe.isMainAtHome([fresh],
+                                              at: clock.now.addingTimeInterval(ChatProbe.mainChatSeconds + 1)),
+                       "протухший ответ канал не разгоняет")
+        XCTAssertFalse(ChatProbe.isMainAtHome([ChatPage(kind: .popout, chat: "local_b2",
+                                                        title: "VkusnoffKz 2", path: ChatProbe.homePath,
+                                                        store: "ok", at: clock.now)], at: clock.now),
+                       "попап на частоту не влияет")
+        XCTAssertFalse(ChatProbe.isMainAtHome([], at: clock.now))
+    }
+
+    /// Задача #5770: «Сохранить раскладку» отказывало плашкой «включи 🗂 Цвет по проекту» —
+    /// при выключенном тумблере канал молчит совсем, и чаты окон никому не известны.
+    /// Требование открывает канал на полминуты: один круг мимо пола частоты, и дальше тишина.
+    func testChatProbeAnswersOnDemandWithToggleOff() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        probe.isEnabled = { false }
+
+        // Тумблер выключен — канала не касаемся вовсе (риск 11 плана WF29).
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 1)
+        XCTAssertTrue(box.writes.isEmpty)
+        XCTAssertEqual(probe.status, "off/0/0")
+
+        // Попросили снимок раскладки: ближайший тик спрашивает страницы.
+        let asked = clock.now
+        probe.demand(at: asked)
+        XCTAssertFalse(probe.answered(after: asked), "круга ещё не было — ждать")
+        clock.advance(2)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1)
+        XCTAssertTrue(try XCTUnwrap(box.writes.last).contains("api.chats({ scan: true"),
+                      "чата окна мы не знаем — просим страницу поискать стор")
+        XCTAssertFalse(probe.answered(after: asked), "ответа ещё нет")
+
+        // Страницы ответили — карта на руках, тумблер тут ни при чём.
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "VkusnoffKz 3", store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 1)
+        XCTAssertTrue(probe.answered(after: asked))
+        XCTAssertEqual(probe.chat(forTitle: "VkusnoffKz 3"), "local_b2")
+
+        // Требование обслужено: второго круга оно не заказывает, сколько ни тикай.
+        for _ in 0..<5 {
+            clock.advance(ChatProbe.askInterval + 1)
+            probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 1)
+        }
+        XCTAssertEqual(box.writes.count, 1)
+
+        // Полминуты вышли — канал снова молчит совсем, как и положено при выключенном тумблере.
+        clock.advance(ChatProbe.demandSeconds)
+        probe.tick(windowTitles: ["VkusnoffKz 3", "Новое окно"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 1)
+        XCTAssertEqual(probe.status, "off/1/1")
+        XCTAssertFalse(probe.answered(after: asked), "канал выключен — ждать нечего")
+        XCTAssertTrue(probe.pages.isEmpty)
+
+        // А со включённым тумблером требование ничего не ломает: круг один, мимо пола частоты.
+        var on = false
+        probe.isEnabled = { on }
+        on = true
+        clock.advance(2)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 2)
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "VkusnoffKz 3", store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 2)
+        let now = clock.now
+        probe.demand(at: now)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 3, "требование обязано спросить мимо пола частоты")
+        // Незакрытый круг сильнее требования: старый ответ затёр бы свежий (критик В2 WF29).
+        probe.demand(at: clock.now)
+        clock.advance(1)
+        probe.tick(windowTitles: ["VkusnoffKz 3"], indexRevision: 2)
+        XCTAssertEqual(box.writes.count, 3)
+    }
+
+    // MARK: - WF87: working и limits в ответе chats()
+
+    /// Эталоны контракта B (общие с tests/chat-id.test.mjs): working — у main и popout, limits — только
+    /// у главного окна; Swift разбирает НАСТОЯЩИЙ ответ страницы.
+    func testParseWorkingAndLimitsFromFixtures() throws {
+        let clock = ProbeClock()
+        let home = try loaderAnswer("probe-answer-home.json", url: "https://claude.ai/epitaxy")
+        let atHome = try XCTUnwrap(ChatProbe.parseAnswer(home.data, nonce: home.nonce, at: clock.now).pages.first)
+        XCTAssertEqual(atHome.working, false)
+        let limits = try XCTUnwrap(atHome.limits)
+        XCTAssertEqual(limits.source, "api")
+        XCTAssertEqual(limits.plan, "Max 20x")
+        XCTAssertEqual(limits.weekly?.used, 77)
+        XCTAssertEqual(limits.fiveHour?.used, 65)
+        XCTAssertEqual(limits.fable?.used, 40)
+        XCTAssertEqual(limits.at, Date(timeIntervalSince1970: 1_756_900_000.123))
+
+        let chat = try loaderAnswer("probe-answer-chat.json",
+                                    url: "https://claude.ai/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74")
+        XCTAssertEqual(ChatProbe.parseAnswer(chat.data, nonce: chat.nonce, at: clock.now).pages.first?.working, true)
+
+        let popout = try loaderAnswer("probe-answer-popout.json", url: "about:blank")
+        let inPopout = try XCTUnwrap(ChatProbe.parseAnswer(popout.data, nonce: popout.nonce, at: clock.now).pages.first)
+        XCTAssertEqual(inPopout.working, false)
+        XCTAssertNil(inPopout.limits, "у попапа лимитов нет")
+    }
+
+    /// Лимиты попапа и чужой страницы не берём; working чужой страницы — тоже.
+    func testLimitsOnlyFromMain() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let limits: [String: Any] = ["v": 1, "at": 1, "plan": "Pro", "fiveHour": NSNull(),
+                                     "weekly": ["used": 10, "resetsAt": NSNull()], "fable": NSNull(), "source": "api"]
+        var popout = box.page(kind: "popout", chat: "local_b2", title: "X", store: "ok", nonce: "n")
+        var other = box.page(kind: "other", chat: nil, title: "", store: "skip", nonce: "n")
+        for i in [0, 1] {
+            var entry = i == 0 ? popout : other
+            var result = entry["result"] as! [String: Any]
+            result["limits"] = limits
+            result["working"] = true
+            entry["result"] = result
+            if i == 0 { popout = entry } else { other = entry }
+        }
+        box.answer([popout, other])
+        let pages = ChatProbe.parseAnswer(box.result, nonce: "n", at: clock.now).pages
+        XCTAssertNil(pages[0].limits)
+        XCTAssertEqual(pages[0].working, true)
+        XCTAssertNil(pages[1].limits)
+        XCTAssertNil(pages[1].working, "чужая страница о работе не говорит")
+    }
+
+    /// Свой повод раз в минуту даже при выключенном «Цвет по проекту»: круг ради лимитов, ответ
+    /// лёг в `signals`, между кругами канал снова молчит. Окон нет — не спрашиваем.
+    func testLimitsReasonWithToggleOff() throws {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        probe.isEnabled = { false }
+        probe.isLimitsWanted = { true }
+
+        probe.tick(windowTitles: [], indexRevision: 1)
+        XCTAssertTrue(box.writes.isEmpty, "окон Claude нет — спрашивать некого")
+
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1, "первый круг ради лимитов — сразу")
+        var main = box.page(kind: "main", chat: "local_a1", title: "Claude", store: "ok")
+        var result = main["result"] as! [String: Any]
+        result["working"] = false
+        result["limits"] = ["v": 1, "at": 1_757_100_000_000, "plan": "Max 20x",
+                            "weekly": ["used": 77, "resetsAt": NSNull()], "fiveHour": NSNull(), "fable": NSNull(),
+                            "source": "api"] as [String: Any]
+        main["result"] = result
+        var popout = box.page(kind: "popout", chat: "local_b2", title: "Pimp", store: "ok")
+        var popoutResult = popout["result"] as! [String: Any]
+        popoutResult["working"] = true
+        popout["result"] = popoutResult
+        box.answer([main, popout])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        let signals = probe.signals
+        XCTAssertEqual(signals.limits?.weekly?.used, 77)
+        XCTAssertEqual(signals.workingChats, 1)
+        XCTAssertEqual(signals.anyPageWorking, true)
+        XCTAssertEqual(signals.lastWorkingAt, clock.now)
+
+        clock.advance(2)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(probe.status.prefix(3), "off", "круг закрыт — канал снова молчит")
+        clock.advance(ChatProbe.limitsInterval - 6)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 1, "раньше минуты не спрашиваем")
+        clock.advance(2)
+        probe.tick(windowTitles: ["Claude"], indexRevision: 1)
+        XCTAssertEqual(box.writes.count, 2, "минута прошла — новый круг")
+        XCTAssertEqual(probe.signals.limits?.weekly?.used, 77, "лимиты живут между кругами")
+
+        // Ответ о работе старше трёх минут — «не знаем», а не «никто не работает».
+        clock.advance(ChatProbe.workingSeconds)
+        XCTAssertNil(probe.signals.workingChats)
+        XCTAssertNil(probe.signals.anyPageWorking)
+    }
+
+    /// Старая страница (без поля working) о работе молчит: nil, а не «никто не работает».
+    func testNoWorkingFieldMeansUnknown() {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        probe.tick(windowTitles: ["Pimp"], indexRevision: 1)
+        box.answer([box.page(kind: "popout", chat: "local_b2", title: "Pimp", store: "ok")])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Pimp"], indexRevision: 1)
+        XCTAssertFalse(probe.pages.isEmpty)
+        XCTAssertNil(probe.signals.workingChats)
+        XCTAssertNil(probe.signals.limits)
+    }
+
+    /// Гейт 2 WF87: тишина считается с первого тихого круга после старта (не «2 мин» сразу), а
+    /// «Обновить» решает только по ответу, пришедшему после нажатия.
+    func testQuietSinceAndAnswerAfterDemand() {
+        let clock = ProbeClock()
+        let box = ProbeBox(clock: clock)
+        let probe = makeProbe(box, clock: clock)
+        func page(working: Bool) -> [String: Any] {
+            var page = box.page(kind: "popout", chat: "local_b2", title: "Pimp", store: "ok")
+            var result = page["result"] as! [String: Any]
+            result["working"] = working
+            page["result"] = result
+            return page
+        }
+        XCTAssertNil(probe.signals.idleSeconds(at: clock.now), "после старта тишину ещё не наблюдали")
+        probe.tick(windowTitles: ["Pimp"], indexRevision: 1)
+        box.answer([page(working: false)])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Pimp"], indexRevision: 1)
+        let quiet = clock.now
+        XCTAssertEqual(probe.signals.quietSince, quiet)
+        XCTAssertEqual(probe.signals.idleSeconds(at: quiet), 0, "тишина с первого тихого круга, а не «давно»")
+        XCTAssertFalse(ClaudeUpdateMenu.shouldOffer(ready: true, claudeRunning: true, windowCount: 1,
+                                                    anyPageWorking: probe.signals.anyPageWorking,
+                                                    idleSeconds: probe.signals.idleSeconds(at: quiet),
+                                                    lastOfferAt: nil, snoozeUntil: nil, now: quiet),
+                       "меньше 120 с наблюдения — не предлагаем")
+        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: true, windowCount: 1,
+                                                 idleSeconds: probe.signals.idleSeconds(at: quiet)),
+                       "никто не работает", "минут не называем")
+
+        // Нажали «Обновить»: прежний ответ не годится, пока не пришёл круг после нажатия.
+        clock.advance(1)
+        let pressed = clock.now
+        XCTAssertNil(probe.signals.answered(after: pressed).workingChats, "ответ до нажатия — «не знаем»")
+        probe.demand(at: pressed)
+        probe.tick(windowTitles: ["Pimp"], indexRevision: 1)
+        box.answer([page(working: true)])
+        clock.advance(2)
+        probe.tick(windowTitles: ["Pimp"], indexRevision: 1)
+        let fresh = probe.signals.answered(after: pressed)
+        XCTAssertEqual(fresh.workingChats, 1, "круг после нажатия — решаем по нему")
+        XCTAssertEqual(fresh.anyPageWorking, true)
+        XCTAssertEqual(probe.signals.quietSince, quiet, "первый тихий круг не переписывается")
+        XCTAssertEqual(probe.signals.idleSeconds(at: clock.now), 0, "работу видели — считаем от неё")
+    }
+
+    /// После подмены Пимпа (1.5.9 → 1.6.0) вчерашний probe.js — свой: скрипт WF87 не менялся, и
+    /// канал не молчит 10 минут (критик WF87 п. 4). Текст — побайтно то, что писал 1.5.9.
+    func testPreviousReleaseScriptIsOwn() {
+        let nonce = "chats-1758800000000-0042"
+        let miss = "{v:1,nonce:\"\(nonce)\",kind:\"other\",store:\"skip\"}"
+        let previous = """
+            // myclaude-chats v1 \(nonce)
+            // Пишет PimpMyClaude: спрашивает у страницы, какой в ней чат (план WF29).
+            // Свой probe.js на гейте? Приложение уступит: чужой свежий файл оно не переписывает.
+            (function () {
+              try {
+                var api = window.__myclaude;
+                if (!api || typeof api.chats !== "function") return \(miss);
+                return api.chats({ scan: false, nonce: "\(nonce)" });
+              } catch (e) {
+                return \(miss);
+              }
+            })()
+
+            """
+        XCTAssertTrue(ChatProbe.isOwnScript(previous))
+        XCTAssertEqual(ChatProbe.script(nonce: nonce, scan: false), previous)
+    }
+}
+
+// WF119: необязательное поле не меняет происхождение/формат probe и прежние ответы.
+extension ChatProbeTests {
+    func testSendDelaySettingOptionalStrictParse() throws {
+        let nonce = "wf119"
+        let settings: [Any] = [NSNull(), ["on": true, "seconds": 3], ["on": false, "seconds": 10],
+            ["on": 1, "seconds": 5], ["on": true, "seconds": true], ["on": true, "seconds": "5"],
+            ["on": true, "seconds": 3.5], ["on": true, "seconds": 0], ["on": true]]
+        let entries: [[String: Any]] = settings.map { setting in
+            var result: [String: Any] = ["nonce": nonce, "kind": "popout", "title": "Чат"]
+            if !(setting is NSNull) { result["sendDelaySetting"] = setting }
+            return ["url": "about:blank", "source": ProbeSourceFixture.metadata(url: "about:blank"), "result": result]
+        }
+        let pages = ChatProbe.parse(try JSONSerialization.data(withJSONObject: ["results": entries]), nonce: nonce, at: Date())
+        XCTAssertEqual(pages.count, settings.count)
+        XCTAssertEqual(pages.map { $0.sendDelaySetting }, [nil, SendDelaySetting(on: true, seconds: 3),
+                       SendDelaySetting(on: false, seconds: 10), nil, nil, nil, nil, nil, nil])
+    }
+}

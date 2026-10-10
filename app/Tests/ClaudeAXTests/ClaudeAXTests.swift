@@ -1,0 +1,5660 @@
+import AppKit
+import XCTest
+@testable import ClaudeAX
+
+/// Хранилище-заглушка: тесты не должны писать в живые настройки приложения.
+private final class MemoryDefaults: ThemeDefaults {
+    var values: [String: Any] = [:]
+    func string(forKey key: String) -> String? { values[key] as? String }
+    func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
+    func object(forKey key: String) -> Any? { values[key] }
+    func set(_ value: Any?, forKey key: String) { values[key] = value }
+    func removeObject(forKey key: String) { values.removeValue(forKey: key) }
+}
+
+/// Ловушка расписания примерок (план WF31): отложенные блоки складываются сюда, а тест
+/// выполняет их сам — ждать полсекунды и крутить run loop незачем.
+private final class PendingPreviews {
+    var blocks: [(wait: TimeInterval, run: () -> Void)] = []
+
+    func runAll() {
+        let all = blocks
+        blocks = []
+        all.forEach { $0.run() }
+    }
+}
+
+/// Только чистая логика: раскладка «Расставить», клавиши меню и формат command.json.
+/// Живой AX (окна Claude, авто-Allow, popUp) проверяется руками на гейте.
+final class ClaudeAXTests: XCTestCase {
+    /// `PreviewMenuDelegate.shared` — синглтон, и с плана WF31 у него есть состояние: пауза
+    /// перед примеркой. Мгновенное расписание ставим ВСЕМ тестам этого класса, иначе
+    /// отложенный блок без прокрутки run loop не выполнится и hover-тесты покраснеют.
+    /// Правило на будущее: любой НОВЫЙ класс тестов, который трогает меню, обязан сделать
+    /// то же самое сам.
+    override func setUp() {
+        super.setUp()
+        PreviewMenuDelegate.shared.schedule = { _, block in block() }
+    }
+
+    /// Синглтон возвращается на место экземплярными полями: `defaultDelay` — `static let`,
+    /// её менять запрещено (иначе сторож константы теряет смысл).
+    override func tearDown() {
+        PreviewMenuDelegate.shared.schedule = PreviewMenuDelegate.liveSchedule
+        PreviewMenuDelegate.shared.delay = PreviewMenuDelegate.defaultDelay
+        PreviewMenuDelegate.shared.cancel()
+        super.tearDown()
+    }
+
+    // Двенадцать команд, включая выключатель Авто-Allow (К3) и режим микрофона (К4).
+    func testSkeleton() { XCTAssertEqual(ClaudeCommand.allCases.count, 12) }
+
+    /// Экран для «Расставить» — тот, где стоят окна, а не тот, где активное окно (08.09):
+    /// большинство центров, ничья — первый, ни одного попадания — первый (меню-бар).
+    func testScreensPickFollowsWindows() {
+        let laptop = CGRect(x: 0, y: 0, width: 1470, height: 956)
+        let tall = CGRect(x: -1060, y: -419, width: 1060, height: 1696)
+        let onLaptop = CGRect(x: 10, y: 40, width: 700, height: 800)
+        let onTall = CGRect(x: -900, y: 100, width: 500, height: 800)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [onLaptop, onLaptop, onTall]), 0)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [onTall, onTall, onLaptop]), 1)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [onLaptop, onTall]), 0)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: []), 0)
+        XCTAssertEqual(Screens.pick(screens: [laptop, tall], for: [CGRect(x: 5000, y: 5000, width: 10, height: 10)]), 0)
+    }
+
+    // MARK: - «Расставить»
+
+    func testColumnsKeepOneRowWhileCellsAreWideEnough() {
+        // 1920/4 = 480 ≥ 340 — четыре столбца во всю высоту, а не 2×2.
+        XCTAssertEqual(ArrangeLayout.columns(count: 4, width: 1920), 4)
+        XCTAssertEqual(ArrangeLayout.columns(count: 1, width: 1920), 1)
+        // 1920/6 = 320 < 340 — столбец отбрасывается, появляется второй ряд.
+        XCTAssertEqual(ArrangeLayout.columns(count: 6, width: 1920), 5)
+        XCTAssertEqual(ArrangeLayout.columns(count: 8, width: 1000), 2)
+    }
+
+    func testFramesTileAreaWithoutGaps() {
+        let area = CGRect(x: 100, y: 25, width: 1710, height: 1055)
+        let cells = ArrangeLayout.frames(count: 5, in: area)
+        XCTAssertEqual(cells.count, 5)
+        XCTAssertEqual(cells[0].minX, area.minX)
+        XCTAssertEqual(cells[4].maxX, area.maxX)
+        for i in 1..<cells.count {
+            XCTAssertEqual(cells[i].minX, cells[i - 1].maxX, "щель между ячейками \(i - 1) и \(i)")
+            XCTAssertEqual(cells[i].height, area.height)
+        }
+        XCTAssertTrue(ArrangeLayout.frames(count: 0, in: area).isEmpty)
+    }
+
+    func testFramesFillRowsTopDown() {
+        let area = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let cells = ArrangeLayout.frames(count: 3, in: area) // 1000/3 = 333 < 340 → 2×2
+        XCTAssertEqual(cells[0], CGRect(x: 0, y: 0, width: 500, height: 400))
+        XCTAssertEqual(cells[1], CGRect(x: 500, y: 0, width: 500, height: 400))
+        XCTAssertEqual(cells[2], CGRect(x: 0, y: 400, width: 500, height: 400))
+    }
+
+    /// «Главный по центру» (WF102, #7904, правка критика C6): семь окон на живом Одиссее
+    /// (2560×720, зазор 2) встают ровно как `layouts-manual/rick7.py` — главный четвёртым,
+    /// шириной в треть, по три окна с боков. Плиткой меню он не бывает.
+    func testCenterLayoutPutsMainInTheMiddleThird() {
+        let odyssey = CGRect(x: -800, y: -720, width: 2560, height: 720)
+        let seven = ArrangeLayout.frames(count: 7, in: odyssey, mode: .center, minCellWidth: 220, gap: 2)
+        XCTAssertEqual(seven.map { $0.minX }, [-800, -515, -231, 54, 908, 1193, 1477])
+        XCTAssertEqual(seven.map { $0.width }, [283, 282, 283, 852, 283, 282, 283])
+        XCTAssertEqual(seven.map { $0.minY }, Array(repeating: -720, count: 7))
+        XCTAssertEqual(seven.map { $0.height }, Array(repeating: 720, count: 7))
+        XCTAssertEqual(seven.last?.maxX, odyssey.maxX, "правый край — встык")
+
+        // Чётное число: слева меньшая половина, главный — на месте floor((n−1)/2).
+        let six = ArrangeLayout.frames(count: 6, in: odyssey, mode: .center, minCellWidth: 220, gap: 2)
+        XCTAssertEqual(six.count, 6)
+        XCTAssertEqual(six[2], seven[3], "главный — та же средняя треть")
+        XCTAssertEqual(six.filter { $0.maxX <= seven[3].minX }.count, 2)
+        XCTAssertEqual(six.filter { $0.minX >= seven[3].maxX }.count, 3)
+        // Одно окно — только средняя треть.
+        XCTAssertEqual(ArrangeLayout.frames(count: 1, in: odyssey, mode: .center, gap: 2), [seven[3]])
+
+        // too-small считается по числу окон: 7 окон по 282 влезают при 220 и 280, 9 окон — нет.
+        XCTAssertTrue(ArrangeLayout.centerFits(count: 7, in: odyssey, minCellWidth: 280, gap: 2))
+        XCTAssertFalse(ArrangeLayout.centerFits(count: 9, in: odyssey, minCellWidth: 280, gap: 2))
+        XCTAssertTrue(ArrangeLayout.centerFits(count: 9, in: odyssey, minCellWidth: 200, gap: 2))
+
+        XCTAssertFalse(MenuModel.layoutOrder.contains(.center), "плиткой меню не бывает")
+    }
+
+    /// Раскладки «4», «5» и «5×2» (план WF21): сетка задана, рамок ровно столько, сколько
+    /// в ней мест, — лишним окнам их не достаётся, и трогать эти окна некому.
+    func testArrangeModesGiveFixedGrids() {
+        let area = CGRect(x: 0, y: 34, width: 1470, height: 860) // 15" Элвиса
+        XCTAssertEqual(ArrangeLayout.Mode.allCases.map { $0.rawValue }, ["row", "4", "5", "5x2", "center"])
+        XCTAssertNil(ArrangeLayout.capacity(of: .ribbon), "лента берёт все окна")
+        let fixed: [ArrangeLayout.Mode] = [.four, .five, .tenGrid]
+        XCTAssertEqual(fixed.map { ArrangeLayout.capacity(of: $0) }, [4, 5, 10])
+
+        // «5 в ряд»: пять столбцов во всю высоту, шестому окну рамки нет.
+        let five = ArrangeLayout.frames(count: 6, in: area, mode: .five)
+        XCTAssertEqual(five.count, 5)
+        XCTAssertEqual(five[0], CGRect(x: 0, y: 34, width: 294, height: 860))
+        XCTAssertEqual(five[4].maxX, area.maxX)
+        // Окон меньше, чем ячеек, — сетка остаётся, окна не растягиваем.
+        XCTAssertEqual(ArrangeLayout.frames(count: 2, in: area, mode: .four).map { $0.width },
+                       [368, 367])
+
+        // «5×2»: слева направо, сверху вниз; ряд — вполовину высоты, одиннадцатому места нет.
+        let grid = ArrangeLayout.frames(count: 6, in: area, mode: .tenGrid)
+        XCTAssertEqual(grid[0], CGRect(x: 0, y: 34, width: 294, height: 430))
+        XCTAssertEqual(grid[5], CGRect(x: 0, y: 464, width: 294, height: 430))
+        XCTAssertEqual(ArrangeLayout.frames(count: 12, in: area, mode: .tenGrid).count, 10)
+        // Лента считает столбцы сама и рамку даёт каждому окну — счёт прежний.
+        XCTAssertEqual(ArrangeLayout.frames(count: 6, in: area, minCellWidth: 280).count, 6)
+
+        // Влезает ли раскладка: у Элвиса minWindowWidth 280 — пятёрка встаёт по 294; у команды
+        // 360 — пятёрка уже серая, а четвёрка (367) ещё нет. Лента влезает всегда.
+        XCTAssertTrue(ArrangeLayout.fits(.five, in: area, minCellWidth: 280))
+        XCTAssertTrue(ArrangeLayout.fits(.tenGrid, in: area, minCellWidth: 280))
+        XCTAssertFalse(ArrangeLayout.fits(.five, in: area, minCellWidth: 360))
+        XCTAssertTrue(ArrangeLayout.fits(.four, in: area, minCellWidth: 360))
+        XCTAssertTrue(ArrangeLayout.fits(.ribbon, in: area, minCellWidth: 999))
+
+        // Последняя раскладка живёт в настройках приложения; чужое слово в них — лента.
+        let store = ThemeStore(defaults: MemoryDefaults())
+        XCTAssertEqual(store.arrangeMode, .ribbon)
+        store.arrangeMode = .tenGrid
+        XCTAssertEqual(store.arrangeMode, .tenGrid)
+        let junk = MemoryDefaults()
+        junk.values[ThemeStore.arrangeModeKey] = "5x3"
+        XCTAssertEqual(ThemeStore(defaults: junk).arrangeMode, .ribbon)
+    }
+
+    /// Полоса раскладок — первый пункт «⋯ Ещё ▸» (план WF21; с WF71 верх меню занимает
+    /// оформление, #6248): четыре плитки в порядке макета, выбранная отмечена, не влезающая
+    /// на экран не нажимается, а последней клеткой стоит «💾 сохранить» (#5799).
+    func testLayoutPickerIsFirstMenuItem() throws {
+        var picked: [ArrangeLayout.Mode] = []
+        var saved = 0
+        let done = expectation(description: "плитка выбрана")
+        let stored = expectation(description: "раскладка сохранена")
+        var config = menuConfig()
+        config.arrangeMode = .five
+        config.arrangeFits = { $0 != .tenGrid }
+        config.arrange = { picked.append($0); done.fulfill() }
+        config.saveLayout = { saved += 1; stored.fulfill() }
+        // Десять окон: при меньшем числе сетки из полосы уходят (#5800), а здесь проверяется
+        // сама полоса целиком.
+        config.windowArea = CGRect(x: 0, y: 0, width: 1000, height: 500)
+        config.windowFrames = (0..<10).map {
+            CGRect(x: CGFloat($0) * 100, y: 0, width: 100, height: 500)
+        }
+        let menu = MinimizeMenu.build(config: config)
+        // На верхнем уровне полосы больше нет — она первой строкой в «⋯ Ещё ▸».
+        XCTAssertNil(menu.items.first { $0.view is LayoutPickerView })
+        let more = try moreMenu(in: menu)
+
+        let item = try XCTUnwrap(more.items.first)
+        XCTAssertEqual(item.title, MenuModel.layoutsTitle)
+        let picker = try XCTUnwrap(item.view as? LayoutPickerView)
+        XCTAssertTrue(more.items[1].isSeparatorItem, "после полосы — разделитель")
+        XCTAssertFalse(more.items[2].isSeparatorItem, "и только один")
+        XCTAssertEqual(picker.tiles.map { $0.mode }, [.four, .five, .tenGrid, .ribbon])
+        XCTAssertEqual(picker.tiles.map { $0.title },
+                       ["4 в ряд", "5 в ряд", "5 × 2", "как сейчас"])
+        XCTAssertEqual(picker.tiles.map { $0.isSelected }, [false, true, false, false])
+        XCTAssertEqual(picker.tiles.map { $0.isEnabled }, [true, true, false, true])
+        XCTAssertEqual(picker.cellCount, 5, "четыре плитки и кнопка сохранения")
+        XCTAssertEqual(picker.saveIndex, 4)
+
+        // Клетки идут слева направо, не наезжают друг на друга и не вылезают за пункт.
+        XCTAssertLessThan(picker.cell(of: 0).maxX, picker.cell(of: 1).minX)
+        XCTAssertLessThanOrEqual(picker.cell(of: 4).maxX, picker.bounds.maxX)
+        XCTAssertEqual(picker.index(at: NSPoint(x: picker.cell(of: 1).midX,
+                                                y: picker.bounds.midY)), 1)
+        XCTAssertEqual(picker.index(at: NSPoint(x: picker.cell(of: 4).midX,
+                                                y: picker.bounds.midY)), 4)
+
+        // Серая плитка молчит; обычная зовёт обработчик ходом вперёд (меню уже закрылось),
+        // а последняя клетка — то же сохранение раскладки, что пункт в «⋯ Ещё ▸».
+        picker.pick(2)
+        picker.pick(0)
+        picker.pick(4)
+        waitForExpectations(timeout: 1)
+        XCTAssertEqual(picked, [.four])
+        XCTAssertEqual(saved, 1)
+    }
+
+    /// Полоса зависит от числа окон (#5800, слово Элвиса 08.09 16:30: «здесь только сейчас два
+    /// окна отображается — зачем эти режимы вообще»). Сетка, у которой ячеек больше, чем окон,
+    /// из полосы уходит совсем, а не сереет: серых Элвис всё равно видел бы четыре штуки.
+    /// Гашение «экран уже» — про другое и работает по-прежнему.
+    func testLayoutTilesFollowWindowCount() {
+        XCTAssertTrue(ArrangeLayout.suits(.ribbon, windows: 0))
+        XCTAssertTrue(ArrangeLayout.suits(.ribbon, windows: 2))
+        XCTAssertFalse(ArrangeLayout.suits(.four, windows: 3))
+        XCTAssertTrue(ArrangeLayout.suits(.four, windows: 4))
+        XCTAssertTrue(ArrangeLayout.suits(.four, windows: 7), "лишние окна не двигаем — смысл есть")
+        XCTAssertFalse(ArrangeLayout.suits(.five, windows: 4))
+        XCTAssertTrue(ArrangeLayout.suits(.five, windows: 5))
+        XCTAssertFalse(ArrangeLayout.suits(.tenGrid, windows: 9))
+        XCTAssertTrue(ArrangeLayout.suits(.tenGrid, windows: 10))
+
+        let all: (ArrangeLayout.Mode) -> Bool = { _ in true }
+        XCTAssertEqual(LayoutPickerView.tiles(mode: .five, fits: all, windows: 2).map { $0.mode },
+                       [.ribbon], "два окна — только «как сейчас»")
+        XCTAssertEqual(LayoutPickerView.tiles(mode: .five, fits: all, windows: 4).map { $0.mode },
+                       [.four, .ribbon])
+        XCTAssertEqual(LayoutPickerView.tiles(mode: .five, fits: all, windows: 10).map { $0.mode },
+                       [.four, .five, .tenGrid, .ribbon])
+        XCTAssertEqual(LayoutPickerView.tiles(mode: .five, fits: { $0 != .five }, windows: 10)
+                        .map { $0.isEnabled }, [true, false, true, true])
+
+        // Клетки не наезжают и не вылезают за пункт ни при какой длине полосы: ужимается
+        // сама клетка (пять по 54 в 260 не влезли бы).
+        for windows in [0, 1, 2, 4, 5, 10] {
+            var config = MinimizeMenu.MenuConfig()
+            config.windowArea = CGRect(x: 0, y: 0, width: 1000, height: 500)
+            config.windowFrames = Array(repeating: CGRect(x: 0, y: 0, width: 100, height: 500),
+                                        count: windows)
+            let picker = LayoutPickerView(config: config)
+            XCTAssertEqual(picker.cellCount, picker.tiles.count + 1)
+            XCTAssertGreaterThanOrEqual(picker.cell(of: 0).minX, 0, "\(windows) окон")
+            for index in 1..<picker.cellCount {
+                XCTAssertLessThan(picker.cell(of: index - 1).maxX, picker.cell(of: index).minX,
+                                  "\(windows) окон")
+            }
+            XCTAssertLessThanOrEqual(picker.cell(of: picker.saveIndex).maxX, picker.bounds.maxX,
+                                     "\(windows) окон")
+        }
+    }
+
+    /// Плитка «как сейчас» рисует НАСТОЯЩЕЕ положение окон (#5798, слово Элвиса 08.09 16:30:
+    /// «"как сейчас" всегда же по-разному — там нужно отображать, как сейчас окна реально
+    /// отображаются»): рамки вписываются в рабочую область долями, а плитка переворачивает их
+    /// в свои координаты — верх экрана остаётся верхом.
+    func testCurrentLayoutTileDrawsRealWindows() {
+        let area = CGRect(x: 100, y: 50, width: 800, height: 400)
+        // Левая половина во всю высоту и правая нижняя четверть.
+        let shapes = ArrangeLayout.shapes(of: [CGRect(x: 100, y: 50, width: 400, height: 400),
+                                               CGRect(x: 500, y: 250, width: 400, height: 200)],
+                                          in: area)
+        XCTAssertEqual(shapes, [CGRect(x: 0, y: 0, width: 0.5, height: 1),
+                                CGRect(x: 0.5, y: 0.5, width: 0.5, height: 0.5)])
+        // Окно с другого экрана в плитку не попадает вовсе; вылезшее за край — обрезается.
+        XCTAssertEqual(ArrangeLayout.shapes(of: [CGRect(x: 2000, y: 50, width: 400, height: 400)],
+                                            in: area), [])
+        XCTAssertEqual(ArrangeLayout.shapes(of: [CGRect(x: -300, y: 50, width: 800, height: 400)],
+                                            in: area), [CGRect(x: 0, y: 0, width: 0.5, height: 1)])
+        XCTAssertEqual(ArrangeLayout.shapes(of: [area], in: .zero), [], "экрана нет — рисовать нечего")
+
+        // Доли → координаты плитки: y растёт вверх, поэтому окно у ВЕРХА экрана рисуется
+        // у верха картинки, а не вверх ногами.
+        let box = NSRect(x: 10, y: 20, width: 40, height: 40)
+        XCTAssertEqual(LayoutPickerView.place(shapes[0], in: box),
+                       NSRect(x: 10, y: 20, width: 20, height: 40))
+        XCTAssertEqual(LayoutPickerView.place(shapes[1], in: box),
+                       NSRect(x: 30, y: 20, width: 20, height: 20))
+        XCTAssertEqual(LayoutPickerView.place(CGRect(x: 0, y: 0, width: 1, height: 0.5), in: box),
+                       NSRect(x: 10, y: 40, width: 40, height: 20))
+
+        // Полоса берёт эти доли у меню; экрана не знаем — плитка рисует прежнюю схему.
+        var config = MinimizeMenu.MenuConfig()
+        config.windowArea = area
+        config.windowFrames = [CGRect(x: 100, y: 50, width: 400, height: 400)]
+        XCTAssertEqual(LayoutPickerView(config: config).shapes,
+                       [CGRect(x: 0, y: 0, width: 0.5, height: 1)])
+        config.windowArea = nil
+        XCTAssertTrue(LayoutPickerView(config: config).shapes.isEmpty)
+    }
+
+    /// «🗂 Раскладки ▸» — в «⋯ Ещё ▸» перед «🖥 Всем окнам ▸» (план WF41; последним с WF71
+    /// стоит «Всем окнам»): сохранить нынешние окна, под ним имена сохранённых, у каждой —
+    /// вернуть те же чаты, открыть новые, удалить.
+    func testSavedLayoutsMenu() throws {
+        var saved = 0
+        var restored: [(name: String, fresh: Bool)] = []
+        var deleted: [String] = []
+        var config = menuConfig()
+        config.layouts = [ClaudeAXTests.layout("Утро"), ClaudeAXTests.layout("Разбор")]
+        config.saveLayout = { saved += 1 }
+        config.restoreLayout = { restored.append((name: $0.name, fresh: $1)) }
+        config.deleteLayout = { deleted.append($0.name) }
+        let menu = MinimizeMenu.build(config: config)
+
+        let more = try moreMenu(in: menu)
+        // Полоса раскладок зовётся так же — ищем пункт с подменю.
+        let item = try XCTUnwrap(more.items.first { $0.title == MenuModel.savedLayoutsTitle && $0.hasSubmenu })
+        let layouts = try XCTUnwrap(item.submenu)
+        XCTAssertNotNil(item.image)
+        // Между ними с WF82 — «🚦 Меню на кнопке ▸» (#7104), настройка рядом с «Всем окнам».
+        XCTAssertEqual(more.items.suffix(4).map { $0.isSeparatorItem ? "—" : $0.title },
+                       [MenuModel.savedLayoutsTitle, "—", MenuModel.menuButtonTitle,
+                        MenuModel.allWindowsTitle])
+        XCTAssertEqual(layouts.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Сохранить эту раскладку…", "—", "Утро", "Разбор"])
+        // Подсказка называет сетку и число окон — по ней раскладки различаются в лицо.
+        XCTAssertEqual(layouts.items.last?.toolTip, "5 в ряд · 2 окна")
+
+        let morning = try XCTUnwrap(layouts.items.first { $0.title == "Утро" }?.submenu)
+        XCTAssertEqual(morning.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Вернуть эти чаты", "Новые чаты по этим проектам", "—", "Удалить"])
+        click(layouts.items[0])
+        click(morning.items[0])
+        click(morning.items[1])
+        click(try XCTUnwrap(morning.items.last))
+        XCTAssertEqual(saved, 1)
+        XCTAssertEqual(restored.map { $0.name }, ["Утро", "Утро"])
+        XCTAssertEqual(restored.map { $0.fresh }, [false, true])
+        XCTAssertEqual(deleted, ["Утро"])
+
+        // Сохранённых раскладок нет — остаётся один пункт, разделителя нет вовсе.
+        var empty = menuConfig()
+        empty.layouts = []
+        let alone = try XCTUnwrap(try moreMenu(in: MinimizeMenu.build(config: empty)).items
+            .first { $0.title == MenuModel.savedLayoutsTitle && $0.hasSubmenu }?.submenu)
+        XCTAssertEqual(alone.items.map { $0.title }, ["Сохранить эту раскладку…"])
+    }
+
+    /// Имя раскладки приложение предлагает само (#5769): проекты окон слева направо.
+    func testSuggestedLayoutNameListsProjects() {
+        func window(_ id: CGWindowID, _ folder: String, x: CGFloat) -> PimpWindow {
+            PimpWindow(id: id, title: "Окно \(id)", chat: "local_\(id)", folder: folder,
+                       frame: CGRect(x: x, y: 34, width: 290, height: 859))
+        }
+        let pimp = "/Users/dev/Projects/PimpMyClaude"
+        let vkus = "/Users/dev/Projects/VkusnoffKz"
+        let dict = "/Users/dev/Projects/Dictatorik"
+        let skil = "/Users/dev/Projects/SkilZZZ"
+
+        XCTAssertEqual(LayoutsStore.suggestedName(for: []), "")
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, pimp, x: 0)]), "PimpMyClaude")
+        // Порядок — по левому краю рамки, а не по порядку в списке (он идёт по слоям окон).
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, vkus, x: 300),
+                                                        window(2, pimp, x: 0)]),
+                       "PimpMyClaude и VkusnoffKz")
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, pimp, x: 0),
+                                                        window(2, vkus, x: 300),
+                                                        window(3, dict, x: 600)]),
+                       "PimpMyClaude, VkusnoffKz и Dictatorik")
+        // Больше трёх — две папки и счёт остальных.
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, pimp, x: 0),
+                                                        window(2, vkus, x: 300),
+                                                        window(3, dict, x: 600),
+                                                        window(4, skil, x: 900)]),
+                       "PimpMyClaude, VkusnoffKz и ещё 2")
+        // Повторы и окна без папки в имя не идут; папок не осталось вовсе — имени нет.
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, pimp, x: 0),
+                                                        window(2, pimp, x: 300),
+                                                        window(3, "", x: 600)]),
+                       "PimpMyClaude")
+        XCTAssertEqual(LayoutsStore.suggestedName(for: [window(1, "", x: 0)]), "")
+        // Три длинных имени в потолок не влезают — то же «и ещё N», и оно короче потолка.
+        let long = String(repeating: "Проект", count: 5)
+        let name = LayoutsStore.suggestedName(for: [window(1, "/tmp/\(long)1", x: 0),
+                                                    window(2, "/tmp/\(long)2", x: 300),
+                                                    window(3, "/tmp/\(long)3", x: 600)])
+        XCTAssertEqual(name, "\(long)1, \(long)2 и ещё 1")
+        XCTAssertLessThanOrEqual(name.count, LayoutsStore.nameLimit)
+    }
+
+    /// Раскладка для меню: два места по сетке «5 в ряд».
+    private static func layout(_ name: String) -> WindowLayout {
+        WindowLayout(name: name, at: PimpChannel.date("2026-09-08T03:00:00Z")!, mode: .five,
+                     cells: [LayoutCell(folder: "/tmp/Pimp", chat: "main", title: "Claude", cell: 0),
+                             LayoutCell(folder: "/tmp/Vkus", chat: "local_1", title: "Вкуснофф",
+                                        cell: 1)])
+    }
+
+    func testOrderKeepsRowsLeftToRight() {
+        let frames = [
+            CGRect(x: 800, y: 0, width: 400, height: 400),   // 0 — правое верхнее
+            CGRect(x: 0, y: 40, width: 400, height: 400),    // 1 — левое верхнее (тот же ряд, Δy < 60)
+            CGRect(x: 0, y: 500, width: 400, height: 400),   // 2 — нижнее
+        ]
+        XCTAssertEqual(ArrangeLayout.order(of: frames), [1, 0, 2])
+    }
+
+    /// Плитка, которая на ЭТОМ экране не влезает, гаснет (#5733), а с WF77 «влезает»
+    /// считает и зазор (критик п. 11): без него ячейка плитки и живая ячейка расходились
+    /// ровно на `gap`, и плитка на грани начинала врать. ⌥⌘A и «▦ Расставить» сюда больше
+    /// не заходят вовсе — они идут умным путём, которому экран мал не бывает.
+    func testLayoutFitsCountsTheGap() {
+        // Экран Элвиса при минимуме окна 360 пятёрку уже не держит, а четвёрку — да.
+        let laptop = CGRect(x: 0, y: 34, width: 1470, height: 860)
+        XCTAssertFalse(ArrangeLayout.fits(.five, in: laptop, minCellWidth: 360))
+        XCTAssertTrue(ArrangeLayout.fits(.ribbon, in: laptop, minCellWidth: 360))
+        // Зазор 40: пятёрка по 294 при минимуме 280 влезала, а с зазором ячейка 262 — нет.
+        XCTAssertTrue(ArrangeLayout.fits(.five, in: laptop, minCellWidth: 280))
+        XCTAssertFalse(ArrangeLayout.fits(.five, in: laptop, minCellWidth: 280, gap: 40))
+        XCTAssertTrue(ArrangeLayout.fits(.four, in: laptop, minCellWidth: 280, gap: 40))
+        // Умолчание — прежний ответ побайтно: зазора у старых вызовов нет.
+        XCTAssertEqual(ArrangeLayout.fits(.five, in: laptop, minCellWidth: 280),
+                       ArrangeLayout.fits(.five, in: laptop, minCellWidth: 280, gap: 0))
+    }
+
+    // MARK: - умная расстановка (план WF77)
+
+    /// Числа Элвиса 20.09: Odyssey над макбуком, рабочая область x −796…2212, y −846…0.
+    private static let odyssey = CGRect(x: -796, y: -846, width: 3008, height: 846)
+    /// Макбук под ним: рабочая 1205×802.
+    private static let macbook = CGRect(x: 0, y: 30, width: 1205, height: 802)
+    private static let minCell: CGFloat = 280
+    private static let gap: CGFloat = 5
+
+    /// Потолок столбцов (WF94, #7730: девять — было шесть, слово Элвиса 20.09; макбуковский —
+    /// четыре) и потолок рядов. Зазор в потолке обязателен (критик блокер 7): при gap 40
+    /// четвёртый столбец макбука дал бы 261 pt.
+    func testColumnCapFollowsScreenAndGap() {
+        let odyssey = ClaudeAXTests.odyssey, macbook = ClaudeAXTests.macbook
+        XCTAssertEqual(ArrangeLayout.cap(width: odyssey.width, minCellWidth: 280, gap: 5), 9)
+        // Потолок держит девять и там, где по ширине влезло бы десять и больше.
+        XCTAssertEqual(ArrangeLayout.cap(width: 2560, minCellWidth: 220, gap: 5), 9)
+        XCTAssertEqual(ArrangeLayout.cap(width: macbook.width, minCellWidth: 280, gap: 5), 4)
+        XCTAssertEqual(ArrangeLayout.cap(width: macbook.width, minCellWidth: 280, gap: 40), 3)
+        // Экран уже одного окна — один столбец, а не ноль.
+        XCTAssertEqual(ArrangeLayout.cap(width: 200, minCellWidth: 280, gap: 5), 1)
+        XCTAssertEqual(ArrangeLayout.cap(width: 0, minCellWidth: 280, gap: 5), 1)
+        // Рядов столько, сколько держит высота при `minCellHeight` 360.
+        XCTAssertEqual(ArrangeLayout.capRows(height: odyssey.height, gap: 5), 2)
+        XCTAssertEqual(ArrangeLayout.capRows(height: macbook.height, gap: 5), 2)
+        XCTAssertEqual(ArrangeLayout.capRows(height: 400, gap: 5), 1)
+    }
+
+    /// Зазор живёт ТОЛЬКО между окнами: у краёв рабочей области, сверху и снизу окна
+    /// прижаты встык (слова Элвиса 20.09 после критика). Умолчание 0 оставляет прежние
+    /// рамки побайтно — старые эталоны и раскладки не едут.
+    func testGapLivesBetweenWindowsOnly() {
+        let area = ClaudeAXTests.odyssey
+        let cells = ArrangeLayout.cells(cols: 6, rows: 1, count: 6, in: area, gap: 5)
+        XCTAssertEqual(cells.first?.minX, area.minX, "левый край — встык")
+        XCTAssertEqual(cells.last?.maxX, area.maxX, "правый край — встык")
+        XCTAssertEqual(cells.map { $0.minY }, Array(repeating: area.minY, count: 6))
+        XCTAssertEqual(cells.map { $0.height }, Array(repeating: area.height, count: 6))
+        for i in 1..<cells.count {
+            XCTAssertEqual(cells[i].minX - cells[i - 1].maxX, 5, "зазор между \(i - 1) и \(i)")
+        }
+        // Ряды — так же по высоте.
+        let rows = ArrangeLayout.cells(cols: 4, rows: 2, count: 8, in: area, gap: 5)
+        XCTAssertEqual(rows[0].minY, area.minY)
+        XCTAssertEqual(rows[4].minY - rows[0].maxY, 5)
+        XCTAssertEqual(rows[7].maxY, area.maxY)
+
+        // Зазора нет — рамки те же, что были до WF77 (побайтно).
+        for count in [1, 2, 3, 5, 6, 12] {
+            for mode in ArrangeLayout.Mode.allCases {
+                XCTAssertEqual(ArrangeLayout.frames(count: count, in: area, mode: mode,
+                                                    minCellWidth: 280, gap: 0),
+                               ArrangeLayout.frames(count: count, in: area, mode: mode,
+                                                    minCellWidth: 280),
+                               "\(mode.rawValue) на \(count) окнах")
+            }
+        }
+    }
+
+    /// Три окна Элвиса стоят в третях Odyssey — «расставить» не двигает НИКОГО (слово Элвиса
+    /// 20.09: «окна, которые уже стояли на месте, никуда не переводить»). С WF105 (#8071) «сидит»
+    /// держит окно только в сетке `least` — три окна, три столбца на всю ширину.
+    func testSmartKeepsWindowsThatAlreadySit() {
+        let area = ClaudeAXTests.odyssey
+        let thirds = ArrangeLayout.cells(cols: 3, rows: 1, count: 3, in: area, gap: 5)
+        XCTAssertEqual(thirds.map { $0.minX }, [-796, 208, 1213])
+        XCTAssertEqual(thirds.map { $0.width }, [999, 1000, 999])
+
+        // Стоят «наоборот» — порядок сидящих не трогаем.
+        let standing = [thirds[1], thirds[0], thirds[2]]
+        XCTAssertEqual(ArrangeLayout.smart(frames: standing, in: area,
+                                           minCellWidth: ClaudeAXTests.minCell, gap: 5),
+                       standing, "сидящие окна не двигаются вовсе")
+        // Живые рамки сходятся с ячейками не точка в точку — допуск 8 pt узнаёт в них ту же
+        // сетку (место не меняется), а рамка доводится до точной ячейки: «не совсем ровно
+        // стоят — ты должен это без моих слов делать».
+        let live = [CGRect(x: -792, y: -842, width: 995, height: 838),
+                    CGRect(x: 210, y: -842, width: 997, height: 838),
+                    CGRect(x: 1216, y: -842, width: 995, height: 838)]
+        XCTAssertEqual(ArrangeLayout.smart(frames: live, in: area,
+                                           minCellWidth: ClaudeAXTests.minCell, gap: 5), thirds)
+        // Окна встык без зазора (живой случай 21.09) — те же места, но с зазором.
+        let tight = ArrangeLayout.cells(cols: 3, rows: 1, count: 3, in: area, gap: 0)
+        XCTAssertEqual(ArrangeLayout.smart(frames: tight, in: area,
+                                           minCellWidth: ClaudeAXTests.minCell, gap: 5), thirds)
+        // Трое в шестых долях (сетка шире нужной) — больше не держат сетку: три трети (#8071).
+        let sixths = ArrangeLayout.cells(cols: 6, rows: 1, count: 6, in: area, gap: 5)
+        XCTAssertEqual(ArrangeLayout.smart(frames: Array(sixths[0..<3]), in: area,
+                                           minCellWidth: ClaudeAXTests.minCell, gap: 5), thirds)
+    }
+
+    /// К трём стоящим окнам добавилось четвёртое «где попало»: трое стоят в четвертях, новое
+    /// встаёт в свободную ячейку (слово Элвиса: «есть свободное место и одно-два окна
+    /// болтаются неприкаянно — заполни ими свободное место»).
+    func testSmartSeatsStrayWindowIntoFreeCell() {
+        let area = ClaudeAXTests.odyssey
+        let quarters = ArrangeLayout.cells(cols: 4, rows: 1, count: 4, in: area, gap: 5)
+        let frames = Array(quarters[0..<3]) + [CGRect(x: 900, y: -500, width: 820, height: 600)]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(Array(placed[0..<3]), Array(quarters[0..<3]), "трое стоят")
+        XCTAssertEqual(placed[3], quarters[3])
+    }
+
+    /// Никто не сидит — окна делят экран поровну: три окна «как попало» становятся тремя
+    /// столбцами во всю ширину и высоту (ничья кандидатов — наименьшее число столбцов).
+    func testSmartSpreadsStrayWindowsEvenly() {
+        let area = ClaudeAXTests.odyssey
+        let frames = [CGRect(x: 40, y: -700, width: 900, height: 500),
+                      CGRect(x: -700, y: -800, width: 600, height: 700),
+                      CGRect(x: 1500, y: -400, width: 700, height: 300)]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        // Порядок неприкаянных — по их собственным рамкам, слева направо.
+        XCTAssertEqual(placed.map { $0.minX }, [208, -796, 1213])
+        XCTAssertEqual(placed.map { $0.width }, [1000, 999, 999])
+        XCTAssertEqual(placed.map { $0.minY }, Array(repeating: area.minY, count: 3))
+        XCTAssertEqual(placed.map { $0.height }, Array(repeating: area.height, count: 3))
+    }
+
+    /// Дырок посередине не оставляем (критик зам. 6): сидят две правые четверти, два окна
+    /// неприкаянные — они встают в свободные ячейки той же сетки слева.
+    func testSmartFillsCellsNextToSeatedOnes() {
+        let area = ClaudeAXTests.odyssey
+        let quarters = ArrangeLayout.cells(cols: 4, rows: 1, count: 4, in: area, gap: 5)
+        let frames = [quarters[2], quarters[3],
+                      CGRect(x: -700, y: -600, width: 400, height: 300),
+                      CGRect(x: 100, y: -300, width: 500, height: 200)]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(Array(placed[0..<2]), [quarters[2], quarters[3]], "сидящие стоят")
+        XCTAssertEqual(Array(placed[2..<4]), [quarters[0], quarters[1]])
+        // Сами ячейки: выбор свободных считается и отдельно от рамок.
+        XCTAssertEqual(ArrangeLayout.freeCells(count: 4, cells: 6, taken: [4, 5]), [2, 3])
+        XCTAssertEqual(ArrangeLayout.freeCells(count: 4, cells: 6, taken: []), [0, 1, 2, 3, 4, 5])
+        // Занятые разошлись шире отрезка — берём просто самые левые свободные.
+        XCTAssertEqual(ArrangeLayout.freeCells(count: 3, cells: 6, taken: [0, 5]), [1, 2, 3, 4])
+    }
+
+    /// Двенадцать окон на прежнем Odyssey 846 pt (экран держит два ряда) — два ряда (потолок
+    /// девять столбцов, WF94), а не двенадцать столбиков: при ничьей берётся наименьшее число
+    /// столбцов, `ceil(12/2) = 6`. Семь окон с WF94 встают в один ряд.
+    func testSmartAddsSecondRowWhenWindowsDoNotFitOneRow() {
+        let area = ClaudeAXTests.odyssey
+        let frames = (0..<12).map { i in
+            CGRect(x: CGFloat(i) * 130 - 700, y: -700 + CGFloat(i) * 10, width: 600, height: 400)
+        }
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(Set(placed.map { $0.minY }).count, 2, "ровно два ряда")
+        XCTAssertEqual(Set(placed.map { $0.minX }).count, 6, "шесть столбцов")
+        XCTAssertEqual(placed.map { $0.height }, Array(repeating: 421, count: 6) + Array(repeating: 420, count: 6))
+        let seven = ArrangeLayout.smart(frames: Array(frames[0..<7]), in: area,
+                                        minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(Set(seven.map { $0.minY }).count, 1, "семь окон — один ряд")
+        XCTAssertEqual(seven.map { $0.height }, Array(repeating: area.height, count: 7))
+        XCTAssertEqual(placed.first?.minY, area.minY)
+        XCTAssertEqual(placed.last?.maxY, area.maxY)
+    }
+
+    /// Окон больше, чем мест на экране, — лишние не трогаем вовсе (слово Элвиса 08.09).
+    /// Макбук: четыре столбца × два ряда = восемь мест, девятое окно остаётся где стояло.
+    /// Экран в два ряда половинок не знает (WF94: они только у экрана в один ряд и от 10 окон).
+    func testSmartLeavesWindowsBeyondCapacityAlone() {
+        let area = ClaudeAXTests.macbook
+        let stray = CGRect(x: 60, y: 300, width: 700, height: 420)
+        let frames = (0..<8).map { i in
+            CGRect(x: CGFloat(i % 4) * 120, y: 40 + CGFloat(i / 4) * 90, width: 640, height: 380)
+        } + [stray]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(placed[8], stray, "девятому окна места нет — его не двигают")
+        XCTAssertEqual(Set(placed[0..<8].map { $0.minX }).count, 4)
+        XCTAssertEqual(Set(placed[0..<8].map { $0.minY }).count, 2)
+        XCTAssertEqual(placed[0], CGRect(x: 0, y: 30, width: 298, height: 399))
+    }
+
+    /// Окна с разных экранов остаются каждое на своём (решение 2 плана): экран выбирается
+    /// по ЦЕНТРУ рамки в ПОЛНОЙ рамке экрана, а сетка считается по рабочей области.
+    func testSmartKeepsWindowsOnTheirOwnScreens() {
+        let odyssey = ClaudeAXTests.odyssey, macbook = ClaudeAXTests.macbook
+        let screens = [(full: CGRect(x: 0, y: 0, width: 1280, height: 832), usable: macbook),
+                       (full: odyssey, usable: odyssey)]
+        let onMac = CGRect(x: 300, y: 200, width: 600, height: 500)
+        let onBig = [CGRect(x: -700, y: -800, width: 900, height: 700),
+                     CGRect(x: 1400, y: -600, width: 800, height: 500)]
+        XCTAssertEqual(Screens.assign(screens: screens.map { $0.full },
+                                      frames: [onMac] + onBig), [0, 1, 1])
+        let placed = ArrangeLayout.smart(frames: [onMac] + onBig, screens: screens,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(placed[0], macbook, "одно окно на макбуке — во весь его экран")
+        XCTAssertEqual(placed[1].minX, odyssey.minX)
+        XCTAssertEqual(placed[2].maxX, odyssey.maxX)
+        XCTAssertEqual(placed[1].width + placed[2].width + 5, odyssey.width)
+        // Центр рамки нигде — экран с меню-баром (первый), окно с него не уезжает.
+        XCTAssertEqual(Screens.assign(screens: screens.map { $0.full },
+                                      frames: [CGRect(x: 9000, y: 9000, width: 10, height: 10)]),
+                       [0])
+    }
+
+    /// Навязанный порядок ради нового окна касается только ЕГО экрана (проверка WF77,
+    /// блокер 2): на другом мониторе окна, сидящие в правых ячейках, остаются где сидят.
+    func testSmartImposedOrderStaysOnAnchorScreen() {
+        let odyssey = ClaudeAXTests.odyssey, macbook = ClaudeAXTests.macbook
+        let screens = [(full: CGRect(x: 0, y: 0, width: 1280, height: 832), usable: macbook),
+                       (full: odyssey, usable: odyssey)]
+        let sixths = ArrangeLayout.cells(cols: 6, rows: 1, count: 6, in: odyssey, gap: 5)
+        let halves = ArrangeLayout.cells(cols: 2, rows: 1, count: 2, in: macbook, gap: 5)
+        // На Odyssey сидят ячейки 4 и 5; на макбуке окно и новое (якорь, индекс 3) поверх.
+        let fresh = CGRect(x: 40, y: 70, width: 600, height: 500)
+        let frames = [sixths[4], sixths[5], halves[0], fresh]
+        let placed = ArrangeLayout.smart(frames: frames, screens: screens,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5,
+                                         order: [3, 0, 1, 2], anchor: 3)
+        XCTAssertEqual(placed[0], sixths[4], "чужой экран не перекладывается")
+        XCTAssertEqual(placed[1], sixths[5])
+        XCTAssertEqual(placed[3], halves[0], "новое окно — первым на своём экране")
+        XCTAssertEqual(placed[2], halves[1])
+    }
+
+    /// Порог «сидящих не меньше половины» (КП-6 критика): одно случайно совпавшее окно
+    /// сетку из шести столбцов не диктует — четыре окна делят экран поровну.
+    func testSmartIgnoresSingleAccidentalMatch() {
+        let area = ClaudeAXTests.odyssey
+        let sixths = ArrangeLayout.cells(cols: 6, rows: 1, count: 6, in: area, gap: 5)
+        let frames = [sixths[2],
+                      CGRect(x: -700, y: -600, width: 400, height: 300),
+                      CGRect(x: 100, y: -300, width: 500, height: 200),
+                      CGRect(x: 1500, y: -700, width: 600, height: 400)]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5)
+        XCTAssertEqual(Set(placed.map { $0.minX }).count, 4, "четыре равных столбца")
+        XCTAssertNotEqual(placed[0], sixths[2], "случайно совпавшее окно тоже переехало")
+        XCTAssertEqual(placed.map { $0.height }, Array(repeating: area.height, count: 4))
+    }
+
+    /// Порядок НАВЯЗАН (новое окно «слева» и «посередине»): сетка та же, но окна кладутся
+    /// подряд — «сидит» там уже никого не держит.
+    func testSmartFollowsGivenOrder() {
+        let area = ClaudeAXTests.odyssey
+        let thirds = ArrangeLayout.cells(cols: 3, rows: 1, count: 3, in: area, gap: 5)
+        let frames = [thirds[0], thirds[1], CGRect(x: 900, y: -500, width: 820, height: 600)]
+        let placed = ArrangeLayout.smart(frames: frames, in: area,
+                                         minCellWidth: ClaudeAXTests.minCell, gap: 5,
+                                         order: [2, 0, 1])
+        XCTAssertEqual(placed, [thirds[1], thirds[2], thirds[0]])
+        // Окно, которого в порядке не назвали, встаёт за названными — по своему месту.
+        XCTAssertEqual(ArrangeLayout.smart(frames: frames, in: area,
+                                           minCellWidth: ClaudeAXTests.minCell, gap: 5,
+                                           order: [2]),
+                       [thirds[1], thirds[2], thirds[0]])
+    }
+
+    /// «Посередине» у сетки с рядами — середина ПЕРВОГО ряда, а не всего порядка (#5560):
+    /// в «5×2» с девятью окнами середина всего порядка давала место 5, то есть начало
+    /// нижнего ряда, — а Элвис просил середину.
+    func testInsertIndexTakesMiddleOfFirstRow() {
+        // Лента рядов не задаёт — счёт прежний, как в WF36.
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .middle, count: 9), 5)
+        XCTAssertNil(ArrangeLayout.grid(of: .ribbon)?.cols)
+        // «5×2»: в первом ряду пять мест, середина — третье.
+        let cols = ArrangeLayout.grid(of: .tenGrid)?.cols
+        XCTAssertEqual(cols, 5)
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .middle, count: 9, columns: cols), 2)
+        // Окон меньше, чем мест в ряду, — считаем по окнам, как раньше.
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .middle, count: 2, columns: cols), 1)
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .middle, count: 3, columns: 4), 2)
+        // Края не двигаются: слева — первым, справа — последним во всём порядке.
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .left, count: 9, columns: cols), 0)
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .right, count: 9, columns: cols), 9)
+        // Мусорное число столбцов счёт не роняет.
+        XCTAssertEqual(ArrangeLayout.insertIndex(of: .middle, count: 4, columns: 0), 2)
+    }
+
+    /// Повторы `setFrame` больше не спят на главной нити (#5557): сон стоял в цикле по окнам
+    /// и умножался на их число — до 2,5 с замершего меню-бара на пяти окнах, а через тот же
+    /// `setFrame` ходят «Расставить», канал «Пимп» и возврат раскладок.
+    ///
+    /// С WF77 повторяем и промах РАЗМЕРА (находка живьём 20.09: за один заход «позиция →
+    /// размер → позиция» размер не берётся вовсе — окно остаётся прежней ширины и высоты,
+    /// и «расставило как попало» было ровно этим). Кроме ширины уже `minWidth`: её Electron
+    /// зажимает осознанно, и весь бюджет повторов уходил туда впустую (#5733).
+    func testSetFrameRetriesWithoutSleepingOnMainThread() {
+        let want = CGRect(x: 100, y: 100, width: 800, height: 600)
+        // Позиция не встала — окно ещё едет, повтор нужен (грабли гейта WF36).
+        XCTAssertTrue(ClaudeActions.needsFrameRetry(now: CGRect(x: 140, y: 100, width: 800, height: 600),
+                                                    want: want))
+        // Позиция встала, а размер остался прежним — повтор нужен (WF77): второй круг
+        // пишет размер уже после того, как встал верх окна, и высота наконец берётся.
+        XCTAssertTrue(ClaudeActions.needsFrameRetry(now: CGRect(x: 100, y: 100, width: 1200, height: 900),
+                                                    want: want))
+        XCTAssertTrue(ClaudeActions.needsFrameRetry(now: CGRect(x: 100, y: 100, width: 800, height: 838),
+                                                    want: want))
+        // Ячейка уже минимальной ширины окна — ширину Electron не отдаст, и это не повод
+        // для повтора: позиция и высота на месте.
+        let narrow = CGRect(x: 100, y: 100, width: 241, height: 600)
+        XCTAssertFalse(ClaudeActions.needsFrameRetry(now: CGRect(x: 100, y: 100, width: 280, height: 600),
+                                                     want: narrow, minWidth: 280))
+        XCTAssertTrue(ClaudeActions.needsFrameRetry(now: CGRect(x: 100, y: 100, width: 280, height: 600),
+                                                    want: narrow, minWidth: 240),
+                      "минимум ниже заказа — ширину спрашиваем снова")
+        // Допуск тот же, что у `frameMatches`.
+        XCTAssertFalse(ClaudeActions.needsFrameRetry(now: CGRect(x: 102, y: 98, width: 802, height: 598),
+                                                     want: want))
+        // Рамки нет вовсе (окно закрылось) — повторять некому.
+        XCTAssertFalse(ClaudeActions.needsFrameRetry(now: nil, want: want))
+        // Кругов четыре: «позиция → пауза → размер» на этом Маке требует второго захода.
+        XCTAssertEqual(ClaudeActions.frameRetries, 4)
+
+        // Вызов на окне, которого нет: AX молчит, и мы возвращаемся сразу — до WF43 здесь
+        // сгорали два `Thread.sleep` по 0,25 с прямо в главной нити. Минимум ширины
+        // подставляем свой: живой claude.json в прогоне не читаем.
+        var scheduled: [TimeInterval] = []
+        let live = ClaudeActions.frameSchedule
+        let liveMin = ClaudeActions.minFrameWidth
+        ClaudeActions.frameSchedule = { delay, _ in scheduled.append(delay) }
+        ClaudeActions.minFrameWidth = { 280 }
+        defer {
+            ClaudeActions.frameSchedule = live
+            ClaudeActions.minFrameWidth = liveMin
+        }
+        let started = Date()
+        XCTAssertFalse(ClaudeActions.setFrame(AXUIElementCreateApplication(999_999), want))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.1, "повторы всё ещё спят на нити")
+        XCTAssertTrue(scheduled.isEmpty, "мёртвому окну повтор не назначаем")
+        XCTAssertEqual(ClaudeActions.frameRetryPause, 0.25)
+    }
+
+    /// Урок ElvisOS (#5791, пункт «а»): СВЕЖЕМУ окну рамка ставится «размер → позиция →
+    /// размер». Система урезает запомненную с прошлого раза высоту по нижнему краю экрана
+    /// (под Dock), а повторный размер после позиции глотает — нижний ряд стабильно получал
+    /// 488 точек вместо 434. Окну, которое уже стоит на экране, порядок прежний: последним
+    /// словом обязана быть позиция, иначе смена размера у правого края снова его сдвинет.
+    func testFreshWindowGetsSizeBeforePosition() {
+        let want = CGRect(x: 100, y: 500, width: 700, height: 434)
+        XCTAssertEqual(ClaudeActions.frameSteps(want, fresh: true),
+                       [.size(want.size), .position(want.origin), .size(want.size)])
+        XCTAssertEqual(ClaudeActions.frameSteps(want, fresh: false),
+                       [.position(want.origin), .size(want.size), .position(want.origin)])
+        // Порядок по умолчанию — прежний: «Расставить» и канал «Пимп» ничего не заметили.
+        XCTAssertEqual(ClaudeActions.frameSteps(want, fresh: false), {
+            var steps: [ClaudeActions.FrameStep] = []
+            steps.append(.position(want.origin))
+            steps.append(.size(want.size))
+            steps.append(.position(want.origin))
+            return steps
+        }())
+        // Повтор идёт тем же порядком: `fresh` доезжает до следующего захода.
+        var scheduled = 0
+        let live = ClaudeActions.frameSchedule
+        let liveMin = ClaudeActions.minFrameWidth
+        ClaudeActions.frameSchedule = { _, _ in scheduled += 1 }
+        ClaudeActions.minFrameWidth = { 280 }
+        defer {
+            ClaudeActions.frameSchedule = live
+            ClaudeActions.minFrameWidth = liveMin
+        }
+        XCTAssertFalse(ClaudeActions.setFrame(AXUIElementCreateApplication(999_999), want,
+                                              fresh: true))
+        XCTAssertEqual(scheduled, 0, "мёртвому окну повтор не назначаем")
+    }
+
+    /// Урок ElvisOS (#5791, пункт «в»): у каждого экземпляра Claude в выдаче оконного сервера
+    /// лежит пара безымянных служебных окон 800×600 по координатам 335,164 — по размеру их от
+    /// чата не отличить, а имя сервер отдаёт только при разрешении «Запись экрана». Плюс
+    /// прозрачные и мелочь меньше 200×150: прежний порог 120×120 пускал их все, а «Обкэшить»
+    /// отдаёт рамку донора ПЕРВОМУ незнакомому окну и потом закрывает донора.
+    func testServiceWindowsAreNotTakenForChats() {
+        XCTAssertTrue(ClaudeApp.isServiceWindow(frame: CGRect(x: 335, y: 164, width: 800, height: 600),
+                                                alpha: 1))
+        XCTAssertTrue(ClaudeApp.isServiceWindow(frame: CGRect(x: 100, y: 100, width: 700, height: 500),
+                                                alpha: 0))
+        XCTAssertTrue(ClaudeApp.isServiceWindow(frame: CGRect(x: 100, y: 100, width: 180, height: 500),
+                                                alpha: 1), "мелочь по ширине")
+        XCTAssertTrue(ClaudeApp.isServiceWindow(frame: CGRect(x: 100, y: 100, width: 700, height: 140),
+                                                alpha: 1), "мелочь по высоте")
+        // Настоящее окно чата ровно того же размера, но в другом месте экрана — трогать нельзя.
+        XCTAssertFalse(ClaudeApp.isServiceWindow(frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                                                 alpha: 1))
+        XCTAssertFalse(ClaudeApp.isServiceWindow(frame: CGRect(x: 335, y: 164, width: 294, height: 900),
+                                                 alpha: 1), "узкая ячейка раскладки — это чат")
+        // Порог прозрачности — граница, а не «почти ноль»: окно чата с лёгкой прозрачностью
+        // окном чата и остаётся.
+        XCTAssertTrue(ClaudeApp.isServiceWindow(frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                                                alpha: 0.04))
+        XCTAssertFalse(ClaudeApp.isServiceWindow(frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                                                 alpha: 0.05))
+        XCTAssertEqual(ClaudeApp.serviceWindowFrame, CGRect(x: 335, y: 164, width: 800, height: 600))
+        XCTAssertEqual(ClaudeApp.minWindowSize, CGSize(width: 200, height: 150))
+        XCTAssertEqual(ClaudeApp.minWindowAlpha, 0.05)
+    }
+
+    /// Урок ElvisOS (#5791, пункт «б»): `kAXRaiseAction` поднимает окно только среди окон
+    /// своего приложения — пока Claude не активирован, его окна остаются под чужими
+    /// («нажимаю, появляется одно окно, надо жать раза три»). Значит активация ПЕРВОЙ.
+    /// И одного подъёма мало внутри самого Claude: без `kAXMain` и `kAXFocused` Electron
+    /// возвращает вперёд своё прежнее ключевое окно.
+    func testFocusActivatesBeforeRaising() {
+        let steps = ClaudeApp.focusSteps
+        XCTAssertEqual(steps.first, .activate, "подъём до активации не поднимает над чужими")
+        let raise = try? XCTUnwrap(steps.firstIndex(of: .raise))
+        let activate = try? XCTUnwrap(steps.firstIndex(of: .activate))
+        XCTAssertNotNil(raise)
+        XCTAssertNotNil(activate)
+        if let raise = raise, let activate = activate { XCTAssertLessThan(activate, raise) }
+        XCTAssertTrue(steps.contains(.main))
+        XCTAssertTrue(steps.contains(.focused))
+    }
+
+    /// Сразу после переезда `CGWindowList` ещё отдаёт СТАРЫЕ рамки: совпадения по рамке нет,
+    /// и окно пропадало из списка целиком — «расставь» сразу после «расставь» отвечала
+    /// «окон нет» (#5684, гейт WF21). Теперь берётся пара, запомненная по номеру окна.
+    func testPimpPairKeepsWindowWhileQuartzCatchesUp() throws {
+        let moved = AXUIElementCreateApplication(999_998)
+        let other = AXUIElementCreateApplication(999_997)
+        let stale = CGRect(x: 0, y: 34, width: 900, height: 700)
+        let live = CGRect(x: 735, y: 34, width: 735, height: 860)
+
+        // Совпало по рамке — берём его и координаты Quartz, как раньше.
+        let byFrame = try XCTUnwrap(ClaudeActions.pimpPair(byFrame: other, remembered: moved,
+                                                           quartz: stale, liveFrame: { _ in live }))
+        XCTAssertTrue(CFEqual(byFrame.window, other))
+        XCTAssertEqual(byFrame.frame, stale)
+
+        // Не совпало (Quartz отстал) — запомненная пара и её ЖИВАЯ рамка из AX.
+        let remembered = try XCTUnwrap(ClaudeActions.pimpPair(byFrame: nil, remembered: moved,
+                                                              quartz: stale, liveFrame: { _ in live }))
+        XCTAssertTrue(CFEqual(remembered.window, moved))
+        XCTAssertEqual(remembered.frame, live)
+
+        // Пара без рамки — окно закрылось; пары не было вовсе — записи нет (как до WF43).
+        XCTAssertNil(ClaudeActions.pimpPair(byFrame: nil, remembered: moved, quartz: stale,
+                                            liveFrame: { _ in nil }))
+        XCTAssertNil(ClaudeActions.pimpPair(byFrame: nil, remembered: nil, quartz: stale,
+                                            liveFrame: { _ in live }))
+    }
+
+    // MARK: - клавиши
+
+    func testMenuKeysMatchReadme() {
+        // Решение 4 плана WF9: заголовок — голое название, клавиша живёт в keyEquivalent,
+        // подсказку справа серым AppKit рисует сам.
+        let down = String(UnicodeScalar(UInt32(NSDownArrowFunctionKey))!)
+        let up = String(UnicodeScalar(UInt32(NSUpArrowFunctionKey))!)
+        let expected: [(ClaudeCommand, String, UInt32, String, NSEvent.ModifierFlags, Bool)] = [
+            (.cashout, "Обкэшить", 0x2D, "n", [.command, .shift], true),
+            // ⌘N — штатная клавиша Claude: показываем, но не регистрируем.
+            (.newChat, "Новый чат", 0x2D, "n", [.command], false),
+            // ⌥⌘N у Claude свободна — её мы регистрируем сами (план WF13).
+            (.newWindow, "Новое окно", 0x2D, "n", [.command, .option], true),
+            (.collapse, "Свернуть", 0x7D, down, [.command, .option], true),
+            (.expand, "Развернуть", 0x7E, up, [.command, .option], true),
+            (.arrange, "Расставить", 0x00, "a", [.command, .option], true),
+            (.show, "Показать", 0x01, "s", [.command, .option], true),
+            (.scroll, "Прокрутить", 0x02, "d", [.command, .option], true),
+        ]
+        // Порядок пунктов — экранный (вариант А плана WF14): «🚀 Workflow» первым, оконная
+        // тройка WF13 сразу за ним, «Развернуть выше, свернуть ниже», редкая четвёрка в хвосте.
+        // С WF71 все десять рисуются внутри «⋯ Ещё ▸» (#6248) в этом же порядке.
+        XCTAssertEqual(MenuModel.entries.map { $0.command },
+                       [.workflow, .newChat, .newWindow, .popoutWindow, .expand, .collapse,
+                        .cashout, .arrange, .show, .scroll])
+        // Блокер Б1 плана WF14: спрятанные пункты обязаны остаться в entries — хоткеи
+        // регистрируются перебором именно его (id = индекс+1), и вынести пункт отсюда значит
+        // убить клавишу. С WF71 спрятаны ВСЕ, и клавиши у всех семи с хоткеем — на месте.
+        XCTAssertEqual(MenuModel.moreCommands, Set(MenuModel.entries.map { $0.command }))
+        for command in [ClaudeCommand.newWindow, .expand, .collapse, .cashout, .arrange, .show,
+                        .scroll] {
+            let entry = MenuModel.entry(for: command)
+            XCTAssertNotNil(entry?.key, "\(command) выпал из entries — с ним умрёт его клавиша")
+            XCTAssertEqual(entry?.registersHotkey, true, "\(command) перестал регистрировать хоткей")
+        }
+        // Разделители: после «Вынести этот чат в окно» и после «Свернуть» (мелочь М3 критика).
+        XCTAssertEqual(MenuModel.separatorsAfter, [.popoutWindow, .collapse])
+        // Без клавиш два пункта: «Workflow» (⌘⌥W занят самим Claude) и «Вынести этот чат в окно».
+        for (command, title) in [(ClaudeCommand.workflow, "Воркфлоу"),
+                                 (.popoutWindow, "Вынести этот чат в окно")] {
+            let entry = MenuModel.entry(for: command)
+            XCTAssertEqual(entry?.menuTitle, title)
+            XCTAssertNil(entry?.key)
+            XCTAssertEqual(entry?.registersHotkey, false)
+        }
+
+        for (command, title, code, equivalent, mask, registers) in expected {
+            let entry = MenuModel.entry(for: command)
+            XCTAssertEqual(entry?.menuTitle, title)
+            XCTAssertFalse(entry?.menuTitle.contains("⌘") ?? true, "клавиша осталась в заголовке")
+            XCTAssertEqual(entry?.key?.keyCode, code)
+            XCTAssertEqual(entry?.key?.keyEquivalent, equivalent)
+            XCTAssertEqual(entry?.key?.modifierMask, mask)
+            XCTAssertEqual(entry?.registersHotkey, registers)
+        }
+        XCTAssertEqual(MenuModel.entries.map { $0.icon },
+                       ["🚀", "💬", "🪟", "🪟", "⬆️", "⬇️", "💰", "▦", "👀", "⏬"])
+    }
+
+    /// Клавиши обязаны доехать до самих пунктов меню — и теперь, когда ВСЕ команды уехали
+    /// в «⋯ Ещё ▸» (WF71, #6248; блокер Б1 плана WF14): прячем их только с глаз.
+    func testMenuItemsCarryKeyEquivalents() throws {
+        let menu = MinimizeMenu.build(config: MinimizeMenu.MenuConfig())
+        // Верхний уровень — про оформление: ни одного пункта-команды из entries.
+        let commands = Set(MenuModel.entries.map { $0.menuTitle })
+        XCTAssertTrue(menu.items.allSatisfy { !commands.contains($0.title) },
+                      "команда осталась на верхнем уровне: \(menu.items.map { $0.title })")
+        XCTAssertNotNil(menu.items.last?.image) // ⋯
+
+        // «⋯ Ещё ▸» — полоса раскладок, десять команд с разделителями `separatorsAfter`,
+        // «🗂 Раскладки ▸», «🚦 Меню на кнопке ▸» (WF82, #7104: настройка рядом с «Всем окнам»)
+        // и «🖥 Всем окнам ▸» последним (порядок макета WF70/71).
+        let more = try moreMenu(in: menu)
+        XCTAssertEqual(more.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Раскладки", "—", "Воркфлоу", "Новый чат", "Новое окно",
+                        "Вынести этот чат в окно", "—", "Развернуть", "Свернуть", "Автосвёртка", "Прятать инструменты", "—",
+                        "Обкэшить", "Расставить", "Вернуть окна", "Бэкап чатов", "Pimp Viewer", "Показать", "Прокрутить", "Раскладки", "—",
+                        "Меню на кнопке", "Всем окнам"])
+        // «Новое окно ▸» (план WF16) и оба «Раскладки» — с подменю или вьюхой, клавиш сами
+        // не носят: ⌥⌘N уехала на «Здесь же» внутри подменю (сторож —
+        // testNewWindowKeepsHotkeyEntry), по view-пункту клавиатура не ходит вовсе.
+        // Тумблер «Автосвёртка» (#6666) и «↩️ Вернуть окна» (#7065, WF84) — не команды из
+        // `entries`, клавиш у них нет.
+        let keyed = more.items.filter { !$0.isSeparatorItem && !$0.hasSubmenu && $0.view == nil
+                                        && $0.title != MenuModel.autoCollapseTitle
+                                        && $0.title != MenuModel.hideToolsTitle
+                                        && $0.title != MenuModel.restoreWindowsTitle
+                                        && $0.title != MenuModel.archiveChatsTitle
+                                        && $0.title != MenuModel.viewerTitle }
+        XCTAssertEqual(keyed.count, MenuModel.entries.count - 1)
+        XCTAssertEqual(keyed.map { $0.title },
+                       ["Воркфлоу", "Новый чат", "Вынести этот чат в окно", "Развернуть",
+                        "Свернуть", "Обкэшить", "Расставить", "Показать", "Прокрутить"])
+        XCTAssertEqual(keyed.map { $0.keyEquivalent },
+                       ["", "n", "", String(UnicodeScalar(UInt32(NSUpArrowFunctionKey))!),
+                        String(UnicodeScalar(UInt32(NSDownArrowFunctionKey))!), "n", "a", "s", "d"])
+        XCTAssertEqual(keyed.map { $0.keyEquivalentModifierMask },
+                       [[], [.command], [], [.command, .option], [.command, .option],
+                        [.command, .shift], [.command, .option], [.command, .option],
+                        [.command, .option]])
+    }
+
+    func testCarbonModifiers() {
+        XCTAssertEqual(KeyMods([.command, .shift]).carbon, 0x0100 | 0x0200)
+        XCTAssertEqual(KeyMods([.command, .option]).carbon, 0x0100 | 0x0800)
+        XCTAssertEqual(MenuModel.quitKey.keyCode, 0x0C)
+        XCTAssertEqual(MenuModel.quitKey.hint, "⌘Q")
+    }
+
+    // MARK: - command.json
+
+    func testPayloadMatchesLoaderContract() throws {
+        let at = Date(timeIntervalSince1970: 1_756_900_000) // 2025-09-03T11:46:40Z
+        let body = CommandChannel.payload(action: "cashout", extra: ["title": "Чат \"один\""],
+                                          id: "1756900000123-0042", at: at)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(json["id"] as? String, "1756900000123-0042")
+        XCTAssertEqual(json["action"] as? String, "cashout")
+        XCTAssertEqual(json["at"] as? String, "2025-09-03T11:46:40Z")
+        XCTAssertEqual(json["title"] as? String, "Чат \"один\"")
+        XCTAssertTrue(body.hasPrefix("{\"id\":"), body)
+    }
+
+    func testJSONStringEscapesControls() {
+        XCTAssertEqual(CommandChannel.jsonString("a\"b\\c"), "\"a\\\"b\\\\c\"")
+        XCTAssertEqual(CommandChannel.jsonString("a\nb"), "\"a\\u000ab\"")
+    }
+
+    func testAtomicWriteReplacesFile() throws {
+        // Живой ~/Library не трогаем: пишем во временную папку.
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        let file = dir.appendingPathComponent("command.json")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        XCTAssertTrue(CommandChannel.writeAtomic(file, "{\"id\":\"1\"}")) // папки ещё нет
+        XCTAssertTrue(CommandChannel.writeAtomic(file, "{\"id\":\"2\"}")) // поверх существующего
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "{\"id\":\"2\"}")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.appendingPathExtension("tmp").path))
+    }
+
+    /// Тест гонки (критик п. 1 плана WF9): лоадер читает command.json раз в 500 мс, поэтому
+    /// две записи подряд потеряли бы первую. Часы и таймер подставлены, живой ~/Library не трогаем.
+    func testQueueKeepsSixHundredMillisecondsBetweenWrites() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        let file = dir.appendingPathComponent("command.json")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let start = Date(timeIntervalSince1970: 1_756_900_000)
+        var now = start
+        var timers: [(at: Date, block: () -> Void)] = []
+        let channel = CommandChannel(path: file, now: { now },
+                                     schedule: { delay, block in
+                                         timers.append((now.addingTimeInterval(delay), block))
+                                     })
+        func action() throws -> String {
+            let json = try JSONSerialization.jsonObject(with: try Data(contentsOf: file))
+            return try XCTUnwrap((json as? [String: Any])?["action"] as? String)
+        }
+        /// Прокрутить часы до ближайшего таймера и выполнить его — как сделал бы главный поток.
+        func tick() throws {
+            let timer = try XCTUnwrap(timers.first, "таймер не поставлен")
+            timers.removeFirst()
+            now = max(now, timer.at)
+            timer.block()
+        }
+
+        // Две команды меню за 100 мс: первая на диске сразу, вторая ждёт своей очереди.
+        XCTAssertTrue(channel.write(action: "collapse"))
+        XCTAssertEqual(try action(), "collapse")
+        now = now.addingTimeInterval(0.1)
+        XCTAssertTrue(channel.write(action: "expand"))
+        XCTAssertEqual(try action(), "collapse", "вторая запись затёрла первую")
+        try tick()
+        XCTAssertEqual(try action(), "expand")
+        XCTAssertGreaterThanOrEqual(now.timeIntervalSince(start), CommandChannel.minInterval)
+
+        // Сводка — низший приоритет: ждёт очереди и пропадает, когда пришла команда меню.
+        var statusWritten: Bool?
+        let expandAt = now
+        channel.write(action: "status", fields: [], completion: { statusWritten = $0 })
+        XCTAssertEqual(try action(), "expand")
+        XCTAssertNil(statusWritten)
+        channel.write(action: "scroll")
+        XCTAssertEqual(statusWritten, false, "сводку не вытеснила команда меню")
+
+        // Примерка через 0,1 с после команды не пишется (z4-r06): лоадер её ещё не прочитал.
+        let preview: [(key: String, value: CommandValue)] = [(key: "preview", value: .bool(true))]
+        now = now.addingTimeInterval(0.1)
+        XCTAssertFalse(channel.write(action: "theme", fields: preview, priority: .preview))
+        XCTAssertEqual(try action(), "expand", "примерка затёрла непрочитанную команду")
+        try tick()
+        XCTAssertEqual(try action(), "scroll")
+        XCTAssertGreaterThanOrEqual(now.timeIntervalSince(expandAt), CommandChannel.minInterval)
+
+        // Через 0,6 с — вне очереди, пишется сразу; команда после неё ждёт те же 600 мс.
+        now = now.addingTimeInterval(CommandChannel.minInterval)
+        let previewAt = now
+        XCTAssertTrue(channel.write(action: "theme", fields: preview, priority: .preview))
+        XCTAssertEqual(try action(), "theme")
+        channel.write(action: "collapse")
+        XCTAssertEqual(try action(), "theme", "команда затёрла примерку раньше срока")
+        try tick()
+        XCTAssertEqual(try action(), "collapse")
+        XCTAssertGreaterThanOrEqual(now.timeIntervalSince(previewAt), CommandChannel.minInterval)
+        XCTAssertEqual(channel.lastCommand.hasPrefix("collapse @"), true, channel.lastCommand)
+    }
+
+    func testIDsDifferWithinTheSameMillisecond() {
+        // Лоадер отбрасывает команду с прежним id, поэтому две подряд обязаны отличаться.
+        let ids = Set((0..<200).map { _ in CommandChannel.makeID() })
+        XCTAssertGreaterThan(ids.count, 150)
+    }
+
+    // MARK: - темы
+
+    /// Мини-каталог формата themes.json: две годные темы и две кривые (без id, без палитры).
+    private static let miniCatalog = """
+    {"version":1,"themes":[
+      {"id":"violet","name":"Фиолетовая","type":"dark","palette":{"accent":"#a78bfa",\
+    "background":"#1b1626","foreground":"#ece9f5","sidebar":"#151021","panel":"#241d33","muted":"#8b81a6"}},
+      {"id":"arctic","name":"Арктика","type":"light","palette":{"accent":"#2563eb",\
+    "background":"#f7f9fc","foreground":"#101828","sidebar":"#eef2f8","panel":"#ffffff","muted":"#667085"}},
+      {"id":"","name":"Без id","type":"dark","palette":{"accent":"#000000"}},
+      {"id":"broken","name":"Без палитры","type":"dark"},
+      {"id":"mango","name":"Манго","type":"dark","set":"bright","palette":{"accent":"#fd8b27",\
+    "background":"#512b15","foreground":"#fce9de","sidebar":"#3a1d0c","panel":"#6b3c22","muted":"#be8c6f"}}
+    ]}
+    """
+
+    private func catalog() -> [Theme] { ThemeCatalog.parse(Data(ClaudeAXTests.miniCatalog.utf8)) }
+
+    func testCatalogParsesThemesAndSkipsBroken() {
+        let themes = catalog()
+        XCTAssertEqual(themes.map { $0.id }, ["violet", "arctic", "mango"])
+        XCTAssertEqual(themes[0].name, "Фиолетовая")
+        XCTAssertEqual(themes[0].palette["background"], "#1b1626")
+        XCTAssertEqual(themes[1].type, "light")
+        // Набор: поля нет — берётся из `type`, есть — стоит в нём (задача #5801).
+        XCTAssertEqual(themes.map { $0.set }, [.dark, .light, .bright])
+        XCTAssertTrue(ThemeCatalog.parse(Data("не json".utf8)).isEmpty)
+        XCTAssertTrue(ThemeCatalog.parse(Data("{\"version\":1}".utf8)).isEmpty)
+        // Нет файла — пустой каталог, а не падение.
+        XCTAssertTrue(ThemeCatalog.load(directory: URL(fileURLWithPath: "/nope/\(UUID().uuidString)")).isEmpty)
+    }
+
+    func testCatalogLoadsFileFromResourcesDirectory() throws {
+        // Так же приложение читает themes.json из Contents/Resources (его кладёт tools/bundle.sh).
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(ClaudeAXTests.miniCatalog.utf8).write(to: dir.appendingPathComponent(ThemeCatalog.fileName))
+        XCTAssertEqual(ThemeCatalog.load(directory: dir).map { $0.id }, ["violet", "arctic", "mango"])
+    }
+
+    /// Живой каталог из репозитория: `claude-patch/themes.json` кладёт в бандл tools/bundle.sh.
+    private static let repositoryRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+
+    func testBundledThemesGoAroundTheColourWheel() throws {
+        // Решение 5 плана WF9: имена по-русски, порядок — по цветовому кругу, id не меняются.
+        let themes = ThemeCatalog.load(directory: ClaudeAXTests.repositoryRoot
+            .appendingPathComponent("claude-patch", isDirectory: true))
+        XCTAssertEqual(themes.map { $0.id },
+                       ["red", "orange", "yellow", "green", "matrix", "teal", "tokyo", "blue",
+                        "violet", "dracula", "lilac", "pink", "crimson", "brown", "gray",
+                        // «Вкуснофф» (задача #6025) — цвета сайта vkusnoff.kz, в круг она не
+                        // встраивается: место ей — последней записью тёмных, чтобы порядок
+                        // тёмных до неё остался прежним.
+                        "vkusnoff",
+                        "peach", "lemon", "cream", "mint", "sky", "arctic", "lavender", "sakura",
+                        "powder",
+                        // Яркие (задача #5801) стоят в хвосте: тёмные и светлые перед ними
+                        // идут прежним порядком.
+                        "mango", "honey", "lemonade", "orangeade", "lime", "coral", "fuchsia",
+                        "electric", "ultra",
+                        // «Opus 5.5» (#7181, вместо «Ночных» #7106) — ещё дальше в хвосте,
+                        // по той же причине.
+                        "neontokyo", "retrowave", "acid", "abyss", "amber", "malachite",
+                        "magma", "laser", "miami", "cobalt"])
+        // Меню режет каталог на четыре набора — порядок внутри каждого обязан остаться тем же.
+        XCTAssertEqual(themes.filter { $0.set == .dark }.map { $0.name },
+                       ["Красная", "Оранжевая", "Жёлтая", "Зелёная", "Матрица", "Бирюзовая",
+                        "Токийская ночь", "Синяя", "Фиолетовая", "Дракула", "Сиреневая", "Розовая",
+                        "Малиновая", "Коричневая", "Серая", "Вкуснофф"])
+        XCTAssertEqual(themes.filter { $0.set == .light }.map { $0.name },
+                       ["Персиковая", "Лимонная", "Кремовая", "Мятная", "Небесная", "Светлая",
+                        "Лавандовая", "Сакура", "Пудровая"])
+        XCTAssertEqual(themes.filter { $0.set == .bright }.map { $0.name },
+                       ["Манго", "Мёд", "Лимонад", "Апельсин", "Лайм", "Коралл", "Фуксия",
+                        "Электрик", "Ультрафиолет"])
+        XCTAssertEqual(themes.filter { $0.set == .opus }.map { $0.name },
+                       ["Неоновый Токио", "Ретровейв", "Кислота", "Бездна", "Янтарный терминал",
+                        "Малахит", "Магма", "Лазер", "Майами", "Кобальт"])
+        XCTAssertTrue(themes.filter { $0.set == .opus }.allSatisfy { !$0.isLight }, "Opus 5.5 — тёмные")
+        // Слово Элвиса «не повторяй»: ни одна новая палитра не совпадает с прежними ни фоном,
+        // ни акцентом.
+        let opus = themes.filter { $0.set == .opus }
+        let others = themes.filter { $0.set != .opus }
+        for theme in opus {
+            XCTAssertFalse(others.contains { $0.palette["background"] == theme.palette["background"] },
+                           "фон «\(theme.name)» уже есть в каталоге")
+            XCTAssertFalse(others.contains { $0.palette["accent"] == theme.palette["accent"] },
+                           "акцент «\(theme.name)» уже есть в каталоге")
+        }
+        // Наборов ровно четыре, «Opus 5.5» последним — три прежних списка на своих местах.
+        XCTAssertEqual(ThemeSet.allCases, [.dark, .light, .bright, .opus])
+        XCTAssertEqual(MenuModel.themeSetTitle(.opus), "Opus 5.5")
+        XCTAssertNotEqual(MenuModel.themeSetIcon(.opus), MenuModel.themeSetIcon(.bright))
+        // Набор — дело меню, `type` — дело страницы: «Лимонад» и «Апельсин» яркие и светлые
+        // разом, и в команде у них по-прежнему стоит «light» (контракт не менялся).
+        XCTAssertEqual(themes.filter { $0.set == .bright && $0.isLight }.map { $0.id },
+                       ["lemonade", "orangeade"])
+        // Английских имён не осталось (Matrix, Dracula, Tokyo Night), палитра у всех полная.
+        for theme in themes {
+            XCTAssertEqual(Set(theme.palette.keys), Set(Theme.paletteOrder), theme.id)
+            let first = try XCTUnwrap(theme.name.unicodeScalars.first)
+            XCTAssertTrue((0x410...0x44F).contains(Int(first.value)), "имя «\(theme.name)» не по-русски")
+        }
+    }
+
+    /// Шрифт для команды: моноширинный, семейство — голым именем (контракт п. 5).
+    private static let monoFont = Font(id: "sf-mono", family: "SF Mono", category: .mono, displayName: "SF Mono")
+
+    private func themeBody(theme: Layer<Theme>, font: Layer<Font>,
+                           size: SizeLayer = .keep, frame: Layer<Bool> = .keep,
+                           scope: String = MenuModel.themeScopeWindow, title: String = "Vkusnoff",
+                           preview: Bool? = nil,
+                           id: String = "1756900000123-0042",
+                           at: TimeInterval = 1_756_900_000) -> String {
+        CommandChannel.payload(action: "theme",
+                               fields: ClaudeActions.themeFields(scope: scope, title: title,
+                                                                 preview: preview,
+                                                                 theme: theme, font: font,
+                                                                 size: size, frame: frame),
+                               id: id, at: Date(timeIntervalSince1970: at))
+    }
+
+    func testThemePayloadMatchesContract() throws {
+        // Побайтно, контракт п. 5 плана WF6: id, action, at, scope, title, theme, font;
+        // слоя, которого не трогаем, в команде нет вовсе.
+        let head = "{\"id\":\"1756900000123-0042\",\"action\":\"theme\",\"at\":\"2025-09-03T11:46:40Z\","
+            + "\"scope\":\"window\",\"title\":\"Vkusnoff\""
+        let themeField = ",\"theme\":{\"id\":\"violet\",\"name\":\"Фиолетовая\",\"type\":\"dark\","
+            + "\"palette\":{\"accent\":\"#a78bfa\",\"background\":\"#1b1626\",\"foreground\":\"#ece9f5\","
+            + "\"sidebar\":\"#151021\",\"panel\":\"#241d33\",\"muted\":\"#8b81a6\"}}"
+        let fontField = ",\"font\":{\"id\":\"sf-mono\",\"family\":\"SF Mono\",\"mono\":true}"
+        let violet = catalog()[0]
+        let font = ClaudeAXTests.monoFont
+
+        // 1. Только тема.
+        XCTAssertEqual(themeBody(theme: .set(violet), font: .keep), head + themeField + "}")
+        // 2. Только шрифт.
+        XCTAssertEqual(themeBody(theme: .keep, font: .set(font)), head + fontField + "}")
+        // 3. Оба слоя (своя тема) — тема всегда перед шрифтом.
+        XCTAssertEqual(themeBody(theme: .set(violet), font: .set(font)), head + themeField + fontField + "}")
+
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(themeBody(theme: .set(violet), font: .set(font)).utf8)) as? [String: Any])
+        XCTAssertEqual(json["action"] as? String, "theme")
+        XCTAssertEqual(json["scope"] as? String, "window")
+        XCTAssertEqual(json["title"] as? String, "Vkusnoff")
+        let theme = try XCTUnwrap(json["theme"] as? [String: Any])
+        XCTAssertEqual(theme["id"] as? String, "violet")
+        XCTAssertEqual(theme["type"] as? String, "dark")
+        XCTAssertEqual((theme["palette"] as? [String: String])?["background"], "#1b1626")
+        let fontJSON = try XCTUnwrap(json["font"] as? [String: Any])
+        XCTAssertEqual(fontJSON["family"] as? String, "SF Mono")
+        XCTAssertEqual(fontJSON["mono"] as? Bool, true)
+    }
+
+    func testThemeResetPayloadCarriesNull() throws {
+        // Сброс обоих слоёв «всем окнам».
+        let body = themeBody(theme: .reset, font: .reset, scope: MenuModel.themeScopeAll, title: "",
+                             id: "1-0001", at: 0)
+        XCTAssertTrue(body.hasSuffix("\"scope\":\"all\",\"title\":\"\",\"theme\":null,\"font\":null}"), body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertTrue(json["theme"] is NSNull)
+        XCTAssertTrue(json["font"] is NSNull)
+
+        // Сброс ОДНОГО слоя: «Системный (как у Claude)» не должен трогать тему окна.
+        let fontOnly = themeBody(theme: .keep, font: .reset, id: "1-0001", at: 0)
+        XCTAssertEqual(fontOnly, "{\"id\":\"1-0001\",\"action\":\"theme\",\"at\":\"1970-01-01T00:00:00Z\","
+            + "\"scope\":\"window\",\"title\":\"Vkusnoff\",\"font\":null}")
+        // И наоборот — «Как у Claude» в теме не трогает шрифт.
+        XCTAssertEqual(themeBody(theme: .reset, font: .keep, id: "1-0001", at: 0),
+                       "{\"id\":\"1-0001\",\"action\":\"theme\",\"at\":\"1970-01-01T00:00:00Z\","
+                       + "\"scope\":\"window\",\"title\":\"Vkusnoff\",\"theme\":null}")
+        // Оба слоя «не трогать» — команды нет вообще.
+        XCTAssertEqual(ClaudeActions.themeFields(scope: "window", title: "", theme: .keep, font: .keep).count, 2)
+
+        // Старые команды не поехали: extra по-прежнему пишет строки по алфавиту.
+        XCTAssertEqual(CommandChannel.payload(action: "scroll", extra: [:], id: "1-0001",
+                                              at: Date(timeIntervalSince1970: 0)),
+                       "{\"id\":\"1-0001\",\"action\":\"scroll\",\"at\":\"1970-01-01T00:00:00Z\"}")
+    }
+
+    func testSizeAndFramePayloadMatchContract() throws {
+        // Побайтно, контракт п. 1 плана WF12 с расширением решения 1 плана WF19: id, action, at,
+        // scope, title, theme, font, size, frame. Размер — числа, а не строки; рамка — true;
+        // слоя, которого не трогаем, в команде нет; снятая ПОЛОВИНА размера — null внутри объекта.
+        let head = "{\"id\":\"1756900000123-0042\",\"action\":\"theme\",\"at\":\"2025-09-03T11:46:40Z\","
+            + "\"scope\":\"window\",\"title\":\"Vkusnoff\""
+        let themeField = ",\"theme\":{\"id\":\"violet\",\"name\":\"Фиолетовая\",\"type\":\"dark\","
+            + "\"palette\":{\"accent\":\"#a78bfa\",\"background\":\"#1b1626\",\"foreground\":\"#ece9f5\","
+            + "\"sidebar\":\"#151021\",\"panel\":\"#241d33\",\"muted\":\"#8b81a6\"}}"
+        let fontField = ",\"font\":{\"id\":\"sf-mono\",\"family\":\"SF Mono\",\"mono\":true}"
+        let violet = catalog()[0]
+        let font = ClaudeAXTests.monoFont
+
+        // 1. Только размер — и только та половина, которую выбрали в меню.
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep, size: .one(.answer, .set(16))),
+                       head + ",\"size\":{\"answer\":16}}")
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep, size: .one(.question, .set(13))),
+                       head + ",\"size\":{\"question\":13}}")
+        // 2. Только рамка.
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep, frame: .set(true)), head + ",\"frame\":true}")
+        // 3. Все четыре слоя (своя тема со всем сохранённым) — порядок тема, шрифт, размер, рамка.
+        let sizeField = ",\"size\":{\"answer\":16,\"question\":14}"
+        let full = themeBody(theme: .set(violet), font: .set(font),
+                             size: SizeLayer(Size(answer: 16, question: 14)), frame: .set(true))
+        XCTAssertEqual(full, head + themeField + fontField + sizeField + ",\"frame\":true}")
+
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(full.utf8)) as? [String: Any])
+        let size = try XCTUnwrap(json["size"] as? [String: Any])
+        XCTAssertEqual(size["answer"] as? Int, 16)   // именно число, а не строка
+        XCTAssertEqual(size["question"] as? Int, 14)
+        XCTAssertEqual(json["frame"] as? Bool, true)
+
+        // 4. Сброс слоя — null; размер снимается целиком, обеими половинами («🧹 Всё как у Claude»).
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep, size: .reset), head + ",\"size\":null}")
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep, frame: .reset), head + ",\"frame\":null}")
+        let reset = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(themeBody(theme: .keep, font: .keep, size: .reset, frame: .reset).utf8)) as? [String: Any])
+        XCTAssertTrue(reset["size"] is NSNull)
+        XCTAssertTrue(reset["frame"] is NSNull)
+        // Тема и шрифт при этом не поехали.
+        XCTAssertNil(reset["theme"])
+        XCTAssertNil(reset["font"])
+
+        // 4а. «Как у Claude» в одном из двух подменю снимает СВОЮ половину — null внутри объекта
+        // (решение 1 плана WF19); вторая половина в команду не попадает вовсе.
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep, size: .one(.answer, .reset)),
+                       head + ",\"size\":{\"answer\":null}}")
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep, size: .one(.question, .reset)),
+                       head + ",\"size\":{\"question\":null}}")
+        let half = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(themeBody(theme: .keep, font: .keep, size: .one(.answer, .reset)).utf8)) as? [String: Any])
+        let halves = try XCTUnwrap(half["size"] as? [String: Any])
+        XCTAssertTrue(halves["answer"] is NSNull, "снятая половина — именно null, а не 0")
+        XCTAssertNil(halves["question"], "вторую половину команда не трогает")
+        // Обе половины «не трогать» — поля size нет вовсе (пустой объект страница прочла бы
+        // как полный сброс).
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep,
+                                 size: .halves(answer: .keep, question: .keep)), head + "}")
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep, size: SizeLayer(Size())), head + "}")
+        // Одна снята, вторая задана — порядок ключей прежний, ответы первыми.
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep,
+                                 size: .halves(answer: .set(16), question: .reset)),
+                       head + ",\"size\":{\"answer\":16,\"question\":null}}")
+
+        // 5. Примерка размера — то же тело плюс preview перед слоями.
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep, size: .one(.answer, .set(20)), preview: true),
+                       head + ",\"preview\":true,\"size\":{\"answer\":20}}")
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep, size: .one(.question, .reset), preview: true),
+                       head + ",\"preview\":true,\"size\":{\"question\":null}}")
+        XCTAssertEqual(themeBody(theme: .keep, font: .keep, frame: .set(true), preview: true),
+                       head + ",\"preview\":true,\"frame\":true}")
+
+        // 6. Границы контракта 11…24 и склейка половин (страница склеивает слой так же).
+        XCTAssertEqual(Size(answer: 40, question: 3).commandValue.json,
+                       "{\"answer\":24,\"question\":11}")
+        XCTAssertEqual(Size(answer: 16).merging(Size(question: 14)), Size(answer: 16, question: 14))
+        XCTAssertEqual(Size(answer: 16).merging(Size(answer: 12)), Size(answer: 12))
+        XCTAssertTrue(Size().isEmpty)
+        XCTAssertFalse(Size(question: 12).isEmpty)
+        XCTAssertEqual(Size.one(.answer, 15), Size(answer: 15))
+        XCTAssertEqual(Size.one(.question, 15), Size(question: 15))
+        XCTAssertEqual(Size(answer: 15, question: 12).value(.question), 12)
+        XCTAssertEqual(CommandValue.number(12).json, "12")
+    }
+
+    func testPreviewPayloadMatchesContract() throws {
+        // Побайтно, контракт п. 1 плана WF8: preview стоит между title и слоями,
+        // в примерке слой ровно один, «конец предпросмотра» — без слоёв вовсе.
+        let head = "{\"id\":\"1756900000123-0042\",\"action\":\"theme\",\"at\":\"2025-09-03T11:46:40Z\","
+            + "\"scope\":\"window\",\"title\":\"Vkusnoff\""
+        let violet = catalog()[0]
+
+        // 1. Примерка темы — тело закрепляющей команды плюс "preview":true перед слоем.
+        let preview = themeBody(theme: .set(violet), font: .keep, preview: true)
+        XCTAssertEqual(preview, themeBody(theme: .set(violet), font: .keep)
+            .replacingOccurrences(of: head, with: head + ",\"preview\":true"))
+        XCTAssertTrue(preview.hasPrefix(head + ",\"preview\":true,\"theme\":{\"id\":\"violet\","), preview)
+
+        // 2. Примерка сброса шрифта («Системный») — слой уходит как null.
+        XCTAssertEqual(themeBody(theme: .keep, font: .reset, preview: true),
+                       head + ",\"preview\":true,\"font\":null}")
+
+        // 3. Конец предпросмотра — preview: false и ни одного слоя.
+        let end = themeBody(theme: .keep, font: .keep, preview: false)
+        XCTAssertEqual(end, head + ",\"preview\":false}")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(end.utf8)) as? [String: Any])
+        XCTAssertEqual(json["preview"] as? Bool, false)
+        XCTAssertEqual(json["scope"] as? String, "window")
+        XCTAssertNil(json["theme"])
+        XCTAssertNil(json["font"])
+
+        // Закрепляющая команда поля preview не носит вовсе.
+        XCTAssertFalse(themeBody(theme: .set(violet), font: .keep).contains("\"preview\""))
+    }
+
+    func testCommandValueWritesBooleans() {
+        XCTAssertEqual(CommandValue.bool(true).json, "true")
+        XCTAssertEqual(CommandValue.bool(false).json, "false")
+        XCTAssertEqual(CommandValue.object([(key: "mono", value: .bool(false))]).json, "{\"mono\":false}")
+        XCTAssertEqual(Font(id: "georgia", family: "Georgia", category: .serif, displayName: "Джорджия")
+            .commandValue.json, "{\"id\":\"georgia\",\"family\":\"Georgia\",\"mono\":false}")
+    }
+
+    /// Своя тема из my-themes.json: фиолетовая палитра + моноширинный шрифт.
+    private func myTheme() -> MyTheme {
+        MyTheme(id: "user-1756900000000", name: "Моя тёплая", type: "dark",
+                palette: catalog()[0].palette, font: ClaudeAXTests.monoFont)
+    }
+
+    private func menuConfig() -> MinimizeMenu.MenuConfig {
+        var config = MinimizeMenu.MenuConfig()
+        config.themes = catalog()
+        config.fonts = [Font(id: "georgia", family: "Georgia", category: .serif, displayName: "Georgia"),
+                        ClaudeAXTests.monoFont]
+        config.myThemes = [myTheme()]
+        config.windowThemeID = "arctic"
+        config.windowFontID = "sf-mono"
+        config.windowSize = Size(answer: 16, question: 13)
+        return config
+    }
+
+    /// «⋯ Ещё ▸» — последний пункт меню (с WF71 там всё, что не про вид).
+    private func moreMenu(in menu: NSMenu) throws -> NSMenu {
+        let item = try XCTUnwrap(menu.items.last, "меню пустое")
+        XCTAssertEqual(item.title, MenuModel.moreTitle, "«Ещё ▸» не последний")
+        return try XCTUnwrap(item.submenu, "у «Ещё» нет подменю")
+    }
+
+    /// «🖥 Всем окнам ▸» — последний пункт «⋯ Ещё ▸» (план WF71: там единственные тумблеры
+    /// «Цвет по проекту», «Раскрасить по кругу» и «Живые цвета»).
+    private func allWindows(in menu: NSMenu) throws -> NSMenu {
+        let item = try XCTUnwrap(try moreMenu(in: menu).items.last)
+        XCTAssertEqual(item.title, MenuModel.allWindowsTitle, "«Всем окнам ▸» не последний в «Ещё ▸»")
+        return try XCTUnwrap(item.submenu, "у «Всем окнам» нет подменю")
+    }
+
+    /// Подменю своей темы на верхнем уровне (план WF71 п. 2).
+    private func myThemeMenu(in menu: NSMenu, _ name: String) throws -> NSMenu {
+        let item = try XCTUnwrap(menu.items.first { $0.title == name }, "темы «\(name)» нет наверху")
+        return try XCTUnwrap(item.submenu, "у темы «\(name)» нет подменю")
+    }
+
+    /// Какие слои пункт НЕ трогает: t — тема, f — шрифт, s — размер, r — рамка.
+    private func keptLayers(_ theme: Layer<Theme>, _ font: Layer<Font>,
+                            _ size: SizeLayer, _ frame: Layer<Bool>) -> String {
+        (theme.isKeep ? "t" : "") + (font.isKeep ? "f" : "")
+            + (size.isKeep ? "s" : "") + (frame.isKeep ? "r" : "")
+    }
+
+    /// Положение меню на жёлтой кнопке (решение 2.1 плана WF20, слово Элвиса 05.09 10:40):
+    /// правый край чуть ЛЕВЕЕ кнопки, верх чуть НИЖЕ неё; у левого края экрана — под левым краем
+    /// окна, как было до WF19. Координаты перевёрнутые (Quartz), точка — левый верхний угол меню.
+    func testMenuOriginSitsLeftOfMinimizeButton() {
+        let area = CGRect(x: 0, y: 25, width: 1710, height: 1055)
+        // Кнопка «Свернуть» окна посреди экрана.
+        let button = CGRect(x: 500, y: 40, width: 14, height: 14)
+        let point = MinimizeMenu.origin(button: button, menuWidth: 300, area: area)
+        XCTAssertEqual(point.x + 300, button.minX - MinimizeMenu.menuGap, "правый край не левее кнопки")
+        XCTAssertEqual(point.y, button.maxY + MinimizeMenu.menuGap, "верх меню не ниже кнопки")
+        // Правило «справа от окна, если влезает» снято: рамка окна на точку не влияет вовсе.
+        XCTAssertEqual(MinimizeMenu.origin(button: button, menuWidth: 300, area: nil), point)
+
+        // Слева не влезло (окно придвинули к краю экрана) — меню падает под ЛЕВЫЙ край окна.
+        let edge = CGRect(x: 40, y: 40, width: 14, height: 14)
+        XCTAssertEqual(MinimizeMenu.origin(button: edge, menuWidth: 300, area: area),
+                       CGPoint(x: edge.minX, y: edge.maxY + MinimizeMenu.menuGap))
+        // Ровно на границе: 302 − 2 − 300 = 0 ещё влезает, на пункт левее — уже нет.
+        XCTAssertEqual(MinimizeMenu.origin(button: CGRect(x: 302, y: 40, width: 14, height: 14),
+                                           menuWidth: 300, area: area).x, area.minX)
+        XCTAssertEqual(MinimizeMenu.origin(button: CGRect(x: 301, y: 40, width: 14, height: 14),
+                                           menuWidth: 300, area: area).x, 301)
+        // Экран не с нуля (второй монитор слева) — считаем от его края, а не от нуля.
+        XCTAssertEqual(MinimizeMenu.origin(button: button, menuWidth: 300,
+                                           area: CGRect(x: 400, y: 25, width: 1000, height: 800)).x,
+                       button.minX)
+
+        // `NSMenu.size` на пунктах с кастомными view может соврать — верим только 120…600,
+        // иначе подставляем 280 (та же константа, что стояла в WF19).
+        let fallback = button.minX - MinimizeMenu.menuGap - MinimizeMenu.fallbackMenuWidth
+        for width in [0, 5, Double(MinimizeMenu.minMenuWidth) - 1,
+                      Double(MinimizeMenu.maxMenuWidth) + 1, 5000, Double.nan] {
+            XCTAssertEqual(MinimizeMenu.origin(button: button, menuWidth: CGFloat(width),
+                                               area: area).x, fallback, "ширина \(width)")
+        }
+        // Крайним значениям полосы верим как есть (широкому меню нужно окно подальше от края).
+        let far = CGRect(x: 900, y: 40, width: 14, height: 14)
+        for (rect, width) in [(button, MinimizeMenu.minMenuWidth), (far, MinimizeMenu.maxMenuWidth)] {
+            XCTAssertEqual(MinimizeMenu.origin(button: rect, menuWidth: width, area: area).x,
+                           rect.minX - MinimizeMenu.menuGap - width, "ширина \(width)")
+        }
+    }
+
+    /// Меню поднимается только после того, как активность ПРАВДА приехала (#5797): `activate`
+    /// её лишь просит, а меню, поднятое до приезда, AppKit гасит через четверть секунды —
+    /// Элвис видел «мигнуло и пропало».
+    func testMenuWaitsUntilAppIsReallyActive() {
+        // Уже активны — ни одного шага ожидания, меню поднимается сразу.
+        var pumps = 0
+        var clock: TimeInterval = 100
+        XCTAssertTrue(MinimizeMenu.awaitActive(isActive: { true }, pump: { pumps += 1 },
+                                               now: { clock }))
+        XCTAssertEqual(pumps, 0)
+
+        // Активность приезжает с третьего события — дождались, лишнего не ждём.
+        pumps = 0
+        XCTAssertTrue(MinimizeMenu.awaitActive(isActive: { pumps >= 3 },
+                                               pump: { pumps += 1; clock += 0.02 },
+                                               now: { clock }))
+        XCTAssertEqual(pumps, 3)
+
+        // Не приехала вовсе — выходим по сроку и меню поднимаем всё равно (ответ false).
+        pumps = 0
+        clock = 100
+        XCTAssertFalse(MinimizeMenu.awaitActive(isActive: { false },
+                                                pump: { pumps += 1; clock += MinimizeMenu.activateStep },
+                                                now: { clock }))
+        XCTAssertEqual(clock - 100, MinimizeMenu.activateWait, accuracy: MinimizeMenu.activateStep,
+                       "ждали дольше срока")
+        XCTAssertGreaterThan(pumps, 0)
+        XCTAssertLessThanOrEqual(pumps,
+                                 Int((MinimizeMenu.activateWait / MinimizeMenu.activateStep).rounded()) + 1)
+    }
+
+    /// Область для меню считается по рамке САМОЙ кнопки (#5716), и рамка эта — из
+    /// доступности, то есть в перевёрнутых координатах Quartz, как их и ждёт
+    /// `Screens.usableFrame(holding:)`: экраны она переворачивает сама. Перевод рамки в
+    /// координаты AppKit перед вызовом ЛОМАЕТ выбор экрана — на это и проверка.
+    func testMenuAreaTakesButtonRectInAXCoordinates() {
+        // Экраны в перевёрнутых координатах: ноутбук с меню-баром и монитор НАД ним (у второго
+        // экрана сверху y отрицательный — на этом и видно, что рамку переворачивать нельзя).
+        let laptop = CGRect(x: 0, y: 0, width: 1470, height: 956)
+        let external = CGRect(x: 0, y: -1080, width: 1920, height: 1080)
+        let flipBase = laptop.maxY
+
+        // Один экран: кнопка окна ноутбука — на нём, куда её ни ставь.
+        let onLaptop = CGRect(x: 40, y: 50, width: 14, height: 14)
+        XCTAssertEqual(Screens.pick(screens: [laptop], for: [onLaptop]), 0)
+        // Экрана под рамкой нет вовсе — тоже нулевой, и область у меню всё равно есть.
+        XCTAssertEqual(Screens.pick(screens: [laptop], for: [CGRect(x: -900, y: 50, width: 14, height: 14)]), 0)
+
+        // Два экрана: кнопка на главном — главный, кнопка на втором — второй.
+        let onExternal = CGRect(x: 40, y: -1030, width: 14, height: 14)
+        XCTAssertEqual(Screens.pick(screens: [laptop, external], for: [onLaptop]), 0)
+        XCTAssertEqual(Screens.pick(screens: [laptop, external], for: [onExternal]), 1)
+
+        // Та же кнопка, но «переведённая» в координаты AppKit, уезжает с экрана вовсе —
+        // выбор скатывается на нулевой, и меню считалось бы по чужой области.
+        let flipped = CGRect(x: onExternal.minX, y: flipBase - onExternal.maxY,
+                             width: onExternal.width, height: onExternal.height)
+        XCTAssertEqual(Screens.pick(screens: [laptop, external], for: [flipped]), 0)
+
+        // Ради чего всё: у окна, придвинутого к левому краю ВТОРОГО экрана, меню падает под
+        // кнопку, а не уезжает за его край.
+        XCTAssertEqual(MinimizeMenu.origin(button: onExternal, menuWidth: 300, area: external).x,
+                       onExternal.minX)
+        // На главном экране места слева хватает — меню как обычно, левее кнопки.
+        XCTAssertEqual(MinimizeMenu.origin(button: CGRect(x: 528, y: 50, width: 14, height: 14),
+                                           menuWidth: 300, area: laptop).x,
+                       528 - MinimizeMenu.menuGap - 300)
+    }
+
+    /// Структура меню WF71 (план WF70/71, макет одобрен Элвисом 17.09 14:20): верхний уровень —
+    /// про оформление (свои темы с подменю у каждой и «💾 Сохранить тему», цвет, шрифт, размер
+    /// шрифта, рамка, поля, «🧹 Всё как у Claude»), всё остальное — в «⋯ Ещё ▸», «всем окнам» —
+    /// одним подменю с ОДНОЙ шапкой последним в «Ещё ▸». «🗂 Проект ▸» из WF15 ушло ещё в WF20,
+    /// тумблер «🗂 Цвет по проекту» стоит в «Всем окнам ▸» перед «🌈 Раскрасить по кругу ▸».
+    func testAppearanceMenuStructure() throws {
+        var applied: [(scope: String, theme: String?, font: String?, keep: String)] = []
+        var here: [String] = []
+        var saved = 0
+        var deleted: [String] = []
+        var config = menuConfig()
+        config.projectColor = true
+        config.apply = { scope, theme, font, size, frame, _ in
+            applied.append((scope: scope, theme: theme.value?.id, font: font.value?.id,
+                            keep: self.keptLayers(theme, font, size, frame)))
+        }
+        // Меню зовёт `applyMyTheme` заглушкой — состав слоёв своей темы проверяют
+        // `testMyThemeAppliesOnlyPalette` и `testMyThemePreviewsOnlyPalette`, а не меню.
+        config.applyMyTheme = { scope, my in
+            applied.append((scope: scope, theme: my.id, font: my.font?.id, keep: ""))
+        }
+        config.applyMyThemeHere = { here.append($0.id) }
+        config.saveMyTheme = { saved += 1 }
+        config.deleteMyTheme = { deleted.append($0.id) }
+        let menu = MinimizeMenu.build(config: config)
+
+        // MARK: верхний уровень — оформление; окно проектом не опознано, «🗂 Проекта» нет
+        XCTAssertEqual(menu.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Как у Claude", "Моя тёплая", "Сохранить тему", "—", "Цвет", "Шрифт", "Размер шрифта",
+                        "Размер шрифта в поле", "Плотный текст",
+                        "Поля", "—", "Всё как у Claude", "—", "Ещё"])
+        // «Как у Claude» первым — тема по умолчанию (слово Элвиса 17.09 16:10): снимает только цвет.
+        let claude = try XCTUnwrap(menu.items.first)
+        XCTAssertNotNil(claude.image)
+        XCTAssertFalse(claude.hasSubmenu)
+        applied.removeAll()
+        click(claude)
+        XCTAssertEqual(applied.map { $0.scope }, ["window"])
+        XCTAssertEqual(applied.map { $0.keep }, ["fsr"], "«Как у Claude» наверху трогает только цвет")
+        XCTAssertNil(applied.first?.theme)
+        applied.removeAll()
+        // Подменю — у своей темы, у трёх списков и у «Ещё»; «Оформление ▸» и «Всем окнам ▸»
+        // наверху больше нет, «Размер вопросов ▸» и «Своя тема…» — нигде (#6252, слово Элвиса).
+        XCTAssertEqual(menu.items.filter { $0.hasSubmenu }.map { $0.title },
+                       ["Моя тёплая", "Цвет", "Шрифт", "Размер шрифта", "Размер шрифта в поле", "Ещё"])
+        XCTAssertNil(menu.items.first { $0.title == "Оформление" })
+        XCTAssertNil(menu.items.first { $0.title == MenuModel.allWindowsTitle })
+        XCTAssertNil(menu.items.first { $0.title == MenuModel.questionSizeTitle })
+        XCTAssertNil(menu.items.first { $0.title == MenuModel.themeEditorTitle })
+        XCTAssertNil(menu.items.first { $0.title == MenuModel.myThemesHeader }, "шапки наверху нет")
+        XCTAssertEqual(MenuModel.answerSizeTitle, "Размер шрифта")
+        XCTAssertEqual(MenuModel.sidePaddingTitle, "Поля")
+        XCTAssertEqual(MenuModel.saveMyThemeTitle, "Сохранить тему")
+        // Двух разделителей подряд быть не должно — AppKit нарисовал бы две линии.
+        for (index, item) in menu.items.enumerated() where item.isSeparatorItem {
+            XCTAssertFalse(index > 0 && menu.items[index - 1].isSeparatorItem, "двойной разделитель")
+        }
+
+        // MARK: «🎨 Цвет ▸» — сброс, полоска и три набора подменю (задача #5801)
+        let color = try XCTUnwrap(menu.items.first { $0.title == MenuModel.colorTitle }?.submenu)
+        XCTAssertEqual(color.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Как у Claude", "—", "Тёмные", "Светлые", "Яркие"])
+        // Наборы — подменю со значком, а не заголовки: клик по имени набора ничего не применяет.
+        var sets: [String: NSMenu] = [:]
+        for title in ["Тёмные", "Светлые", "Яркие"] {
+            let item = try XCTUnwrap(color.items.first { $0.title == title })
+            XCTAssertTrue(item.isEnabled, "набор «\(title)» погашен")
+            XCTAssertNotNil(item.image, "у набора «\(title)» нет значка")
+            sets[title] = try XCTUnwrap(item.submenu, "набор «\(title)» без списка")
+        }
+        XCTAssertEqual(sets["Тёмные"]?.items.map { $0.title }, ["Фиолетовая"])
+        XCTAssertEqual(sets["Светлые"]?.items.map { $0.title }, ["Арктика"])
+        XCTAssertEqual(sets["Яркие"]?.items.map { $0.title }, ["Манго"])
+        // Галка стоит у того набора, откуда взят цвет окна: искать по всем трём не надо.
+        XCTAssertEqual(try XCTUnwrap(color.items.first { $0.title == "Светлые" }).state, .on)
+        XCTAssertEqual(try XCTUnwrap(color.items.first { $0.title == "Тёмные" }).state, .off)
+        XCTAssertEqual(try XCTUnwrap(color.items.first { $0.title == "Яркие" }).state, .off)
+        let violet = try XCTUnwrap(sets["Тёмные"]?.items.first { $0.title == "Фиолетовая" })
+        XCTAssertNotNil(violet.image) // кружок цвета
+        XCTAssertEqual(violet.image?.size, NSSize(width: 14, height: 14))
+        XCTAssertEqual(violet.image?.isTemplate, false)
+        XCTAssertNotNil(violet.image?.tiffRepresentation) // кружок рисуется, а не падает
+        // Цвета кружка — из палитры; кривой цвет не должен ронять меню.
+        XCTAssertEqual(MinimizeMenu.color("#abc"), MinimizeMenu.color("#AABBCC"))
+        XCTAssertNil(MinimizeMenu.color("не цвет"))
+        XCTAssertNil(MinimizeMenu.color(nil))
+        XCTAssertEqual(violet.state, .off)
+        XCTAssertEqual(try XCTUnwrap(sets["Светлые"]?.items.first { $0.title == "Арктика" }).state,
+                       .on) // выбрана
+        // У окна своя запись есть — «Как у Claude» не отмечено (правило галок — отдельный тест).
+        XCTAssertEqual(try XCTUnwrap(color.items.first { $0.title == "Как у Claude" }).state, .off)
+        // Свои темы живут наверху — в списке цветов окна их нет.
+        XCTAssertNil(color.items.first { $0.title == MenuModel.myThemesHeader })
+
+        // MARK: своя тема наверху — кружок, галка по id, подменю (план WF71 п. 2)
+        let myItem = try XCTUnwrap(menu.items.first { $0.title == "Моя тёплая" })
+        XCTAssertNotNil(myItem.image)
+        XCTAssertEqual(myItem.state, .off)
+        let my = try myThemeMenu(in: menu, "Моя тёплая")
+        XCTAssertEqual(my.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Применить", "Изменить…", "—", "Удалить"])
+        // Окно проектом не опознано — адресатов два: «Окнам проекта …» нет.
+        let targets = try XCTUnwrap(my.items.first?.submenu)
+        XCTAssertEqual(targets.items.map { $0.title }, ["Только этому окну", "Всем окнам"])
+        XCTAssertNotNil(my.items.first { $0.title == MenuModel.editMyThemeTitle }?.image) // ✏️
+        XCTAssertNotNil(my.items.first { $0.title == MenuModel.deleteMyThemeTitle }?.image) // 🗑
+
+        // MARK: «🖥 Всем окнам ▸» — последним в «Ещё ▸», шапка ровно одна (критик В4)
+        let all = try allWindows(in: menu)
+        // «🌊 Живые цвета ▸» встали сразу под «🌈 Раскрасить по кругу ▸» (план WF18, вариант А),
+        // а перед ними — тумблер «🗂 Цвет по проекту» (решение 3.4 плана WF20).
+        XCTAssertEqual(all.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["ВСЕМ ОКНАМ", "Цвет", "Шрифт", "Размер шрифта",
+                        "Плотный текст", "Опыты", "—",
+                        "Цвет по проекту", "Раскрасить по кругу", "Живые цвета"])
+        XCTAssertFalse(try XCTUnwrap(all.items.first).isEnabled)
+        XCTAssertNotNil(try moreMenu(in: menu).items.last?.image) // 🖥
+        // «Мои темы» остались в «Всем окнам ▸ → Цвет ▸» (блокер Б2): свою тему можно дать всем окнам.
+        let colorAll = try XCTUnwrap(all.items.first { $0.title == MenuModel.colorTitle }?.submenu)
+        XCTAssertEqual(colorAll.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Мои темы", "Моя тёплая", "—", "Как у Claude", "—", "Тёмные", "Светлые",
+                        "Яркие"])
+        // Шапки «ВСЕМ ОКНАМ» во вложенных списках больше нет — иначе она задвоилась бы.
+        for nested in [colorAll,
+                       try XCTUnwrap(all.items.first { $0.title == MenuModel.fontTitle }?.submenu),
+                       try XCTUnwrap(all.items.first { $0.title == MenuModel.answerSizeTitle }?.submenu)] {
+            XCTAssertNil(nested.items.first { $0.title == MenuModel.allWindowsHeader },
+                         "шапка «ВСЕМ ОКНАМ» задвоилась в «\(nested.title)»")
+        }
+        // всем окнам ничего не задано → «Как у Claude»
+        XCTAssertEqual(colorAll.items.first { $0.title == MenuModel.themeResetTitle }?.state, .on)
+
+        // MARK: «🔤 Шрифт ▸» — сброс первым, дальше секции категорий: с засечками последними (#6251)
+        let font = try XCTUnwrap(menu.items.first { $0.title == MenuModel.fontTitle }?.submenu)
+        XCTAssertEqual(font.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Системный (как у Claude)", "—", "МОНОШИРИННЫЕ", "SF Mono", "—",
+                        "С ЗАСЕЧКАМИ", "Georgia"])
+        XCTAssertFalse(try XCTUnwrap(font.items.first { $0.title == "С ЗАСЕЧКАМИ" }).isEnabled)
+        // Каждый пункт нарисован своим шрифтом.
+        let georgia = try XCTUnwrap(font.items.first { $0.title == "Georgia" })
+        XCTAssertEqual((georgia.attributedTitle?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize, 13)
+        XCTAssertEqual(try XCTUnwrap(font.items.first { $0.title == "SF Mono" }).state, .on)
+        let fontAll = try XCTUnwrap(all.items.first { $0.title == MenuModel.fontTitle }?.submenu)
+        XCTAssertEqual(fontAll.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Системный (как у Claude)", "—", "МОНОШИРИННЫЕ", "SF Mono", "—",
+                        "С ЗАСЕЧКАМИ", "Georgia"])
+
+        // MARK: нажатия — каждый пункт трогает ровно свой слой
+        let lightAll = try XCTUnwrap(colorAll.items
+            .first { $0.title == MenuModel.lightThemesHeader }?.submenu)
+        click(try XCTUnwrap(sets["Тёмные"]?.items.first { $0.title == "Фиолетовая" }))
+        click(try XCTUnwrap(color.items.first { $0.title == "Как у Claude" }))
+        click(try XCTUnwrap(lightAll.items.first { $0.title == "Арктика" }))
+        click(try XCTUnwrap(font.items.first { $0.title == "SF Mono" }))
+        click(try XCTUnwrap(font.items.first { $0.title == "Системный (как у Claude)" }))
+        click(try XCTUnwrap(fontAll.items.first { $0.title == "Georgia" }))
+        click(try XCTUnwrap(targets.items.first { $0.title == MenuModel.applyMyThemeAllTitle }))
+        click(try XCTUnwrap(colorAll.items.first { $0.title == "Моя тёплая" }))
+        XCTAssertEqual(applied.map { $0.scope },
+                       ["window", "window", "all", "window", "window", "all", "all", "all"])
+        XCTAssertEqual(applied.map { $0.theme },
+                       ["violet", nil, "arctic", nil, nil, nil, "user-1756900000000", "user-1756900000000"])
+        XCTAssertEqual(applied.map { $0.font }, [nil, nil, nil, "sf-mono", nil, "georgia", "sf-mono", "sf-mono"])
+        // Тема не трогает ни шрифт, ни размер, ни рамку — и наоборот (в команде полей просто нет).
+        XCTAssertEqual(applied.map { $0.keep }, ["fsr", "fsr", "fsr", "tsr", "tsr", "tsr", "", ""])
+        // «Только этому окну» идёт своим крючком — мимо проекта (план WF71 п. 2).
+        click(try XCTUnwrap(targets.items.first { $0.title == MenuModel.applyMyThemeWindowTitle }))
+        XCTAssertEqual(here, ["user-1756900000000"])
+        XCTAssertEqual(applied.count, 8)
+
+        // «🧹 Всё как у Claude» — сброс всех четырёх слоёв одной командой.
+        applied = []
+        click(try XCTUnwrap(menu.items.first { $0.title == MenuModel.resetAllTitle }))
+        XCTAssertEqual(applied.map { $0.scope }, ["window"])
+        XCTAssertEqual(applied.map { $0.keep }, [""])
+        XCTAssertEqual(applied.map { $0.theme }, [nil])
+
+        // «💾 Сохранить тему» — один пункт раздела; «🗑 Удалить» — в подменю темы.
+        click(try XCTUnwrap(menu.items.first { $0.title == MenuModel.saveMyThemeTitle }))
+        click(try XCTUnwrap(my.items.first { $0.title == MenuModel.deleteMyThemeTitle }))
+        XCTAssertEqual(saved, 1)
+        XCTAssertEqual(deleted, ["user-1756900000000"])
+
+        // Своих тем нет — раздел из одного «Сохранить тему», разделитель за ним остаётся.
+        var without = menuConfig()
+        without.myThemes = []
+        let plain = MinimizeMenu.build(config: without)
+        XCTAssertEqual(plain.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Как у Claude", "Сохранить тему", "—", "Цвет", "Шрифт", "Размер шрифта", "Размер шрифта в поле",
+                        "Плотный текст",
+                        "Поля", "—", "Всё как у Claude", "—", "Ещё"])
+
+        // Каталога нет — «Цвет» и «Шрифт» пропадают, остальное оформление на месте, а
+        // «Раскрасить по кругу» палитры считает само и в themes.json не заглядывает (критик В10).
+        let bare = MinimizeMenu.build(config: MinimizeMenu.MenuConfig())
+        XCTAssertEqual(bare.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Как у Claude", "Сохранить тему", "—", "Размер шрифта", "Размер шрифта в поле",
+                        "Плотный текст", "Поля", "—",
+                        "Всё как у Claude", "—", "Ещё"])
+        XCTAssertEqual(bare.items.filter { $0.hasSubmenu }.map { $0.title },
+                       ["Размер шрифта", "Размер шрифта в поле", "Ещё"])
+        let bareAll = try allWindows(in: bare)
+        XCTAssertEqual(bareAll.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["ВСЕМ ОКНАМ", "Размер шрифта",
+                        "Плотный текст", "Опыты", "—",
+                        "Раскрасить по кругу", "Живые цвета"])
+    }
+
+    /// «🗂 <Проект>» — первый пункт раздела своих тем (план WF71 п. 3): есть, когда окно
+    /// опознано проектом; имя — имя папки, галка — вид проекта стоит на окне; клик возвращает
+    /// вид проекта, ничего не записывая; наведение примеряет тему проекта. С ним у своих тем
+    /// появляется третий адресат — «Окнам проекта …».
+    func testProjectThemeItemHeadsMyThemes() throws {
+        var repainted = 0
+        var previews: [String] = []
+        var applied: [(scope: String, id: String)] = []
+        var config = menuConfig()
+        let auto = AutoPaint.projectTheme(folderName: "PimpMyClaude")
+        config.projectTheme = (name: "PimpMyClaude", theme: auto, current: true)
+        config.windowThemeID = nil
+        config.repaintProject = { repainted += 1 }
+        config.previewTheme = { previews.append($0?.id ?? "—") }
+        config.applyMyTheme = { scope, my in applied.append((scope: scope, id: my.id)) }
+        let menu = MinimizeMenu.build(config: config)
+
+        XCTAssertEqual(menu.items.prefix(4).map { $0.title },
+                       ["Как у Claude", "Тема проекта PimpMyClaude", "Моя тёплая", "Сохранить тему"])
+        let project = try XCTUnwrap(menu.items[1])
+        XCTAssertNotNil(project.image) // кружок палитры проекта, не папка (слово Элвиса 17.09 16:10)
+        XCTAssertFalse(project.hasSubmenu)
+        XCTAssertEqual(project.toolTip, auto.name)
+        XCTAssertEqual(project.state, .on, "вид проекта стоит на окне")
+        // Цвет на окне — проектный: «Как у Claude» без галки, хотя память окна пуста.
+        XCTAssertEqual(try XCTUnwrap(menu.items.first).state, .off)
+        click(project)
+        XCTAssertEqual(repainted, 1)
+        highlight(menu, project)
+        XCTAssertEqual(previews, [auto.id])
+
+        // Третий адресат у своей темы — «Окнам проекта PimpMyClaude», между окном и всеми.
+        let targets = try XCTUnwrap(try myThemeMenu(in: menu, "Моя тёплая").items.first?.submenu)
+        XCTAssertEqual(targets.items.map { $0.title },
+                       ["Только этому окну", "Окнам проекта PimpMyClaude", "Всем окнам"])
+        click(targets.items[1])
+        XCTAssertEqual(applied.map { $0.scope }, ["window"])
+        XCTAssertEqual(applied.map { $0.id }, ["user-1756900000000"])
+
+        // Отпечаток сошёлся, а память окна держит ЧУЖОЙ цвет («Применить ▸ Только этому
+        // окну» отпечаток не меняет) — галки у проекта нет, она у своей темы.
+        config.windowThemeID = "user-1756900000000"
+        let foreign = MinimizeMenu.build(config: config)
+        XCTAssertEqual(try XCTUnwrap(foreign.items[1]).state, .off)
+        XCTAssertEqual(try XCTUnwrap(foreign.items.first { $0.title == "Моя тёплая" }).state, .on)
+        // Память держит саму тему проекта (ручной выбор в окне проекта) — галка стоит.
+        config.windowThemeID = auto.id
+        XCTAssertEqual(try XCTUnwrap(MinimizeMenu.build(config: config).items[1]).state, .on)
+        // Отпечаток разошёлся — не стоит.
+        config.projectTheme = (name: "PimpMyClaude", theme: auto, current: false)
+        XCTAssertEqual(try XCTUnwrap(MinimizeMenu.build(config: config).items[1]).state, .off)
+
+        // Окно проектом не опознано — ни пункта, ни адресата «Окнам проекта …»; цвета на окне
+        // нет вовсе — галка у «Как у Claude».
+        config.projectTheme = nil
+        config.windowThemeID = nil
+        let plain = MinimizeMenu.build(config: config)
+        XCTAssertEqual(plain.items.prefix(2).map { $0.title }, ["Как у Claude", "Моя тёплая"])
+        XCTAssertEqual(try XCTUnwrap(plain.items.first).state, .on)
+        XCTAssertEqual(try XCTUnwrap(try myThemeMenu(in: plain, "Моя тёплая").items.first?.submenu)
+                        .items.map { $0.title }, ["Только этому окну", "Всем окнам"])
+    }
+
+    func testHoverPreviewsThemeAndFont() throws {
+        // План WF8 п. 2: наведение примеряет слой — и только в списках окна. Свои темы
+        // живут на верхнем уровне (WF71), значит делегат нужен и на корне.
+        // С плана WF31 примерка отложена на `defaultDelay` — здесь её выполняет мгновенное
+        // расписание из `setUp`, а саму паузу проверяют тесты ниже.
+        var previews: [String] = []
+        var applied = 0
+        var config = menuConfig()
+        config.previewTheme = { previews.append("тема:" + ($0?.id ?? "—")) }
+        config.previewFont = { previews.append("шрифт:" + ($0?.id ?? "—")) }
+        config.previewMyTheme = { previews.append("тема:" + $0.id) }
+        config.apply = { _, _, _, _, _, _ in applied += 1 }
+        config.applyMyTheme = { _, _ in applied += 1 }
+        config.applyMyThemeHere = { _ in applied += 1 }
+        let menu = MinimizeMenu.build(config: config)
+        let color = try XCTUnwrap(menu.items.first { $0.title == MenuModel.colorTitle }?.submenu)
+        let font = try XCTUnwrap(menu.items.first { $0.title == MenuModel.fontTitle }?.submenu)
+        let all = try allWindows(in: menu)
+        let colorAll = try XCTUnwrap(all.items.first { $0.title == MenuModel.colorTitle }?.submenu)
+        // Цвета лежат в наборах (задача #5801) — делегат нужен и им.
+        let dark = try XCTUnwrap(color.items.first { $0.title == MenuModel.darkThemesHeader }?.submenu)
+        let darkAll = try XCTUnwrap(colorAll.items
+            .first { $0.title == MenuModel.darkThemesHeader }?.submenu)
+        let my = try myThemeMenu(in: menu, "Моя тёплая")
+        let targets = try XCTUnwrap(my.items.first?.submenu)
+
+        // Делегат стоит на корне, на списках окна, на подменю своей темы и её «Применить ▸»,
+        // но не на «Всем окнам ▸» и не на «Ещё ▸».
+        XCTAssertTrue(menu.delegate === PreviewMenuDelegate.shared)
+        XCTAssertTrue(color.delegate === PreviewMenuDelegate.shared)
+        XCTAssertTrue(dark.delegate === PreviewMenuDelegate.shared)
+        XCTAssertTrue(font.delegate === PreviewMenuDelegate.shared)
+        XCTAssertTrue(my.delegate === PreviewMenuDelegate.shared)
+        XCTAssertTrue(targets.delegate === PreviewMenuDelegate.shared)
+        XCTAssertNil(try moreMenu(in: menu).delegate)
+        XCTAssertNil(all.delegate)
+        XCTAssertNil(colorAll.delegate)
+        XCTAssertNil(darkAll.delegate)
+
+        highlight(dark, dark.items.first { $0.title == "Фиолетовая" })
+        highlight(menu, menu.items.first { $0.title == "Моя тёплая" })
+        highlight(color, color.items.first { $0.title == MenuModel.themeResetTitle })
+        highlight(font, font.items.first { $0.title == "SF Mono" })
+        highlight(font, font.items.first { $0.title == MenuModel.fontResetTitle })
+        XCTAssertEqual(previews, ["тема:violet", "тема:user-1756900000000", "тема:—",
+                                  "шрифт:sf-mono", "шрифт:—"])
+
+        // «Применить ▸» и каждый адресат примеряют ТУ ЖЕ тему: быстрый заход внутрь всё
+        // равно примерит (план WF71 п. 2).
+        previews = []
+        highlight(my, my.items.first)
+        for item in targets.items { highlight(targets, item) }
+        XCTAssertEqual(previews, Array(repeating: "тема:user-1756900000000", count: 3))
+
+        // Имя набора, разделитель, подменю, «Сохранить тему», «Изменить…», «Удалить», пустое
+        // наведение и пункты внутри «Всем окнам» примерок не делают.
+        previews = []
+        highlight(color, color.items.first { $0.title == MenuModel.darkThemesHeader })
+        highlight(color, color.items.first { $0.isSeparatorItem })
+        highlight(menu, menu.items.first { $0.title == MenuModel.moreTitle })
+        highlight(menu, menu.items.first { $0.title == MenuModel.colorTitle })
+        highlight(menu, menu.items.first { $0.title == MenuModel.saveMyThemeTitle })
+        highlight(my, my.items.first { $0.title == MenuModel.editMyThemeTitle })
+        highlight(my, my.items.first { $0.title == MenuModel.deleteMyThemeTitle })
+        highlight(menu, nil)
+        for item in colorAll.items { PreviewMenuDelegate.shared.menu(colorAll, willHighlight: item) }
+        for item in darkAll.items { PreviewMenuDelegate.shared.menu(darkAll, willHighlight: item) }
+        XCTAssertEqual(previews, [])
+        // И ничего не закрепляют.
+        XCTAssertEqual(applied, 0)
+    }
+
+    // MARK: - пауза перед примеркой (план WF31, задача #5452)
+
+    /// Меню с записью примерок: корень (с WF71 — оформление) и его списки цветов и шрифтов;
+    /// `theme` — подменю своей темы «Моя тёплая».
+    private func previewMenus(_ record: @escaping (String) -> Void) throws
+        -> (appearance: NSMenu, color: NSMenu, dark: NSMenu, light: NSMenu, font: NSMenu,
+            theme: NSMenu) {
+        var config = menuConfig()
+        config.previewTheme = { record("тема:" + ($0?.id ?? "—")) }
+        config.previewFont = { record("шрифт:" + ($0?.id ?? "—")) }
+        config.previewMyTheme = { record("тема:" + $0.id) }
+        let appearance = MinimizeMenu.build(config: config)
+        let color = try XCTUnwrap(appearance.items.first { $0.title == MenuModel.colorTitle }?.submenu)
+        // Сами цвета лежат в наборах (задача #5801) — примерка живёт там же.
+        let dark = try XCTUnwrap(color.items.first { $0.title == MenuModel.darkThemesHeader }?.submenu)
+        let light = try XCTUnwrap(color.items.first { $0.title == MenuModel.lightThemesHeader }?.submenu)
+        let font = try XCTUnwrap(appearance.items.first { $0.title == MenuModel.fontTitle }?.submenu)
+        let theme = try myThemeMenu(in: appearance, "Моя тёплая")
+        return (appearance, color, dark, light, font, theme)
+    }
+
+    /// Подменяет делегату расписание ловушкой; мгновенное вернёт `tearDown`.
+    private func capturePreviewSchedule() -> PendingPreviews {
+        let pending = PendingPreviews()
+        PreviewMenuDelegate.shared.schedule = { wait, block in pending.blocks.append((wait, block)) }
+        return pending
+    }
+
+    func testPreviewWaitsBeforePainting() throws {
+        var previews: [String] = []
+        let menus = try previewMenus { previews.append($0) }
+        let pending = capturePreviewSchedule()
+        let violet = try XCTUnwrap(menus.dark.items.first { $0.title == "Фиолетовая" })
+
+        highlight(menus.dark, violet)
+        // Само наведение окно не красит: сначала курсор обязан постоять на пункте.
+        XCTAssertEqual(previews, [])
+        XCTAssertEqual(pending.blocks.count, 1)
+        XCTAssertEqual(pending.blocks.first?.wait, PreviewMenuDelegate.defaultDelay)
+
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:violet"])
+
+        // Тот же пункт второй раз (дрожь руки) второго блока не планирует и заново не красит.
+        highlight(menus.dark, violet)
+        XCTAssertEqual(pending.blocks.count, 0)
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:violet"])
+    }
+
+    func testPreviewCancelledWhenHighlightMovesOn() throws {
+        var previews: [String] = []
+        let menus = try previewMenus { previews.append($0) }
+        let pending = capturePreviewSchedule()
+
+        // Быстрый проход: «Фиолетовая» (набор «Тёмные») → «Моя тёплая» (секция «Мои темы»)
+        // → «Арктика» (набор «Светлые»).
+        highlight(menus.dark, try XCTUnwrap(menus.dark.items.first { $0.title == "Фиолетовая" }))
+        highlight(menus.appearance, try XCTUnwrap(menus.appearance.items.first { $0.title == "Моя тёплая" }))
+        highlight(menus.light, try XCTUnwrap(menus.light.items.first { $0.title == "Арктика" }))
+        XCTAssertEqual(pending.blocks.count, 3)
+
+        // Выполняются все три блока, красит РОВНО последний: прежние сняты поколением.
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:arctic"])
+    }
+
+    func testPreviewCancelledByNonPreviewItem() throws {
+        var previews: [String] = []
+        let menus = try previewMenus { previews.append($0) }
+        let pending = capturePreviewSchedule()
+        let violet = try XCTUnwrap(menus.dark.items.first { $0.title == "Фиолетовая" })
+
+        // Имя набора, разделитель, пункт с подменю, «Сохранить тему» и пустая подсветка
+        // ТОГО ЖЕ меню: отложенное отменяют, своей примерки не делают.
+        let stoppers: [(menu: NSMenu, item: NSMenuItem?)] = [
+            (menus.color, menus.color.items.first { $0.title == MenuModel.darkThemesHeader }),
+            (menus.color, menus.color.items.first { $0.isSeparatorItem }),
+            (menus.appearance, menus.appearance.items.first { $0.title == MenuModel.colorTitle }),
+            (menus.appearance, menus.appearance.items.first { $0.title == MenuModel.saveMyThemeTitle }),
+            (menus.dark, nil),
+        ]
+        for stopper in stoppers {
+            highlight(menus.dark, violet)
+            XCTAssertEqual(pending.blocks.count, 1)
+            highlight(stopper.menu, stopper.item)
+            pending.runAll()
+            XCTAssertEqual(previews, [], "не отменил «\(stopper.item?.title ?? "пусто")»")
+        }
+    }
+
+    func testParentMenuNilKeepsSubmenuPreview() throws {
+        var previews: [String] = []
+        let menus = try previewMenus { previews.append($0) }
+        let pending = capturePreviewSchedule()
+
+        // Мышь ушла в подменю цветов — родительский корень гасит СВОЮ подсветку.
+        highlight(menus.dark, try XCTUnwrap(menus.dark.items.first { $0.title == "Фиолетовая" }))
+        highlight(menus.appearance, nil)
+        pending.runAll()
+        // Отложенная примерка обязана выжить: иначе на живом AppKit она не случалась бы вовсе.
+        XCTAssertEqual(previews, ["тема:violet"])
+    }
+
+    /// Примерка снимается при уходе (#6250, план WF71 п. 4) — правило предка: выстрелила, а
+    /// мышь ушла на пункт без примерки в том же меню или в его предке → `onLeave`; в потомке
+    /// («Изменить…» в подменю самой темы) — нет; без выстрела — нет.
+    func testPreviewEndsWhenHighlightLeavesToAncestor() throws {
+        var previews: [String] = []
+        var left = 0
+        let menus = try previewMenus { previews.append($0) }
+        let pending = capturePreviewSchedule()
+        PreviewMenuDelegate.shared.onLeave = { left += 1 }
+        defer { PreviewMenuDelegate.shared.onLeave = nil }
+        let theme = try XCTUnwrap(menus.appearance.items.first { $0.title == "Моя тёплая" })
+        let font = try XCTUnwrap(menus.appearance.items.first { $0.title == MenuModel.fontTitle })
+
+        // «Матрица» → выстрел → «Шрифт ▸» в том же меню: одно снятие.
+        highlight(menus.appearance, theme)
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:user-1756900000000"])
+        XCTAssertTrue(PreviewMenuDelegate.shared.fired)
+        highlight(menus.appearance, font)
+        XCTAssertEqual(left, 1)
+        XCTAssertFalse(PreviewMenuDelegate.shared.fired)
+        // Повтор обычного пункта без выстрела — ничего.
+        highlight(menus.appearance, menus.appearance.items.first { $0.title == MenuModel.colorTitle })
+        highlight(menus.appearance, font)
+        XCTAssertEqual(left, 1)
+        // Наведение без выстрела (пауза не вышла) и уход — тоже ничего: красить не успели.
+        highlight(menus.appearance, theme)
+        highlight(menus.appearance, font)
+        XCTAssertEqual(left, 1)
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:user-1756900000000"], "снятая поколением примерка выстрелила")
+
+        // «Матрица» → её «Изменить…» и «Удалить» (потомок): окно остаётся в цвете темы.
+        highlight(menus.appearance, theme)
+        pending.runAll()
+        highlight(menus.theme, menus.theme.items.first { $0.title == MenuModel.editMyThemeTitle })
+        highlight(menus.theme, menus.theme.items.first { $0.title == MenuModel.deleteMyThemeTitle })
+        XCTAssertEqual(left, 1)
+        XCTAssertTrue(PreviewMenuDelegate.shared.fired)
+        // Повторный выстрел в подменю темы («Применить ▸» несёт ту же примерку) исходное меню
+        // вглубь не утаскивает: «Изменить…» рядом по-прежнему не гасит.
+        highlight(menus.theme, menus.theme.items.first)
+        pending.runAll()
+        highlight(menus.theme, menus.theme.items.first { $0.title == MenuModel.editMyThemeTitle })
+        XCTAssertEqual(left, 1)
+        // А уход наверх, в предка, — гасит.
+        highlight(menus.appearance, font)
+        XCTAssertEqual(left, 2)
+
+        // «Тёмные ▸ Фиолетовая» → «Цвет ▸» (предок через два уровня) — снятие; после него
+        // «Светлые ▸» в списке цветов уже ничего не снимает (выстрела нет).
+        highlight(menus.dark, try XCTUnwrap(menus.dark.items.first { $0.title == "Фиолетовая" }))
+        pending.runAll()
+        highlight(menus.appearance, menus.appearance.items.first { $0.title == MenuModel.colorTitle })
+        XCTAssertEqual(left, 3)
+        highlight(menus.color, menus.color.items.first { $0.title == MenuModel.lightThemesHeader })
+        XCTAssertEqual(left, 3)
+        // «Тёмные ▸ Фиолетовая» → «Светлые ▸» (прямой предок) — снятие.
+        highlight(menus.dark, try XCTUnwrap(menus.dark.items.first { $0.title == "Фиолетовая" }))
+        pending.runAll()
+        highlight(menus.color, menus.color.items.first { $0.title == MenuModel.lightThemesHeader })
+        XCTAssertEqual(left, 4)
+        // Пустая подсветка — как раньше, ничего.
+        highlight(menus.dark, try XCTUnwrap(menus.dark.items.first { $0.title == "Фиолетовая" }))
+        pending.runAll()
+        highlight(menus.dark, nil)
+        highlight(menus.appearance, nil)
+        XCTAssertEqual(left, 4)
+        // Закрытие подменю набора память о выстреле не трогает: AppKit шлёт его и при уходе
+        // на соседний набор, и порядок с подсветкой родителя не обещан.
+        PreviewMenuDelegate.shared.menuDidClose(menus.dark)
+        XCTAssertTrue(PreviewMenuDelegate.shared.fired)
+        highlight(menus.color, menus.color.items.first { $0.title == MenuModel.lightThemesHeader })
+        XCTAssertEqual(left, 5)
+        // Меню закрылось целиком — память чистится, крючок молчит.
+        highlight(menus.dark, try XCTUnwrap(menus.dark.items.first { $0.title == "Фиолетовая" }))
+        pending.runAll()
+        PreviewMenuDelegate.shared.cancel()
+        XCTAssertFalse(PreviewMenuDelegate.shared.fired)
+        highlight(menus.color, menus.color.items.first { $0.title == MenuModel.lightThemesHeader })
+        XCTAssertEqual(left, 5)
+    }
+
+    func testPreviewCancelledWhenMenuCloses() throws {
+        var previews: [String] = []
+        let menus = try previewMenus { previews.append($0) }
+        let pending = capturePreviewSchedule()
+        let violet = try XCTUnwrap(menus.dark.items.first { $0.title == "Фиолетовая" })
+
+        // Меню закрылось раньше, чем истекла пауза (`cancel()` после `popUp` и в `stop()`).
+        highlight(menus.dark, violet)
+        PreviewMenuDelegate.shared.cancel()
+        pending.runAll()
+        XCTAssertEqual(previews, [])
+
+        // `menuDidClose` гасит только СВОЁ меню: закрылось чужое — примерка ждёт дальше.
+        highlight(menus.dark, violet)
+        PreviewMenuDelegate.shared.menuDidClose(menus.font)
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:violet"])
+
+        // А закрылось то, в котором ждём, — отменяем сами.
+        highlight(menus.light, try XCTUnwrap(menus.light.items.first { $0.title == "Арктика" }))
+        PreviewMenuDelegate.shared.menuDidClose(menus.light)
+        pending.runAll()
+        XCTAssertEqual(previews, ["тема:violet"])
+    }
+
+    func testPreviewDelayIsHalfSecond() {
+        // Число — слово Элвиса (#5452: «нужно секундочку подождать… только при долгом
+        // удержании просмотр»), а не вкус агента. Тюнится ровно этой константой.
+        XCTAssertEqual(PreviewMenuDelegate.defaultDelay, 0.5)
+        XCTAssertEqual(PreviewMenuDelegate().delay, PreviewMenuDelegate.defaultDelay)
+    }
+
+    // MARK: - своя тема ставит только палитру (план WF31, задача #5453)
+
+    /// Своя тема со всеми слоями — ровно такая «Пудра» и подменяла окну шрифт и кегль.
+    private func loadedMyTheme() -> MyTheme {
+        MyTheme(id: "user-1757000000000", name: "Пудра", type: "light",
+                palette: catalog()[1].palette, font: ClaudeAXTests.monoFont,
+                size: Size(answer: 20, question: 13), frame: true)
+    }
+
+    /// Тело команды без `id` и времени: у двух записей они разные, сравнивать нечего.
+    private static func commandTail(_ text: String) -> String {
+        guard let scope = text.range(of: ",\"scope\":") else { return text }
+        return String(text[scope.lowerBound...])
+    }
+
+    /// Канал и действия на временной папке — образец из теста живых цветов.
+    private func actionsOnDisk(dir: URL, now: @escaping () -> Date) -> ClaudeActions {
+        let actions = ClaudeActions(app: IsolatedClaudeApp.make(),
+                                    commands: CommandChannel(path: dir.appendingPathComponent("command.json"),
+                                                             now: now, schedule: { _, _ in }),
+                                    themes: [], fonts: [],
+                                    themeStore: ThemeStore(defaults: MemoryDefaults()),
+                                    myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")),
+                                    autoPaintStore: AutoPaintStore(defaults: MemoryDefaults()),
+                                    liveColorsStore: LiveColorsStore(defaults: MemoryDefaults()))
+        actions.clock = now
+        return actions
+    }
+
+    func testMyThemeAppliesOnlyPalette() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("command.json")
+        // Таймер не нужен: между записями часы двигаем сами, зазор канала выдержан.
+        var now = Date(timeIntervalSince1970: 1_757_000_000)
+        let actions = actionsOnDisk(dir: dir, now: { now })
+        let my = loadedMyTheme()
+        let gap = CommandChannel.minInterval + 0.1
+        func body() throws -> String { try String(contentsOf: file, encoding: .utf8) }
+
+        // И у окна, и у «Всем окнам ▸ → Цвет ▸» — команда с одним слоем, палитрой.
+        for scope in [MenuModel.themeScopeWindow, MenuModel.themeScopeAll] {
+            XCTAssertTrue(actions.apply(myTheme: my, scope: scope, window: nil))
+            let mine = try body()
+            // Эталон строится тут же: новое поле контракта появится в обоих телах разом.
+            now += gap
+            XCTAssertTrue(actions.applyTheme(scope: scope, theme: .set(my.theme), font: .keep,
+                                             size: .keep, frame: .keep, window: nil))
+            XCTAssertEqual(ClaudeAXTests.commandTail(mine), ClaudeAXTests.commandTail(try body()))
+            XCTAssertTrue(mine.contains("\"theme\":{\"id\":\"\(my.id)\""), mine)
+            XCTAssertFalse(mine.contains("\"font\""), mine)
+            XCTAssertFalse(mine.contains("\"size\""), mine)
+            XCTAssertFalse(mine.contains("\"frame\""), mine)
+            now += gap
+        }
+    }
+
+    func testMyThemePreviewsOnlyPalette() throws {
+        // Примерка своей темы обязана стать неотличимой от примерки темы каталога с тем же id.
+        // Уйдёт ли она файлом, решает живой AX: `sendPreview` требует AX-заголовка окна, и на
+        // Маке с запущенным Claude окно в фокусе есть, а на голой машине его нет (#6667 — тест
+        // требовал, чтобы файла не было, и на Маке Элвиса краснел). Поэтому проверяем то, что
+        // верно в обоих случаях: обе функции на одном окне дают один и тот же результат.
+        // Что слоёв шрифта, размера и рамки нет у применения, держит testMyThemeAppliesOnlyPalette.
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let now = Date(timeIntervalSince1970: 1_757_000_000)
+        let actions = actionsOnDisk(dir: dir, now: { now })
+        let my = loadedMyTheme()
+        let file = dir.appendingPathComponent("command.json")
+        // Тело ушедшей примерки без `id` и времени; ничего не ушло — nil.
+        func sent(_ send: () -> Bool) throws -> String? {
+            try? FileManager.default.removeItem(at: file)
+            guard send() else { return nil }
+            return ClaudeAXTests.commandTail(try String(contentsOf: file, encoding: .utf8))
+        }
+
+        XCTAssertEqual(try sent { actions.preview(myTheme: my, window: nil) },
+                       try sent { actions.previewTheme(my.theme, window: nil) })
+    }
+
+    /// Слой размера словами: «16/—» — ответам 16, вопросы не трогаем; «∅» — половину снимаем;
+    /// «сброс слоя» — `"size":null` целиком.
+    private func describe(_ size: SizeLayer) -> String {
+        if case .reset = size { return "сброс слоя" }
+        func half(_ side: Size.Half) -> String {
+            switch size.half(side) {
+            case .keep: return "—"
+            case .reset: return "∅"
+            case .set(let px): return String(px)
+            }
+        }
+        return "\(half(.answer))/\(half(.question))"
+    }
+
+    func testMenuHasSizeSubmenusWithChecksAndPreview() throws {
+        // План WF12 п. 2 + WF71: одно подменю «🔠 Размер шрифта ▸» — прямо на верхнем уровне
+        // (у окна) и в «🖥 Всем окнам ▸»; оно меняет половину `answer`, «Размер вопросов ▸» из
+        // меню убран (#6252: «ни на что не влияет»). Сброс первым, галка — по своей ПОЛОВИНЕ
+        // слоя (критик В3). Решение 2 плана WF19: «Как у Claude» тоже трогает ровно свою
+        // половину — снимает её (∅), вторую (из старой записи) не поминает вовсе.
+        var applied: [(scope: String, size: String, keep: String)] = []
+        var previews: [String] = []
+        var config = menuConfig()          // у окна: ответы 16, вопросы 13
+        config.allSize = Size(question: 12) // всем окнам задан только размер вопросов
+        config.apply = { scope, theme, font, size, frame, _ in
+            applied.append((scope: scope, size: self.describe(size),
+                            keep: self.keptLayers(theme, font, size, frame)))
+        }
+        config.previewSize = { previews.append(self.describe($0)) }
+        let menu = MinimizeMenu.build(config: config)
+        let all = try allWindows(in: menu)
+
+        let answers = try XCTUnwrap(menu.items.first { $0.title == MenuModel.answerSizeTitle }?.submenu)
+        XCTAssertEqual(answers.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Как у Claude", "—", "12", "13", "14", "15", "16", "18", "20"])
+        XCTAssertNotNil(menu.items.first { $0.title == MenuModel.answerSizeTitle }?.image) // 🔠
+        // Галка — на своей половине слоя: у ответов 16.
+        XCTAssertEqual(answers.items.filter { $0.state == .on }.map { $0.title }, ["16"])
+        // Подменю вопросов нет ни у окна, ни у «всем окнам».
+        XCTAssertNil(menu.items.first { $0.title == MenuModel.questionSizeTitle })
+        XCTAssertNil(all.items.first { $0.title == MenuModel.questionSizeTitle })
+        XCTAssertEqual(menu.items.filter { $0.title.hasPrefix("Размер") && $0.title != MenuModel.composerFontTitle }.count, 1)
+        // «Как у Claude» у «всем окнам» — когда записи нет: размер ответов всем окнам не задан.
+        let answersAll = try XCTUnwrap(all.items.first { $0.title == MenuModel.answerSizeTitle }?.submenu)
+        XCTAssertEqual(answersAll.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Как у Claude", "—", "12", "13", "14", "15", "16", "18", "20"])
+        XCTAssertEqual(answersAll.items.filter { $0.state == .on }.map { $0.title }, ["Как у Claude"])
+        // У окна половина занята своей записью — сброс не отмечен.
+        XCTAssertEqual(answers.items.first { $0.title == MenuModel.sizeResetTitle }?.state, .off)
+
+        // Примерка — только в списке окна; «Всем окнам ▸» её не делает.
+        XCTAssertTrue(answers.delegate === PreviewMenuDelegate.shared)
+        XCTAssertNil(answersAll.delegate)
+        highlight(answers, answers.items.first { $0.title == "18" })
+        highlight(answers, answers.items.first { $0.title == MenuModel.sizeResetTitle })
+        for item in answersAll.items { PreviewMenuDelegate.shared.menu(answersAll, willHighlight: item) }
+        // Примерка «Как у Claude» — та же половина: вторая на экране не дрогнет.
+        XCTAssertEqual(previews, ["18/—", "∅/—"])
+
+        // Нажатия: половина слоя `answer`, остальные слои не трогаются.
+        click(try XCTUnwrap(answers.items.first { $0.title == "18" }))
+        click(try XCTUnwrap(answers.items.first { $0.title == MenuModel.sizeResetTitle }))
+        click(try XCTUnwrap(answersAll.items.first { $0.title == "20" }))
+        click(try XCTUnwrap(answersAll.items.first { $0.title == MenuModel.sizeResetTitle }))
+        XCTAssertEqual(applied.map { $0.scope }, ["window", "window", "all", "all"])
+        XCTAssertEqual(applied.map { $0.size }, ["18/—", "∅/—", "20/—", "∅/—"])
+        XCTAssertEqual(applied.map { $0.keep }, Array(repeating: "tfr", count: 4))
+
+        // «🧹 Всё как у Claude» — единственный пункт, снимающий обе половины разом.
+        applied = []
+        click(try XCTUnwrap(menu.items.first { $0.title == MenuModel.resetAllTitle }))
+        XCTAssertEqual(applied.map { $0.size }, ["сброс слоя"])
+    }
+
+    func testRetiredFrameAndNeonAreGoneFromMenu() throws {
+        // WF220 (#9440): «✨ Неоновая рамка» и «Неон и ретро-экран» сняты — ни у окна, ни во «Всем окнам ▸».
+        // У окна «Опыты» опустели — подменю нет; «Плотный текст» стоит сразу за «Размером шрифта в поле ▸».
+        func titles(_ menu: NSMenu) -> [String] {
+            menu.items.flatMap { [$0.title] + ($0.submenu.map(titles) ?? []) }
+        }
+        var applied: [Layer<Bool>] = []
+        var config = menuConfig()
+        config.apply = { _, _, _, _, frame, _ in applied.append(frame) }
+        let menu = MinimizeMenu.build(config: config)
+        let all = titles(menu)
+        XCTAssertFalse(all.contains("Неоновая рамка"))
+        XCTAssertFalse(all.contains("Неон и ретро-экран"))
+        XCTAssertFalse(menu.items.contains { $0.title == MenuModel.lookLabTitle }, "у окна «Опытов» нет")
+        let dense = try XCTUnwrap(menu.items.firstIndex { $0.title == MenuModel.lookDenseTitle })
+        XCTAssertEqual(menu.items[dense - 1].title, MenuModel.composerFontTitle)
+        XCTAssertEqual(menu.items[dense + 1].title, MenuModel.sidePaddingTitle)
+        // «Всем окнам ▸»: «Плотный текст» и «🧪 Опыты ▸» с «Живым фоном» и «🎨 Схемой ▸».
+        let allList = try allWindows(in: menu)
+        let lab = try XCTUnwrap(allList.items.first { $0.title == MenuModel.lookLabTitle }?.submenu)
+        XCTAssertEqual(lab.items.map { $0.title }, [MenuModel.lookAuroraTitle, MenuModel.lookSchemeTitle])
+        // «🧹 Всё как у Claude» рамку по-прежнему снимает (`"frame":null`) — у кого она осталась.
+        click(try XCTUnwrap(menu.items.first { $0.title == MenuModel.resetAllTitle }))
+        XCTAssertEqual(applied, [.reset])
+    }
+
+    func testLookLayerGoesAfterFrameWhole() throws {
+        // Контракт плана WF83: поле `look` ПОСЛЕ `frame`, объект целиком `{aurora, neon, dense}`,
+        // сброс — null; у примерки `preview` стоит перед слоями, как у остальных.
+        let head = "{\"id\":\"1756900000123-0042\",\"action\":\"theme\",\"at\":\"2025-09-03T11:46:40Z\","
+            + "\"scope\":\"window\",\"title\":\"Vkusnoff\""
+        func body(frame: Layer<Bool> = .keep, look: Layer<Look>, preview: Bool? = nil) -> String {
+            CommandChannel.payload(action: "theme",
+                                   fields: ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow,
+                                                                     title: "Vkusnoff", preview: preview,
+                                                                     theme: .keep, font: .keep,
+                                                                     frame: frame, look: look),
+                                   id: "1756900000123-0042",
+                                   at: Date(timeIntervalSince1970: 1_756_900_000))
+        }
+        XCTAssertEqual(body(frame: .set(true), look: .set(Look(aurora: true, dense: true))),
+                       head + ",\"frame\":true,\"look\":{\"aurora\":true,\"neon\":false,\"dense\":true}}")
+        XCTAssertEqual(body(look: .reset), head + ",\"look\":null}")
+        XCTAssertEqual(body(look: .keep), head + "}")
+        XCTAssertEqual(body(look: .set(Look(dense: true)), preview: true),
+                       head + ",\"preview\":true,\"look\":{\"aurora\":false,\"neon\":false,\"dense\":true}}")
+        // WF220: снятый `neon` из старых записей не читается — вид без него.
+        XCTAssertEqual(Look.from(["neon": true, "dense": true]), Look(dense: true))
+        XCTAssertEqual(Look.from(["neon": true])?.layer, .reset)
+        // Пустой вид — это сброс слоя, а не три false.
+        XCTAssertEqual(Look().layer, .reset)
+        XCTAssertEqual(Look(dense: true).layer, .set(Look(dense: true)))
+        // `new-window` вида не шлёт: слоя в нём нет вовсе.
+        XCTAssertFalse(ClaudeActions.newWindowFields(title: "", x: 0, y: 0, text: "")
+            .contains { $0.key == "look" })
+    }
+
+    func testMenuLookTogglesSendWholeLookAndPreviewOwnEffect() throws {
+        // План WF83: тумблеры вида — у окна и в «🖥 Всем окнам ▸». Клик переключает свой эффект и шлёт
+        // вид целиком; выключенный последним снимает слой; наведение примеряет вид окна с этим
+        // эффектом включённым (только у окна).
+        var applied: [(scope: String, look: Layer<Look>, keep: String)] = []
+        var previews: [Look] = []
+        var config = menuConfig()
+        config.windowLook = Look(dense: true)
+        config.apply = { scope, theme, font, size, frame, look in
+            applied.append((scope: scope, look: look, keep: self.keptLayers(theme, font, size, frame)))
+        }
+        config.previewLook = { previews.append($0) }
+        let menu = MinimizeMenu.build(config: config)
+
+        XCTAssertEqual([MenuModel.lookAuroraTitle, MenuModel.lookDenseTitle], ["Живой фон", "Плотный текст"])
+        // WF202: «Живого фона» у окна нет — он в «Всем окнам ▸» и на переключателе панели.
+        XCTAssertNil(menu.items.first { $0.title == MenuModel.lookAuroraTitle })
+        let item = try XCTUnwrap(menu.items.first { $0.title == MenuModel.lookDenseTitle })
+        XCTAssertEqual(item.state, .on)
+        XCTAssertTrue(item.image != nil && !item.hasSubmenu)
+
+        highlight(menu, item)
+        click(item) // плотный был последним — слой снимается
+        XCTAssertEqual(applied.map { $0.look }, [.reset])
+        XCTAssertEqual(applied.map { $0.keep }, ["tfsr"], "пункт вида трогает только вид")
+        XCTAssertEqual(previews, [Look(dense: true)])
+
+        // «Всем окнам ▸»: свои галки, без примерки.
+        let all = try allWindows(in: menu)
+        let dense = try XCTUnwrap(all.items.first { $0.title == MenuModel.lookDenseTitle })
+        XCTAssertEqual(dense.state, .off)
+        XCTAssertNil((dense as? BlockMenuItem)?.preview)
+        applied = []
+        click(dense)
+        XCTAssertEqual(applied.map { $0.scope }, ["all"])
+        XCTAssertEqual(applied.map { $0.look }, [.set(Look(dense: true))])
+
+        // «🧹 Всё как у Claude» снимает и вид.
+        applied = []
+        click(try XCTUnwrap(menu.items.first { $0.title == MenuModel.resetAllTitle }))
+        XCTAssertEqual(applied.map { $0.look }, [.reset])
+    }
+
+    func testThemeStoreRemembersLook() {
+        let defaults = MemoryDefaults()
+        let store = ThemeStore(defaults: defaults)
+        XCTAssertEqual(store.windowLook(title: "Vkusnoff"), Look())
+        XCTAssertEqual(store.allLook, Look())
+        store.setWindowLook(Look(aurora: true, dense: true), title: "Vkusnoff")
+        store.setAllLook(Look(dense: true))
+        XCTAssertEqual(store.windowLook(title: "Vkusnoff"), Look(aurora: true, dense: true))
+        XCTAssertEqual(store.allLook, Look(dense: true))
+        XCTAssertEqual(defaults.values[ThemeStore.lookByWindowKey] as? [String: [String: Bool]],
+                       ["Vkusnoff": ["aurora": true, "dense": true]])
+        // Пустой вид — записи нет, как у выключенной рамки.
+        store.setWindowLook(Look(), title: "Vkusnoff")
+        XCTAssertNil(defaults.values[ThemeStore.lookByWindowKey])
+        store.setAllLook(nil)
+        XCTAssertNil(defaults.values[ThemeStore.lookAllKey])
+        // «Всем окнам» чистит только свой слой; окно без заголовка запоминать нечем.
+        store.setWindowLook(Look(dense: true), title: "Trelvis")
+        store.setWindowTheme("blue", title: "Trelvis")
+        store.clearWindowLooks()
+        XCTAssertEqual(store.windowLook(title: "Trelvis"), Look())
+        XCTAssertEqual(store.windowThemeID(title: "Trelvis"), "blue")
+        store.setWindowLook(Look(dense: true), title: "")
+        XCTAssertEqual(store.windowLook(title: ""), Look())
+    }
+
+    func testThemeStoreRemembersChoicePerWindow() {
+        let defaults = MemoryDefaults()
+        let store = ThemeStore(defaults: defaults)
+        XCTAssertNil(store.windowThemeID(title: "Vkusnoff"))
+        store.setWindowTheme("orange", title: "Vkusnoff")
+        store.setWindowTheme("blue", title: "Trelvis")
+        store.setAllTheme("matrix")
+        XCTAssertEqual(store.windowThemeID(title: "Vkusnoff"), "orange")
+        XCTAssertEqual(store.allThemeID, "matrix")
+        XCTAssertEqual(defaults.values[ThemeStore.byWindowKey] as? [String: String],
+                       ["Vkusnoff": "orange", "Trelvis": "blue"])
+        store.setWindowTheme(nil, title: "Vkusnoff") // «Как у Claude»
+        XCTAssertNil(store.windowThemeID(title: "Vkusnoff"))
+        XCTAssertEqual(store.windowThemeID(title: "Trelvis"), "blue")
+        store.setAllTheme(nil)
+        XCTAssertNil(store.allThemeID)
+        // «Тема всех окон» стирает карту окон — как runThemeCommand в inject.js.
+        store.clearWindowThemes()
+        XCTAssertNil(store.windowThemeID(title: "Trelvis"))
+        // Окно без заголовка запоминать нечем: страница адресует его как «в фокусе».
+        store.setWindowTheme("blue", title: "")
+        XCTAssertNil(store.windowThemeID(title: ""))
+    }
+
+    func testThemeStoreKeepsThemeAndFontApart() {
+        let defaults = MemoryDefaults()
+        let store = ThemeStore(defaults: defaults)
+        store.setWindowTheme("violet", title: "Vkusnoff")
+        store.setWindowFont("sf-mono", title: "Vkusnoff")
+        store.setAllTheme("matrix")
+        store.setAllFont("georgia")
+        XCTAssertEqual(store.windowThemeID(title: "Vkusnoff"), "violet")
+        XCTAssertEqual(store.windowFontID(title: "Vkusnoff"), "sf-mono")
+        XCTAssertEqual(defaults.values[ThemeStore.fontByWindowKey] as? [String: String],
+                       ["Vkusnoff": "sf-mono"])
+
+        // «Тема всем окнам» чистит только карту тем — шрифты окон остаются (контракт п. 5).
+        store.clearWindowThemes()
+        XCTAssertNil(store.windowThemeID(title: "Vkusnoff"))
+        XCTAssertEqual(store.windowFontID(title: "Vkusnoff"), "sf-mono")
+        store.clearWindowFonts()
+        XCTAssertNil(store.windowFontID(title: "Vkusnoff"))
+
+        // Слои «всем окнам» тоже независимы.
+        store.setAllFont(nil)
+        XCTAssertNil(store.allFontID)
+        XCTAssertEqual(store.allThemeID, "matrix")
+        // Окно без заголовка запоминать нечем.
+        store.setWindowFont("sf-mono", title: "")
+        XCTAssertNil(store.windowFontID(title: ""))
+    }
+
+    func testThemeStoreRemembersSize() {
+        // План WF12 п. 1: размер — такой же независимый слой, со своими ключами (рамка снята в WF220).
+        let defaults = MemoryDefaults()
+        let store = ThemeStore(defaults: defaults)
+        XCTAssertNil(store.windowSize(title: "Vkusnoff"))
+        XCTAssertNil(store.allSize)
+
+        store.setWindowSize(Size(answer: 16, question: 13), title: "Vkusnoff")
+        store.setWindowSize(Size(answer: 20), title: "Trelvis")
+        store.setAllSize(Size(question: 12))
+        XCTAssertEqual(store.windowSize(title: "Vkusnoff"), Size(answer: 16, question: 13))
+        XCTAssertEqual(store.windowSize(title: "Trelvis"), Size(answer: 20))
+        XCTAssertEqual(store.allSize, Size(question: 12))
+        // Ключи — те, что читает живое приложение; половины лежат числами.
+        XCTAssertEqual((defaults.values[ThemeStore.sizeByWindowKey] as? [String: Any])?.keys.sorted(),
+                       ["Trelvis", "Vkusnoff"])
+        XCTAssertEqual(ThemeStore.size(defaults.values[ThemeStore.sizeAllKey])?.question, 12)
+
+        // Сброс слоя: запись пропадает целиком, а не половиной.
+        store.setWindowSize(nil, title: "Vkusnoff")
+        XCTAssertNil(store.windowSize(title: "Vkusnoff"))
+        XCTAssertEqual(store.windowSize(title: "Trelvis"), Size(answer: 20))
+        store.setAllSize(nil)
+        XCTAssertNil(store.allSize)
+
+        // «Всем окнам» чистит карту только своего слоя (контракт п. 5 плана WF6).
+        store.setWindowTheme("violet", title: "Trelvis")
+        store.clearWindowSizes()
+        XCTAssertNil(store.windowSize(title: "Trelvis"))
+        XCTAssertEqual(store.windowThemeID(title: "Trelvis"), "violet")
+        XCTAssertEqual(store.windowThemeID(title: "Trelvis"), "violet")
+
+        // Окно без заголовка запоминать нечем; мусор в записи — как будто записи нет.
+        store.setWindowSize(Size(answer: 16), title: "")
+        XCTAssertNil(store.windowSize(title: ""))
+        XCTAssertNil(ThemeStore.size(nil))
+        XCTAssertNil(ThemeStore.size("15"))
+        XCTAssertNil(ThemeStore.size(["answer": "большой"]))
+        XCTAssertEqual(ThemeStore.size(["answer": 99]), Size(answer: Size.maxPx))
+
+        // MARK: что запоминается после команды размера (критик В4 и В5 плана WF19)
+        // База слияния у окна — своя запись, а её нет — запись «всем окнам»: страница мержит
+        // по той же цепочке и материализует унаследованную половину в запись чата.
+        XCTAssertEqual(ClaudeActions.windowSize(after: .one(.answer, .set(16)),
+                                                window: nil, all: Size(question: 12)),
+                       Size(answer: 16, question: 12))
+        XCTAssertEqual(ClaudeActions.windowSize(after: .one(.answer, .set(16)),
+                                                window: Size(question: 13), all: Size(question: 12)),
+                       Size(answer: 16, question: 13), "своя запись сильнее «всем окнам»")
+        // «Как у Claude» в одном подменю снимает свою половину — вторая остаётся.
+        XCTAssertEqual(ClaudeActions.windowSize(after: .one(.answer, .reset),
+                                                window: Size(answer: 16, question: 13), all: nil),
+                       Size(question: 13))
+        // Снятая последняя половина — записи больше нет вовсе (страница читает пустой слой так же).
+        XCTAssertNil(ClaudeActions.windowSize(after: .one(.question, .reset),
+                                              window: Size(question: 13), all: nil))
+        // Наследующее окно: снимаем половину, которой у него своей и не было, — остаётся вторая,
+        // унаследованная (материализуется числом; открытый риск плана, не баг).
+        XCTAssertEqual(ClaudeActions.windowSize(after: .one(.answer, .reset),
+                                                window: nil, all: Size(answer: 18, question: 12)),
+                       Size(question: 12))
+        // «🧹 Всё как у Claude» снимает слой целиком.
+        XCTAssertNil(ClaudeActions.windowSize(after: .reset,
+                                              window: Size(answer: 16, question: 13),
+                                              all: Size(question: 12)))
+        // Слой «не трогать» ничего не меняет.
+        XCTAssertEqual(ClaudeActions.windowSize(after: .keep, window: Size(answer: 16), all: nil),
+                       Size(answer: 16))
+        // Та же арифметика лежит под lastAppliedSize: «💾 Сохранить как мою тему…» не должна
+        // записать кегль, снятый с экрана (критик В5).
+        XCTAssertEqual(SizeLayer.one(.answer, .reset).applied(to: Size(answer: 16, question: 14)),
+                       Size(question: 14))
+        XCTAssertNil(SizeLayer.reset.applied(to: Size(answer: 16, question: 14)))
+        XCTAssertEqual(SizeLayer.one(.question, .set(14)).applied(to: Size(answer: 16)),
+                       Size(answer: 16, question: 14))
+    }
+
+    func testSizeHalfResetKeepsOtherHalf() {
+        // Решение 1 плана WF19, чистая проверка слоя команды: три состояния половины.
+        XCTAssertNil(SizeLayer.keep.commandValue?.json, "поля size нет вовсе")
+        XCTAssertEqual(SizeLayer.reset.commandValue?.json, "null")
+        XCTAssertEqual(SizeLayer.one(.answer, .reset).commandValue?.json, "{\"answer\":null}")
+        XCTAssertEqual(SizeLayer.one(.question, .reset).commandValue?.json, "{\"question\":null}")
+        XCTAssertEqual(SizeLayer.one(.answer, .set(16)).commandValue?.json, "{\"answer\":16}")
+        // Порядок ключей прежний — ответы первыми, — чем бы половины ни были.
+        XCTAssertEqual(SizeLayer.halves(answer: .set(16), question: .reset).commandValue?.json,
+                       "{\"answer\":16,\"question\":null}")
+        XCTAssertEqual(SizeLayer.halves(answer: .reset, question: .set(12)).commandValue?.json,
+                       "{\"answer\":null,\"question\":12}")
+        // Обе половины «не трогать» = слоя в команде нет (иначе страница прочла бы {} как сброс).
+        XCTAssertNil(SizeLayer.halves(answer: .keep, question: .keep).commandValue)
+        XCTAssertTrue(SizeLayer.halves(answer: .keep, question: .keep).isKeep)
+        XCTAssertFalse(SizeLayer.one(.answer, .reset).isKeep, "снятие половины — это команда")
+        XCTAssertFalse(SizeLayer.reset.isKeep)
+
+        // Границы контракта 11…24 держатся и здесь: в команду уходит уже обрезанное число.
+        XCTAssertEqual(SizeLayer.one(.answer, .set(99)).commandValue?.json, "{\"answer\":24}")
+        XCTAssertEqual(SizeLayer.one(.question, .set(3)).commandValue?.json, "{\"question\":11}")
+
+        // Переводы: готовый размер и слой-значение (своя тема, вид проекта).
+        XCTAssertEqual(SizeLayer(Size(answer: 16, question: 14)).commandValue?.json,
+                       "{\"answer\":16,\"question\":14}")
+        XCTAssertNil(SizeLayer(Size()).commandValue, "пустой размер — не слой, а «не трогать»")
+        XCTAssertNil(SizeLayer(Layer<Size>.keep).commandValue)
+        XCTAssertEqual(SizeLayer(Layer<Size>.reset).commandValue?.json, "null")
+        XCTAssertEqual(SizeLayer(Layer<Size>.set(Size(question: 12))).commandValue?.json,
+                       "{\"question\":12}")
+        XCTAssertNil(SizeLayer(Layer<Size>.set(Size())).commandValue)
+
+        // Половины слоя поимённо — по ним меню и решает, что послать.
+        XCTAssertEqual(SizeLayer.one(.answer, .set(16)).half(.answer).value, 16)
+        XCTAssertTrue(SizeLayer.one(.answer, .set(16)).half(.question).isKeep)
+        // Сброс слоя целиком — это сброс обеих половин.
+        XCTAssertFalse(SizeLayer.reset.half(.answer).isKeep)
+        XCTAssertFalse(SizeLayer.reset.half(.question).isKeep)
+        XCTAssertNil(SizeLayer.reset.half(.question).value)
+    }
+
+    // MARK: - шрифты
+
+    func testFontCatalogKeepsInstalledCyrillicFamilies() {
+        let installed = ["Georgia", "Verdana", "Papyrus", "Menlo", "Fira Code", "Weird*Mono",
+                         "Иван Mono", "Monaco"]
+        // Без кириллицы шрифт в меню не показываем.
+        let fonts = FontCatalog.build(installed: installed,
+                                      coversCyrillic: { !["Papyrus", "Fira Code"].contains($0) },
+                                      displayName: { $0 == "Menlo" ? "Менло" : $0 })
+        // Обычные — в порядке белого списка; моноширинные следом, тоже по списку.
+        XCTAssertEqual(fonts.map { $0.family }, ["Georgia", "Verdana", "Menlo", "Monaco"])
+        XCTAssertEqual(fonts.map { $0.mono }, [false, false, true, true])
+        XCTAssertEqual(fonts.map { $0.id }, ["georgia", "verdana", "menlo", "monaco"])
+        XCTAssertEqual(fonts[2].displayName, "Менло") // localizedNameForFamily только для меню
+        // Helvetica Neue из белого списка не стоит — в каталоге её нет.
+        XCTAssertFalse(fonts.contains { $0.family == "Helvetica Neue" })
+
+        // Санитайзер контракта: только [A-Za-z0-9 -], ≤ 60 знаков.
+        XCTAssertEqual(FontCatalog.sanitize(family: "Comic Sans MS"), "Comic Sans MS")
+        XCTAssertNil(FontCatalog.sanitize(family: "Weird*Mono"))
+        XCTAssertNil(FontCatalog.sanitize(family: "Иван Mono"))
+        XCTAssertNil(FontCatalog.sanitize(family: String(repeating: "a", count: 61)))
+        XCTAssertEqual(FontCatalog.id(for: "SF Mono"), "sf-mono")
+
+        // Секция «МОНОШИРИННЫЕ» не разрастается: не больше десяти пунктов.
+        let many = (1...14).map { "Test\($0) Mono" }
+        let capped = FontCatalog.build(installed: many, coversCyrillic: { _ in true }, displayName: { $0 })
+        XCTAssertEqual(capped.count, FontCatalog.monoLimit)
+        XCTAssertTrue(capped.allSatisfy { $0.mono })
+    }
+
+    func testFontCatalogSplitsFamiliesIntoFourSections() {
+        // Решение 7 плана WF9: четыре секции, каждая в порядке своего белого списка. Порядок
+        // `FontCategory` не трогаем (на нём каталог); в МЕНЮ секции идут по `fontSectionOrder` —
+        // с засечками последними (#6251, слово Элвиса 17.09).
+        XCTAssertEqual(FontCategory.allCases, [.serif, .sans, .hand, .mono])
+        XCTAssertEqual(MenuModel.fontSectionOrder, [.sans, .hand, .mono, .serif])
+        XCTAssertEqual(Set(MenuModel.fontSectionOrder), Set(FontCategory.allCases), "секция потерялась")
+        XCTAssertEqual(FontCategory.allCases.map { MenuModel.fontsHeader($0) },
+                       ["С ЗАСЕЧКАМИ", "БЕЗ ЗАСЕЧЕК", "РУКОПИСНЫЕ И ВЕСЁЛЫЕ", "МОНОШИРИННЫЕ"])
+        XCTAssertEqual(FontCatalog.serifFamilies,
+                       ["Georgia", "Palatino", "Baskerville", "Didot", "Hoefler Text",
+                        "Iowan Old Style", "Times New Roman"])
+        XCTAssertEqual(FontCatalog.sansFamilies,
+                       ["Helvetica Neue", "Avenir Next", "Futura", "Gill Sans", "Optima", "Verdana",
+                        "Trebuchet MS", "Arial", "Tahoma"])
+        // Noteworthy, Bradley Hand и Snell Roundhand убраны — «плохо читаются» (#6251).
+        XCTAssertEqual(FontCatalog.handFamilies,
+                       ["Comic Sans MS", "Chalkboard SE", "Marker Felt", "Papyrus", "Copperplate",
+                        "American Typewriter"])
+        for gone in ["Noteworthy", "Bradley Hand", "Snell Roundhand"] {
+            XCTAssertFalse(FontCatalog.handFamilies.contains(gone), "\(gone) вернулся в меню")
+        }
+        // Ни одно семейство не попало в две секции сразу.
+        let all = FontCategory.allCases.flatMap { FontCatalog.families($0) }
+        XCTAssertEqual(all.count, Set(all).count)
+
+        let installed = ["Georgia", "Times New Roman", "Arial", "Futura", "Papyrus", "Marker Felt",
+                         "Menlo", "Monaco"]
+        let fonts = FontCatalog.build(installed: installed, coversCyrillic: { _ in true },
+                                      displayName: { $0 })
+        XCTAssertEqual(fonts.map { $0.family },
+                       ["Georgia", "Times New Roman", "Futura", "Arial", "Marker Felt", "Papyrus",
+                        "Menlo", "Monaco"])
+        XCTAssertEqual(fonts.map { $0.category },
+                       [.serif, .serif, .sans, .sans, .hand, .hand, .mono, .mono])
+        // В команду по-прежнему уезжает булево mono, а не категория (контракт п. 5 WF6).
+        XCTAssertEqual(fonts.map { $0.mono }, [false, false, false, false, false, false, true, true])
+        XCTAssertFalse(fonts[0].commandValue.json.contains("serif"))
+
+        // Незнакомое семейство (шрифт из my-themes.json) — по флагу mono.
+        XCTAssertEqual(FontCatalog.category(family: "Papyrus", mono: false), .hand)
+        XCTAssertEqual(FontCatalog.category(family: "SF Mono", mono: false), .mono)
+        XCTAssertEqual(FontCatalog.category(family: "Fira Code", mono: true), .mono)
+        XCTAssertEqual(FontCatalog.category(family: "Fira Code", mono: false), .sans)
+    }
+
+    // MARK: - Workflow и сводки (план WF9)
+
+    func testWorkflowPayloadMatchesContract() throws {
+        // Побайтно, контракт п. 3 плана WF9: id, action, at, scope, title, text.
+        let body = CommandChannel.payload(action: "workflow",
+                                          fields: ClaudeActions.workflowFields(title: "Vkusnoff",
+                                                                               text: "Работаем\nдальше"),
+                                          id: "1756900000123-0042",
+                                          at: Date(timeIntervalSince1970: 1_756_900_000))
+        XCTAssertEqual(body, "{\"id\":\"1756900000123-0042\",\"action\":\"workflow\","
+            + "\"at\":\"2025-09-03T11:46:40Z\",\"scope\":\"window\",\"title\":\"Vkusnoff\","
+            + "\"text\":\"Работаем\\u000aдальше\"}")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(json["text"] as? String, "Работаем\nдальше")
+        XCTAssertEqual(json["scope"] as? String, "window")
+        // Без доверия Accessibility заголовка нет — страница поймёт это как «окно в фокусе».
+        XCTAssertTrue(CommandChannel.payload(action: "workflow",
+                                             fields: ClaudeActions.workflowFields(title: "", text: "x"),
+                                             id: "1-0001", at: Date(timeIntervalSince1970: 0))
+            .hasSuffix("\"scope\":\"window\",\"title\":\"\",\"text\":\"x\"}"))
+    }
+
+    // MARK: - новое окно (план WF13)
+
+    func testNewWindowPayloadMatchesContract() throws {
+        // Побайтно, контракт п. 1 плана WF13, расширенный решением 1 плана WF16:
+        // id, action, at, scope, title, x, y, text, folder, name, затем слои — тема, шрифт,
+        // размер, рамка. `folder` и `name` есть всегда, пустая строка = «не трогать».
+        let violet = catalog()[0]
+        let body = CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "Vkusnoff", x: 586, y: 303,
+                                                  text: "PimpMyClaude 2",
+                                                  folder: "/Users/dev/Projects/PimpMyClaude",
+                                                  name: "PimpMyClaude 2",
+                                                  theme: .set(violet), font: .keep,
+                                                  size: .set(Size(answer: 16)), frame: .set(true)),
+            id: "1756900000123-0042", at: Date(timeIntervalSince1970: 1_756_900_000))
+        XCTAssertEqual(body, "{\"id\":\"1756900000123-0042\",\"action\":\"new-window\","
+            + "\"at\":\"2025-09-03T11:46:40Z\",\"scope\":\"window\",\"title\":\"Vkusnoff\","
+            + "\"x\":586,\"y\":303,\"text\":\"PimpMyClaude 2\","
+            + "\"folder\":\"/Users/dev/Projects/PimpMyClaude\",\"name\":\"PimpMyClaude 2\","
+            + "\"theme\":{\"id\":\"violet\",\"name\":\"Фиолетовая\",\"type\":\"dark\","
+            + "\"palette\":{\"accent\":\"#a78bfa\",\"background\":\"#1b1626\",\"foreground\":\"#ece9f5\","
+            + "\"sidebar\":\"#151021\",\"panel\":\"#241d33\",\"muted\":\"#8b81a6\"}},"
+            + "\"size\":{\"answer\":16},\"frame\":true}")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(json["scope"] as? String, "window")
+        XCTAssertEqual(json["folder"] as? String, "/Users/dev/Projects/PimpMyClaude")
+        // Имя чата приходит на страницу ГОТОВЫМ, с номером: сайдбар на совпадения она не
+        // проверяет — номер считает приложение по всем сессиям (критик В4).
+        XCTAssertEqual(json["name"] as? String, "PimpMyClaude 2")
+        XCTAssertEqual(json["text"] as? String, "PimpMyClaude 2")
+        XCTAssertNil(json["font"], "слоя, который не трогаем, в команде нет вовсе")
+        // Координаты — числа, а не строки: страница проверяет их Number.isFinite.
+        XCTAssertEqual(json["x"] as? Int, 586)
+        XCTAssertEqual(json["y"] as? Int, 303)
+        XCTAssertNil(json["x"] as? String)
+
+        // «Здесь же» (и хоткей ⌥⌘N) — поведение WF13 до буквы: папки и имени нет, слоёв нет,
+        // первое сообщение одной строкой. Сам текст здесь не проверяется (он живёт в
+        // `MenuModel.newWindowText`, #5767) — проверяется ПОРЯДОК полей.
+        XCTAssertFalse(MenuModel.newWindowText.isEmpty)
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "", x: 120, y: 120,
+                                                  text: ClaudeAXTests.fixtureFirstMessage),
+            id: "1-0001", at: Date(timeIntervalSince1970: 0)),
+                       "{\"id\":\"1-0001\",\"action\":\"new-window\",\"at\":\"1970-01-01T00:00:00Z\","
+                       + "\"scope\":\"window\",\"title\":\"\",\"x\":120,\"y\":120,\"text\":\"Привет\","
+                       + "\"folder\":\"\",\"name\":\"\"}")
+        // Сброс слоя уходит как null — правило слоёв то же, что у команды `theme`.
+        XCTAssertTrue(CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "", x: 0, y: 0, text: "Проект",
+                                                  folder: "/tmp/Проект", name: "Проект",
+                                                  theme: .reset, frame: .reset),
+            id: "1-0001", at: Date(timeIntervalSince1970: 0))
+            .hasSuffix("\"folder\":\"/tmp/Проект\",\"name\":\"Проект\",\"theme\":null,\"frame\":null}"))
+
+        // Адресация ГЛАВНОМУ окну (дополнение 05.09 к плану WF19): `match` стоит сразу за
+        // title, как у команды `theme`; поля нет — команда прежняя до байта.
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "Claude", match: "/epitaxy/local_f44e46bb",
+                                                  x: 120, y: 120, text: "Привет"),
+            id: "1-0001", at: Date(timeIntervalSince1970: 0)),
+                       "{\"id\":\"1-0001\",\"action\":\"new-window\",\"at\":\"1970-01-01T00:00:00Z\","
+                       + "\"scope\":\"window\",\"title\":\"Claude\",\"match\":\"/epitaxy/local_f44e46bb\","
+                       + "\"x\":120,\"y\":120,\"text\":\"Привет\",\"folder\":\"\",\"name\":\"\"}")
+
+        // Чем красить новое окно (вопрос 2 макета WF16, ответ Элвиса «1»): вид проекта, а пока
+        // его нет — вид окна, из которого нажали.
+        let project = ProjectSettings(theme: .set(violet))
+        let window = ProjectSettings(size: .set(Size(answer: 16)))
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: project, window: window).theme.value?.id,
+                       "violet")
+        XCTAssertTrue(ClaudeActions.newWindowLayers(project: project, window: window).size.isKeep,
+                      "вид проекта берётся целиком, а не смешивается с окном")
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: nil, window: window).size.value,
+                       Size(answer: 16))
+        // Файл проекта есть, а слоёв в нём нет — это не «не красить», а «как у окна».
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: ProjectSettings(name: "Проект"),
+                                                     window: window).size.value, Size(answer: 16))
+        XCTAssertTrue(ClaudeActions.newWindowLayers(project: nil, window: ProjectSettings()).isEmpty)
+
+        // Авто-цвет проекта в команде (план WF36 п. 4): файла у папки нет — окно рождается
+        // цветом ПАПКИ, а не соседнего чата, и не ждёт, пока до него доберётся ProjectPaint.
+        let auto = AutoPaint.projectTheme(folderName: "Dictator")
+        let byName = ClaudeActions.newWindowLayers(project: nil, window: window, autoColor: auto)
+        XCTAssertEqual(byName.theme.value?.id, auto.id)
+        XCTAssertEqual(byName.size.value, Size(answer: 16), "остальные слои — от окна-источника")
+        // Тему окна-источника авто-цвет перебивает: иначе окно откроется чужим цветом
+        // и перекрасится через такты.
+        let painted = ProjectSettings(theme: .set(violet), size: .set(Size(answer: 16)))
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: nil, window: painted,
+                                                     autoColor: auto).theme.value?.id, auto.id)
+        // Свой вид проекта сильнее авто-цвета — он и есть выбор Элвиса.
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: project, window: window,
+                                                     autoColor: auto).theme.value?.id, "violet")
+        // Тумблер «🗂 Цвет по проекту» выключен (или задан вид «всем окнам») — авто-цвета нет
+        // вовсе, и всё ведёт себя ровно как до WF36.
+        XCTAssertEqual(ClaudeActions.newWindowLayers(project: nil, window: painted,
+                                                     autoColor: nil).theme.value?.id, "violet")
+    }
+
+    // MARK: - «Обкэшить» из попапа (план WF37, часть B1, задачи #5575 и #5535)
+
+    /// Эталоны контракта лежат в репозитории: `tests/fixtures/cashout/`, путь — от #filePath,
+    /// как у канала «Пимп». Их читают ОБА батча волны, и байты у них одни на двоих.
+    private static func cashoutFixture(_ name: String) throws -> String {
+        try String(contentsOf: repositoryRoot
+            .appendingPathComponent("tests/fixtures/cashout/\(name)"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static let cashoutID = "1756900000123-0042"
+    private static let cashoutAt = Date(timeIntervalSince1970: 1_756_900_000)
+    private static let cashoutMainMatch = "/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74"
+    private static let cashoutPopoutChat = "local_4dae798d-aed9-42d7-bd1b-3631eb360c07"
+    /// Первое сообщение, записанное В ЭТАЛОНАХ (`tests/fixtures/cashout/new-window-transfer*`):
+    /// эталон держит ПОРЯДОК полей команды, и трогать его файлы ради смены текста не надо.
+    /// Сам текст живёт в `MenuModel.newWindowText` и проверяется отдельно (#5767,
+    /// `testNewWindowFirstMessageAsksToWait`).
+    private static let fixtureFirstMessage = "Привет"
+
+    /// Главное окно с ОТКРЫТЫМ названным чатом носит имя чата, а не заглушку «Claude»
+    /// (критик, блокер 3): различает их только резолвер, и развилка верит ему одному.
+    func testCashoutRouteMainByResolver() {
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "PimpMyClaude", isMainTitle: true,
+                                                  knownChat: nil), .main)
+        // Заголовка нет вовсе (без доверия Accessibility) — тоже главное окно, как до WF37.
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "", isMainTitle: true, knownChat: nil), .main)
+        // Резолвер сильнее карты probe: у главного окна чат есть, а ⌘N всё равно бьёт на месте.
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "PimpMyClaude", isMainTitle: true,
+                                                  knownChat: "local_a1"), .main)
+        // Запасное правило без контроллера: заглушка и пустой заголовок значат главное окно.
+        XCTAssertTrue(ClaudeActions.isMainWindowTitle("Claude"))
+        XCTAssertTrue(ClaudeActions.isMainWindowTitle("  "))
+        XCTAssertFalse(ClaudeActions.isMainWindowTitle("VkusnoffKz 2"))
+    }
+
+    /// Заглушка заголовка сама по себе главным окном не делает: её носит и безымянный попап
+    /// (#5534). Сказал резолвер «не главное» — это попап, и адресуется он заголовком.
+    func testCashoutRouteStubTitleUnknownIsPopout() {
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "Claude", isMainTitle: false,
+                                                  knownChat: nil), .popout(chat: nil))
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "VkusnoffKz 2", isMainTitle: false,
+                                                  knownChat: nil), .popout(chat: nil))
+    }
+
+    /// Попап назвал свой чат в круге probe — команда уходит полем `chat`, и заголовок
+    /// страница не смотрит вовсе (переименование чата адрес больше не сбивает, #5455).
+    func testCashoutRoutePopoutKnownChat() {
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "VkusnoffKz 2", isMainTitle: false,
+                                                  knownChat: ClaudeAXTests.cashoutPopoutChat),
+                       .popout(chat: ClaudeAXTests.cashoutPopoutChat))
+    }
+
+    /// Задача #5715: выбор цвета/шрифта/размера в меню адресуется той же развилкой, что
+    /// «Обкэшить», — главному окну путь, вынесенному чату его id. Без адреса команда уходила
+    /// ВСЕМ окнам с таким же именем чата (главное окно «Claude» и безымянный попап).
+    func testThemeCommandAddressesOneWindow() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
+        actions.isMainWindowTitle = { $0 == "PimpMyClaude" }
+        actions.chatForTitle = { title, _ in
+            title == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil
+        }
+        actions.mainWindowMatch = { ClaudeAXTests.cashoutMainMatch }
+        let window = MenuModel.themeScopeWindow
+
+        // Главное окно — путь страницы, и поля `chat` у него нет никогда.
+        let main = actions.themeAddress(scope: window, title: "PimpMyClaude")
+        XCTAssertEqual(main.match, ClaudeAXTests.cashoutMainMatch)
+        XCTAssertNil(main.chat)
+        // Попап назвал свой чат в круге probe — адрес по чату, и пути ему не шлём.
+        let popout = actions.themeAddress(scope: window, title: "VkusnoffKz 2")
+        XCTAssertNil(popout.match)
+        XCTAssertEqual(popout.chat, ClaudeAXTests.cashoutPopoutChat)
+        // Окно не опознано — как сегодня, по заголовку.
+        XCTAssertNil(actions.themeAddress(scope: window, title: "Гость").match)
+        XCTAssertNil(actions.themeAddress(scope: window, title: "Гость").chat)
+        // План WF77 (#6734): заголовок носят два окна — адрес выбирает РАМКА окна, и без
+        // неё это ничья. Карту рамок держит `ChatProbe`, сюда она приходит сиденьем.
+        let left = CGRect(x: -792, y: -842, width: 496, height: 838)
+        let right = CGRect(x: -290, y: -842, width: 496, height: 838)
+        actions.chatForTitle = { title, frame in
+            guard title == "Ожидание задачи", let frame = frame else { return nil }
+            return frame.minX == left.minX ? "local_left" : "local_right"
+        }
+        XCTAssertEqual(actions.themeAddress(scope: window, title: "Ожидание задачи",
+                                            frame: left).chat, "local_left")
+        XCTAssertEqual(actions.themeAddress(scope: window, title: "Ожидание задачи",
+                                            frame: right).chat, "local_right")
+        XCTAssertNil(actions.themeAddress(scope: window, title: "Ожидание задачи").chat,
+                     "рамки нет — ничья, и команда адресуется заголовком, как до WF77")
+        actions.chatForTitle = { title, _ in
+            title == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil
+        }
+        // «Всем окнам» адреса не имеет вовсе, пустой заголовок значит «окно в фокусе».
+        XCTAssertNil(actions.themeAddress(scope: MenuModel.themeScopeAll,
+                                          title: "PimpMyClaude").match)
+        XCTAssertNil(actions.themeAddress(scope: window, title: "").match)
+
+        // Байты команды: порядок полей scope, title, match?, chat? — тот же, что у «Обкэшить».
+        let fields = ClaudeActions.themeFields(scope: window, title: "VkusnoffKz 2",
+                                               match: popout.match, chat: popout.chat,
+                                               theme: .keep, font: .keep)
+        let body = CommandChannel.payload(action: "theme", fields: fields,
+                                          id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt)
+        XCTAssertFalse(body.contains("\"match\""))
+        XCTAssertTrue(body.contains("\"chat\":\"\(ClaudeAXTests.cashoutPopoutChat)\""), body)
+    }
+
+    /// Побайтно с эталоном: главное окно — scope, title, match.
+    func testCashoutPayloadMain() throws {
+        let body = CommandChannel.payload(
+            action: ClaudeCommand.cashout.rawValue,
+            fields: ClaudeActions.cashoutFields(title: "PimpMyClaude",
+                                                match: ClaudeAXTests.cashoutMainMatch),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt)
+        XCTAssertEqual(body, try ClaudeAXTests.cashoutFixture("cashout-main.json"))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(json["scope"] as? String, "window")
+        XCTAssertNil(json["chat"], "главному окну поле chat не шлётся никогда")
+    }
+
+    /// На домашнем экране пути у главного окна нет — адрес прежний, заголовком (риск 7 плана).
+    func testCashoutPayloadMainHome() throws {
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.cashout.rawValue,
+            fields: ClaudeActions.cashoutFields(title: "Claude", match: ChatProbe.homePath),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt),
+                       try ClaudeAXTests.cashoutFixture("cashout-main-home.json"))
+    }
+
+    /// Побайтно с эталоном: попап — scope, title, chat; id чата неизвестен — только заголовок,
+    /// и `match` попапу не уходит ни в том, ни в другом случае.
+    func testCashoutPayloadPopoutChat() throws {
+        let body = CommandChannel.payload(
+            action: ClaudeCommand.cashout.rawValue,
+            fields: ClaudeActions.cashoutFields(title: "VkusnoffKz 2",
+                                                chat: ClaudeAXTests.cashoutPopoutChat),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt)
+        XCTAssertEqual(body, try ClaudeAXTests.cashoutFixture("cashout-popout.json"))
+        XCTAssertFalse(body.contains("\"match\""), "попапу путь главного окна не шлётся никогда")
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.cashout.rawValue,
+            fields: ClaudeActions.cashoutFields(title: "VkusnoffKz 2"),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt),
+                       try ClaudeAXTests.cashoutFixture("cashout-popout-title.json"))
+    }
+
+    /// Контракт `new-window` с переносом (критик, блокер 2): `transfer:true` стоит ПОСЛЕ
+    /// `name` и ПЕРЕД слоями. Побайтно с эталонами — их же читает батч страницы.
+    func testNewWindowPayloadWithTransfer() throws {
+        let violet = catalog()[0]
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "VkusnoffKz 2",
+                                                  match: ClaudeAXTests.cashoutMainMatch,
+                                                  x: 586, y: 303, text: ClaudeAXTests.fixtureFirstMessage,
+                                                  folder: "/Users/dev/Projects/VkusnoffKz",
+                                                  name: "VkusnoffKz 3", transfer: true,
+                                                  theme: .set(violet),
+                                                  size: .set(Size(answer: 16)), frame: .set(true)),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt),
+                       try ClaudeAXTests.cashoutFixture("new-window-transfer.json"))
+        // Проекта нет («Здесь же») — папка и имя пустые, а перенос всё равно нужен.
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "VkusnoffKz 2",
+                                                  match: ClaudeAXTests.cashoutMainMatch,
+                                                  x: 586, y: 303, text: ClaudeAXTests.fixtureFirstMessage,
+                                                  transfer: true),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt),
+                       try ClaudeAXTests.cashoutFixture("new-window-transfer-plain.json"))
+    }
+
+    /// Сторож: поле ставит ТОЛЬКО ветка «Обкэшить». ⌥⌘N, «▸ проект», «Здесь же» и канал
+    /// «Пимп» шлют прежний контракт WF16 — тот же байт в байт, но без `transfer`.
+    func testNewWindowPayloadWithoutTransferUnchanged() throws {
+        let plain = CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "VkusnoffKz 2",
+                                                  match: ClaudeAXTests.cashoutMainMatch,
+                                                  x: 586, y: 303,
+                                                  text: ClaudeAXTests.fixtureFirstMessage),
+            id: ClaudeAXTests.cashoutID, at: ClaudeAXTests.cashoutAt)
+        XCTAssertFalse(plain.contains("\"transfer\""))
+        XCTAssertEqual(plain, try ClaudeAXTests.cashoutFixture("new-window-transfer-plain.json")
+            .replacingOccurrences(of: ",\"transfer\":true", with: ""))
+        // И у команды со слоями поля нет тоже — иначе перенос уехал бы в чужое окно.
+        let violet = catalog()[0]
+        XCTAssertFalse(CommandChannel.payload(
+            action: ClaudeCommand.newWindow.rawValue,
+            fields: ClaudeActions.newWindowFields(title: "", x: 0, y: 0, text: "Проект",
+                                                  folder: "/tmp/Проект", name: "Проект",
+                                                  theme: .set(violet)),
+            id: "1-0001", at: Date(timeIntervalSince1970: 0)).contains("transfer"))
+    }
+
+    // MARK: - «Обкэшить» заменяет окно (#5768, слово Элвиса 08.09 11:40)
+
+    /// Новое окно рождается РОВНО в углу донора: ни уступа в 40 pt, ни обрезки по главному
+    /// экрану — иначе окно уезжало и на соседнее место, и на другой монитор.
+    func testCashoutOriginTakesDonorCorner() {
+        let donor = CGRect(x: 1200.4, y: 340.6, width: 700, height: 900)
+        XCTAssertEqual(ClaudeActions.cashoutOrigin(donor: donor).x, 1200)
+        XCTAssertEqual(ClaudeActions.cashoutOrigin(donor: donor).y, 341)
+        // Точка «Нового окна» на том же окне — с уступом: у замены его быть не должно.
+        XCTAssertNotEqual(ClaudeActions.cashoutOrigin(donor: donor).x,
+                          ClaudeActions.popoutOrigin(near: donor, area: nil).x)
+        // Окно на втором мониторе (отрицательный x) остаётся на нём.
+        XCTAssertEqual(ClaudeActions.cashoutOrigin(donor: CGRect(x: -900, y: 100,
+                                                                 width: 500, height: 800)).x, -900)
+        // Рамки донора нет (AX молчит) — прежняя точка от угла экрана, замены не будет.
+        XCTAssertEqual(ClaudeActions.cashoutOrigin(donor: nil).x, ClaudeActions.popoutWindowFallback.x)
+        XCTAssertEqual(ClaudeActions.cashoutOrigin(donor: nil).y, ClaudeActions.popoutWindowFallback.y)
+    }
+
+    /// Страница ещё ничего не сказала — ждём; сказала «вставлено» — закрываем; сказала
+    /// приговор — не закрываем ничего и говорим причину (#5779). Отказ СОСЕДНЕЙ страницы
+    /// («перенос не в это окно») работу не заканчивает.
+    func testCashoutWaitsForDeliveryNotForWindow() {
+        let at = Date(timeIntervalSince1970: 1_757_000_000)
+        func page(_ title: String, _ said: String?) -> ChatPage {
+            ChatPage(kind: .popout, chat: nil, title: title, store: "ok", cashout: said, at: at)
+        }
+        // Окно уже родилось и даже ответило — но пока не «вставлено», это ожидание.
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("VkusnoffKz 3", nil)]), .waiting)
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("VkusnoffKz 3", "ждём"),
+                                                             page("PimpMyClaude", "")]),
+                       .waiting)
+        // Доезд подтверждён — и заголовок берётся у той страницы, которая это сказала.
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("Гость", "ждём"),
+                                                             page("VkusnoffKz 3", "вставлено")]),
+                       .landed(title: "VkusnoffKz 3"))
+        // Приговор с причиной: доезда не будет. «Вставлено» сильнее приговора соседней страницы.
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("Гость", "отказ: поле ввода пропало")]),
+                       .refused("поле ввода пропало"))
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("Гость", "отказ: текст не попал в поле"),
+                                                             page("VkusnoffKz 3", "вставлено")]),
+                       .landed(title: "VkusnoffKz 3"))
+        // Приговор без причины всё равно называет что-то человеческое, а не пустоту.
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("Гость", "отказ:")]),
+                       .refused(MenuModel.cashoutNoAnswerReason))
+        XCTAssertEqual(ClaudeActions.cashoutLanded, "вставлено")
+        // Круг, пришедший ДО нажатия, говорит о прошлом переносе — его не слушаем вовсе
+        // (находка гейта WF50): два «Обкэшить» подряд закрывали бы второго донора по
+        // ответу про первый.
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("VkusnoffKz 3", "вставлено")],
+                                                     since: at.addingTimeInterval(1)),
+                       .waiting)
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: [page("VkusnoffKz 3", "вставлено")],
+                                                     since: at),
+                       .landed(title: "VkusnoffKz 3"))
+    }
+
+    /// Потолок ожидания — СУММА пауз худшего честного хода цепочки, а не «на глаз» (#5785):
+    /// фокус, очередь канала, опрос командного файла, ⌘N, сторож цепочки на странице,
+    /// вставка с подтверждением и круг probe.
+    func testCashoutWaitCoversWholeChain() {
+        let focus = 0.1, queue = CommandChannel.minInterval, loader = 0.5, key = 0.8
+        let pageGuard = 110.0         // NEW_WINDOW_GUARD_MS в inject.js (95 → 110 с К2 WF84)
+        // Сторож вставки 0,3 с + ожидание чужого черновика 1,8 с + два способа вставки
+        // с подтверждением (12 и 20 повторов по 150 мс).
+        let paste = 0.3 + 1.8 + 12 * 0.15 + 20 * 0.15
+        let probe = ChatProbe.cashoutInterval + 2 + 1 + 2 // пол частоты, лоадер, обход, тик
+        let honest = focus + queue + loader + key + pageGuard + paste + probe
+        XCTAssertGreaterThanOrEqual(ClaudeActions.cashoutWaitSeconds, honest,
+                                    "потолок меньше суммы пауз — Элвис получит «не доехало» раньше доезда")
+        XCTAssertEqual(ClaudeActions.cashoutWaitSeconds, 135)
+        // Прежние 40 с не покрывали даже сторожа самой цепочки.
+        XCTAssertLessThan(40, honest)
+    }
+
+    /// Наше окно — только то, чей заголовок назвала страница-адресат, и только среди окон,
+    /// которых до ⌘N не было. Чужое окно тех же секунд (канал «Пимп», вынос другого чата,
+    /// служебные окна Electron без заголовка) не занимает рамку и не закрывает донора.
+    func testCashoutFreshWindowIsOnlyOurs() {
+        let before: Set<CGWindowID> = [7, 9]
+        let windows: [(id: CGWindowID, title: String)] = [
+            (7, "VkusnoffKz 2"), (9, "PimpMyClaude"), (12, "VkusnoffKz 3"), (13, ""),
+        ]
+        XCTAssertEqual(ClaudeActions.cashoutFresh(title: "VkusnoffKz 3", before: before,
+                                                  windows: windows), 12)
+        // Окно с этим именем было и до ⌘N — оно не наше.
+        XCTAssertNil(ClaudeActions.cashoutFresh(title: "VkusnoffKz 2", before: before,
+                                                windows: windows))
+        // Служебное окно без заголовка и пустое имя адресата рамку не занимают.
+        XCTAssertNil(ClaudeActions.cashoutFresh(title: "", before: before, windows: windows))
+        // Два свежих окна с одним именем — не угадываем вовсе.
+        XCTAssertNil(ClaudeActions.cashoutFresh(title: "VkusnoffKz 3", before: before,
+                                                windows: windows + [(14, "VkusnoffKz 3")]))
+        // Заголовок ещё не доехал до AX — ждём, а не берём единственное свежее окно.
+        XCTAssertNil(ClaudeActions.cashoutFresh(title: "VkusnoffKz 3", before: before,
+                                                windows: [(7, "VkusnoffKz 2"), (12, "Claude")]))
+    }
+
+    /// Донора закрываем только после подтверждённого доезда, и только если он ещё на экране:
+    /// не доехало — не закрываем ничего.
+    func testCashoutClosesDonorOnlyAfterReplacement() {
+        XCTAssertTrue(ClaudeActions.cashoutCloses(donor: 7, fresh: 12, onScreen: [7, 9, 12]))
+        // Элвис закрыл старое окно сам, пока шла работа.
+        XCTAssertFalse(ClaudeActions.cashoutCloses(donor: 7, fresh: 12, onScreen: [9, 12]))
+        // «Новым» оказался сам донор — закрывать его значит закрыть то, что только что открыли.
+        XCTAssertFalse(ClaudeActions.cashoutCloses(donor: 7, fresh: 7, onScreen: [7, 9]))
+    }
+
+    /// Плашка говорит правду (#5779, задача 3): «старое закрыл» — только когда `AX.close`
+    /// правда сработал; у окна без кнопки закрытия текст другой. И у каждого отказа своя
+    /// причина: молчаливый выход = «кнопка не работает» (урок ElvisOS).
+    func testCashoutNoticesTellTheTruth() {
+        XCTAssertTrue(MenuModel.cashoutReplacedNotice.contains("Старое закрыл"))
+        XCTAssertTrue(MenuModel.cashoutCloseFailedNotice.contains("закрыть не смог"))
+        XCTAssertFalse(MenuModel.cashoutCloseFailedNotice.contains("Старое закрыл"))
+        XCTAssertEqual(MenuModel.cashoutKeptNotice("перенос протух"),
+                       "Перенос не доехал (перенос протух) — старое окно оставил как было")
+        XCTAssertTrue(MenuModel.cashoutKeptNotice(MenuModel.cashoutNoAnswerReason)
+                        .contains("не подтвердила вставку"))
+        XCTAssertTrue(MenuModel.cashoutNoWindowNotice.contains("оставил как было"))
+    }
+
+    /// Без карты probe (канал занят агентом, тумблер выключен) ответов нет — и донор не
+    /// закрывается НИКОГДА: это и есть безопасная деградация. Плюс пауза между рамкой и
+    /// закрытием — урок ElvisOS о свежем окне (#5784).
+    func testCashoutWithoutAnswersNeverCloses() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: actions.cashoutAnswers()), .waiting)
+        XCTAssertFalse(actions.cashoutPending, "работы нет — тик не должен трогать окна")
+        // Тик без работы молчит: ни плашек, ни движения окон.
+        var warnings: [String] = []
+        actions.onWarning = { warnings.append($0) }
+        actions.cashoutTick()
+        XCTAssertTrue(warnings.isEmpty)
+        XCTAssertEqual(ClaudeActions.cashoutSettlePause, 0.35)
+        XCTAssertEqual(ClaudeActions.axWindowTimeout, 1.0)
+    }
+
+    /// Канал probe спрашивает о доезде ТОЛЬКО пока идёт перенос: `status()` считается на
+    /// каждой из четырёх десятков страниц, и платить за него в обычном круге незачем (#5779).
+    func testChatProbeScriptAsksAboutCashoutOnlyWhenNeeded() {
+        let plain = ChatProbe.script(nonce: "chats-1-0001", scan: false, cash: false)
+        let asking = ChatProbe.script(nonce: "chats-1-0001", scan: false, cash: true)
+        XCTAssertFalse(plain.contains("cashout"))
+        XCTAssertFalse(plain.contains("api.status"))
+        XCTAssertTrue(asking.contains("api.status()"))
+        XCTAssertTrue(asking.contains("cashout"))
+        // Все четыре варианта скрипта остаются НАШИМИ: иначе приложение уступило бы канал
+        // самому себе и замолчало на минуту.
+        for scan in [false, true] {
+            for cash in [false, true] {
+                XCTAssertTrue(ChatProbe.isOwnScript(ChatProbe.script(nonce: "chats-1-0002",
+                                                                     scan: scan, cash: cash)))
+            }
+        }
+        XCTAssertFalse(ChatProbe.isOwnScript("\(ChatProbe.mark) chats-1-0002\nчужое"))
+
+        // Обычный круг остался ПОБАЙТНО прежним: иначе первый запуск после обновления
+        // приложения считал бы свой же вчерашний probe.js чужим и молчал 10 минут.
+        XCTAssertEqual(plain, """
+        \(ChatProbe.mark) chats-1-0001
+        // Пишет PimpMyClaude: спрашивает у страницы, какой в ней чат (план WF29).
+        // Свой probe.js на гейте? Приложение уступит: чужой свежий файл оно не переписывает.
+        (function () {
+          try {
+            var api = window.__myclaude;
+            if (!api || typeof api.chats !== "function") return {v:1,nonce:"chats-1-0001",kind:"other",store:"skip"};
+            return api.chats({ scan: false, nonce: "chats-1-0001" });
+          } catch (e) {
+            return {v:1,nonce:"chats-1-0001",kind:"other",store:"skip"};
+          }
+        })()
+
+        """)
+    }
+
+    /// Слово о доезде приезжает тем же кругом probe, что и чаты: `status().cashout.delivery`.
+    /// Чужая строка просеивается, как папка: не строка, пустая или огромная — считаем, что
+    /// страница промолчала, и донор не закрывается.
+    func testChatProbeReadsCashoutResult() {
+        XCTAssertEqual(ChatProbe.cashoutWord(["delivery": " вставлено "]), "вставлено")
+        XCTAssertNil(ChatProbe.cashoutWord(nil))
+        XCTAssertNil(ChatProbe.cashoutWord(["delivery": ""]))
+        XCTAssertNil(ChatProbe.cashoutWord(["record": true]))
+        XCTAssertNil(ChatProbe.cashoutWord("вставлено"))
+        XCTAssertNil(ChatProbe.cashoutWord(["delivery": String(repeating: "я", count: 201)]))
+
+        let json = """
+        {"at":"2026-09-08T13:00:00.000Z","results":[
+          {"id":1,"url":"about:blank","source":{"loader":8,"origin":"https://claude.ai","url":"about:blank","processId":1,"routingId":1},"result":{"v":1,"nonce":"chats-1-0003","kind":"popout",
+           "title":"VkusnoffKz 3","store":"ok",
+           "cashout":{"record":false,"to":null,"title":null,"stampedAt":null,"refusal":null,
+                      "delivery":"вставлено"}}}]}
+        """
+        let pages = ChatProbe.parse(json.data(using: .utf8), nonce: "chats-1-0003",
+                                    at: Date(timeIntervalSince1970: 1_757_000_000))
+        XCTAssertEqual(pages.count, 1)
+        XCTAssertEqual(pages.first?.cashout, "вставлено")
+        XCTAssertEqual(ClaudeActions.cashoutDelivery(pages: pages), .landed(title: "VkusnoffKz 3"))
+    }
+
+    /// Пока идёт перенос, канал probe работает при ЛЮБОМ тумблере: по ответу страницы
+    /// закрывается окно Элвиса с его текстом, и молчать тут нельзя (#5779).
+    func testChatProbeWorksWhileCashoutPending() {
+        var script: String?
+        var writes = 0
+        var now = Date(timeIntervalSince1970: 1_757_100_000)
+        let files = ChatProbeFiles(scriptInfo: { script == nil ? nil : ("\(writes)", now) },
+                                   readScript: { script },
+                                   writeScript: { text in
+                                       script = text
+                                       writes += 1
+                                       return true
+                                   },
+                                   resultInfo: { nil }, readResult: { nil })
+        let probe = ChatProbe(files: files, now: { now }, random: { 7 })
+        var pending = false
+        probe.isEnabled = { false }
+        probe.isCashoutPending = { pending }
+
+        probe.tick(windowTitles: ["VkusnoffKz 2"], indexRevision: 1)
+        XCTAssertEqual(writes, 0, "тумблер выключен и переноса нет — канала не касаемся")
+
+        pending = true
+        probe.tick(windowTitles: ["VkusnoffKz 2"], indexRevision: 1)
+        XCTAssertEqual(writes, 1)
+        XCTAssertTrue(script?.contains("cashout") == true, "круг обязан спросить о доезде")
+        // Свой пол частоты: прежние 15 с — это 15 с лишнего окна на экране.
+        XCTAssertEqual(ChatProbe.cashoutInterval, 4)
+        XCTAssertLessThan(ChatProbe.cashoutInterval, ChatProbe.askInterval)
+
+        now = now.addingTimeInterval(60)
+        pending = false
+        probe.tick(windowTitles: ["VkusnoffKz 2"], indexRevision: 1)
+        XCTAssertEqual(writes, 1, "перенос кончился — канал снова молчит по тумблеру")
+    }
+
+    // MARK: - «Новый чат», ⌘N и первое сообщение (#5734, #5735, #5767)
+
+    /// Задача #5734: «💬 Новый чат» из вынесенного окна больше не жмёт ⌘N — его исполняет
+    /// главное окно, и разговор Элвиса там сменялся новым чатом. Из главного окна всё как
+    /// было; попап с #7749 заменяется новым чатом — `Fix7749Tests`.
+    func testNewChatFromMainWindowPressesKey() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("command.json")
+        let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
+        actions.isMainWindowTitle = { $0 == "PimpMyClaude" }
+        actions.chatForTitle = { title, _ in
+            title == "VkusnoffKz 2" ? ClaudeAXTests.cashoutPopoutChat : nil
+        }
+        actions.mainWindowMatch = { ClaudeAXTests.cashoutMainMatch }
+        var delays: [TimeInterval] = []
+        actions.schedule = { delay, _ in delays.append(delay) }
+
+        // Главное окно: команд в канал не уходит вовсе, только ⌘N (он отложен на focusDelay).
+        actions.newChatCommand(nil, title: "PimpMyClaude")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path),
+                       "главному окну «Новый чат» команд не шлёт — как было до #5734")
+        XCTAssertEqual(delays, [actions.focusDelay])
+        // Заголовка окна нет в карте probe — окно неизвестное, и развилка ведёт себя как раньше.
+        XCTAssertEqual(ClaudeActions.cashoutRoute(title: "Гость", isMainTitle: false,
+                                                  knownChat: nil), .popout(chat: nil))
+    }
+
+    /// Задача #5735: ⌘N жмётся от МОМЕНТА ЗАПИСИ файла, а не от клика. Команда простояла в
+    /// очереди канала — клавиша ждёт её, иначе главное окно уезжало на пустой `/epitaxy`
+    /// раньше, чем страница получала команду, и вернуть его на чат Элвиса было некому.
+    func testNewWindowPressesKeyAfterCommandLandsOnDisk() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("command.json")
+        var now = Date(timeIntervalSince1970: 1_757_000_000)
+        // Таймер канала ловим сами: так видно, что команда правда стоит в очереди.
+        var queued: [(wait: TimeInterval, run: () -> Void)] = []
+        let channel = CommandChannel(path: file, now: { now },
+                                     schedule: { wait, block in queued.append((wait, block)) })
+        let actions = ClaudeActions(app: IsolatedClaudeApp.make(), commands: channel, themes: [], fonts: [],
+                                    themeStore: ThemeStore(defaults: MemoryDefaults()),
+                                    myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")),
+                                    autoPaintStore: AutoPaintStore(defaults: MemoryDefaults()),
+                                    liveColorsStore: LiveColorsStore(defaults: MemoryDefaults()))
+        actions.clock = { now }
+        actions.mainWindowMatch = { nil }
+        var delays: [TimeInterval] = []
+        // Пауза фокуса — шаг живого AX: на Маке, где Claude запущен и доступ выдан,
+        // `perform` находит окно в фокусе и шлёт команду после неё (#6667 — тест считал,
+        // что в прогоне живого AX не бывает). Её прокручиваем сами, ⌘N ждём отдельно.
+        var focusSteps: [() -> Void] = []
+        actions.schedule = { delay, block in
+            if delay == actions.focusDelay { focusSteps.append(block) } else { delays.append(delay) }
+        }
+
+        // Перед «Новым окном» в канал уже написали (примерка темы, цвет проекта, сводка).
+        actions.perform(.scroll, on: nil)
+        XCTAssertEqual(try ClaudeAXTests.action(of: file), "scroll")
+
+        actions.perform(.newWindow, on: nil)
+        focusSteps.forEach { $0() }
+        XCTAssertEqual(try ClaudeAXTests.action(of: file), "scroll",
+                       "команда стоит в очереди — зазор канала ещё не вышел")
+        XCTAssertTrue(delays.isEmpty, "⌘N нельзя жать раньше, чем команда легла на диск")
+
+        // Очередь дошла до записи — только теперь отсчитываются 0,8 с до ⌘N.
+        now = now.addingTimeInterval(CommandChannel.minInterval)
+        XCTAssertEqual(queued.count, 1)
+        // Через `XCTUnwrap`, а не `removeFirst()`: на пустой очереди падал ВЕСЬ прогон
+        // (#6667) — четыре класса тестов после этой строки не исполнялись вовсе.
+        try XCTUnwrap(queued.first).run()
+        queued.removeFirst()
+        XCTAssertEqual(try ClaudeAXTests.action(of: file), ClaudeCommand.newWindow.rawValue)
+        XCTAssertEqual(delays, [actions.newWindowKeyDelay])
+    }
+
+    /// Задача #5767 (она же половина #5447): первое сообщение нового окна больше не запускает
+    /// работу — оно прямо просит ничего не делать и не читать правила, потому что полная
+    /// ориентировка агента стоила по 2–5 долларов на окно. Имя чата от этого не зависит:
+    /// оно уходит своим полем `name`, и текст у окна с папкой ровно тот же.
+    func testNewWindowFirstMessageAsksToWait() throws {
+        let text = MenuModel.newWindowText.lowercased()
+        XCTAssertTrue(text.contains("не читай правила"), MenuModel.newWindowText)
+        XCTAssertTrue(text.contains("ничего не делай"), MenuModel.newWindowText)
+        XCTAssertFalse(MenuModel.newWindowText.contains("/"), "путей в первом сообщении быть не должно")
+
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("command.json")
+        let actions = actionsOnDisk(dir: dir, now: { Date(timeIntervalSince1970: 1_757_000_000) })
+        actions.mainWindowMatch = { nil }
+        actions.chatName = { project in "\(project.name) 2" }
+        // Как в тесте очереди (#6667): пауза фокуса живого AX прокручивается здесь же,
+        // а отложенный ⌘N остаётся невыполненным — жать клавишу в прогоне незачем.
+        var focusSteps: [() -> Void] = []
+        actions.schedule = { delay, block in if delay == actions.focusDelay { focusSteps.append(block) } }
+        actions.newWindow(in: ClaudeAXTests.project("PimpMyClaude"), on: nil)
+        focusSteps.forEach { $0() }
+
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try Data(contentsOf: file))
+                                    as? [String: Any])
+        XCTAssertEqual(json["name"] as? String, "PimpMyClaude 2", "имя чата осталось на месте")
+        XCTAssertEqual(json["text"] as? String, MenuModel.newWindowText,
+                       "с папкой первое сообщение больше не имя проекта — оно стоило хода модели")
+    }
+
+    private static func action(of file: URL) throws -> String {
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try Data(contentsOf: file))
+                                    as? [String: Any])
+        return try XCTUnwrap(json["action"] as? String)
+    }
+
+    // MARK: - авто-Allow (#5736)
+
+    /// Запрос страницы «открой HTML в Chrome» (#6618): только GET /open-html, абсолютный путь, страница.
+    func testHtmlChromeRequestParsing() {
+        let ok = HtmlChromeOpener.parse("GET /open-html?mode=auto&path=%2FUsers%2Fe%2F%D0%BE%D1%82%D1%87%D1%91%D1%82%20a.html HTTP/1.1\r\nHost: x\r\n")
+        XCTAssertNil(ok)
+        XCTAssertEqual(HtmlChromeOpener.parse("GET /open-html?path=%2Fa.HTM HTTP/1.1")?.mode, .click)
+        XCTAssertNil(HtmlChromeOpener.parse("GET /open-html?path=%2Fetc%2Fpasswd HTTP/1.1"))
+        XCTAssertEqual(HtmlChromeOpener.parse("GET /open-html?path=%2Fa%2Fb.PNG HTTP/1.1")?.path, "/a/b.PNG")
+        XCTAssertEqual(HtmlChromeOpener.parse("GET /open-html?path=%2Fa%2Fb.pdf HTTP/1.1")?.path, "/a/b.pdf")
+        XCTAssertNil(HtmlChromeOpener.parse("GET /open-html?path=%2Fa%2Fb.sh HTTP/1.1"))
+        XCTAssertNil(HtmlChromeOpener.parse("GET /open-html?path=a.html HTTP/1.1"))
+        XCTAssertNil(HtmlChromeOpener.parse("POST /open-html?path=%2Fa.html HTTP/1.1"))
+        XCTAssertNil(HtmlChromeOpener.parse("GET /other?path=%2Fa.html HTTP/1.1"))
+    }
+
+    /// Explicit opening reuses, reloads and activates the existing browser tab.
+    func testHtmlChromeScriptModes() {
+        let click = HtmlChromeOpener.script(url: "file:///a.html")
+        XCTAssertTrue(click.contains("set active tab index of w to i"))
+        XCTAssertTrue(click.contains("reload t"))
+        XCTAssertTrue(click.contains("set target to \"file:///a.html\""))
+    }
+
+    /// Сторож (критик В2 плана WF16 — повтор блокера Б1 из WF14): подменю не должно стоить
+    /// клавиши ⌥⌘N. Carbon-хоткеи регистрируются перебором `MenuModel.entries` (id = индекс+1),
+    /// поэтому `.newWindow` обязан остаться в списке И на своём месте; рисуется клавиша на
+    /// пункте «Здесь же» — у родителя с подменю AppKit её не отрабатывает.
+    func testNewWindowKeepsHotkeyEntry() throws {
+        let index = try XCTUnwrap(MenuModel.entries.firstIndex { $0.command == .newWindow })
+        XCTAssertEqual(index, 2, "индекс .newWindow съехал — вместе с ним съедет id Carbon-хоткея")
+        let entry = try XCTUnwrap(MenuModel.entry(for: .newWindow))
+        XCTAssertEqual(entry.registersHotkey, true, ".newWindow перестал регистрировать хоткей")
+        XCTAssertEqual(entry.key?.keyCode, 0x2D)
+        XCTAssertEqual(entry.key?.keyEquivalent, "n")
+        XCTAssertEqual(entry.key?.modifierMask, [.command, .option])
+
+        var config = MinimizeMenu.MenuConfig()
+        config.projects = [ClaudeAXTests.project("PimpMyClaude")]
+        // С WF71 «🪟 Новое окно ▸» живёт в «⋯ Ещё ▸» — и там оно по-прежнему подменю.
+        let parent = try XCTUnwrap(try moreMenu(in: MinimizeMenu.build(config: config)).items
+            .first { $0.title == "Новое окно" })
+        XCTAssertNotNil(parent.submenu, "«Новое окно» — подменю (вариант А макета WF16)")
+        XCTAssertEqual(parent.keyEquivalent, "", "у пункта с подменю AppKit клавишу не отработает")
+        XCTAssertEqual(parent.keyEquivalentModifierMask, [])
+        let here = try XCTUnwrap(parent.submenu?.items.first)
+        XCTAssertEqual(here.title, MenuModel.newWindowHereTitle)
+        XCTAssertEqual(here.keyEquivalent, "n")
+        XCTAssertEqual(here.keyEquivalentModifierMask, [.command, .option])
+    }
+
+    /// «🪟 Новое окно ▸» — «Здесь же» первым, за ним «НЕДАВНИЕ ПРОЕКТЫ» и папки (план WF16).
+    func testNewWindowSubmenuListsProjects() throws {
+        var performed: [ClaudeCommand] = []
+        var opened: [String] = []
+        var config = MinimizeMenu.MenuConfig()
+        config.perform = { performed.append($0) }
+        config.newWindowInProject = { opened.append($0.folder.path) }
+        config.projects = [ClaudeAXTests.project("PimpMyClaude"),
+                           ClaudeAXTests.project("Dictatorik", at: 2000)]
+
+        let submenu = try XCTUnwrap(try moreMenu(in: MinimizeMenu.build(config: config)).items
+            .first { $0.title == "Новое окно" }?.submenu)
+        XCTAssertEqual(submenu.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       [MenuModel.newWindowHereTitle, "—", MenuModel.recentProjectsHeader,
+                        "PimpMyClaude", "Dictatorik"])
+        let header = try XCTUnwrap(submenu.items.first { $0.title == MenuModel.recentProjectsHeader })
+        XCTAssertFalse(header.isEnabled, "«НЕДАВНИЕ ПРОЕКТЫ» — заголовок секции, а не кнопка")
+        // Имя пункта — имя папки, полный путь — подсказкой при наведении: у двух проектов
+        // папки могут зваться одинаково.
+        let pimp = try XCTUnwrap(submenu.items.first { $0.title == "PimpMyClaude" })
+        XCTAssertNotNil(pimp.image)
+        XCTAssertEqual(pimp.toolTip,
+                       ProjectPaint.short(path: ClaudeAXTests.project("PimpMyClaude").folder))
+        click(pimp)
+        XCTAssertEqual(opened, [ClaudeAXTests.project("PimpMyClaude").folder.path])
+        // «Здесь же» — прежняя команда WF13, ничего про папки не знающая.
+        click(try XCTUnwrap(submenu.items.first))
+        XCTAssertEqual(performed, [.newWindow])
+
+        // Папок не знаем — подменю из одного пункта: раздел «НЕДАВНИЕ ПРОЕКТЫ» без списка
+        // хуже, чем его отсутствие (условие ветвления, критик Б1).
+        config.projects = []
+        let bare = try XCTUnwrap(try moreMenu(in: MinimizeMenu.build(config: config)).items
+            .first { $0.title == "Новое окно" }?.submenu)
+        XCTAssertEqual(bare.items.map { $0.title }, [MenuModel.newWindowHereTitle])
+        // Длина списка — ответ Элвиса на вопрос 3 макета.
+        XCTAssertEqual(MenuModel.newWindowProjectsLimit, 8)
+    }
+
+    /// Проект из индекса чатов: папка в ~/Projects, имя — её последний компонент.
+    private static func project(_ name: String, at: Double = 3000) -> Project {
+        Project(folder: FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Projects", isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true), name: name, lastFocusedAt: at)
+    }
+
+    func testPopoutWindowPayloadMatchesContract() throws {
+        // Побайтно, решение Элвиса 04.09: те же поля без text.
+        let body = CommandChannel.payload(
+            action: ClaudeCommand.popoutWindow.rawValue,
+            fields: ClaudeActions.popoutWindowFields(title: "Привет", x: 120, y: 120),
+            id: "1-0001", at: Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(body, "{\"id\":\"1-0001\",\"action\":\"popout-window\","
+            + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"window\",\"title\":\"Привет\","
+            + "\"x\":120,\"y\":120}")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertNil(json["text"])
+        XCTAssertEqual(json["x"] as? Int, 120)
+        XCTAssertNil(json["match"], "поля match нет — адресация заголовком, как раньше")
+
+        // Дополнение 05.09 к плану WF19: чат выносит ГЛАВНОЕ окно, на каком бы окне ни нажали, —
+        // адресуем его путём страницы (с попапа команда уходила с его заголовком и молчала).
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.popoutWindow.rawValue,
+            fields: ClaudeActions.popoutWindowFields(title: "Привет", match: "/epitaxy/local_f44e46bb",
+                                                     x: 120, y: 120),
+            id: "1-0001", at: Date(timeIntervalSince1970: 0)),
+                       "{\"id\":\"1-0001\",\"action\":\"popout-window\","
+                       + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"window\",\"title\":\"Привет\","
+                       + "\"match\":\"/epitaxy/local_f44e46bb\",\"x\":120,\"y\":120}")
+
+        // «↩︎ Вернуть эти чаты» (план WF41): `chat` и `name` идут ПОСЛЕ `y`, а адрес у команды
+        // один — путь главного окна: поле `chat` для страницы значит «эта страница и есть тот
+        // чат», и закрытый разговор такую команду не взял бы вовсе.
+        XCTAssertEqual(CommandChannel.payload(
+            action: ClaudeCommand.popoutWindow.rawValue,
+            fields: ClaudeActions.popoutWindowFields(title: "", match: "/epitaxy/local_f44e46bb",
+                                                     x: 294, y: 34, chat: "local_gone",
+                                                     name: "Вкуснофф"),
+            id: "1-0002", at: Date(timeIntervalSince1970: 0)),
+                       "{\"id\":\"1-0002\",\"action\":\"popout-window\","
+                       + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"window\",\"title\":\"\","
+                       + "\"match\":\"/epitaxy/local_f44e46bb\",\"x\":294,\"y\":34,"
+                       + "\"chat\":\"local_gone\",\"name\":\"Вкуснофф\"}")
+        // Путь берётся из диагностики лоадера: одна страница claude.ai — она и есть главное окно,
+        // ни одной или несколько — nil, и адресация остаётся прежней (живой ~/Library не трогаем).
+        XCTAssertNil(ClaudeActions.mainWindowMatch(statusURL: URL(fileURLWithPath: "/нет/такого")))
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let status = dir.appendingPathComponent(ProjectIndex.statusFileName)
+        func write(_ urls: [String]) {
+            let list = urls.map { "{\"url\":\"\($0)\"}" }.joined(separator: ",")
+            XCTAssertTrue(CommandChannel.writeAtomic(status, "{\"webContents\":[\(list)]}"))
+        }
+        write(["https://claude.ai/epitaxy/local_f44e46bb", "about:blank"])
+        XCTAssertEqual(ClaudeActions.mainWindowMatch(statusURL: status), "/epitaxy/local_f44e46bb")
+        // Две страницы claude.ai — какая из них главная, отсюда не видно: молчим и адресуем
+        // заголовком, как раньше.
+        write(["https://claude.ai/epitaxy/local_f44e46bb", "https://claude.ai/epitaxy/local_aa11bb22"])
+        XCTAssertNil(ClaudeActions.mainWindowMatch(statusURL: status))
+        write(["about:blank"])
+        XCTAssertNil(ClaudeActions.mainWindowMatch(statusURL: status))
+
+        // Координаты — точки Quartz: угол окна под кнопкой + 40/40, обрезанные по экрану так,
+        // чтобы окно 900×700 влезло целиком; окна нет — 120/120.
+        let area = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        XCTAssertEqual(ClaudeActions.popoutOrigin(near: nil, area: area).x, 120)
+        XCTAssertEqual(ClaudeActions.popoutOrigin(near: nil, area: area).y, 120)
+        // На большом экране уступ ничем не обрезан.
+        let wide = CGRect(x: 0, y: 25, width: 1920, height: 1175)
+        let near = ClaudeActions.popoutOrigin(near: CGRect(x: 546, y: 263, width: 900, height: 700),
+                                              area: wide)
+        XCTAssertEqual(near.x, 586)
+        XCTAssertEqual(near.y, 303)
+        // Окно у правого нижнего угла — уступ уехал бы за экран.
+        let corner = ClaudeActions.popoutOrigin(near: CGRect(x: 1000, y: 800, width: 400, height: 300),
+                                                area: area)
+        XCTAssertEqual(corner.x, 540) // 1440 − 900
+        XCTAssertEqual(corner.y, 200) // 25 + 875 − 700
+        // И за левый верхний край тоже не пускаем.
+        let above = ClaudeActions.popoutOrigin(near: CGRect(x: -100, y: -100, width: 400, height: 300),
+                                               area: area)
+        XCTAssertEqual(above.x, 0)
+        XCTAssertEqual(above.y, 25)
+    }
+
+    /// Новое окно рождается на экране ОКНА-ИСТОЧНИКА (#5731): `NSScreen.main` — это экран
+    /// активного окна любого приложения, и с ним «🪟 Новое окно» и «Обкэшить» из попапа
+    /// уезжали на второй монитор — та же болезнь, что чинили у «Расставить» 08.09.
+    func testPopoutOriginStaysOnSourceWindowScreen() {
+        let laptop = CGRect(x: 0, y: 34, width: 1470, height: 860)
+        let external = CGRect(x: 1470, y: 0, width: 1920, height: 1080)
+        let source = CGRect(x: 2000, y: 200, width: 900, height: 700)
+        // Экран источника выбирает тот же `pick`, что и «Расставить».
+        XCTAssertEqual(Screens.pick(screens: [laptop, external], for: [source]), 1)
+
+        let right = ClaudeActions.popoutOrigin(near: source, area: external)
+        XCTAssertEqual(right.x, 2040) // уступ 40/40 на своём экране ничем не обрезан
+        XCTAssertEqual(right.y, 240)
+        // По главному экрану ту же точку прижало бы к правому краю ноутбука — это и был #5731.
+        let wrong = ClaudeActions.popoutOrigin(near: source, area: laptop)
+        XCTAssertEqual(wrong.x, 570) // 1470 − 900
+        XCTAssertLessThan(CGFloat(wrong.x), external.minX)
+
+        // Без подсказки экран считается сам, а не берётся «как есть»: точка обрезана рабочей
+        // областью того экрана, где стоит источник (на одном мониторе он единственный).
+        if let area = Screens.usableFrame(holding: [source]) {
+            let auto = ClaudeActions.popoutOrigin(near: source)
+            XCTAssertGreaterThanOrEqual(CGFloat(auto.x), area.minX)
+            XCTAssertLessThanOrEqual(CGFloat(auto.x),
+                                     max(area.minX, area.maxX - ClaudeActions.popoutWindowSize.width))
+        }
+    }
+
+    func testWorkflowKitLandsInApplicationSupport() throws {
+        // Комплект из бандла (в тесте — из репозитория) ложится рядом с command.json.
+        let source = ClaudeAXTests.repositoryRoot
+            .appendingPathComponent("resources/workflow-kit", isDirectory: true)
+        let target = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: target) }
+        XCTAssertTrue(WorkflowKit.install(from: source, to: target))
+        for name in WorkflowKit.files {
+            XCTAssertEqual(try Data(contentsOf: target.appendingPathComponent(name)),
+                           try Data(contentsOf: source.appendingPathComponent(name)), name)
+        }
+        // В поле ввода уходит кикофф из бандла, и он ссылается на разложенные правила.
+        let kickoff = try XCTUnwrap(WorkflowKit.kickoff(directory: source))
+        XCTAssertTrue(kickoff.contains(WorkflowKit.rulesName), kickoff)
+        XCTAssertTrue(kickoff.contains("MyClaude/\(WorkflowKit.installedFolderName)"), kickoff)
+        // Комплекта нет — ни падения, ни текста.
+        XCTAssertFalse(WorkflowKit.install(from: nil, to: target))
+        XCTAssertNil(WorkflowKit.kickoff(directory: URL(fileURLWithPath: "/nope/\(UUID().uuidString)")))
+    }
+
+    func testStatusPayloadMatchesContract() throws {
+        // Побайтно, контракт п. 2 плана WF9: id, action, at, scope, projects[{name,text}].
+        let projects = [StatusProject(name: "PimpMyClaude", text: "# ⚪PimpMyClaude\n1️⃣ Workflow ✅"),
+                        StatusProject(name: "SkilZZZ", text: "# 🟣SkilZZZ")]
+        let body = CommandChannel.payload(action: "status", fields: StatusFeed.fields(projects),
+                                          id: "1-0001", at: Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(body, "{\"id\":\"1-0001\",\"action\":\"status\","
+            + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"all\",\"projects\":["
+            + "{\"name\":\"PimpMyClaude\",\"text\":\"# ⚪PimpMyClaude\\u000a1️⃣ Workflow ✅\"},"
+            + "{\"name\":\"SkilZZZ\",\"text\":\"# 🟣SkilZZZ\"}]}")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        XCTAssertEqual(json["scope"] as? String, "all")
+        let list = try XCTUnwrap(json["projects"] as? [[String: String]])
+        XCTAssertEqual(list.map { $0["name"] }, ["PimpMyClaude", "SkilZZZ"])
+        XCTAssertEqual(list.first?["text"], "# ⚪PimpMyClaude\n1️⃣ Workflow ✅")
+        // Проектов нет — пустой список, а не сломанный JSON (такую команду StatusFeed не шлёт).
+        XCTAssertEqual(CommandValue.array([]).json, "[]")
+        // Содержимое не менялось — хэш тот же; поменялось хоть в одном проекте — другой.
+        XCTAssertEqual(StatusFeed.digest(projects), StatusFeed.digest(projects))
+        XCTAssertNotEqual(StatusFeed.digest(projects),
+                          StatusFeed.digest([projects[0], StatusProject(name: "SkilZZZ", text: "!")]))
+
+        // Общий потолок (критик п. 6; 128 КБ с WF202): проекты кладутся по порядку, хвост отбрасывается.
+        let heavy = { (name: String) in
+            StatusProject(name: name, text: String(repeating: "строка сводки\n", count: 500))
+        }
+        let many = (1...12).map { heavy("Проект \($0)") }
+        let capped = StatusFeed.cap(many)
+        XCTAssertLessThanOrEqual(StatusFeed.payloadSize(capped), StatusFeed.totalLimit)
+        XCTAssertGreaterThan(capped.count, 0)
+        XCTAssertLessThan(capped.count, many.count)
+        XCTAssertEqual(capped.map { $0.name }, many.prefix(capped.count).map { $0.name })
+        // Влезают все — не трогаем ни байта.
+        XCTAssertEqual(StatusFeed.cap(projects), projects)
+        // Не влез даже первый — режем ему текст, но проект остаётся.
+        let alone = StatusFeed.cap([heavy("Один")], limit: 500)
+        XCTAssertEqual(alone.count, 1)
+        XCTAssertLessThanOrEqual(StatusFeed.payloadSize(alone), 500)
+        XCTAssertTrue(heavy("Один").text.hasPrefix(alone[0].text))
+    }
+
+    func testStatusScanReadsProjectSummaries() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        func put(_ project: String, _ folder: String, _ text: String, at moment: Date = Date()) throws {
+            let dir = root.appendingPathComponent(project).appendingPathComponent(folder)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent(StatusFeed.statusFileName)
+            try Data(text.utf8).write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: moment], ofItemAtPath: url.path)
+        }
+        try put("PimpMyClaude", "docs", "# ⚪PimpMyClaude", at: now)
+        try put("PimpMyClaude", "work", "не эта", at: now)        // docs идёт первым
+        try put("Audited", "audit", "# аудит", at: now.addingTimeInterval(-3600))
+        try put("Empty", "docs", "   \n", at: now)                 // пустая сводка не едет
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("NoStatus/src"),
+                                                withIntermediateDirectories: true)
+
+        let projects = StatusFeed.scan(root: root)
+        // Свежие первыми (WF22): алфавит («Audited») уступает времени правки status.md.
+        XCTAssertEqual(projects.map { $0.name }, ["PimpMyClaude", "Audited"])
+        XCTAssertEqual(projects.first?.text, "# ⚪PimpMyClaude")
+        // Папки проектов нет — ничего не читаем.
+        XCTAssertTrue(StatusFeed.scan(root: root.appendingPathComponent("нет")).isEmpty)
+
+        // projectsRoot из claude.json; ключа/файла нет — ~/Projects (WF108).
+        let config = root.appendingPathComponent("claude.json")
+        try Data("{\"minWindowWidth\":360,\"projectsRoot\":\"~/Projects\"}".utf8).write(to: config)
+        XCTAssertEqual(StatusFeed.projectsRoot(configURL: config).path,
+                       NSString(string: "~/Projects").expandingTildeInPath)
+        try Data("{\"minWindowWidth\":360}".utf8).write(to: config)
+        XCTAssertEqual(StatusFeed.projectsRoot(configURL: config).path,
+                       NSString(string: StatusFeed.defaultProjectsRoot).expandingTildeInPath)
+        XCTAssertEqual(StatusFeed.projectsRoot(configURL: root.appendingPathComponent("нет.json")).path,
+                       NSString(string: StatusFeed.defaultProjectsRoot).expandingTildeInPath)
+    }
+
+    func testStatusSliceCutsOnWorkflowBlocks() {
+        let head = "# ⚪PimpMyClaude\nобновлено 01:55\n"
+        let block = { (index: Int) in "\(index)️⃣ Workflow ✅ готово\n" + String(repeating: "- строка сводки\n", count: 40) }
+        let text = head + (1...9).map(block).joined()
+        XCTAssertGreaterThan(text.utf8.count, StatusFeed.limit)
+
+        let slice = StatusFeed.slice(text)
+        XCTAssertLessThanOrEqual(slice.utf8.count, StatusFeed.limit)
+        XCTAssertTrue(slice.hasPrefix(head), slice)
+        // Режем с НАЧАЛА (WF22): шапка остаётся, из блоков едут ПОСЛЕДНИЕ и целыми.
+        XCTAssertTrue(slice.hasSuffix("- строка сводки\n"), String(slice.suffix(40)))
+        let kept = (1...9).filter { slice.contains("\($0)️⃣ Workflow") }
+        XCTAssertGreaterThan(kept.count, 1)
+        XCTAssertEqual(kept, Array((10 - kept.count)...9)) // хвост подряд, без дыр
+        XCTAssertFalse(slice.contains("1️⃣ Workflow"), slice) // голова отрезана
+
+        // Влезает целиком — не трогаем ни байта.
+        XCTAssertEqual(StatusFeed.slice(head + block(1)), head + block(1))
+        // Ни один блок не влез — режем по знакам, UTF-8 не рвём.
+        let single = StatusFeed.slice(head + block(1), limit: 20)
+        XCTAssertLessThanOrEqual(single.utf8.count, 20)
+        XCTAssertTrue(head.hasPrefix(single), single)
+        XCTAssertTrue(StatusFeed.isWorkflowHeading("1️⃣ Workflow ✅ готово"))
+        XCTAssertTrue(StatusFeed.isWorkflowHeading("🔟 Workflow"))
+        XCTAssertFalse(StatusFeed.isWorkflowHeading("1. Workflow"))
+        XCTAssertFalse(StatusFeed.isWorkflowHeading("- строка сводки"))
+        XCTAssertFalse(StatusFeed.isWorkflowHeading(""))
+    }
+
+    func testStatusFeedCompactKeepsHeadAndBlocks() {
+        let text = """
+        # ⚪PimpMyClaude
+        обновлено 19:40
+
+        4 воркфлоу
+        2 готово
+        3,5 ч потрачено
+
+        1️⃣ Workflow ✅ готово
+        - о чём: одна строка простыми словами
+        - шаги 2 из 2
+        - 00:17 → 01:20 · 1 ч
+        - планирование · я · Fable high
+        - проверка · 🔴 **Fable max**
+
+        2️⃣ Workflow 💭 идёт
+        - о чём: полоска
+        - шаги 1 из 3
+        - 13:05 → закончит примерно в 13:50 · идёт 25 мин
+        - кодинг · 2 агента · Opus max 💭
+
+        Сейчас: идёт кодинг.
+        Ждёт Элвиса: буква по макету.
+        """
+        // Шапка целиком (с WF84 в её конце хвост «Сейчас:»/«Ждёт Элвиса:»), заголовки блоков
+        // и четыре вида строк — остальное за бортом.
+        XCTAssertEqual(StatusFeed.compact(text).components(separatedBy: "\n"), [
+            "# ⚪PimpMyClaude",
+            "обновлено 19:40",
+            "4 воркфлоу",
+            "2 готово",
+            "3,5 ч потрачено",
+            "Сейчас: идёт кодинг.",
+            "Ждёт Элвиса: буква по макету.",
+            "1️⃣ Workflow ✅ готово",
+            "- о чём: одна строка простыми словами",
+            "- шаги 2 из 2",
+            "- 00:17 → 01:20 · 1 ч",
+            "- планирование · я · Fable high",
+            "- проверка · 🔴 **Fable max**",
+            "2️⃣ Workflow 💭 идёт",
+            "- о чём: полоска",
+            "- шаги 1 из 3",
+            "- 13:05 → закончит примерно в 13:50 · идёт 25 мин",
+            "- кодинг · 2 агента · Opus max 💭",
+        ])
+        XCTAssertLessThan(StatusFeed.compact(text).utf8.count, text.utf8.count)
+        // Посторонний пункт блока не едет, а шапка остаётся любой строкой.
+        XCTAssertEqual(StatusFeed.compact("# ⚪Проект\nпримечание\n1️⃣ Workflow\n- план: docs/plan.md\n- шаги 1 из 2"),
+                       "# ⚪Проект\nпримечание\n1️⃣ Workflow\n- шаги 1 из 2")
+        // Сжатие идемпотентно: сжатую сводку можно сжать ещё раз без потерь.
+        XCTAssertEqual(StatusFeed.compact(StatusFeed.compact(text)), StatusFeed.compact(text))
+        XCTAssertTrue(StatusFeed.tailKind("Ждёт Элвиса: буква") != nil)
+        XCTAssertTrue(StatusFeed.startsWithClock("13:05 → 13:50"))
+        XCTAssertFalse(StatusFeed.startsWithClock("шаги 1 из 3"))
+    }
+
+    /// Идущий блок стоит в середине файла, а после него много запланированных (настоящий
+    /// docs/status.md 07.09: 💭 на 22-м из 41): срез с начала обязан оставить его всё равно.
+    func testStatusFeedKeepsRunningBlockCutFromStart() {
+        func keys(_ number: Int) -> String { String(number).map { "\($0)\u{FE0F}\u{20E3}" }.joined() }
+        func block(_ index: Int) -> String {
+            let state = index == 22 ? "💭 идёт" : (index < 22 ? "✅ готово" : "⬜ запланирован")
+            return "\(keys(index)) Workflow \(state)\n"
+                + "- о чём: строка про воркфлоу номер \(index)\n"
+                + "- шаги 1 из 3\n"
+                + String(repeating: "- кодинг · 2 агента · Opus max\n", count: 6)
+        }
+        let head = "# ⚪PimpMyClaude\nобновлено 22:40\n41 воркфлоу\n"
+        let text = head + (1...41).map(block).joined()
+        XCTAssertGreaterThan(text.utf8.count, StatusFeed.limit)
+        let slice = StatusFeed.slice(text)
+        XCTAssertLessThanOrEqual(slice.utf8.count, StatusFeed.limit)
+        XCTAssertTrue(slice.hasPrefix(head))
+        XCTAssertTrue(slice.contains("\(keys(22)) Workflow 💭 идёт"), "идущий блок отрезан")
+        XCTAssertTrue(slice.contains(block(22)), "идущий блок доехал не целым")
+        let kept = slice.components(separatedBy: "\n").filter { StatusFeed.isWorkflowHeading($0) }
+        XCTAssertEqual(kept.first.map { $0.hasPrefix(keys(22)) }, true, "живой блок первым после шапки")
+        XCTAssertTrue(kept.last?.hasPrefix(keys(41)) == true, "хвост файла на месте")
+        // Порядок — как в файле, без дыр внутри хвоста.
+        let numbers = kept.compactMap { line in (1...41).first { line.hasPrefix(keys($0) + " Workflow") } }
+        XCTAssertEqual(numbers, numbers.sorted())
+        XCTAssertEqual(Array(numbers.dropFirst()), Array((41 - numbers.count + 2)...41))
+    }
+
+    func testStatusFeedCutsFromStart() {
+        func keys(_ number: Int) -> String { String(number).map { "\($0)\u{FE0F}\u{20E3}" }.joined() }
+        func block(_ index: Int) -> String {
+            let state = index == 40 ? "💭 идёт" : "✅ готово"
+            return "\(keys(index)) Workflow \(state)\n"
+                + "- о чём: строка про воркфлоу номер \(index)\n"
+                + "- шаги 2 из 2\n"
+                + "- 00:17 → 01:20 · 1 ч\n"
+                + String(repeating: "- кодинг · 2 агента · Opus max\n", count: 6)
+        }
+        let head = "# ⚪PimpMyClaude\nобновлено 19:40\n40 воркфлоу\n"
+        let text = head + (1...40).map(block).joined()
+        XCTAssertGreaterThan(text.utf8.count, StatusFeed.limit)
+
+        let slice = StatusFeed.slice(text)
+        XCTAssertLessThanOrEqual(slice.utf8.count, StatusFeed.limit)
+        // Шапка на месте, а из блоков доехали последние — идущий 40-й в том числе.
+        XCTAssertTrue(slice.hasPrefix(head), String(slice.prefix(80)))
+        XCTAssertTrue(slice.contains("\(keys(40)) Workflow 💭 идёт"), String(slice.suffix(200)))
+        let kept = slice.components(separatedBy: "\n").filter { StatusFeed.isWorkflowHeading($0) }
+        XCTAssertGreaterThan(kept.count, 1)
+        XCTAssertLessThan(kept.count, 40) // голова файла отрезана
+        let all = (1...40).map { "\(keys($0)) Workflow " + ($0 == 40 ? "💭 идёт" : "✅ готово") }
+        XCTAssertEqual(kept, Array(all.suffix(kept.count))) // ровно хвост, без дыр
+        // Блок доезжает целым: у последнего заголовка все его строки на месте.
+        XCTAssertTrue(slice.hasSuffix(block(40)), String(slice.suffix(60)))
+    }
+
+    func testStatusFeedOrderByMtime() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        func put(_ project: String, _ folder: String, _ text: String, minutesAgo: Double) throws {
+            let dir = root.appendingPathComponent(project).appendingPathComponent(folder)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent(StatusFeed.statusFileName)
+            try Data(text.utf8).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: now.addingTimeInterval(-minutesAgo * 60)], ofItemAtPath: url.path)
+        }
+        try put("Старый", "docs", "# 🟣Старый", minutesAgo: 90)
+        try put("Свежий", "docs", "# ⚪Свежий", minutesAgo: 1)
+        try put("Средний", "audit", "# 🟠Средний", minutesAgo: 30)
+        // Свежие первыми — иначе 32 КБ достаются голове алфавита, а живой проект отваливается.
+        XCTAssertEqual(StatusFeed.scan(root: root).map { $0.name }, ["Свежий", "Средний", "Старый"])
+        // Одинаковое время — по имени: порядок не пляшет от обхода каталога.
+        try put("Бета", "docs", "# 🟢Бета", minutesAgo: 1)
+        try put("Альфа", "docs", "# 🔵Альфа", minutesAgo: 1)
+        XCTAssertEqual(StatusFeed.scan(root: root).map { $0.name },
+                       ["Альфа", "Бета", "Свежий", "Средний", "Старый"])
+    }
+
+    func testStatusFeedDigestOrderIndependent() {
+        let pimp = StatusProject(name: "PimpMyClaude", text: "# ⚪PimpMyClaude\n1️⃣ Workflow ✅")
+        let skil = StatusProject(name: "SkilZZZ", text: "# 💤SkilZZZ")
+        // Порядок пляшет от «потрогали файл» — та же сводка не должна ехать заново.
+        XCTAssertEqual(StatusFeed.digest([pimp, skil]), StatusFeed.digest([skil, pimp]))
+        // Содержимое поменялось — хэш другой.
+        XCTAssertNotEqual(StatusFeed.digest([pimp, skil]),
+                          StatusFeed.digest([pimp, StatusProject(name: "SkilZZZ", text: "!")]))
+        // Проект пропал или добавился — тоже другой.
+        XCTAssertNotEqual(StatusFeed.digest([pimp, skil]), StatusFeed.digest([pimp]))
+    }
+
+    func testStatusFeedTotalLimitStillHolds() {
+        XCTAssertEqual(StatusFeed.limit, 6 * 1024)
+        XCTAssertEqual(StatusFeed.totalLimit, 128 * 1024, "WF202: столько принимает страница (STATUS_MAX_TOTAL)")
+        let heavy = { (name: String) in
+            StatusProject(name: name,
+                          text: String(repeating: "- кодинг · 2 агента · Opus max\n", count: 200))
+        }
+        let many = (1...20).map { heavy("Проект \($0)") }
+        let capped = StatusFeed.cap(many)
+        XCTAssertLessThanOrEqual(StatusFeed.payloadSize(capped), StatusFeed.totalLimit)
+        XCTAssertGreaterThan(capped.count, 0)
+        XCTAssertLessThan(capped.count, many.count)
+        // Отбрасывается хвост списка — свежие проекты идут первыми и доезжают.
+        XCTAssertEqual(capped.map { $0.name }, many.prefix(capped.count).map { $0.name })
+        // Влезают все — не трогаем ни байта.
+        XCTAssertEqual(StatusFeed.cap(Array(many.prefix(2))), Array(many.prefix(2)))
+    }
+
+    // MARK: - мои темы
+
+    func testMyThemesSaveLoadAndLimit() throws {
+        XCTAssertTrue(MyThemesStore.parse(nil).isEmpty)
+        XCTAssertTrue(MyThemesStore.parse(Data("не json".utf8)).isEmpty)
+        XCTAssertTrue(MyThemesStore.parse(Data("{\"version\":1}".utf8)).isEmpty)
+        // Запись без палитры пропускается, остальные читаются.
+        XCTAssertEqual(MyThemesStore.parse(Data("""
+        {"version":1,"themes":[{"id":"user-1","name":"Без палитры"},
+        {"id":"user-2","name":"Годная","type":"light","palette":{"accent":"#fff"}}]}
+        """.utf8)).map { $0.id }, ["user-2"])
+        // Размер и рамка читаются из файла (его правит и сам Элвис); мусор в размере —
+        // как будто половины нет, кегли зажаты в границы контракта.
+        let hand = MyThemesStore.parse(Data("""
+        {"version":1,"themes":[{"id":"user-3","name":"Крупная","palette":{"accent":"#fff"},
+        "size":{"answer":40,"question":"много"},"frame":true}]}
+        """.utf8))
+        XCTAssertEqual(hand.first?.size, Size(answer: Size.maxPx))
+        XCTAssertEqual(hand.first?.frame, true)
+
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent(MyThemesStore.fileName)
+        let store = MyThemesStore(url: url)
+        XCTAssertTrue(store.load().isEmpty) // файла ещё нет — не падаем
+
+        let saved = try XCTUnwrap(store.add(name: "  Моя тёплая  ", theme: catalog()[0],
+                                            font: ClaudeAXTests.monoFont,
+                                            size: Size(answer: 16, question: 13), frame: true,
+                                            now: 1_756_900_000))
+        XCTAssertEqual(saved.map { $0.id }, ["user-1756900000000"])
+        let loaded = store.load()
+        XCTAssertEqual(loaded.map { $0.name }, ["Моя тёплая"]) // пробелы срезаны
+        XCTAssertEqual(loaded[0].palette["background"], "#1b1626") // палитра скопирована
+        XCTAssertEqual(loaded[0].font?.family, "SF Mono")
+        XCTAssertEqual(loaded[0].font?.mono, true)
+        // Размер и рамка запоминаются той же парой (план WF12 п. 1).
+        XCTAssertEqual(loaded[0].size, Size(answer: 16, question: 13))
+        XCTAssertTrue(loaded[0].frame)
+        XCTAssertEqual(loaded[0].theme.id, "user-1756900000000") // команда уходит со своим id
+        let raw = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(raw.hasPrefix("{\"version\":1,\"themes\":[{\"id\":\"user-1756900000000\","), raw)
+        XCTAssertTrue(raw.contains("\"font\":{\"id\":\"sf-mono\",\"family\":\"SF Mono\",\"mono\":true},"
+            + "\"size\":{\"answer\":16,\"question\":13},\"frame\":true"), raw)
+
+        // Тема без шрифта, размера и рамки — обрезка имени по 80 знакам; новая тема встаёт
+        // ПЕРВОЙ (WF71, слово Элвиса: «она чик сразу появляется сверху»).
+        let long = try XCTUnwrap(store.add(name: String(repeating: "я", count: 100),
+                                           theme: catalog()[1], font: nil, now: 1_756_900_001))
+        XCTAssertEqual(long.count, 2)
+        XCTAssertEqual(long.map { $0.id }, ["user-1756900001000", "user-1756900000000"])
+        XCTAssertEqual(long.first?.name.count, MyThemesStore.nameLimit)
+        XCTAssertNil(store.load().first?.font)
+        XCTAssertNil(store.load().first?.size)
+        XCTAssertFalse(try XCTUnwrap(store.load().first).frame)
+        XCTAssertTrue(try String(contentsOf: url, encoding: .utf8)
+            .contains("\"font\":null,\"size\":null,\"frame\":false"))
+        // Пустое имя не сохраняется.
+        XCTAssertNil(store.add(name: "   ", theme: catalog()[0], font: nil))
+
+        // Имя занято (другой регистр и пробелы) — слои перезаписываются, id и место в списке
+        // сохраняются, длина списка не растёт (задача #5364, «изменить свою тему»).
+        let again = try XCTUnwrap(store.add(name: "  моя ТЁПЛАЯ  ", theme: catalog()[1], font: nil,
+                                            size: Size(answer: 20), frame: false,
+                                            now: 1_756_900_009))
+        XCTAssertEqual(again.count, 2, "перезапись не должна плодить дубли")
+        XCTAssertEqual(again.map { $0.id }, ["user-1756900001000", "user-1756900000000"])
+        XCTAssertEqual(again[1].name, "моя ТЁПЛАЯ")     // имя пишется тем, что ввели
+        XCTAssertEqual(again[1].palette["background"], "#f7f9fc") // слои — новые
+        XCTAssertNil(again[1].font)
+        XCTAssertEqual(again[1].size, Size(answer: 20))
+        XCTAssertFalse(again[1].frame)
+        XCTAssertEqual(store.load().map { $0.id }, again.map { $0.id })
+        // Само совпадение имён — чистая функция: по ней же считается авто-имя.
+        XCTAssertEqual(MyThemesStore.matching(name: " МОЯ тёплая ", in: again)?.id, "user-1756900000000")
+        XCTAssertNil(MyThemesStore.matching(name: "Такой нет", in: again))
+        XCTAssertNil(MyThemesStore.matching(name: "   ", in: again))
+        // Возвращаем список к прежнему виду, чтобы дальше проверять удаление и лимит.
+        _ = store.add(name: "Моя тёплая", theme: catalog()[0], font: ClaudeAXTests.monoFont,
+                      size: Size(answer: 16, question: 13), frame: true, now: 1_756_900_010)
+
+        let after = try XCTUnwrap(store.delete(id: "user-1756900000000"))
+        XCTAssertEqual(after.count, 1)
+        XCTAssertEqual(store.load().map { $0.id }, after.map { $0.id })
+
+        // Лимит: двадцать первая тема вытесняет самую старую — она теперь в хвосте.
+        var list: [MyTheme] = []
+        for index in 0..<25 {
+            list = MyThemesStore.appending(MyTheme(id: "user-\(index)", name: "Тема \(index)",
+                                                   type: "dark", palette: ["accent": "#fff"], font: nil),
+                                           to: list)
+        }
+        XCTAssertEqual(list.count, MyThemesStore.limit)
+        XCTAssertEqual(list.first?.id, "user-24")
+        XCTAssertEqual(list.last?.id, "user-5")
+    }
+
+    /// Имя для «💾 Сохранить тему» без диалога (WF71): имя цвета окна, а занято — « 2», « 3»…
+    /// первое свободное; регистр и пробелы, как у `matching`, не считаются.
+    func testMyThemeAutoNameNumbersTakenNames() {
+        let matrix = Theme(id: "matrix", name: "Матрица", type: "dark", palette: ["accent": "#0f0"])
+        func my(_ name: String, _ index: Int) -> MyTheme {
+            MyTheme(id: "user-\(index)", name: name, type: "dark", palette: ["accent": "#fff"], font: nil)
+        }
+        XCTAssertEqual(MyThemesStore.autoName(for: matrix, among: []), "Матрица")
+        XCTAssertEqual(MyThemesStore.autoName(for: matrix, among: [my("Пудра", 1)]), "Матрица")
+        XCTAssertEqual(MyThemesStore.autoName(for: matrix, among: [my(" матрица ", 1)]), "Матрица 2")
+        XCTAssertEqual(MyThemesStore.autoName(for: matrix, among: [my("Матрица", 1), my("Матрица 2", 2)]),
+                       "Матрица 3")
+        // Дыра в номерах занимается первой: «Матрица 2» удалили — она и вернётся.
+        XCTAssertEqual(MyThemesStore.autoName(for: matrix, among: [my("Матрица", 1), my("Матрица 3", 3)]),
+                       "Матрица 2")
+        // Имя темы пустое (кривой каталог) — запись всё равно состоится.
+        XCTAssertEqual(MyThemesStore.autoName(for: Theme(id: "x", name: "  ", type: "dark",
+                                                         palette: ["accent": "#fff"]), among: []),
+                       "Тема")
+        // Автотема окна («Радуга · 137°») — тем же правилом.
+        let auto = AutoPaint.projectTheme(folderName: "PimpMyClaude")
+        XCTAssertEqual(MyThemesStore.autoName(for: auto, among: [my(auto.name, 1)]), auto.name + " 2")
+    }
+
+    // MARK: - редактор своей темы (план WF20, часть 1)
+
+    /// Временный `my-themes.json` — тесты не должны трогать живой файл Элвиса.
+    private func themeStoreFile() -> (store: MyThemesStore, url: URL, dir: URL) {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        let url = dir.appendingPathComponent(MyThemesStore.fileName)
+        return (MyThemesStore(url: url), url, dir)
+    }
+
+    /// Ручки собирают только читаемые палитры: генератор тот же, что у автопокраски, значит
+    /// `pulled`/`banded` держат контраст на любой комбинации ручек (решение 1.1 плана WF20).
+    func testThemeKnobsMakeReadablePalette() throws {
+        for light in [false, true] {
+            for hue in stride(from: 0, to: 360, by: 45) {
+                for shift in [-180, -90, -37, 0, 37, 90, 180] {
+                    for strength in [0, 25, 50, 100] {
+                        let knobs = ThemeKnobs(hue: hue, accent: shift, strength: strength,
+                                               light: light)
+                        let palette = knobs.palette()
+                        let where_ = "hue \(hue), акцент \(shift), сила \(strength), light \(light)"
+                        XCTAssertEqual(Set(palette.keys), Set(Theme.paletteOrder), where_)
+                        for (key, hex) in palette {
+                            XCTAssertNotNil(AutoPaint.channels(hex: hex), "\(key) не цвет: \(where_)")
+                        }
+                        let background = try XCTUnwrap(palette["background"])
+                        let text = try XCTUnwrap(AutoPaint.contrast(hex: try XCTUnwrap(palette["foreground"]),
+                                                                    hex: background))
+                        XCTAssertGreaterThanOrEqual(text, AutoPaint.textContrast - 0.05, where_)
+                        let accent = try XCTUnwrap(AutoPaint.contrast(hex: try XCTUnwrap(palette["accent"]),
+                                                                      hex: background))
+                        XCTAssertGreaterThanOrEqual(accent, AutoPaint.accentContrast - 0.05, where_)
+                        XCTAssertLessThanOrEqual(accent, AutoPaint.accentContrastCap(light: light) + 0.05,
+                                                 where_)
+                        XCTAssertLessThanOrEqual(try XCTUnwrap(AutoPaint.saturation(hex: background)),
+                                                 AutoPaint.maxBackgroundSaturation + 0.5, where_)
+                        XCTAssertEqual(knobs.theme().type, light ? "light" : "dark")
+                    }
+                }
+            }
+        }
+        // Ручка «Акцент» и правда двигает тон акцента, а фон оставляет на месте.
+        let base = ThemeKnobs(hue: 200, accent: 0, strength: 50, light: false)
+        let shifted = ThemeKnobs(hue: 200, accent: 90, strength: 50, light: false)
+        XCTAssertEqual(base.palette()["background"], shifted.palette()["background"])
+        let tone = try XCTUnwrap(ThemeKnobs.hue(hex: try XCTUnwrap(shifted.palette()["accent"])))
+        XCTAssertEqual(Double(tone), 290, accuracy: 2, "акцент не уехал на +90°")
+        // `accentHue` со значением по умолчанию не меняет автопокраску ни на байт (главная
+        // проверка verify): её палитра и палитра «акцент как у фона» побайтно равны.
+        for hue in stride(from: 0.0, to: 360, by: 30) {
+            XCTAssertEqual(AutoPaint.palette(hue: hue, light: false),
+                           AutoPaint.palette(hue: hue, light: false, accentHue: hue))
+            XCTAssertEqual(AutoPaint.palette(hue: hue, light: true, strength: 1),
+                           AutoPaint.palette(hue: hue, light: true, strength: 1, accentHue: hue))
+        }
+        // Границы ручек держит сама структура: круг замкнут, остальное зажато.
+        XCTAssertEqual(ThemeKnobs(hue: 400, accent: 900, strength: 900).hue, 40)
+        XCTAssertEqual(ThemeKnobs(hue: -30, accent: -900, strength: -5).hue, 330)
+        XCTAssertEqual(ThemeKnobs(hue: 0, accent: 900, strength: 900).accent, 180)
+        XCTAssertEqual(ThemeKnobs(hue: 0, accent: -900, strength: -5).strength, 0)
+        var moved = ThemeKnobs()
+        moved.hue = 720
+        moved.accent = 400
+        moved.strength = 500
+        XCTAssertEqual(moved, ThemeKnobs(hue: 0, accent: 180, strength: 100))
+    }
+
+    /// `knobs` в `my-themes.json`: пишутся последним полем и только когда они есть, читаются
+    /// обратно один в один, а файл без них (и с мусором в них) разбор не роняет (критик В4).
+    func testThemeKnobsRoundTripThroughFile() throws {
+        let file = themeStoreFile()
+        defer { try? FileManager.default.removeItem(at: file.dir) }
+        let knobs = ThemeKnobs(hue: 262, accent: -37, strength: 65, light: false)
+        XCTAssertNotNil(file.store.add(name: "Ночная", theme: knobs.theme(), font: nil,
+                                       knobs: knobs, now: 1_756_900_000))
+        let raw = try String(contentsOf: file.url, encoding: .utf8)
+        XCTAssertTrue(raw.contains("\"frame\":false,\"knobs\":"
+            + "{\"hue\":262,\"accent\":-37,\"strength\":65,\"light\":false}}"), raw)
+        XCTAssertEqual(file.store.load().first?.knobs, knobs)
+        // Палитра записи и палитра её ручек — побайтно одно и то же (иначе «Изменить» молча
+        // перекрасило бы тему).
+        XCTAssertEqual(file.store.load().first?.palette, knobs.palette())
+
+        // «💾 Сохранить тему» ручек не знает — `"knobs":null` не пишем вовсе (новая тема
+        // встаёт первой, WF71).
+        XCTAssertNotNil(file.store.add(name: "Из каталога", theme: catalog()[0], font: nil,
+                                       now: 1_756_900_001))
+        let both = try String(contentsOf: file.url, encoding: .utf8)
+        XCTAssertFalse(both.contains("\"knobs\":null"), both)
+        XCTAssertEqual(file.store.load().first?.name, "Из каталога")
+        XCTAssertNil(file.store.load().first?.knobs)
+
+        // Файл правит и сам Элвис: старый формат без knobs, мусор вместо объекта и половина
+        // ключей — всё это просто «ручек нет», а не потерянный список.
+        let hand = MyThemesStore.parse(Data("""
+        {"version":1,"themes":[{"id":"user-1","name":"Старая","palette":{"accent":"#fff"}},
+        {"id":"user-2","name":"Мусор","palette":{"accent":"#fff"},"knobs":"да"},
+        {"id":"user-3","name":"Половина","palette":{"accent":"#fff"},"knobs":{"hue":10}},
+        {"id":"user-4","name":"Годная","type":"light","palette":{"accent":"#fff"},
+        "knobs":{"hue":10,"accent":5,"strength":40,"light":true}}]}
+        """.utf8))
+        XCTAssertEqual(hand.map { $0.id }, ["user-1", "user-2", "user-3", "user-4"])
+        XCTAssertEqual(hand.map { $0.knobs == nil }, [true, true, true, false])
+        XCTAssertEqual(hand.last?.knobs, ThemeKnobs(hue: 10, accent: 5, strength: 40, light: true))
+        // Границы читаются с тем же зажимом, что и у ручек.
+        XCTAssertEqual(MyThemesStore.parse(Data("""
+        {"version":1,"themes":[{"id":"user-9","name":"Края","palette":{"accent":"#fff"},
+        "knobs":{"hue":400,"accent":900,"strength":900,"light":false}}]}
+        """.utf8)).first?.knobs, ThemeKnobs(hue: 40, accent: 180, strength: 100))
+
+        // Ручки чужой темы восстанавливаются приблизительно — тон ±2°, сила ±5 % (п. 4 плана).
+        let source = ThemeKnobs(hue: 137, accent: 40, strength: 70, light: false)
+        let back = ThemeKnobs.from(palette: source.palette(), type: "dark")
+        XCTAssertEqual(Double(back.hue), 137, accuracy: 2)
+        XCTAssertEqual(Double(back.accent), 40, accuracy: 3)
+        XCTAssertEqual(Double(back.strength), 70, accuracy: 6)
+        XCTAssertFalse(back.light)
+        XCTAssertTrue(ThemeKnobs.from(palette: catalog()[1].palette, type: "light").light)
+        // Палитры нет вовсе — умолчания, а не падение.
+        XCTAssertEqual(ThemeKnobs.from(palette: [:], type: "dark"),
+                       ThemeKnobs(hue: ThemeKnobs.defaultHue, accent: 0,
+                                  strength: ThemeKnobs.defaultStrength))
+        // У своей темы ручки берутся из файла, а нет их — подбираются по палитре.
+        XCTAssertEqual(ThemeKnobs.of(try XCTUnwrap(hand.last)),
+                       ThemeKnobs(hue: 10, accent: 5, strength: 40, light: true))
+        XCTAssertEqual(ThemeKnobs.of(myTheme()),
+                       ThemeKnobs.from(palette: myTheme().palette, type: "dark"))
+    }
+
+    /// Троттлинг примерки (критик В3): десять движений за 100 мс дают ровно одну запись,
+    /// последнее значение досылается по истечении 0,5 с. Часы и таймер подставлены — как
+    /// у теста очереди `CommandChannel`.
+    func testThemeEditorThrottlesPreview() throws {
+        var now = Date(timeIntervalSince1970: 1_756_900_000)
+        var timers: [(at: Date, block: () -> Void)] = []
+        let model = ThemeEditorModel(knobs: ThemeKnobs(hue: 200, accent: 0, strength: 50),
+                                     now: { now },
+                                     schedule: { delay, block in
+                                         timers.append((now.addingTimeInterval(delay), block))
+                                     })
+        var sent: [ThemeKnobs] = []
+        var ended = 0
+        model.onPreview = { sent.append($0) }
+        model.onEndPreview = { ended += 1 }
+
+        // Первое движение уходит сразу, девять следующих за 100 мс — нет.
+        for step in 1...10 {
+            model.set(hue: 200 + step)
+            now = now.addingTimeInterval(0.01)
+        }
+        XCTAssertEqual(sent.map { $0.hue }, [201], "движения не сложились в одну запись")
+        XCTAssertEqual(model.knobs.hue, 210)
+
+        // Досылка последнего значения — ровно по истечении интервала.
+        let timer = try XCTUnwrap(timers.first, "таймер досылки не поставлен")
+        timers.removeFirst()
+        XCTAssertGreaterThanOrEqual(timer.at.timeIntervalSince1970 - 1_756_900_000,
+                                    ThemeEditorModel.previewInterval - 0.001)
+        now = max(now, timer.at)
+        timer.block()
+        XCTAssertEqual(sent.map { $0.hue }, [201, 210], "последнее значение не досталось окну")
+        XCTAssertEqual(sent, model.previews)
+        XCTAssertEqual(ended, 0)
+
+        // Ручки, которые ничего не меняют, примерок не стоят.
+        let before = sent.count
+        model.set(hue: 210)
+        model.set(accent: 0)
+        model.set(light: false)
+        XCTAssertEqual(sent.count, before)
+    }
+
+    /// Пока ручку не тронули, окно не перекрашивается (критик В5), и гасить на выходе нечего.
+    func testThemeEditorSendsNothingUntilKnobMoved() {
+        let model = ThemeEditorModel(knobs: ThemeKnobs())
+        var sent = 0
+        var ended = 0
+        model.onPreview = { _ in sent += 1 }
+        model.onEndPreview = { ended += 1 }
+        XCTAssertFalse(model.previewing)
+        model.cancel()
+        XCTAssertEqual([sent, ended], [0, 0], "открытие панели перекрасило окно")
+        model.set(strength: 80)
+        XCTAssertEqual([sent, ended], [1, 0])
+    }
+
+    /// «Отмена» и крестик гасят примерку: `preview:false` без слоёв — окну возвращается
+    /// сохранённое. Второй раз гасить нечего.
+    func testThemeEditorCancelEndsPreview() throws {
+        let model = ThemeEditorModel(knobs: ThemeKnobs(hue: 10, accent: 0, strength: 50))
+        var ended = 0
+        model.onEndPreview = { ended += 1 }
+        model.set(hue: 40)
+        XCTAssertTrue(model.previewing)
+        model.cancel()
+        XCTAssertEqual(ended, 1)
+        XCTAssertFalse(model.previewing)
+        model.cancel()
+        XCTAssertEqual(ended, 1, "второй «конец примерки» снял бы живую тему у окна")
+
+        // Байты команды «конец примерки» — те же, что у меню (контракт п. 1 плана WF8).
+        let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: "Чат",
+                                               preview: false, theme: .keep, font: .keep)
+        let json = CommandChannel.payload(action: "theme", fields: fields, id: "1", at: Date(timeIntervalSince1970: 0))
+        XCTAssertTrue(json.hasSuffix("\"scope\":\"window\",\"title\":\"Чат\",\"preview\":false}"), json)
+    }
+
+    /// «Сохранить»: спросили имя, записали свою тему вместе с ручками и последними слоями,
+    /// вернули её для обычной команды. Отказ от имени не пишет ничего.
+    func testThemeEditorSaveAsksNameAndWritesMyTheme() throws {
+        let file = themeStoreFile()
+        defer { try? FileManager.default.removeItem(at: file.dir) }
+        let knobs = ThemeKnobs(hue: 33, accent: 12, strength: 70, light: true)
+        let model = ThemeEditorModel(knobs: knobs)
+        var asked: [String] = []
+
+        // Отказ от имени (и пустое имя) не пишет файла вовсе.
+        XCTAssertEqual(model.save(into: file.store, font: nil, size: nil,
+                                  ask: { asked.append($0); return nil }, confirm: { _ in true }),
+                       .cancelled)
+        XCTAssertEqual(model.save(into: file.store, font: nil, size: nil,
+                                  ask: { _ in "   " }, confirm: { _ in true }), .cancelled)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.url.path))
+        // Панель предлагает имя по тону — два сохранения подряд не упрутся в «перезаписать?».
+        XCTAssertEqual(asked, ["Своя · 33°"])
+
+        let saved = model.save(into: file.store, font: ClaudeAXTests.monoFont,
+                               size: Size(answer: 16),
+                               ask: { _ in "  Ночная  " }, confirm: { _ in true })
+        guard case .saved(let my) = saved else { return XCTFail("тема не записалась: \(saved)") }
+        XCTAssertEqual(my.name, "Ночная")
+        XCTAssertEqual(my.type, "light")
+        XCTAssertEqual(my.palette, knobs.palette())
+        XCTAssertEqual(my.knobs, knobs)
+        // Шрифт и размер берутся из уже применённых слоёв (решение 1.4 плана WF20); рамка снята в WF220.
+        XCTAssertEqual(my.font?.id, "sf-mono")
+        XCTAssertEqual(my.size, Size(answer: 16))
+        XCTAssertFalse(my.frame)
+        XCTAssertEqual(file.store.load().map { $0.id }, [my.id])
+        XCTAssertTrue(my.id.hasPrefix("user-"))
+        // Своя тема уезжает в окно своим id — им же ставится галка в меню.
+        XCTAssertEqual(my.theme.id, my.id)
+        XCTAssertEqual(my.theme.palette, knobs.palette())
+
+        // Имя занято ЧУЖОЙ записью — без подтверждения не пишем.
+        let second = ThemeEditorModel(knobs: ThemeKnobs(hue: 300))
+        var confirmed: [String] = []
+        XCTAssertEqual(second.save(into: file.store, font: nil, size: nil,
+                                   ask: { _ in "ночная" },
+                                   confirm: { confirmed.append($0); return false }), .cancelled)
+        XCTAssertEqual(confirmed, ["Ночная"])
+        XCTAssertEqual(file.store.load().first?.knobs, knobs, "отказ всё-таки перезаписал тему")
+    }
+
+    /// «✏️ Изменить»: запись меняется НА МЕСТЕ (id и позиция целы), а новое имя, занятое чужой
+    /// записью, сливает две темы в одну — двойников не заводим (критик В8 плана WF20).
+    func testUpdateKeepsPlaceAndRespectsNameRule() throws {
+        let file = themeStoreFile()
+        defer { try? FileManager.default.removeItem(at: file.dir) }
+        let store = file.store
+        XCTAssertNotNil(store.add(name: "Первая", theme: catalog()[0], font: nil, now: 1_756_900_000))
+        XCTAssertNotNil(store.add(name: "Вторая", theme: catalog()[0], font: nil, now: 1_756_900_001))
+        XCTAssertNotNil(store.add(name: "Третья", theme: catalog()[0], font: nil, now: 1_756_900_002))
+        // Новая тема встаёт первой (WF71): свежая «Третья» сверху, «Первая» в хвосте.
+        let ids = store.load().map { $0.id }
+        XCTAssertEqual(ids.count, 3)
+        XCTAssertEqual(store.load().map { $0.name }, ["Третья", "Вторая", "Первая"])
+
+        // Правка средней темы: место, id и соседи не двигаются, слои и ручки — новые.
+        let knobs = ThemeKnobs(hue: 90, accent: -20, strength: 30, light: false)
+        let changed = try XCTUnwrap(store.update(id: ids[1], name: "Вторая ночная",
+                                                 theme: knobs.theme(), font: ClaudeAXTests.monoFont,
+                                                 size: Size(question: 13), frame: true, knobs: knobs))
+        XCTAssertEqual(changed.id, ids[1])
+        XCTAssertEqual(store.load().map { $0.id }, ids, "запись уехала с места")
+        XCTAssertEqual(store.load().map { $0.name }, ["Третья", "Вторая ночная", "Первая"])
+        XCTAssertEqual(store.load()[1].knobs, knobs)
+        XCTAssertEqual(store.load()[1].palette, knobs.palette())
+        XCTAssertEqual(store.load()[1].size, Size(question: 13))
+        XCTAssertTrue(store.load()[1].frame)
+
+        // Переименование в имя СОСЕДА (регистр и пробелы не важны) — слияние в его запись:
+        // остаются две темы, id соседа и его место целы.
+        let merged = try XCTUnwrap(store.update(id: ids[1], name: "  ТРЕТЬЯ  ", theme: knobs.theme(),
+                                                font: nil, knobs: knobs))
+        XCTAssertEqual(merged.id, ids[0], "слились не в ту запись")
+        XCTAssertEqual(store.load().map { $0.id }, [ids[0], ids[2]])
+        XCTAssertEqual(store.load().map { $0.name }, ["ТРЕТЬЯ", "Первая"])
+        XCTAssertEqual(store.load().first?.knobs, knobs)
+
+        // Пустое имя не пишется, а тема, которую Элвис успел удалить руками, просто заводится
+        // заново (первой) — терять правку из-за этого нельзя.
+        XCTAssertNil(store.update(id: ids[2], name: "   ", theme: catalog()[0], font: nil))
+        XCTAssertNotNil(store.update(id: "user-нет-такой", name: "Заново", theme: catalog()[0],
+                                     font: nil))
+        XCTAssertEqual(store.load().map { $0.name }, ["Заново", "ТРЕТЬЯ", "Первая"])
+    }
+
+    /// Пока открыта панель «Своя тема», меню на жёлтой кнопке не всплывает (блокер Б2):
+    /// иначе наведение на тему послало бы свою примерку, а закрытие меню — `endPreview`.
+    func testMenuStaysClosedWhileThemeEditorIsOpen() {
+        let app = IsolatedClaudeApp.make()
+        let menu = MinimizeMenu(app: app, actions: ClaudeActions(app: app, commands: CommandChannel()))
+        defer { MinimizeMenu.editorOpen = false }
+        XCTAssertFalse(menu.hoverPaused)
+        MinimizeMenu.editorOpen = true
+        XCTAssertTrue(menu.hoverPaused, "меню всплывёт поверх панели и убьёт примерку")
+        MinimizeMenu.editorOpen = false
+        XCTAssertFalse(menu.hoverPaused)
+        // Тумблер «Меню на кнопке» гасит наведение по-прежнему.
+        menu.enabled = false
+        XCTAssertTrue(menu.hoverPaused)
+    }
+
+    /// «✏️ Изменить…» живёт в подменю своей темы (решение 1.5 плана WF20, переложено в WF71):
+    /// открывает панель ручками этой темы. Пункта «🎚 Своя тема…» в меню больше нет (слово
+    /// Элвиса 17.09: «плюс своя тема не нужно»), панель — только через «Изменить…».
+    func testMenuHasThemeEditorItems() throws {
+        var edited: [String] = []
+        var config = menuConfig()
+        config.editMyTheme = { edited.append($0.id) }
+        let menu = MinimizeMenu.build(config: config)
+
+        XCTAssertNil(menu.items.first { $0.title == MenuModel.themeEditorTitle })
+        let my = try myThemeMenu(in: menu, "Моя тёплая")
+        let editor = try XCTUnwrap(my.items.first { $0.title == MenuModel.editMyThemeTitle })
+        XCTAssertFalse(editor.hasSubmenu)
+        XCTAssertNotNil(editor.image) // ✏️
+        // Порядок подменю темы: Применить ▸ · ✏️ Изменить… · ─ · 🗑 Удалить.
+        XCTAssertEqual(my.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       [MenuModel.applyMyThemeTitle, MenuModel.editMyThemeTitle, "—",
+                        MenuModel.deleteMyThemeTitle])
+        click(editor)
+        XCTAssertEqual(edited, ["user-1756900000000"])
+        // Предпросмотра по наведению у «Изменить…» нет — панель и так красит окно.
+        XCTAssertNil((editor as? BlockMenuItem)?.preview)
+
+        // Своих тем нет — ни подменю, ни «Изменить…» нигде; «Своя тема…» не появляется.
+        var without = menuConfig()
+        without.myThemes = []
+        let plain = MinimizeMenu.build(config: without)
+        XCTAssertNil(plain.items.first { $0.title == MenuModel.themeEditorTitle })
+        XCTAssertTrue(plain.items.allSatisfy { $0.submenu?.items.contains { $0.title == MenuModel.editMyThemeTitle } != true })
+    }
+
+    // MARK: - автопокраска (план WF10)
+
+    /// Двенадцать hue по кругу — как раз то, что раскладывает «Радуга» на дюжине окон.
+    private static let wheelHues: [Double] = (0..<12).map { Double($0) * 30 }
+
+    func testAutoPaintPaletteIsValidAndReadable() throws {
+        for light in [false, true] {
+            for hue in ClaudeAXTests.wheelHues {
+                // Крайние силы — «Пастель»/«Неон» и края «Монохрома».
+                for strength in [0.0, 0.35, 0.5, 1.0] {
+                    let where_ = "hue \(Int(hue))° \(light ? "светлая" : "тёмная") сила \(strength)"
+                    let palette = AutoPaint.palette(hue: hue, light: light, strength: strength)
+                    XCTAssertEqual(Set(palette.keys), Set(Theme.paletteOrder), where_)
+                    for key in Theme.paletteOrder {
+                        let hex = try XCTUnwrap(palette[key], where_)
+                        XCTAssertNotNil(hex.range(of: "^#[0-9a-f]{6}$", options: .regularExpression),
+                                        "\(where_): \(key) = \(hex)")
+                    }
+                    let background = try XCTUnwrap(palette["background"])
+                    // Текст на фоне — AAA (≥ 7), приглушённый текст и акцент — AA (≥ 4,5).
+                    let text = try XCTUnwrap(AutoPaint.contrast(hex: try XCTUnwrap(palette["foreground"]),
+                                                                hex: background))
+                    XCTAssertGreaterThanOrEqual(text, AutoPaint.textContrast, "\(where_): текст на фоне")
+                    for key in ["muted", "accent"] {
+                        let value = try XCTUnwrap(AutoPaint.contrast(hex: try XCTUnwrap(palette[key]),
+                                                                     hex: background))
+                        XCTAssertGreaterThanOrEqual(value, AutoPaint.accentContrast, "\(where_): \(key)")
+                    }
+                    // «Трендовые, не кричащие»: насыщенность фона ≤ 60 % (фикс-батч п. 2 — на
+                    // 45 % выходило серо). Считаем её обратно из hex — по нему цвет и увидят.
+                    let saturation = try XCTUnwrap(AutoPaint.saturation(hex: background))
+                    XCTAssertLessThanOrEqual(saturation, AutoPaint.maxBackgroundSaturation, where_)
+                    // Боковина темнее фона, панель светлее (у светлой темы — наоборот).
+                    XCTAssertNotEqual(palette["sidebar"], background, where_)
+                    XCTAssertNotEqual(palette["panel"], background, where_)
+                }
+            }
+        }
+    }
+
+    func testAutoPaintAccentStaysInContrastBand() throws {
+        // Акцент кладём в полосу контраста, а не в пол (фикс-батч п. 1): иначе жёлтый с зелёным
+        // на тёмном фоне уходят за 10 и кричат, а синий с фиолетовым висят на 4,5 и тонут.
+        // Проверка — весь круг с шагом 10°, в обоих режимах.
+        for light in [false, true] {
+            let mode = light ? "светлая" : "тёмная"
+            let cap = AutoPaint.accentContrastCap(light: light)
+            var luminances: [Double] = []
+            for step in 0..<36 {
+                let hue = Double(step) * 10
+                let palette = AutoPaint.palette(hue: hue, light: light)
+                let accent = try XCTUnwrap(palette["accent"])
+                let value = try XCTUnwrap(AutoPaint.contrast(hex: accent,
+                                                             hex: try XCTUnwrap(palette["background"])))
+                XCTAssertGreaterThanOrEqual(value, AutoPaint.accentContrast, "\(mode) hue \(Int(hue))°")
+                XCTAssertLessThanOrEqual(value, cap, "\(mode) hue \(Int(hue))°")
+                let channels = try XCTUnwrap(AutoPaint.channels(hex: accent))
+                luminances.append(AutoPaint.luminance(r: channels.r, g: channels.g, b: channels.b))
+            }
+            // Полоса держит и яркость: по кругу акцент разъезжается не больше чем вдвое —
+            // иначе одно окно из четырёх било бы в глаза, а другое пряталось.
+            let spread = try XCTUnwrap(luminances.max()) / max(try XCTUnwrap(luminances.min()), 0.0001)
+            XCTAssertLessThanOrEqual(spread, 2, "\(mode): яркость акцента разъехалась в \(spread) раза")
+        }
+    }
+
+    func testAutoPaintSpreadsHuesAroundTheWheelLeftToRight() throws {
+        // Четыре окна в ряд, перемешанные: красим слева направо (тот же порядок, что «Расставить»).
+        let frames = [
+            CGRect(x: 900, y: 30, width: 440, height: 900),   // 0 — третье слева
+            CGRect(x: 20, y: 0, width: 440, height: 900),     // 1 — первое
+            CGRect(x: 1360, y: 10, width: 440, height: 900),  // 2 — четвёртое
+            CGRect(x: 460, y: 20, width: 440, height: 900),   // 3 — второе
+        ]
+        XCTAssertEqual(ArrangeLayout.order(of: frames), [1, 3, 0, 2])
+
+        let rainbow = try XCTUnwrap(AutoPaint.preset(id: "rainbow"))
+        let themes = AutoPaint.themes(preset: rainbow, scheme: rainbow.scheme,
+                                      count: frames.count, start: 100, light: false)
+        XCTAssertEqual(themes.map { $0.id },
+                       ["auto-rainbow-100", "auto-rainbow-190", "auto-rainbow-280", "auto-rainbow-10"])
+        XCTAssertEqual(themes.map { $0.name },
+                       ["Радуга · 100°", "Радуга · 190°", "Радуга · 280°", "Радуга · 10°"])
+        // Четыре окна — четыре разных цвета, разведённых ровно на четверть круга.
+        XCTAssertEqual(Set(themes.map { $0.palette["background"] }).count, 4)
+        let hues = AutoPaint.hues(scheme: .wheel, count: 4, start: 100)
+        for index in 1..<hues.count {
+            XCTAssertEqual(AutoPaint.normalized(hues[index] - hues[index - 1]), 90, accuracy: 0.001)
+        }
+        // Одно окно — середина диапазона (план п. 4); сектор «Заката» обходит 0°.
+        XCTAssertEqual(AutoPaint.hues(scheme: .sector(180, 260), count: 1, start: 0), [220])
+        XCTAssertEqual(AutoPaint.hues(scheme: .sector(350, 420), count: 2, start: 0), [7.5, 42.5])
+        // «Ещё раз» крутит старт внутри сектора, наружу не выпуская.
+        for hue in AutoPaint.hues(scheme: .sector(180, 260), count: 3, start: AutoPaint.againStep) {
+            XCTAssertTrue((180...260).contains(hue), "\(hue)° вышел из «Океана»")
+        }
+        // «Монохром» — один hue на все окна, но фон у каждого своей светлоты.
+        let mono = try XCTUnwrap(AutoPaint.preset(id: "mono"))
+        let shades = AutoPaint.themes(preset: mono, scheme: mono.scheme, count: 3, start: 210, light: false)
+        XCTAssertEqual(shades.map { $0.id }, Array(repeating: "auto-mono-210", count: 3))
+        XCTAssertEqual(Set(shades.map { $0.palette["background"] }).count, 3)
+        XCTAssertEqual(AutoPaint.hues(scheme: .wheel, count: 0, start: 0), [])
+    }
+
+    func testAutoPaintRandomSchemesGiveOneHuePerWindow() throws {
+        // «Случайно» берёт схему из четырёх (аналоговая, триада, сплит, тетрада) — и на N окон
+        // обязана дать N разных цветов, даже когда окон больше, чем углов в схеме.
+        for (index, scheme) in AutoPaint.randomSchemes.enumerated() {
+            for count in [1, 3, 5] {
+                let hues = AutoPaint.hues(scheme: scheme, count: count, start: 200)
+                XCTAssertEqual(hues.count, count, "схема \(index)")
+                XCTAssertEqual(Set(hues.map { Int($0.rounded()) }).count, count,
+                               "схема \(index) повторила цвет на \(count) окнах")
+                for hue in hues { XCTAssertTrue((0..<360).contains(hue), "\(hue)° вне круга") }
+            }
+        }
+        // Схема «Случайно» выбирается на каждый запуск, у остальных наборов она своя всегда.
+        // Случайность приходит параметром: `pick` получает размер выбора (критик Б3 плана WF19).
+        let ocean = try XCTUnwrap(AutoPaint.preset(id: "ocean"))
+        XCTAssertEqual(AutoPaint.schemeIndex(for: AutoPaint.random, pick: { _ in 2 }), 2)
+        XCTAssertNil(AutoPaint.schemeIndex(for: ocean, pick: { _ in 2 }))
+        XCTAssertEqual(AutoPaint.scheme(for: AutoPaint.random, index: 2), AutoPaint.randomSchemes[2])
+        XCTAssertEqual(AutoPaint.scheme(for: ocean, index: 2), .sector(180, 260))
+        // `repeating` повторяет заданную схему: индекс из памяти, а не новый.
+        XCTAssertEqual(AutoPaint.schemeIndex(for: AutoPaint.random, repeating: 1, pick: { _ in 3 }), 1)
+        XCTAssertEqual(AutoPaint.schemeIndex(for: AutoPaint.random, repeating: 99, pick: { _ in 3 }),
+                       AutoPaint.randomSchemes.count - 1)
+        // Выбор идёт по всем четырём гармониям — размер выбора у «Случайно» полный.
+        XCTAssertEqual(AutoPaint.randomSchemes.count, 4)
+        XCTAssertEqual((0..<4).compactMap { index in
+            AutoPaint.schemeIndex(for: AutoPaint.random, pick: { _ in index })
+        }, [0, 1, 2, 3])
+        // «Случайно» решает тёмная/светлая по окнам, поэтому своего режима у него нет.
+        XCTAssertNil(AutoPaint.random.light)
+        XCTAssertEqual(AutoPaint.presets.map { $0.light }, [false, true, false, false, false, false, false, false])
+    }
+
+    func testAutoPaintThemePayloadMatchesContract() throws {
+        // Тема уезжает обычной командой на окно (план п. 4): scope window, адресация заголовком,
+        // слой шрифта не трогаем.
+        let rainbow = try XCTUnwrap(AutoPaint.preset(id: "rainbow"))
+        let theme = AutoPaint.theme(preset: rainbow, hue: 137, light: false)
+        let body = themeBody(theme: .set(theme), font: .keep, id: "1-0001", at: 0)
+        XCTAssertTrue(body.hasPrefix("{\"id\":\"1-0001\",\"action\":\"theme\",\"at\":\"1970-01-01T00:00:00Z\","
+            + "\"scope\":\"window\",\"title\":\"Vkusnoff\",\"theme\":{\"id\":\"auto-rainbow-137\","
+            + "\"name\":\"Радуга · 137°\",\"type\":\"dark\",\"palette\":{\"accent\":\"#"), body)
+        XCTAssertFalse(body.contains("\"font\""))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let payload = try XCTUnwrap(json["theme"] as? [String: Any])
+        XCTAssertEqual(payload["type"] as? String, "dark")
+        XCTAssertEqual(Set(try XCTUnwrap(payload["palette"] as? [String: String]).keys),
+                       Set(Theme.paletteOrder))
+        // Светлый набор помечает тему светлой — по типу страница ставит color-scheme.
+        XCTAssertEqual(AutoPaint.theme(preset: try XCTUnwrap(AutoPaint.preset(id: "pastel")),
+                                       hue: 359.7, light: true).id, "auto-pastel-0")
+    }
+
+    func testAutoPaintRemembersPresetStartAndScheme() throws {
+        // План п. 5: последний запуск (набор, старт, схема, режим) живёт в UserDefaults,
+        // «Ещё раз» = старт +37°.
+        let defaults = MemoryDefaults()
+        let store = AutoPaintStore(defaults: defaults)
+        XCTAssertNil(store.last?.preset)
+        store.remember(preset: "ocean", start: 350)
+        XCTAssertEqual(store.last?.preset, "ocean")
+        XCTAssertEqual(try XCTUnwrap(store.last?.start), 350, accuracy: 0.001)
+        XCTAssertNil(try XCTUnwrap(store.last).scheme) // у набора со своей схемой индекса нет
+        XCTAssertNil(try XCTUnwrap(store.last).light)
+        store.remember(preset: "ocean", start: 350 + AutoPaint.againStep)
+        XCTAssertEqual(try XCTUnwrap(store.last?.start), 27, accuracy: 0.001) // круг замкнулся
+        // «Случайно» кладёт индекс схемы и режим. Режим «Ещё раз» повторяет (светлые окна не
+        // перевернутся в тёмные), а гармонию после WF19 берёт новую — прежняя лежит здесь ради
+        // того, чтобы её НЕ повторить (решение 4 плана WF19). Сам `AutoPaintStore` от этого
+        // не изменился: он по-прежнему помнит набор, старт, схему и режим.
+        store.remember(preset: "random", start: 10, scheme: 3, light: true)
+        XCTAssertEqual(try XCTUnwrap(store.last).scheme, 3)
+        XCTAssertEqual(try XCTUnwrap(store.last).light, true)
+        XCTAssertEqual(AutoPaint.scheme(for: AutoPaint.random,
+                                        index: AutoPaint.schemeIndex(for: AutoPaint.random,
+                                                                     repeating: store.last?.scheme ?? nil)),
+                       AutoPaint.randomSchemes[3])
+        XCTAssertEqual(AutoPaint.preset(id: "ocean")?.title, "Океан")
+        XCTAssertNil(AutoPaint.preset(id: "нет такого"))
+        // Ключ — тот, что читает живое приложение.
+        XCTAssertNotNil(defaults.values[AutoPaintStore.key])
+    }
+
+    func testAutoPaintAgainRerollsRandomScheme() throws {
+        // Решение 4 плана WF19: «🔁 Ещё раз» после «🎲 Случайно» берёт НОВУЮ гармонию — из трёх
+        // оставшихся, прежняя не выпадет ни при каком броске (критик В3: из четырёх честный
+        // выбор в четверти случаев вернул бы ту же, и Элвис снова увидел бы «ничего не изменилось»).
+        for previous in 0..<AutoPaint.randomSchemes.count {
+            var seen: Set<Int> = []
+            for roll in 0..<(AutoPaint.randomSchemes.count - 1) {
+                let index = try XCTUnwrap(AutoPaint.schemeIndex(for: AutoPaint.random,
+                                                                avoiding: previous,
+                                                                pick: { _ in roll }))
+                XCTAssertNotEqual(index, previous, "гармония \(previous) выпала снова")
+                XCTAssertTrue((0..<AutoPaint.randomSchemes.count).contains(index))
+                seen.insert(index)
+            }
+            // Достижимы все три оставшиеся — «Ещё раз» не сужает выбор до одной-двух.
+            XCTAssertEqual(seen.count, AutoPaint.randomSchemes.count - 1, "прежняя \(previous)")
+        }
+        // Бросок за границей выбора не роняет и не возвращает прежнюю.
+        XCTAssertNotEqual(AutoPaint.schemeIndex(for: AutoPaint.random, avoiding: 1, pick: { _ in 99 }), 1)
+        XCTAssertNotEqual(AutoPaint.schemeIndex(for: AutoPaint.random, avoiding: 1, pick: { _ in -5 }), 1)
+        // Прежней гармонии в памяти нет (первый запуск) — обычный случайный выбор.
+        XCTAssertEqual(AutoPaint.schemeIndex(for: AutoPaint.random, avoiding: nil, pick: { _ in 2 }), 2)
+        // Мусор в памяти обрезается по каталогу гармоний, а не уводит выбор за его край.
+        XCTAssertNotEqual(AutoPaint.schemeIndex(for: AutoPaint.random, avoiding: 99, pick: { _ in 2 }),
+                          AutoPaint.randomSchemes.count - 1)
+        // У наборов со своей схемой менять нечего — «Ещё раз» повторяет их как был.
+        XCTAssertNil(AutoPaint.schemeIndex(for: try XCTUnwrap(AutoPaint.preset(id: "ocean")),
+                                           avoiding: 2, pick: { _ in 0 }))
+        // Старт по-прежнему уезжает на +37° — «ещё вариант», а не тот же самый.
+        XCTAssertEqual(AutoPaint.againStep, 37)
+    }
+
+    func testAutoPaintRandomAlternatesLightMode() {
+        // Решение 3 плана WF19: «🎲 Случайно» каждый раз наоборот к прошлой покраске — двух
+        // тёмных подряд больше не бывает. Прошлой нет (первый запуск, старая память) — монетка.
+        XCTAssertFalse(AutoPaint.nextLight(last: true, coin: { true }))
+        XCTAssertTrue(AutoPaint.nextLight(last: false, coin: { false }))
+        XCTAssertTrue(AutoPaint.nextLight(last: nil, coin: { true }))
+        XCTAssertFalse(AutoPaint.nextLight(last: nil, coin: { false }))
+
+        // Через память: покрасили тёмным — следующее «Случайно» светлое, и наоборот. Раньше
+        // здесь считались галки тем окон, а покраска их сама же и снимала — выходило всегда тёмное.
+        let store = AutoPaintStore(defaults: MemoryDefaults())
+        XCTAssertNil(store.last?.light)
+        store.remember(preset: "random", start: 10, scheme: 1, light: false)
+        let second = AutoPaint.nextLight(last: store.last?.light ?? nil, coin: { false })
+        XCTAssertTrue(second)
+        store.remember(preset: "random", start: 47, scheme: 2, light: second)
+        XCTAssertFalse(AutoPaint.nextLight(last: store.last?.light ?? nil, coin: { true }))
+        // Набор со своим режимом решает сам — «Пастель» остаётся светлой, «Радуга» тёмной.
+        XCTAssertEqual(AutoPaint.preset(id: "pastel")?.light, true)
+        XCTAssertEqual(AutoPaint.preset(id: "rainbow")?.light, false)
+        XCTAssertNil(AutoPaint.random.light)
+    }
+
+    func testAutoPaintHUDCountsWindowsAndUnnamedChats() {
+        // Строка перед покраской (фикс-батч п. 4): окон на экране столько же, сколько цветов, —
+        // говорим просто, сколько красим.
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 1), "Крашу 1 окно…")
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 4), "Крашу 4 окна…")
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 5), "Крашу 5 окон…")
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 11), "Крашу 11 окон…")
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 22), "Крашу 22 окна…")
+        // Окна с одинаковым заголовком делят один ключ темы — им достанется один цвет, и это
+        // не сбой; счёт идёт от того, скольким окнам своего цвета не досталось (хвост WF10).
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 4, shared: 2),
+                       "Крашу 4 окна; 2 с одинаковым именем чата — одним цветом")
+        // Окно без AX-заголовка не красим вовсе — про это говорим отдельно.
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 4, skipped: 1),
+                       "Крашу 4 окна; 1 без заголовка — пропущено")
+        XCTAssertEqual(MenuModel.autoPaintStart(windows: 6, shared: 1, skipped: 2),
+                       "Крашу 6 окон; 1 с одинаковым именем чата — одним цветом; 2 без заголовка — пропущены")
+        XCTAssertEqual(MenuModel.skippedWord(1), "пропущено")
+        XCTAssertEqual(MenuModel.skippedWord(11), "пропущены")
+        XCTAssertEqual(MenuModel.skippedWord(21), "пропущено")
+    }
+
+    func testAutoPaintMenuHasPresetsRandomAgainAndReset() throws {
+        var painted: [String] = []
+        var again = 0
+        var reset = 0
+        var config = menuConfig()
+        config.autoPaint = { painted.append($0.id) }
+        config.autoPaintAgain = { again += 1 }
+        config.autoPaintReset = { reset += 1 }
+        // Путь (решение Элвиса 04.09, с WF71 через «Ещё ▸»): «⋯ Ещё ▸ → 🖥 Всем окнам ▸ →
+        // 🌈 Раскрасить по кругу ▸». С верхнего уровня и из меню-бара пункт снят.
+        let menu = MinimizeMenu.build(config: config)
+        XCTAssertNil(menu.items.first { $0.title == MenuModel.autoPaintTitle })
+        XCTAssertNil(try moreMenu(in: menu).items.first { $0.title == MenuModel.autoPaintTitle })
+        let all = try allWindows(in: menu)
+        let submenu = try XCTUnwrap(all.items.first { $0.title == MenuModel.autoPaintTitle }?.submenu)
+        XCTAssertEqual(MenuModel.autoPaintTitle, "Раскрасить по кругу")
+
+        // Наборы, разделитель, «Случайно», «Ещё раз», сброс всем окнам (план п. 1).
+        XCTAssertEqual(submenu.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Радуга", "Пастель", "Закат", "Океан", "Лес", "Ягоды", "Неон", "Монохром",
+                        "—", "Случайно", "Ещё раз", "Как у Claude (все окна)"])
+        XCTAssertTrue(submenu.items.allSatisfy { !$0.hasSubmenu })
+        // Предпросмотра у автопокраски нет: набор красит все окна разом.
+        XCTAssertNil(submenu.delegate)
+        XCTAssertTrue(submenu.items.compactMap { ($0 as? BlockMenuItem)?.preview }.isEmpty)
+
+        for item in submenu.items where !item.isSeparatorItem { click(item) }
+        XCTAssertEqual(painted, AutoPaint.presets.map { $0.id } + ["random"])
+        XCTAssertEqual(again, 1)
+        XCTAssertEqual(reset, 1)
+    }
+
+    // MARK: - галки «Как у Claude» (задача #5363, критик В1 и В3)
+
+    /// Состояния пунктов сброса во всех трёх списках ОКНА (с WF71 размер — один список).
+    private func windowResets(_ config: MinimizeMenu.MenuConfig) throws -> [String] {
+        let menu = MinimizeMenu.build(config: config)
+        func state(_ submenu: String, _ item: String) throws -> Bool {
+            let list = try XCTUnwrap(menu.items.first { $0.title == submenu }?.submenu)
+            return try XCTUnwrap(list.items.first { $0.title == item }).state == .on
+        }
+        var on: [String] = []
+        if try state(MenuModel.colorTitle, MenuModel.themeResetTitle) { on.append("цвет") }
+        if try state(MenuModel.fontTitle, MenuModel.fontResetTitle) { on.append("шрифт") }
+        if try state(MenuModel.answerSizeTitle, MenuModel.sizeResetTitle) { on.append("ответы") }
+        return on
+    }
+
+    func testClaudeCheckStandsOnlyWhenMemoryIsTrusted() throws {
+        // Пусто во всех слоях — галка «Как у Claude» стоит у окна во всех трёх списках.
+        // Это и есть #5363: раньше у окна её не ставили никогда.
+        var empty = menuConfig()
+        empty.windowThemeID = nil
+        empty.windowFontID = nil
+        empty.windowSize = nil
+        XCTAssertEqual(try windowResets(empty), ["цвет", "шрифт", "ответы"])
+
+        // Своя запись есть — галка у сброса не стоит (она на выбранном пункте).
+        XCTAssertEqual(try windowResets(menuConfig()), [])
+
+        // Есть запись «всем окнам»: окно её наследует, поэтому у окна не отмечено ничего,
+        // а галка стоит внутри «🖥 Всем окнам ▸» только там, где записи нет.
+        var inherited = empty
+        inherited.allThemeID = "violet"
+        inherited.allFontID = "georgia"
+        inherited.allSize = Size(question: 18)
+        XCTAssertEqual(try windowResets(inherited), ["ответы"])
+        let all = try allWindows(in: MinimizeMenu.build(config: inherited))
+        let colorAll = try XCTUnwrap(all.items.first { $0.title == MenuModel.colorTitle }?.submenu)
+        XCTAssertEqual(colorAll.items.first { $0.title == MenuModel.themeResetTitle }?.state, .off)
+        let answersAll = try XCTUnwrap(all.items.first { $0.title == MenuModel.answerSizeTitle }?.submenu)
+        XCTAssertEqual(answersAll.items.first { $0.title == MenuModel.sizeResetTitle }?.state, .on)
+
+        // Половина слоя своя (критик В3): у окна из старой записи задан только размер
+        // вопросов — в «Размер шрифта ▸» галка обязана встать, половина ответов пуста.
+        var half = empty
+        half.windowSize = Size(question: 13)
+        XCTAssertEqual(try windowResets(half), ["цвет", "шрифт", "ответы"])
+
+        // Окно без AX-заголовка: память по заголовку пуста ВСЕГДА — галку не ставим (В1).
+        var untitled = empty
+        untitled.windowTitled = false
+        XCTAssertEqual(try windowResets(untitled), [])
+
+        // Окно после автопокраски: оно цветное, а ThemeStore пуст — галка соврала бы (В1).
+        var painted = empty
+        painted.windowAutoPainted = true
+        XCTAssertEqual(try windowResets(painted), [])
+    }
+
+    // MARK: - живой блок claude.css и merge claude.json (план WF14, решение 1)
+
+    /// Блок контракта побайтно — тем же текстом он лежит в репозиторном claude-patch/claude.css.
+    private static let expectedBlock = """
+    /* PimpMyClaude:auto */
+    #myclaude-window-frame{border-radius:15px !important}
+    .epitaxy-titlebar span[class*="w-[var(--chat-gutter-start"]{width:32px !important}
+    .tiles-shell{min-width:0 !important}
+    [class*="--chat-column-gutter-start"]{--chat-column-gutter-start:5px !important;--chat-column-gutter-end:5px !important}
+    [class*="ps-[var(--chat-gutter"],[class*="pe-[var(--chat-gutter"],.epitaxy-transcript-width,.epitaxy-composer-width{padding-inline-start:5px !important;padding-inline-end:5px !important;padding-left:5px !important;padding-right:5px !important}
+    [class*="ps-[var(--chat"],[class*="pe-[var(--chat"]{padding-inline-start:5px !important;padding-inline-end:5px !important}
+    /* /PimpMyClaude:auto */
+    """
+
+    func testLiveStyleBlockMatchesContract() throws {
+        XCTAssertEqual(LiveStyle.block(padding: 5, radius: 15), ClaudeAXTests.expectedBlock)
+        // Радиус — по версии macOS: у Tahoe (26+) угол ≈ 17 pt, у 13–15 — 10.
+        XCTAssertEqual(LiveStyle.frameRadius(majorVersion: 26), 15)
+        XCTAssertEqual(LiveStyle.frameRadius(majorVersion: 15), 10)
+        // Необязательный ключ frameRadius в claude.json перебивает порог; мусор — нет.
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":12}", majorVersion: 26), 12)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":999}", majorVersion: 26), 15)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "не json", majorVersion: 15), 10)
+        XCTAssertEqual(LiveStyle.frameRadius(config: nil, majorVersion: 26), 15)
+        // Ползунок зажат в 0…40 (#9148), умолчание — 24 (слово Элвиса 08.10).
+        XCTAssertEqual(LiveStyle.clamp(-5), 0)
+        XCTAssertEqual(LiveStyle.clamp(41), 40)
+        XCTAssertEqual(LiveStyle.clamp(5), 5)
+        XCTAssertEqual(LiveStyle.defaultSidePadding, 24)
+        // Тот же блок лежит в репозиторном claude-patch/claude.css: свежая установка правильна
+        // ещё до первого запуска приложения (критик В5).
+        let repo = try String(contentsOf: ClaudeAXTests.repositoryRoot
+            .appendingPathComponent("claude-patch").appendingPathComponent("claude.css"),
+                              encoding: .utf8)
+        XCTAssertTrue(repo.contains(LiveStyle.block(padding: LiveStyle.defaultSidePadding, radius: 15)), repo)
+        XCTAssertTrue(repo.hasSuffix(LiveStyle.markerEnd + "\n"), repo)
+        // Умолчание полей — то же и в репозиторном claude.json (мелочь М6: цифра в двух таргетах).
+        let config = try String(contentsOf: ClaudeAXTests.repositoryRoot
+            .appendingPathComponent("claude-patch").appendingPathComponent("claude.json"),
+                                encoding: .utf8)
+        XCTAssertEqual(LiveStyle.number(config, key: LiveStyle.sidePaddingKey),
+                       LiveStyle.defaultSidePadding)
+    }
+
+    func testLiveStyleBlockKeepsForeignRules() throws {
+        let block = LiveStyle.block(padding: 5, radius: 15)
+        let old = LiveStyle.block(padding: 16, radius: 10)
+        let mine = "/* Элвис */\n.a{color:red}\n"
+
+        // 1. Маркеров нет — блок дописан в КОНЕЦ, чужое дословно цело.
+        let appended = LiveStyle.applying(block: block, to: mine)
+        XCTAssertEqual(appended, mine + block + "\n")
+        // 2. Повторный вызов даёт байт-в-байт тот же файл (иначе mtime дёргается каждую секунду).
+        XCTAssertEqual(LiveStyle.applying(block: block, to: appended), appended)
+        // 3. Блок в СЕРЕДИНЕ файла — заменяется на месте, порядок строк не меняется.
+        XCTAssertEqual(LiveStyle.applying(block: block, to: "/* до */\n" + old + "\n/* после */\n"),
+                       "/* до */\n" + block + "\n/* после */\n")
+        // 4. Блок дважды — мусор от первого маркера до последнего вырезан, свежий блок в конце.
+        XCTAssertEqual(LiveStyle.applying(block: block, to: "/* до */\n" + old + "\n" + old + "\n/* после */\n"),
+                       "/* до */\n/* после */\n" + block + "\n")
+        // 5. Только один из маркеров — та же уборка.
+        XCTAssertEqual(LiveStyle.applying(block: block, to: "/* до */\n" + LiveStyle.markerStart + "\n.b{color:blue}\n"),
+                       "/* до */\n.b{color:blue}\n" + block + "\n")
+        // 6. Файла нет и 7. файл пустой — в файле остаётся один блок.
+        XCTAssertEqual(LiveStyle.applying(block: block, to: ""), block + "\n")
+        XCTAssertEqual(LiveStyle.applying(block: block, to: "\n\n"), block + "\n")
+        // 8. Файл без финального перевода строки — блок всё равно отдельными строками.
+        XCTAssertEqual(LiveStyle.applying(block: block, to: "/* хвост */"),
+                       "/* хвост */\n" + block + "\n")
+    }
+
+    func testLiveStyleWritesBlockAndConfigOnDisk() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let css = dir.appendingPathComponent(LiveStyle.cssFileName)
+        let config = dir.appendingPathComponent(LiveStyle.configFileName)
+        // Живой claude.json Элвиса: minWindowWidth 300 (не 360 из репозитория) и projectsRoot.
+        try Data("""
+        {
+          "minWindowWidth" : 300,
+          "projectsRoot" : "/Users/dev/Projects",
+          "sidePadding" : 16
+        }
+
+        """.utf8).write(to: config)
+        try Data("/* Элвис */\n.a{color:red}\n".utf8).write(to: css)
+
+        XCTAssertEqual(LiveStyle.currentSidePadding(directory: dir), 16)
+        XCTAssertTrue(LiveStyle.writeBlock(padding: 5, directory: dir, majorVersion: 26))
+        XCTAssertTrue(LiveStyle.writeConfig(sidePadding: 5, directory: dir))
+        XCTAssertEqual(try String(contentsOf: css, encoding: .utf8),
+                       "/* Элвис */\n.a{color:red}\n" + ClaudeAXTests.expectedBlock + "\n")
+        XCTAssertEqual(LiveStyle.currentSidePadding(directory: dir), 5)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try Data(contentsOf: config)) as? [String: Any])
+        XCTAssertEqual(json["minWindowWidth"] as? Int, 300, "merge потерял ширину окна")
+        XCTAssertEqual(json["projectsRoot"] as? String, "/Users/dev/Projects")
+        XCTAssertEqual(json["sidePadding"] as? Int, 5)
+        // Путь остаётся читаемым: без withoutEscapingSlashes вышло бы «\/Users\/elvis\/…».
+        XCTAssertTrue(try String(contentsOf: config, encoding: .utf8)
+            .contains("\"/Users/dev/Projects\""))
+
+        // Повторный вызов с тем же значением записи НЕ делает — иначе лоадер каждую секунду
+        // переставляет CSS во всех страницах.
+        let past = Date(timeIntervalSince1970: 0)
+        for url in [css, config] {
+            try FileManager.default.setAttributes([.modificationDate: past], ofItemAtPath: url.path)
+        }
+        XCTAssertTrue(LiveStyle.writeBlock(padding: 5, directory: dir, majorVersion: 26))
+        XCTAssertTrue(LiveStyle.writeConfig(sidePadding: 5, directory: dir))
+        for url in [css, config] {
+            XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date,
+                           past, "лишняя запись дёрнула mtime у \(url.lastPathComponent)")
+        }
+
+        // Битый claude.json не трогаем вовсе (критик В8), а claude.css при этом пишем.
+        try Data("{сломано".utf8).write(to: config)
+        XCTAssertFalse(LiveStyle.writeConfig(sidePadding: 8, directory: dir))
+        XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), "{сломано")
+        XCTAssertTrue(LiveStyle.writeBlock(padding: 8, directory: dir, majorVersion: 26))
+        XCTAssertTrue(try String(contentsOf: css, encoding: .utf8).contains("border-radius:15px"))
+        XCTAssertTrue(try String(contentsOf: css, encoding: .utf8).contains("--chat-column-gutter-start:8px"))
+
+        // Файла claude.json нет — создаём из умолчаний, ничего не теряя.
+        try FileManager.default.removeItem(at: config)
+        XCTAssertTrue(LiveStyle.writeConfig(sidePadding: 99, directory: dir))
+        let fresh = try XCTUnwrap(JSONSerialization.jsonObject(with: try Data(contentsOf: config)) as? [String: Any])
+        XCTAssertEqual(fresh["sidePadding"] as? Int, LiveStyle.maxSidePadding) // зажали 99 → 40
+        XCTAssertEqual(fresh["minWindowWidth"] as? Int, 280, "умолчание чистой установки — 280 (WF45)")
+        XCTAssertTrue(try String(contentsOf: config, encoding: .utf8).hasSuffix("}\n"))
+
+        // Пустой claude.json — как «настроек ещё нет»: пишем свой ключ и не падаем.
+        XCTAssertNil(LiveStyle.merged(config: "{сломано", sidePadding: 5))
+        XCTAssertEqual(LiveStyle.number(LiveStyle.merged(config: "", sidePadding: 7),
+                                        key: LiveStyle.sidePaddingKey), 7)
+        // Ключи по алфавиту (sortedKeys) — тот же порядок, что у Patcher.ensureConfig.
+        let merged = try XCTUnwrap(LiveStyle.merged(config: "{\"projectsRoot\":\"/tmp\",\"minWindowWidth\":300}",
+                                                    sidePadding: 5))
+        XCTAssertLessThan(try XCTUnwrap(merged.range(of: "minWindowWidth")).lowerBound,
+                          try XCTUnwrap(merged.range(of: "projectsRoot")).lowerBound)
+    }
+
+    // MARK: - ползунок «Поля по бокам» (задача #5360)
+
+    func testSidePaddingSliderItemCarriesViewAndDebounces() throws {
+        var changed: [Int] = []
+        let done = expectation(description: "дебаунс ползунка")
+        var config = menuConfig()
+        config.sidePadding = 41 // зажмётся в 40 (#9148)
+        config.setSidePadding = {
+            changed.append($0)
+            done.fulfill()
+        }
+        let menu = MinimizeMenu.build(config: config)
+        let item = try XCTUnwrap(menu.items.first { $0.title == MenuModel.sidePaddingTitle })
+        XCTAssertNil(item.submenu)
+        // Ползунок — общий компонент: им же сделана «⏱ Скорость» живых цветов (план WF18).
+        let view = try XCTUnwrap(item.view as? SliderMenuView)
+        XCTAssertEqual(view.slider.minValue, Double(LiveStyle.minSidePadding))
+        XCTAssertEqual(view.slider.maxValue, Double(LiveStyle.maxSidePadding))
+        XCTAssertEqual(view.slider.maxValue, 40)
+        XCTAssertEqual(view.slider.doubleValue, 40, accuracy: 0.001)
+        XCTAssertTrue(view.slider.isContinuous)
+        XCTAssertEqual(view.slider.numberOfTickMarks, 0) // делений не рисуем — была бы гребёнка
+
+        // Ползунок тащат: несколько событий подряд дают ОДНУ запись, значение округляется.
+        let action = try XCTUnwrap(view.slider.action)
+        for value in [7.4, 7.6] {
+            view.slider.doubleValue = value
+            _ = (view.slider.target as? NSObject)?.perform(action, with: view.slider)
+        }
+        waitForExpectations(timeout: 2)
+        XCTAssertEqual(changed, [8])
+    }
+
+    // MARK: - живые цвета (план WF18)
+
+    private func liveBody(_ state: LiveColorsState, titles: [String] = [],
+                          id: String = "1-0001", at: TimeInterval = 0) -> String {
+        CommandChannel.payload(action: LiveColors.action,
+                               fields: LiveColors.fields(state: state, titles: titles),
+                               id: id, at: Date(timeIntervalSince1970: at))
+    }
+
+    func testLiveColorsPayloadMatchesContract() throws {
+        // Контракт п. 3 плана WF18, побайтно: id, action, at, scope, on, mode, period, epoch,
+        // light, titles, ring. Числа — числами, не строками.
+        let state = LiveColorsState(on: true, mode: .sync, period: 300, tone: .dark,
+                                    epoch: 1_757_000_000_000)
+        let body = liveBody(state, titles: ["Trelvis", "Dictatorik"])
+        XCTAssertTrue(body.hasPrefix("{\"id\":\"1-0001\",\"action\":\"live-colors\","
+            + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"all\",\"on\":true,\"mode\":\"sync\","
+            + "\"period\":300,\"epoch\":1757000000000,\"light\":false,"
+            + "\"titles\":[\"Trelvis\",\"Dictatorik\"],\"ring\":{\"dark\":[{\"accent\":\"#"), body)
+        XCTAssertTrue(body.hasSuffix("}]}}"), body)
+
+        // Порядок ключей внутри каждой палитры кольца — accent, background, foreground, sidebar,
+        // panel, muted (критик В6): обход словаря в Swift непредсказуем, поэтому палитры идут
+        // через Theme.paletteValue, и контракт не плывёт от запуска к запуску.
+        for light in [false, true] {
+            for palette in LiveColors.palettes(light: light) {
+                let literal = "{" + Theme.paletteOrder.map { "\"\($0)\":\"\(palette[$0] ?? "")\"" }
+                    .joined(separator: ",") + "}"
+                XCTAssertTrue(body.contains(literal), literal)
+            }
+        }
+        // Оба кольца целиком: 12 тёмных палитр и 12 светлых.
+        XCTAssertEqual(body.components(separatedBy: "\"accent\":").count - 1, LiveColors.ringCount * 2)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let ring = try XCTUnwrap(json["ring"] as? [String: Any])
+        XCTAssertEqual((ring["dark"] as? [[String: String]])?.count, LiveColors.ringCount)
+        XCTAssertEqual((ring["light"] as? [[String: String]])?.count, LiveColors.ringCount)
+        // Команда одна на всё и не бесконечная: 24 палитры по шесть hex — около 3,5 КБ.
+        XCTAssertLessThan(body.count, 5000, "команда распухла: \(body.count) байт")
+
+        // Выключение — только scope и on: страница сама вернёт окну прежнюю тему.
+        var off = state
+        off.on = false
+        XCTAssertEqual(liveBody(off), "{\"id\":\"1-0001\",\"action\":\"live-colors\","
+            + "\"at\":\"1970-01-01T00:00:00Z\",\"scope\":\"all\",\"on\":false}")
+
+        // «🪟 Как окно сейчас» — light: null; в режиме «все одним цветом» он невозможен (М2).
+        var window = state
+        window.mode = .solo
+        window.tone = .window
+        XCTAssertTrue(liveBody(window).contains("\"light\":null,\"titles\":[]"), liveBody(window))
+        window.mode = .sync
+        XCTAssertTrue(liveBody(window).contains("\"light\":false"))
+        // Светлые — true.
+        var light = state
+        light.tone = .light
+        XCTAssertTrue(liveBody(light).contains("\"light\":true"))
+    }
+
+    func testLiveColorsRingKeepsContrastBetweenAnchors() throws {
+        // Критик В14: контраст WF10 гарантирован в опорных точках, а страница идёт между ними
+        // по хорде в sRGB, и просадка возможна ровно в середине шага. Проверяем середины
+        // ВСЕХ хорд обоих колец — не уложились бы, кольцо стало бы из 24 точек.
+        for light in [false, true] {
+            let ring = LiveColors.palettes(light: light)
+            XCTAssertEqual(ring.count, LiveColors.ringCount)
+            for (index, palette) in ring.enumerated() {
+                XCTAssertEqual(Set(palette.keys), Set(Theme.paletteOrder))
+                let next = ring[(index + 1) % ring.count]
+                for share in [0.0, 0.5] {
+                    func mixed(_ key: String) -> String {
+                        LiveColors.mix(palette[key] ?? "", next[key] ?? "", share)
+                    }
+                    let where_ = "кольцо \(light ? "светлое" : "тёмное") \(index)+\(share)"
+                    let text = try XCTUnwrap(AutoPaint.contrast(hex: mixed("foreground"),
+                                                                hex: mixed("background")))
+                    XCTAssertGreaterThanOrEqual(text, AutoPaint.accentContrast, "текст, \(where_)")
+                    let accent = try XCTUnwrap(AutoPaint.contrast(hex: mixed("accent"),
+                                                                  hex: mixed("background")))
+                    XCTAssertGreaterThanOrEqual(accent, AutoPaint.accentContrast, "акцент, \(where_)")
+                    XCTAssertLessThanOrEqual(accent, AutoPaint.accentContrastCap(light: light),
+                                             "акцент кричит, \(where_)")
+                    // Фон остаётся «трендовым, не кричащим» и между опорными точками.
+                    let saturation = try XCTUnwrap(AutoPaint.saturation(hex: mixed("background")))
+                    XCTAssertLessThanOrEqual(saturation, AutoPaint.maxBackgroundSaturation + 0.5,
+                                             "фон кричит, \(where_)")
+                }
+            }
+        }
+        // Смешение — как на странице: половина хорды между чёрным и белым.
+        XCTAssertEqual(LiveColors.mix("#000000", "#ffffff", 0.5), "#808080")
+        XCTAssertEqual(LiveColors.mix("#102030", "#102030", 1), "#102030")
+        XCTAssertEqual(LiveColors.mix("не цвет", "#ffffff", 0.5), "не цвет")
+    }
+
+    func testLiveColorsScaleAndEpochKeepTheHue() {
+        // Шкала: восемь делений, 30…1 минута, по умолчанию 5 минут (решение 5, критик В4).
+        XCTAssertEqual(LiveColors.periods, [1800, 1200, 900, 600, 300, 180, 120, 60])
+        XCTAssertEqual(LiveColors.defaultPeriod, 300)
+        XCTAssertEqual(LiveColors.defaultMode, .solo)
+        XCTAssertEqual(LiveColors.defaultTone, .dark)
+        XCTAssertEqual(LiveColors.period(at: 0), 1800)
+        XCTAssertEqual(LiveColors.period(at: 99), 60) // быстрее минуты не даём
+        XCTAssertEqual(LiveColors.period(at: -3), 1800)
+        XCTAssertEqual(LiveColors.index(of: 300), 4)
+        XCTAssertEqual(LiveColors.index(of: 310), 4) // правленое руками — ближайшее деление
+        XCTAssertEqual(LiveColors.period(clamping: 45), 60)
+        XCTAssertEqual(MenuModel.liveColorsSpeed(300), "круг за 5 мин")
+        XCTAssertEqual(MenuModel.liveColorsSpeed(1800), "круг за 30 мин")
+
+        // Цвет считается от стенных часов (решение 1): четверть круга — 90°.
+        let now = 1_757_000_000_000
+        XCTAssertEqual(LiveColors.hue(epoch: now, period: 300, now: now), 0, accuracy: 0.001)
+        XCTAssertEqual(LiveColors.hue(epoch: now - 75_000, period: 300, now: now), 90, accuracy: 0.001)
+        // Круг замкнулся — тот же цвет, а не 450°.
+        XCTAssertEqual(LiveColors.hue(epoch: now - 375_000, period: 300, now: now), 90, accuracy: 0.001)
+
+        // Смена скорости не дёргает цвет (решение 3): hue до и после совпадает.
+        let before = LiveColorsState(on: true, mode: .solo, period: 300, tone: .dark,
+                                     epoch: now - 75_000)
+        let after = LiveColors.state(before, period: 60, now: now)
+        XCTAssertEqual(after.period, 60)
+        XCTAssertEqual(LiveColors.hue(epoch: after.epoch, period: after.period, now: now), 90,
+                       accuracy: 0.01)
+        XCTAssertEqual(LiveColors.state(before, period: 7, now: now).period, 60)
+
+        // «Как окно сейчас» живёт только в режиме «каждое своим» (критик М2).
+        XCTAssertEqual(LiveColors.tone(.window, mode: .solo), .window)
+        XCTAssertEqual(LiveColors.tone(.window, mode: .sync), .dark)
+        XCTAssertEqual(LiveColors.tone(.light, mode: .sync), .light)
+        XCTAssertEqual(LiveColorsTone.dark.lightValue, false)
+        XCTAssertEqual(LiveColorsTone.light.lightValue, true)
+        XCTAssertNil(LiveColorsTone.window.lightValue)
+    }
+
+    func testLiveColorsStoreRemembersRunAndDefaults() {
+        let defaults = MemoryDefaults()
+        let store = LiveColorsStore(defaults: defaults)
+        // Пусто — выключено, «каждое своим», круг за 5 минут, тёмные.
+        XCTAssertEqual(store.state, LiveColorsState())
+        XCTAssertFalse(store.state.on)
+
+        let state = LiveColorsState(on: true, mode: .sync, period: 120, tone: .window,
+                                    epoch: 1_757_000_000_000)
+        store.save(state)
+        XCTAssertEqual(store.state, state)
+        // Ключи — те, что читает живое приложение (решение 4 плана).
+        XCTAssertEqual(defaults.values[LiveColorsStore.onKey] as? Bool, true)
+        XCTAssertEqual(defaults.values[LiveColorsStore.modeKey] as? String, "sync")
+        XCTAssertEqual(defaults.values[LiveColorsStore.periodKey] as? Int, 120)
+        XCTAssertEqual(defaults.values[LiveColorsStore.toneKey] as? String, "window")
+        XCTAssertEqual(defaults.values[LiveColorsStore.epochKey] as? Int, 1_757_000_000_000)
+
+        // Настройки правят и руками: мусор даёт умолчания, а не падение.
+        defaults.values[LiveColorsStore.modeKey] = "неведомо"
+        defaults.values[LiveColorsStore.toneKey] = 42
+        defaults.values[LiveColorsStore.periodKey] = 7
+        XCTAssertEqual(store.state.mode, .solo)
+        XCTAssertEqual(store.state.tone, .dark)
+        XCTAssertEqual(store.state.period, 60)
+    }
+
+    func testLiveColorsMenuHasOffModesSpeedAndTones() throws {
+        var modes: [String] = []
+        var tones: [String] = []
+        var periods: [Int] = []
+        let dragged = expectation(description: "дебаунс ползунка скорости")
+        var config = menuConfig()
+        config.liveColors = LiveColorsState(on: true, mode: .solo, period: 120, tone: .light,
+                                            epoch: 1)
+        config.setLiveColorsMode = { modes.append($0?.rawValue ?? "off") }
+        config.setLiveColorsTone = { tones.append($0.rawValue) }
+        config.setLiveColorsPeriod = {
+            periods.append($0)
+            dragged.fulfill()
+        }
+        let all = try allWindows(in: MinimizeMenu.build(config: config))
+        let live = try XCTUnwrap(all.items.first { $0.title == MenuModel.liveColorsTitle }?.submenu)
+
+        // Вариант А макета: выключатель, два режима, ползунок, три режима света.
+        XCTAssertEqual(live.items.map { $0.isSeparatorItem ? "—" : $0.title },
+                       ["Выключить", "—", "Все окна одним цветом", "Каждое окно своим цветом",
+                        "—", "Скорость", "—", "Тёмные", "Светлые", "Как окно сейчас"])
+        XCTAssertEqual(live.items.filter { $0.state == .on }.map { $0.title },
+                       ["Каждое окно своим цветом", "Светлые"])
+        // Предпросмотра нет: команда одна на все окна, примерять нечего.
+        XCTAssertNil(live.delegate)
+        XCTAssertTrue(live.items.compactMap { ($0 as? BlockMenuItem)?.preview }.isEmpty)
+        // «🪟 Как окно сейчас» доступен в режиме «каждое своим» (критик М2).
+        XCTAssertTrue(try XCTUnwrap(live.items.first { $0.title == MenuModel.liveColorsWindowTitle }).isEnabled)
+
+        // Ползунок — тот же компонент, что «Поля по бокам»: восемь делений шкалы.
+        let speed = try XCTUnwrap(live.items.first { $0.title == MenuModel.liveColorsSpeedTitle })
+        XCTAssertNil(speed.submenu)
+        let view = try XCTUnwrap(speed.view as? SliderMenuView)
+        XCTAssertEqual(view.slider.minValue, 0)
+        XCTAssertEqual(view.slider.maxValue, Double(LiveColors.periods.count - 1))
+        XCTAssertEqual(view.slider.doubleValue, Double(LiveColors.index(of: 120)), accuracy: 0.001)
+
+        for item in live.items where !item.isSeparatorItem && item.view == nil { click(item) }
+        XCTAssertEqual(modes, ["off", "sync", "solo"])
+        XCTAssertEqual(tones, ["dark", "light", "window"])
+
+        // Тащим ползунок: одна запись после дебаунса, значение — с деления шкалы.
+        let action = try XCTUnwrap(view.slider.action)
+        view.slider.doubleValue = 0.4
+        _ = (view.slider.target as? NSObject)?.perform(action, with: view.slider)
+        waitForExpectations(timeout: 2)
+        XCTAssertEqual(periods, [1800])
+
+        // Выключено — галка у «⏹ Выключить»; в режиме «все одним цветом» «Как окно сейчас» погашен.
+        var off = menuConfig()
+        off.liveColors = LiveColorsState(on: false, mode: .sync, period: 300, tone: .dark, epoch: 0)
+        let offLive = try XCTUnwrap(try allWindows(in: MinimizeMenu.build(config: off)).items
+            .first { $0.title == MenuModel.liveColorsTitle }?.submenu)
+        XCTAssertEqual(offLive.items.filter { $0.state == .on }.map { $0.title },
+                       ["Выключить", "Тёмные"])
+        XCTAssertFalse(try XCTUnwrap(offLive.items
+            .first { $0.title == MenuModel.liveColorsWindowTitle }).isEnabled)
+    }
+
+    func testAutoPaintDimsWhileLiveColorsRun() throws {
+        // Критик В13: пока живые цвета крутятся, «🌈 Раскрасить по кругу ▸» гаснет — иначе
+        // покраска пишет темы окнам, а живой слой перекрывает их через четверть секунды.
+        var config = menuConfig()
+        config.liveColors = LiveColorsState(on: true, mode: .solo, period: 300, tone: .dark, epoch: 1)
+        func autoPaint(_ config: MinimizeMenu.MenuConfig) throws -> NSMenu {
+            try XCTUnwrap(try allWindows(in: MinimizeMenu.build(config: config)).items
+                .first { $0.title == MenuModel.autoPaintTitle }?.submenu)
+        }
+        let dimmed = try autoPaint(config)
+        XCTAssertEqual(dimmed.items.first?.title, MenuModel.autoPaintLiveHint)
+        XCTAssertTrue(dimmed.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
+
+        // Живые выключены — подсказки нет, пункты работают.
+        let plain = try autoPaint(menuConfig())
+        XCTAssertNil(plain.items.first { $0.title == MenuModel.autoPaintLiveHint })
+        XCTAssertTrue(plain.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.isEnabled })
+    }
+
+    /// То же и у «🎨 Цвет ▸» (#5742): при живых цветах выбор темы был мёртвой кнопкой —
+    /// примерка под курсором видна, клик записывается в карту, а крутёж перекрывает его
+    /// через четверть секунды, и догадаться, что мешает, неоткуда. Гасим список и говорим.
+    func testColorListDimsWhileLiveColorsRun() throws {
+        var config = menuConfig()
+        config.liveColors = LiveColorsState(on: true, mode: .sync, period: 300, tone: .dark, epoch: 1)
+        func colors(_ config: MinimizeMenu.MenuConfig, all: Bool) throws -> NSMenu {
+            let menu = MinimizeMenu.build(config: config)
+            let level = all ? try allWindows(in: menu) : menu
+            return try XCTUnwrap(level.items.first { $0.title == MenuModel.colorTitle }?.submenu)
+        }
+        // Пункты цвета лежат и в самом списке, и в трёх наборах (задача #5801) — считаем всех.
+        func clickable(_ menu: NSMenu) -> [NSMenuItem] {
+            menu.items.flatMap { item -> [NSMenuItem] in
+                if let list = item.submenu { return [item] + list.items }
+                return item is BlockMenuItem ? [item] : []
+            }
+        }
+        // И у окна, и у «Всем окнам ▸» (там в списке ещё и «Мои темы» — они тоже темы).
+        for all in [false, true] {
+            let dimmed = try colors(config, all: all)
+            XCTAssertEqual(dimmed.items.first?.title, MenuModel.autoPaintLiveHint)
+            XCTAssertNotNil(dimmed.items.first { $0.title == MenuModel.themeResetTitle })
+            let items = clickable(dimmed)
+            XCTAssertFalse(items.isEmpty)
+            XCTAssertTrue(items.allSatisfy { !$0.isEnabled },
+                          "\(all ? "всем окнам" : "окну"): пункт цвета остался живым")
+        }
+
+        // Крутёж выключен — подсказки нет, весь список работает как раньше.
+        let plain = try colors(menuConfig(), all: true)
+        XCTAssertNil(plain.items.first { $0.title == MenuModel.autoPaintLiveHint })
+        XCTAssertTrue(clickable(plain).allSatisfy { $0.isEnabled })
+    }
+
+    func testLiveColorsGoOutAsOneCommandAndAreRemembered() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("command.json")
+        var now = Date(timeIntervalSince1970: 1_757_000_000)
+        // Таймер не нужен: между записями часы двигаем сами, зазор канала выдержан.
+        let channel = CommandChannel(path: file, now: { now }, schedule: { _, _ in })
+        let defaults = MemoryDefaults()
+        let actions = ClaudeActions(app: IsolatedClaudeApp.make(), commands: channel, themes: [], fonts: [],
+                                    themeStore: ThemeStore(defaults: MemoryDefaults()),
+                                    myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")),
+                                    autoPaintStore: AutoPaintStore(defaults: MemoryDefaults()),
+                                    liveColorsStore: LiveColorsStore(defaults: defaults))
+        actions.clock = { now }
+        func command() throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: try Data(contentsOf: file)) as? [String: Any])
+        }
+
+        XCTAssertTrue(actions.startLiveColors(mode: .solo))
+        var json = try command()
+        XCTAssertEqual(json["action"] as? String, LiveColors.action)
+        XCTAssertEqual(json["scope"] as? String, "all")
+        XCTAssertEqual(json["on"] as? Bool, true)
+        XCTAssertEqual(json["mode"] as? String, "solo")
+        XCTAssertEqual(json["period"] as? Int, LiveColors.defaultPeriod)
+        XCTAssertEqual(json["epoch"] as? Int, LiveColors.milliseconds(now))
+        XCTAssertNotNil(json["ring"])
+        XCTAssertTrue(actions.liveColors.on) // запомнили в настройках приложения
+
+        // Скорость меняется без прыжка цвета: за 75 с круга по 300 с прошло 90°.
+        now = now.addingTimeInterval(75)
+        XCTAssertTrue(actions.setLiveColors(period: 60))
+        json = try command()
+        XCTAssertEqual(json["period"] as? Int, 60)
+        XCTAssertEqual(LiveColors.hue(epoch: try XCTUnwrap(json["epoch"] as? Int), period: 60,
+                                      now: LiveColors.milliseconds(now)), 90, accuracy: 0.01)
+        XCTAssertEqual(actions.liveColors.period, 60)
+
+        // Режим света запоминается и уезжает той же одной командой.
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.setLiveColors(tone: .light))
+        XCTAssertEqual(try command()["light"] as? Bool, true)
+        XCTAssertEqual(actions.liveColors.tone, .light)
+
+        // Выключение — короткая команда; кольца в ней нет вовсе.
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.stopLiveColors())
+        json = try command()
+        XCTAssertEqual(json["on"] as? Bool, false)
+        XCTAssertNil(json["ring"])
+        XCTAssertFalse(actions.liveColors.on)
+        // Выключенные живые цвета при старте приложения молчат, а включённые — пересылаются.
+        XCTAssertFalse(actions.resendLiveColors())
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.startLiveColors(mode: .sync))
+        // «Как окно сейчас» в «синхронно» невозможен: свет садится на тёмные (критик М2).
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.setLiveColors(tone: .window))
+        XCTAssertEqual(actions.liveColors.tone, .dark)
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.resendLiveColors())
+        XCTAssertEqual(try command()["mode"] as? String, "sync")
+
+        // Пока открыта панель «Своя тема», крутёж не запускаем и не пересылаем (критик Б3
+        // плана WF20): живой слой перекрасил бы окно поверх примерки. Выбор всё равно помним.
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.stopLiveColors())
+        ClaudeActions.themeEditorTitle = "Чат"
+        defer { ClaudeActions.themeEditorTitle = nil }
+        now = now.addingTimeInterval(1)
+        XCTAssertFalse(actions.startLiveColors(mode: .solo))
+        XCTAssertEqual(try command()["on"] as? Bool, false, "живые цвета перебили примерку")
+        XCTAssertTrue(actions.liveColors.on, "выбор Элвиса потерялся")
+        XCTAssertFalse(actions.resendLiveColors())
+        // Выключение проходит всегда — оно примерке только помогает.
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.stopLiveColors())
+        XCTAssertEqual(try command()["on"] as? Bool, false)
+
+        // Панель закрыли — отложенный крутёж уезжает на страницу сам (находка 4 проверки WF20).
+        // Раньше галка стояла, «Раскрасить по кругу» было погашено, а страница не крутила ничего
+        // до перезапуска приложения.
+        now = now.addingTimeInterval(1)
+        XCTAssertFalse(actions.startLiveColors(mode: .solo))
+        XCTAssertTrue(actions.liveColors.on, "выбор Элвиса потерялся")
+        now = now.addingTimeInterval(1)
+        actions.finishThemeEditor()
+        XCTAssertNil(ClaudeActions.themeEditorTitle, "панель обязана снять свой флаг")
+        json = try command()
+        XCTAssertEqual(json["on"] as? Bool, true)
+        XCTAssertEqual(json["mode"] as? String, "solo")
+        // Крутёж выключен — закрытие панели молчит: слать нечего.
+        now = now.addingTimeInterval(1)
+        XCTAssertTrue(actions.stopLiveColors())
+        now = now.addingTimeInterval(1)
+        actions.finishThemeEditor()
+        XCTAssertEqual(try command()["on"] as? Bool, false)
+    }
+
+    func testProjectPaintStaysSilentWhileLiveColorsRun() throws {
+        // Блокер Б2 плана WF18: живой слой перекрывает цвет проекта — пока живые цвета
+        // крутятся, ProjectPaint не шлёт ни одной команды. Выключили — красит как обычно.
+        let box = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claudeax-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: box) }
+        let root = box.appendingPathComponent("Projects", isDirectory: true)
+        let sessions = box.appendingPathComponent("sessions", isDirectory: true)
+        let folder = root.appendingPathComponent("PimpMyClaude", isDirectory: true)
+        let place = sessions.appendingPathComponent("4646c58f/8cb117af", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent(".git"),
+                                                withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: place, withIntermediateDirectories: true)
+        let session: [String: Any] = ["sessionId": "local_a1", "title": "Vkusnoff",
+                                      "titleSource": "user", "cwd": folder.path,
+                                      "originCwd": folder.path, "lastFocusedAt": 3000,
+                                      "lastActivityAt": 3000, "isArchived": false]
+        try JSONSerialization.data(withJSONObject: session)
+            .write(to: place.appendingPathComponent("local_a1.json"))
+
+        let index = ProjectIndex(sessionsDirectory: sessions,
+                                 statusURL: box.appendingPathComponent("status.json"),
+                                 projectsRoot: root, home: box)
+        let store = ProjectSettingsStore(registryURL: box.appendingPathComponent("projects.json"))
+        store.write(ProjectSettings(name: "PimpMyClaude", theme: .set(catalog()[0])), to: folder)
+        let paint = ProjectPaint(index: index, store: store, defaults: MemoryDefaults())
+        var sent = 0
+        var live = true
+        paint.send = { _ in
+            sent += 1
+            return true
+        }
+        paint.windowTitles = { ["Vkusnoff"] }
+        paint.isLiveColorsOn = { live }
+
+        paint.tick()
+        XCTAssertEqual(sent, 0, "цвет проекта заговорил поверх живых цветов")
+        live = false
+        // То же самое, но окном владеет панель «Своя тема» (решение 1.6 плана WF20): обычная
+        // команда `theme` погасила бы примерку ползунка на странице.
+        ClaudeActions.themeEditorTitle = "Vkusnoff"
+        defer { ClaudeActions.themeEditorTitle = nil }
+        paint.tick()
+        XCTAssertEqual(sent, 0, "цвет проекта заговорил поверх открытой панели")
+        // Панель закрыли — отпечаток не протух, окно красится ближайшим тиком.
+        ClaudeActions.themeEditorTitle = nil
+        paint.tick()
+        XCTAssertEqual(sent, 1)
+    }
+
+    // MARK: - Сверки, которые до WF24 держались только на глазах
+
+    /// Радиус рамки по версии macOS — через константы `LiveStyle`, а не через числа (решение 6.1 плана WF24):
+    /// «26 → 15» гейт ещё может подвинуть, а «13–15 → 10» и есть автоматическая половина проверки
+    /// на старых системах — своей машины с ними у нас нет.
+    func testFrameRadiusMatchesMacOSMajor() throws {
+        for major in [13, 14, 15] {
+            XCTAssertEqual(LiveStyle.frameRadius(majorVersion: major), LiveStyle.legacyFrameRadius,
+                           "macOS \(major): угол окна 10–11 pt, строке в claude.css там взяться неоткуда")
+        }
+        XCTAssertEqual(LiveStyle.legacyFrameRadius, 10)
+        XCTAssertEqual(LiveStyle.frameRadius(majorVersion: LiveStyle.modernMacOSVersion - 1),
+                       LiveStyle.legacyFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(majorVersion: LiveStyle.modernMacOSVersion),
+                       LiveStyle.modernFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(majorVersion: 26), LiveStyle.modernFrameRadius)
+        XCTAssertNotEqual(LiveStyle.modernFrameRadius, LiveStyle.legacyFrameRadius,
+                          "порог по версии перестал что-либо менять")
+
+        // Необязательный ключ frameRadius живого claude.json перебивает мажор; мусор и значения вне 0…40 — мимо.
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":12}", majorVersion: 15), 12)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":0}", majorVersion: 26), 0)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":\(LiveStyle.maxFrameRadius + 1)}",
+                                             majorVersion: 15), LiveStyle.legacyFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":-1}", majorVersion: 15),
+                       LiveStyle.legacyFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "{\"frameRadius\":\"толще\"}", majorVersion: 26),
+                       LiveStyle.modernFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(config: "не json", majorVersion: 15), LiveStyle.legacyFrameRadius)
+        XCTAssertEqual(LiveStyle.frameRadius(config: nil, majorVersion: 15), LiveStyle.legacyFrameRadius)
+
+        // Инлайн-радиус самой рамки в inject.js — та же десятка: на macOS 13–15 угол ровный
+        // без единой строки в claude.css. Именно это и просим глазами подтвердить у команды.
+        let inject = try String(contentsOf: ClaudeAXTests.injectURL, encoding: .utf8)
+        let marker = "const WINDOW_FRAME_RADIUS = "
+        guard let found = inject.range(of: marker) else {
+            return XCTFail("в inject.js не нашлась константа «\(marker)»")
+        }
+        XCTAssertEqual(Int(inject[found.upperBound...].prefix { $0.isNumber }), LiveStyle.legacyFrameRadius,
+                       "рамка в inject.js рисуется не тем радиусом, который ждёт macOS 13–15")
+    }
+
+    /// Команда в Swift ↔ ветка разбора в inject.js (решение 9 плана WF24, находка К1 критика).
+    /// Полного равенства нет и не будет: часть команд исполняет только AX, часть пишется мимо enum —
+    /// отсюда два списка-исключения. **Дополняет тот, кто добавляет команду.**
+    func testCommandContractMatchesInjectJS() throws {
+        let axOnly: Set<ClaudeCommand> = [.newChat, .arrange, .show]    // исполняет AX, ветки в JS нет
+        // пишутся мимо enum
+        let pageOnly: Set<String> = ["theme", "status", "live-colors", "themes-restore", "auto-collapse", "hide-tools", "pinned-look", "mic-refused", "dictating", "viewer-chat",
+                                  "viewer-counts", "draft-setup", "send-text", "chat-context",
+                                  "composer-font", "trust-root", "main-chat", "send-look", "send-delay", "dim", "auto-continue", "neon-style", "bypass-chats", "text-justify",
+                                  "clean-answers"]
+        // `theme`/`status` складывают ClaudeActions и StatusFeed, `live-colors` (WF18) — LiveColors.swift,
+        // `themes-restore` (WF35) — WindowThemeStore: команда уходит строкой, enum ради неё
+        // не расширяли (это не пункт меню и не слот хоткея). `mic-refused` (WF92) пишет MicMonitor строкой.
+        // `draft-setup` (WF88 К18) пишет ClaudeActions строкой `BlankWindow.draftSetupAction`.
+        // `send-text` (WF103, #7953) пишет ClaudeActions строкой `PimpChannel.sendTextAction`.
+        // `chat-context` (WF106, #8103) пишет ClaudeAXController строкой `ChatContext.action`.
+        // `composer-font` (WF107, #8126) пишет ClaudeActions строкой `ComposerFont.action`.
+        // `trust-root` (WF108) пишет ClaudeAXController строкой `TrustRoot.action`.
+        // `main-chat` (WF108, #8148) пишет ClaudeActions строкой `PimpChannel.mainChatAction`.
+        // `send-look` (WF114, #8226) — вид и размер отсчёта отправки: пишет ClaudeAXController строкой `SendLook.action`.
+        // `dim` (WF113, #8256) — притемнение окон, кроме главного: пишет ClaudeAXController строкой `DimSetting.action`.
+        // `pinned-look` (WF124, #8743) — название проекта и таймер у закреплённых: строкой `PinnedLook.action`.
+        // `bypass-chats` (WF161, #9060 путь Б) — Bypass permissions во всех чатах: строкой `BypassNew.action`.
+        // `text-justify` (WF167, #9168; ветка страницы — WF165) — по ширине / влево: строкой `TextLook.justifyAction`.
+        // Пока ветки в inject.js нет, исключение ничего не проверяет — тест зелёный и до слияния WF165, и после.
+        // `clean-answers` (WF210, #9398, К-CA; ветка страницы — WF209) — чистые ответы: строкой `CleanAnswers.action`.
+
+        let inject = try String(contentsOf: ClaudeAXTests.injectURL, encoding: .utf8)
+        let branches = Set(ClaudeAXTests.commandBranches(in: inject))
+        XCTAssertFalse(branches.isEmpty, "в inject.js не нашлось ни одной ветки if (action === \"…\")")
+
+        for command in ClaudeCommand.allCases where !axOnly.contains(command) {
+            XCTAssertTrue(branches.contains(command.rawValue),
+                          "команда «\(command.rawValue)» есть в Swift, а ветки в inject.js нет: "
+                          + "допиши разбор в разделе 15 или внеси команду в axOnly")
+        }
+        let known = Set(ClaudeCommand.allCases.map { $0.rawValue })
+        for branch in branches.sorted() where !pageOnly.contains(branch) {
+            XCTAssertTrue(known.contains(branch),
+                          "ветка «\(branch)» в inject.js без команды в ClaudeCommand: "
+                          + "заведи команду или внеси ветку в pageOnly")
+        }
+    }
+
+    /// Боевой inject.js из репозитория — тот самый файл, что уезжает в Claude (кладёт tools/bundle.sh).
+    private static let injectURL = repositoryRoot
+        .appendingPathComponent("claude-patch", isDirectory: true)
+        .appendingPathComponent("inject.js")
+
+    /// Ветки разбора команды: все `if (action === "…")` файла (раздел 15). Скобка в примете
+    /// обязательна — без неё в список попадает `typeof detail?.action === "string"` парой строк выше.
+    private static func commandBranches(in text: String) -> [String] {
+        var found: [String] = []
+        var rest = Substring(text)
+        while let marker = rest.range(of: "(action === \"") {
+            let tail = rest[marker.upperBound...]
+            if let end = tail.firstIndex(of: "\"") { found.append(String(tail[..<end])) }
+            rest = tail
+        }
+        return found
+    }
+
+    /// Наведение на пункт без popUp: так его зовёт AppKit — через делегата подменю.
+    private func highlight(_ menu: NSMenu, _ item: NSMenuItem?) {
+        guard let delegate = menu.delegate else {
+            return XCTFail("у подменю «\(menu.title)» нет делегата")
+        }
+        delegate.menu?(menu, willHighlight: item)
+    }
+
+    /// Нажатие на пункт меню без popUp: BlockMenuItem держит замыкание на себе.
+    private func click(_ item: NSMenuItem) {
+        guard let action = item.action, let target = item.target as? NSObject else {
+            return XCTFail("у пункта «\(item.title)» нет действия")
+        }
+        target.perform(action)
+    }
+}
+
+final class FrameMatchTests: XCTestCase {
+    /// Гейт WF36: рамка «встала», если все четыре величины в допуске 2 pt.
+    func testFrameMatchesWithinTolerance() {
+        let want = CGRect(x: 735, y: 34, width: 367, height: 859)
+        XCTAssertTrue(ClaudeActions.frameMatches(CGRect(x: 736, y: 34, width: 367, height: 858), want))
+        XCTAssertFalse(ClaudeActions.frameMatches(CGRect(x: 493, y: 74, width: 367, height: 819), want))
+        XCTAssertFalse(ClaudeActions.frameMatches(CGRect(x: 735, y: 34, width: 367, height: 819), want))
+    }
+}
+
+/// Какой из запущенных Claude «тот самый» (WF82, #7096). Ночью 23.09 на Маке жили два процесса
+/// с bundle id Claude: забытая скрытая копия 1.20186.1 (запущена в 01:24, окна за экраном) и
+/// настоящий 2.2553.13 (01:57). Кэш `running()` сел на первый и второго не замечал.
+final class ClaudeInstanceTests: XCTestCase {
+    private static let folders = ["/Applications", "/Users/u/Applications"]
+    private let hidden = ClaudeInstance(pid: 41330, path: "/Applications/.Claude-before-Matrix-1.20186.1.app",
+                                        launchDate: Date(timeIntervalSince1970: 1_790_108_640))
+    private let regular = ClaudeInstance(pid: 49762, path: "/Applications/Claude.app",
+                                         launchDate: Date(timeIntervalSince1970: 1_790_110_656))
+
+    /// Весь сценарий ночи через `running()`: список процессов и часы подаются замыканиями.
+    func testChoiceMovesToRegularClaudeLaunchedNextToHiddenCopy() {
+        let app = IsolatedClaudeApp.make()
+        var list = [hidden]
+        var now: TimeInterval = 1_000
+        var restarts = 0
+        var windowQueries = 0
+        var duplicates: [(path: String?, count: Int)] = []
+        app.instances = { list }
+        app.clock = { now }
+        app.windowOwners = { windowQueries += 1; return [] }
+        app.onRestart = { restarts += 1 }
+        app.onDuplicate = { extra, count in duplicates.append((extra.path, count)) }
+
+        // Только старый — выбран старый: другого нет, работаем с ним.
+        _ = app.running()
+        XCTAssertEqual(app.chosen?.pid, 41330)
+        XCTAssertEqual(restarts, 0, "первая находка — не перезапуск")
+        XCTAssertEqual(app.statusField, "41330/1")
+
+        // Рядом запустился обычный. До сверки выбор стоит (running() зовут 8 раз в секунду),
+        // на сверке — переезжает, и onRestart зовётся ровно один раз.
+        list = [hidden, regular]
+        now += 1
+        _ = app.running()
+        XCTAssertEqual(app.chosen?.pid, 41330, "список перечитывается раз в 2 с, не на каждом вызове")
+        now += 1.5
+        _ = app.running()
+        XCTAssertEqual(app.chosen?.pid, 49762, "кэш держался за скрытую копию (#7096)")
+        XCTAssertEqual(restarts, 1)
+        XCTAssertEqual(windowQueries, 0, "место бандла решило без оконного сервера")
+        XCTAssertEqual(app.statusField, "49762/2")
+        XCTAssertEqual(duplicates.count, 1)
+        XCTAssertEqual(duplicates.first?.path, "/Applications/.Claude-before-Matrix-1.20186.1.app")
+        XCTAssertEqual(duplicates.first?.count, 2)
+        for _ in 0..<5 {
+            now += 3
+            _ = app.running()
+        }
+        XCTAssertEqual(app.chosen?.pid, 49762)
+        XCTAssertEqual(restarts, 1, "onRestart — ровно один раз на смену выбора")
+        XCTAssertEqual(duplicates.count, 1, "плашка — одна на появление, а не на каждую сверку")
+
+        // Старый вышел — выбор на месте, onRestart не зовётся.
+        list = [regular]
+        now += 3
+        _ = app.running()
+        XCTAssertEqual(app.chosen?.pid, 49762)
+        XCTAssertEqual(restarts, 1)
+        XCTAssertEqual(app.statusField, "49762/1")
+
+        // Лишний запустили снова — снова одна плашка.
+        list = [regular, hidden]
+        now += 3
+        _ = app.running()
+        XCTAssertEqual(app.chosen?.pid, 49762)
+        XCTAssertEqual(duplicates.count, 2)
+        XCTAssertEqual(restarts, 1)
+    }
+
+    /// Перезапуск Claude, как было до WF82: вышел — выбора нет, запустился новый — onRestart.
+    func testRelaunchStillCallsRestart() {
+        let app = IsolatedClaudeApp.make()
+        var list = [regular]
+        var now: TimeInterval = 0
+        var restarts = 0
+        app.instances = { list }
+        app.clock = { now }
+        app.windowOwners = { [] }
+        app.onRestart = { restarts += 1 }
+
+        _ = app.running()
+        XCTAssertEqual(app.chosen?.pid, 49762)
+        list = []
+        now += 3
+        _ = app.running()
+        XCTAssertNil(app.chosen)
+        XCTAssertEqual(app.statusField, "нет")
+        let next = ClaudeInstance(pid: 50001, path: "/Applications/Claude.app", launchDate: nil)
+        list = [next]
+        now += 1
+        _ = app.running()
+        XCTAssertNil(app.chosen, "без Claude список перечитывается не чаще раза в 2 с")
+        now += 1.5
+        _ = app.running()
+        XCTAssertEqual(app.chosen?.pid, 50001)
+        XCTAssertEqual(restarts, 1)
+    }
+
+    /// Порядок выбора (критик WF82 п. 3): место бандла, окна на экране, позже запущенный.
+    func testPickOrder() {
+        let folders = ClaudeInstanceTests.folders
+        func at(_ minute: Double) -> Date { Date(timeIntervalSince1970: minute * 60) }
+        let hidden = ClaudeInstance(pid: 10, path: "/Applications/.Claude-before-X.app", launchDate: at(5))
+        let regular = ClaudeInstance(pid: 20, path: "/Applications/Claude.app", launchDate: at(1))
+        let own = ClaudeInstance(pid: 30, path: "/Users/u/Applications/Claude.app", launchDate: at(2))
+        let elsewhere = ClaudeInstance(pid: 40, path: "/Users/u/Downloads/Claude.app", launchDate: at(9))
+
+        XCTAssertEqual(ClaudeApp.placement(of: regular.path, folders: folders), 0)
+        XCTAssertEqual(ClaudeApp.placement(of: own.path, folders: folders), 0)
+        XCTAssertEqual(ClaudeApp.placement(of: elsewhere.path, folders: folders), 1)
+        XCTAssertEqual(ClaudeApp.placement(of: nil, folders: folders), 1)
+        XCTAssertEqual(ClaudeApp.placement(of: hidden.path, folders: folders), 2)
+        XCTAssertEqual(ClaudeApp.placement(of: "/Users/u/.Trash/Claude.app", folders: folders), 2)
+        XCTAssertEqual(ClaudeApp.placement(of: "/Applications/Claude.app.failed", folders: folders), 2)
+
+        // Место сильнее окон и возраста; кандидат один — оконный сервер не спрашиваем.
+        var asked = 0
+        XCTAssertEqual(ClaudeApp.pick([hidden, elsewhere, regular], folders: folders,
+                                      windowOwners: { asked += 1; return [10, 40] })?.pid, 20)
+        XCTAssertEqual(asked, 0)
+        XCTAssertEqual(ClaudeApp.pick([hidden, elsewhere], folders: folders, windowOwners: { [10] })?.pid, 40)
+        // Равные по месту — у кого окна на экране.
+        XCTAssertEqual(ClaudeApp.pick([regular, own], folders: folders, windowOwners: { [20] })?.pid, 20)
+        // Окна у обоих или ни у кого — позже запущенный.
+        XCTAssertEqual(ClaudeApp.pick([regular, own], folders: folders, windowOwners: { [] })?.pid, 30)
+        XCTAssertEqual(ClaudeApp.pick([own, regular], folders: folders, windowOwners: { [20, 30] })?.pid, 30)
+        // Без даты запуска — больший pid.
+        let a = ClaudeInstance(pid: 7, path: "/Applications/Claude.app", launchDate: nil)
+        let b = ClaudeInstance(pid: 9, path: "/Users/u/Applications/Claude.app", launchDate: nil)
+        XCTAssertEqual(ClaudeApp.pick([b, a], folders: folders, windowOwners: { [] })?.pid, 9)
+        XCTAssertEqual(ClaudeApp.pick([a, b], folders: folders, windowOwners: { [] })?.pid, 9)
+        XCTAssertNil(ClaudeApp.pick([], folders: folders, windowOwners: { [] }))
+    }
+
+    /// Живой выбор уступает только копии, что стоит лучше по месту: два Claude с окнами на
+    /// разных столах не перекидывают выбор при каждом переключении стола.
+    func testLiveChoiceMovesOnlyToBetterPlacement() {
+        let folders = ClaudeInstanceTests.folders
+        let one = ClaudeInstance(pid: 20, path: "/Applications/Claude.app", launchDate: nil)
+        let two = ClaudeInstance(pid: 30, path: "/Users/u/Applications/Claude.app", launchDate: nil)
+        var asked = 0
+        XCTAssertEqual(ClaudeApp.choose(current: 30, among: [one, two], folders: folders,
+                                        windowOwners: { asked += 1; return [20] })?.pid, 30)
+        XCTAssertEqual(asked, 0, "живой выбор при равном месте окон не спрашивает")
+        XCTAssertEqual(ClaudeApp.choose(current: hidden.pid, among: [hidden, regular], folders: folders,
+                                        windowOwners: { [41330] })?.pid, 49762)
+        // Выбранный вышел — выбор заново по полному порядку.
+        XCTAssertEqual(ClaudeApp.choose(current: 99, among: [one, two], folders: folders,
+                                        windowOwners: { [20] })?.pid, 20)
+        XCTAssertEqual(ClaudeApp.choose(current: nil, among: [one, two], folders: folders,
+                                        windowOwners: { [20] })?.pid, 20)
+        XCTAssertNil(ClaudeApp.choose(current: 20, among: [], folders: folders, windowOwners: { [] }))
+    }
+
+    /// Лишний Claude появился рядом с выбранным настоящим: выбор на месте, перезапуска нет,
+    /// плашка одна.
+    func testHiddenCopyLaunchedLaterDoesNotStealChoice() {
+        let app = IsolatedClaudeApp.make()
+        var list = [regular]
+        var now: TimeInterval = 0
+        var restarts = 0
+        var duplicates: [pid_t] = []
+        app.instances = { list }
+        app.clock = { now }
+        app.windowOwners = { [] }
+        app.onRestart = { restarts += 1 }
+        app.onDuplicate = { extra, _ in duplicates.append(extra.pid) }
+
+        _ = app.running()
+        list = [regular, hidden]
+        for _ in 0..<3 {
+            now += 3
+            _ = app.running()
+        }
+        XCTAssertEqual(app.chosen?.pid, 49762)
+        XCTAssertEqual(restarts, 0)
+        XCTAssertEqual(duplicates, [41330])
+    }
+
+    /// Плашка про лишний Claude (критик WF82 п. 4): путь отдельной строкой, чтобы не обрезался.
+    func testDuplicateNoticeNamesTheExtraCopy() {
+        XCTAssertEqual(MenuModel.duplicateClaudeNotice(path: "/Applications/.Claude-before-Matrix-1.20186.1.app",
+                                                       pid: 41330, count: 2),
+                       "Запущено два Claude:\n/Applications/.Claude-before-Matrix-1.20186.1.app,\n"
+                       + "закрой его, иначе ломаются темы и меню")
+        XCTAssertTrue(MenuModel.duplicateClaudeNotice(path: nil, pid: 41330, count: 3)
+            .hasPrefix("Запущено 3 Claude:\nпроцесс 41330,"))
+    }
+}
+
+/// Меню на выбранной кнопке и в полноэкранном режиме (WF82, #7104). Числа — живой замер
+/// 23.09 на MacBook с вырезом (экран 1470×956, толщина строки меню 22).
+final class MenuButtonTests: XCTestCase {
+    private let yellow = CGRect(x: 43, y: 54, width: 16, height: 16)
+    private let green = CGRect(x: 66, y: 54, width: 16, height: 16)
+
+    func testHoverTargetInWindow() {
+        let both = MinimizeMenu.TitleButtons(minimize: yellow, zoom: green, fullScreen: false)
+        // В оконном режиме пол не действует: полосу `topBand` держит сам тик.
+        XCTAssertEqual(MinimizeMenu.hoverTarget(both, preferred: .minimize, floor: 1_000), yellow)
+        XCTAssertEqual(MinimizeMenu.hoverTarget(both, preferred: .zoom, floor: 1_000), green)
+        // У выбранной нет рамки — вторая.
+        XCTAssertEqual(MinimizeMenu.hoverTarget(.init(minimize: yellow, zoom: nil), preferred: .zoom, floor: 0),
+                       yellow)
+        XCTAssertEqual(MinimizeMenu.hoverTarget(.init(minimize: nil, zoom: green), preferred: .minimize, floor: 0),
+                       green)
+        XCTAssertNil(MinimizeMenu.hoverTarget(.init(), preferred: .minimize, floor: 0))
+    }
+
+    func testHoverTargetInFullScreen() {
+        let screen = CGRect(x: 0, y: 0, width: 1470, height: 956)
+        let window = CGRect(x: 0, y: 33, width: 1470, height: 923)
+        let floor = MinimizeMenu.menuBarBottom(window: window, screens: [screen], thickness: 22)
+        XCTAssertEqual(floor, 33, "на Маке с вырезом окно начинается под меню-баром")
+
+        // Шапка спрятана: AX отдаёт рамки в полосе меню-бара — наведения нет.
+        let hidden = MinimizeMenu.TitleButtons(minimize: CGRect(x: 31, y: 9, width: 16, height: 16),
+                                               zoom: CGRect(x: 54, y: 9, width: 16, height: 16),
+                                               fullScreen: true)
+        XCTAssertNil(MinimizeMenu.hoverTarget(hidden, preferred: .minimize, floor: floor))
+        XCTAssertNil(MinimizeMenu.hoverTarget(hidden, preferred: .zoom, floor: floor))
+
+        // Шапка выехала: жёлтая серая, но видна — меню на ней; выбрана зелёная — на зелёной.
+        let shownYellow = CGRect(x: 31, y: 41, width: 16, height: 16)
+        let shownGreen = CGRect(x: 54, y: 41, width: 16, height: 16)
+        let shown = MinimizeMenu.TitleButtons(minimize: shownYellow, zoom: shownGreen, fullScreen: true)
+        XCTAssertEqual(MinimizeMenu.hoverTarget(shown, preferred: .minimize, floor: floor), shownYellow)
+        XCTAssertEqual(MinimizeMenu.hoverTarget(shown, preferred: .zoom, floor: floor), shownGreen)
+        // У выбранной нет рамки — вторая.
+        XCTAssertEqual(MinimizeMenu.hoverTarget(.init(minimize: shownYellow, zoom: nil, fullScreen: true),
+                                                preferred: .zoom, floor: floor), shownYellow)
+
+        // Экран без выреза (второй монитор слева): окно от верха, низ меню-бара — верх + толщина.
+        let plain = CGRect(x: -1920, y: 0, width: 1920, height: 1080)
+        XCTAssertEqual(MinimizeMenu.menuBarBottom(window: plain, screens: [screen, plain], thickness: 24), 24)
+        // Окно ни на одном экране — меряем от его верха.
+        XCTAssertEqual(MinimizeMenu.menuBarBottom(window: CGRect(x: 5_000, y: 40, width: 100, height: 100),
+                                                  screens: [screen], thickness: 22), 62)
+    }
+
+    /// «⋯ Ещё ▸ → 🚦 Меню на кнопке ▸» (критик WF82 п. 11): два радио-пункта, галка на выбранном.
+    func testMoreMenuOffersButtonChoice() throws {
+        var picked: [MenuButton] = []
+        var config = MinimizeMenu.MenuConfig()
+        config.menuButton = .zoom
+        config.setMenuButton = { picked.append($0) }
+        let menu = MinimizeMenu.build(config: config)
+        let more = try XCTUnwrap(menu.items.last?.submenu)
+        let item = try XCTUnwrap(more.items.first { $0.title == MenuModel.menuButtonTitle })
+        XCTAssertNotNil(item.image) // 🚦
+        let choices = try XCTUnwrap(item.submenu)
+        XCTAssertEqual(choices.items.map { $0.title },
+                       [MenuModel.menuButtonMinimizeTitle, MenuModel.menuButtonZoomTitle])
+        XCTAssertEqual(choices.items.map { $0.state }, [.off, .on])
+        let yellow = try XCTUnwrap(choices.items.first)
+        let target = try XCTUnwrap(yellow.target as? NSObject)
+        target.perform(try XCTUnwrap(yellow.action))
+        XCTAssertEqual(picked, [.minimize])
+    }
+
+    /// Умолчание — жёлтая (замер 23.09: на зелёной всплывает палитра Moom); выбор живёт
+    /// в UserDefaults, мусор в ключе — снова жёлтая.
+    func testButtonChoiceDefaultsToYellowAndPersists() throws {
+        let suite = "MenuButtonTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(MenuButton.stored(in: defaults), .minimize)
+        let app = IsolatedClaudeApp.make()
+        let actions = ClaudeActions(app: app, commands: CommandChannel())
+        let menu = MinimizeMenu(app: app, actions: actions, defaults: defaults)
+        XCTAssertEqual(menu.menuButton, .minimize)
+        menu.menuButton = .zoom
+        XCTAssertEqual(MenuButton.stored(in: defaults), .zoom)
+        XCTAssertEqual(MinimizeMenu(app: app, actions: actions, defaults: defaults).menuButton, .zoom)
+        defaults.set("мусор", forKey: MenuModel.menuButtonKey)
+        XCTAssertEqual(MenuButton.stored(in: defaults), .minimize)
+    }
+}

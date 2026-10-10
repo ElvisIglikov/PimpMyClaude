@@ -1,0 +1,596 @@
+{
+  "version": 1,
+  "themes": [
+    {
+      "id": "red",
+      "name": "Красная",
+      "type": "dark",
+      "palette": {
+        "accent": "#ff5c5c",
+        "background": "#3b1414",
+        "foreground": "#ffe4e4",
+        "sidebar": "#2a0e0e",
+        "panel": "#4e1d1d",
+        "muted": "#d69a9a"
+      }
+    },
+    {
+      "id": "orange",
+      "name": "Оранжевая",
+      "type": "dark",
+      "palette": {
+        "accent": "#ff9147",
+        "background": "#3a2010",
+        "foreground": "#f9e9dc",
+        "sidebar": "#2a170b",
+        "panel": "#4a2b16",
+        "muted": "#cfae92"
+      }
+    },
+    {
+      "id": "yellow",
+      "name": "Жёлтая",
+      "type": "dark",
+      "palette": {
+        "accent": "#ffc83d",
+        "background": "#3a2e0c",
+        "foreground": "#fdf4d9",
+        "sidebar": "#2a2107",
+        "panel": "#4d3e12",
+        "muted": "#d5bd82"
+      }
+    },
+    {
+      "id": "green",
+      "name": "Зелёная",
+      "type": "dark",
+      "palette": {
+        "accent": "#46d18b",
+        "background": "#0f2e22",
+        "foreground": "#dff5e9",
+        "sidebar": "#0a2118",
+        "panel": "#164031",
+        "muted": "#93c4ab"
+      }
+    },
+    {
+      "id": "matrix",
+      "name": "Матрица",
+      "type": "dark",
+      "palette": {
+        "accent": "#1eff5a",
+        "background": "#0b1f0b",
+        "foreground": "#b8ffca",
+        "sidebar": "#071607",
+        "panel": "#123012",
+        "muted": "#9bffb8"
+      }
+    },
+    {
+      "id": "teal",
+      "name": "Бирюзовая",
+      "type": "dark",
+      "palette": {
+        "accent": "#2fe0d6",
+        "background": "#0d3033",
+        "foreground": "#dcfbf8",
+        "sidebar": "#082326",
+        "panel": "#144145",
+        "muted": "#8dc6c7"
+      }
+    },
+    {
+      "id": "tokyo",
+      "name": "Токийская ночь",
+      "type": "dark",
+      "palette": {
+        "accent": "#7aa2f7",
+        "background": "#1a1b26",
+        "foreground": "#a9b1d6",
+        "sidebar": "#16161e",
+        "panel": "#1f2335",
+        "muted": "#787c99"
+      }
+    },
+    {
+      "id": "blue",
+      "name": "Синяя",
+      "type": "dark",
+      "palette": {
+        "accent": "#5b9bff",
+        "background": "#122446",
+        "foreground": "#e4ecfb",
+        "sidebar": "#0c1a33",
+        "panel": "#1a3160",
+        "muted": "#9db1d6"
+      }
+    },
+    {
+      "id": "violet",
+      "name": "Фиолетовая",
+      "type": "dark",
+      "palette": {
+        "accent": "#b57bff",
+        "background": "#221640",
+        "foreground": "#efe7ff",
+        "sidebar": "#180f2e",
+        "panel": "#2d1f52",
+        "muted": "#b3a2d6"
+      }
+    },
+    {
+      "id": "dracula",
+      "name": "Дракула",
+      "type": "dark",
+      "palette": {
+        "accent": "#bd93f9",
+        "background": "#282a36",
+        "foreground": "#f8f8f2",
+        "sidebar": "#21222c",
+        "panel": "#343746",
+        "muted": "#6272a4"
+      }
+    },
+    {
+      "id": "lilac",
+      "name": "Сиреневая",
+      "type": "dark",
+      "palette": {
+        "accent": "#d8a7ff",
+        "background": "#2c1c3a",
+        "foreground": "#f5e9ff",
+        "sidebar": "#201429",
+        "panel": "#3d2851",
+        "muted": "#c0a8d4"
+      }
+    },
+    {
+      "id": "pink",
+      "name": "Розовая",
+      "type": "dark",
+      "palette": {
+        "accent": "#ff8ec4",
+        "background": "#3b1a2f",
+        "foreground": "#ffe6f3",
+        "sidebar": "#2b1123",
+        "panel": "#4f2441",
+        "muted": "#d9a6c4"
+      }
+    },
+    {
+      "id": "crimson",
+      "name": "Малиновая",
+      "type": "dark",
+      "palette": {
+        "accent": "#f4335f",
+        "background": "#3c0f1d",
+        "foreground": "#ffe0e7",
+        "sidebar": "#2b0a15",
+        "panel": "#501528",
+        "muted": "#d4939f"
+      }
+    },
+    {
+      "id": "brown",
+      "name": "Коричневая",
+      "type": "dark",
+      "palette": {
+        "accent": "#d9a066",
+        "background": "#2e2018",
+        "foreground": "#f3e7db",
+        "sidebar": "#221710",
+        "panel": "#3f2d21",
+        "muted": "#bfa48c"
+      }
+    },
+    {
+      "id": "gray",
+      "name": "Серая",
+      "type": "dark",
+      "palette": {
+        "accent": "#a8b3c4",
+        "background": "#131518",
+        "foreground": "#e6e8ec",
+        "sidebar": "#0e1013",
+        "panel": "#1c1f24",
+        "muted": "#9096a0"
+      }
+    },
+    {
+      "id": "vkusnoff",
+      "name": "Вкуснофф",
+      "type": "dark",
+      "palette": {
+        "accent": "#ff9800",
+        "background": "#0f0f10",
+        "foreground": "#f5f2ee",
+        "sidebar": "#17171a",
+        "panel": "#1c1c1e",
+        "muted": "#b8b0a8"
+      }
+    },
+    {
+      "id": "peach",
+      "name": "Персиковая",
+      "type": "light",
+      "palette": {
+        "accent": "#d9611c",
+        "background": "#fff1e8",
+        "foreground": "#3a2216",
+        "sidebar": "#ffe2d1",
+        "panel": "#ffffff",
+        "muted": "#8a6a58"
+      }
+    },
+    {
+      "id": "lemon",
+      "name": "Лимонная",
+      "type": "light",
+      "palette": {
+        "accent": "#7f8c00",
+        "background": "#fbfae4",
+        "foreground": "#2c2f14",
+        "sidebar": "#f2f1cd",
+        "panel": "#ffffff",
+        "muted": "#6f7452"
+      }
+    },
+    {
+      "id": "cream",
+      "name": "Кремовая",
+      "type": "light",
+      "palette": {
+        "accent": "#b07d2b",
+        "background": "#fbf6e9",
+        "foreground": "#33291a",
+        "sidebar": "#f2ead4",
+        "panel": "#ffffff",
+        "muted": "#7e7154"
+      }
+    },
+    {
+      "id": "mint",
+      "name": "Мятная",
+      "type": "light",
+      "palette": {
+        "accent": "#0f8f5e",
+        "background": "#e9f8f1",
+        "foreground": "#12291f",
+        "sidebar": "#d6efe3",
+        "panel": "#ffffff",
+        "muted": "#5c7f6f"
+      }
+    },
+    {
+      "id": "sky",
+      "name": "Небесная",
+      "type": "light",
+      "palette": {
+        "accent": "#1f6feb",
+        "background": "#e9f3ff",
+        "foreground": "#10223a",
+        "sidebar": "#d7e8fd",
+        "panel": "#ffffff",
+        "muted": "#5b7590"
+      }
+    },
+    {
+      "id": "arctic",
+      "name": "Светлая",
+      "type": "light",
+      "palette": {
+        "accent": "#0066ff",
+        "background": "#f3f8ff",
+        "foreground": "#07152a",
+        "sidebar": "#e3efff",
+        "panel": "#ffffff",
+        "muted": "#4d6580"
+      }
+    },
+    {
+      "id": "lavender",
+      "name": "Лавандовая",
+      "type": "light",
+      "palette": {
+        "accent": "#7c4dff",
+        "background": "#f3eefb",
+        "foreground": "#241a33",
+        "sidebar": "#e7ddf7",
+        "panel": "#ffffff",
+        "muted": "#6f6383"
+      }
+    },
+    {
+      "id": "sakura",
+      "name": "Сакура",
+      "type": "light",
+      "palette": {
+        "accent": "#e13c78",
+        "background": "#fbe9f0",
+        "foreground": "#3a1f2b",
+        "sidebar": "#f6d8e4",
+        "panel": "#ffffff",
+        "muted": "#8b6575"
+      }
+    },
+    {
+      "id": "powder",
+      "name": "Пудровая",
+      "type": "light",
+      "palette": {
+        "accent": "#c0607f",
+        "background": "#f9eef0",
+        "foreground": "#33212a",
+        "sidebar": "#f0dde1",
+        "panel": "#ffffff",
+        "muted": "#856b73"
+      }
+    },
+    {
+      "id": "mango",
+      "name": "Манго",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#fd8b27",
+        "background": "#512b15",
+        "foreground": "#fce9de",
+        "sidebar": "#3a1d0c",
+        "panel": "#6b3c22",
+        "muted": "#be8c6f"
+      }
+    },
+    {
+      "id": "honey",
+      "name": "Мёд",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#e6ad02",
+        "background": "#503c14",
+        "foreground": "#fcf2de",
+        "sidebar": "#38290c",
+        "panel": "#695121",
+        "muted": "#bca069"
+      }
+    },
+    {
+      "id": "lemonade",
+      "name": "Лимонад",
+      "type": "light",
+      "set": "bright",
+      "palette": {
+        "accent": "#b12c00",
+        "background": "#ffeb85",
+        "foreground": "#322b08",
+        "sidebar": "#ffe45e",
+        "panel": "#fff7cf",
+        "muted": "#7f7234"
+      }
+    },
+    {
+      "id": "orangeade",
+      "name": "Апельсин",
+      "type": "light",
+      "set": "bright",
+      "palette": {
+        "accent": "#a31000",
+        "background": "#ffcb8f",
+        "foreground": "#321f08",
+        "sidebar": "#ffb969",
+        "panel": "#ffedd9",
+        "muted": "#815d35"
+      }
+    },
+    {
+      "id": "lime",
+      "name": "Лайм",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#7ed102",
+        "background": "#374912",
+        "foreground": "#f2fcde",
+        "sidebar": "#25320a",
+        "panel": "#4c631f",
+        "muted": "#95b457"
+      }
+    },
+    {
+      "id": "coral",
+      "name": "Коралл",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#fd7661",
+        "background": "#541915",
+        "foreground": "#fce0de",
+        "sidebar": "#3d100c",
+        "panel": "#6d2722",
+        "muted": "#c27b76"
+      }
+    },
+    {
+      "id": "fuchsia",
+      "name": "Фуксия",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#fd69cc",
+        "background": "#53163c",
+        "foreground": "#fcdef1",
+        "sidebar": "#3d0c2b",
+        "panel": "#6d2251",
+        "muted": "#c277a7"
+      }
+    },
+    {
+      "id": "electric",
+      "name": "Электрик",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#02baf2",
+        "background": "#143c50",
+        "foreground": "#def2fc",
+        "sidebar": "#0c2938",
+        "panel": "#215169",
+        "muted": "#6ca2bd"
+      }
+    },
+    {
+      "id": "ultra",
+      "name": "Ультрафиолет",
+      "type": "dark",
+      "set": "bright",
+      "palette": {
+        "accent": "#c674fe",
+        "background": "#381655",
+        "foreground": "#eedefc",
+        "sidebar": "#270d3f",
+        "panel": "#4b236e",
+        "muted": "#a078c2"
+      }
+    },
+    {
+      "id": "neontokyo",
+      "name": "Неоновый Токио",
+      "type": "dark",
+      "set": "opus",
+      "palette": {
+        "accent": "#ff2bd6",
+        "background": "#120c3d",
+        "foreground": "#fcdef6",
+        "sidebar": "#0c0829",
+        "panel": "#1d1555",
+        "muted": "#c86fb7"
+      }
+    },
+    {
+      "id": "retrowave",
+      "name": "Ретровейв",
+      "type": "dark",
+      "set": "opus",
+      "palette": {
+        "accent": "#00eaff",
+        "background": "#3a0a2e",
+        "foreground": "#defafc",
+        "sidebar": "#27071f",
+        "panel": "#511241",
+        "muted": "#59b7c0"
+      }
+    },
+    {
+      "id": "acid",
+      "name": "Кислота",
+      "type": "dark",
+      "set": "opus",
+      "palette": {
+        "accent": "#c6ff1a",
+        "background": "#22093a",
+        "foreground": "#f5fcde",
+        "sidebar": "#170627",
+        "panel": "#311151",
+        "muted": "#a6c059"
+      }
+    },
+    {
+      "id": "abyss",
+      "name": "Бездна",
+      "type": "dark",
+      "set": "opus",
+      "palette": {
+        "accent": "#00ffc8",
+        "background": "#061445",
+        "foreground": "#defcf6",
+        "sidebar": "#040e2f",
+        "panel": "#0d205f",
+        "muted": "#59c0aa"
+      }
+    },
+    {
+      "id": "amber",
+      "name": "Янтарный терминал",
+      "type": "dark",
+      "set": "opus",
+      "palette": {
+        "accent": "#ffb000",
+        "background": "#1e1203",
+        "foreground": "#fcf3de",
+        "sidebar": "#140c02",
+        "panel": "#2a1a06",
+        "muted": "#c0a059"
+      }
+    },
+    {
+      "id": "malachite",
+      "name": "Малахит",
+      "type": "dark",
+      "set": "opus",
+      "palette": {
+        "accent": "#ffd54a",
+        "background": "#053a2b",
+        "foreground": "#fcf5de",
+        "sidebar": "#03271d",
+        "panel": "#0b503d",
+        "muted": "#cdb97a"
+      }
+    },
+    {
+      "id": "magma",
+      "name": "Магма",
+      "type": "dark",
+      "set": "opus",
+      "palette": {
+        "accent": "#ff6a1a",
+        "background": "#3a0911",
+        "foreground": "#fce9de",
+        "sidebar": "#27060c",
+        "panel": "#51111b",
+        "muted": "#c58867"
+      }
+    },
+    {
+      "id": "laser",
+      "name": "Лазер",
+      "type": "dark",
+      "set": "opus",
+      "palette": {
+        "accent": "#ff2d55",
+        "background": "#0c0e1c",
+        "foreground": "#fcdee4",
+        "sidebar": "#080a13",
+        "panel": "#131527",
+        "muted": "#c86f80"
+      }
+    },
+    {
+      "id": "miami",
+      "name": "Майами",
+      "type": "dark",
+      "set": "opus",
+      "palette": {
+        "accent": "#ff5fa8",
+        "background": "#062a2c",
+        "foreground": "#fcdeec",
+        "sidebar": "#041d1e",
+        "panel": "#0b3a3d",
+        "muted": "#d48cad"
+      }
+    },
+    {
+      "id": "cobalt",
+      "name": "Кобальт",
+      "type": "dark",
+      "set": "opus",
+      "palette": {
+        "accent": "#4d8dff",
+        "background": "#2b1206",
+        "foreground": "#dee9fc",
+        "sidebar": "#1d0c04",
+        "panel": "#3c1b0b",
+        "muted": "#7292ca"
+      }
+    }
+  ]
+}

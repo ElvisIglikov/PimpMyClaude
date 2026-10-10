@@ -1,0 +1,9 @@
+# gitleaks: default rules plus one allowlist.
+# Names of localStorage keys in claude-patch/inject.js ("myclaude-…") look like API keys to the
+# generic-api-key rule; they are plain storage key names, not secrets.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "localStorage key names of the page script"
+regexes = ['''^myclaude-[a-z0-9._:-]+$''']

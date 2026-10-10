@@ -1,0 +1,849 @@
+import AppKit
+import Foundation
+
+// Порт claude-patch/patch-claude.mjs (команды patch / restore / status) на Swift.
+// Отличия от mjs — по решениям критика плана WF4:
+//   2 — Claude закрывается через NSRunningApplication.terminate/forceTerminate, не osascript;
+//   3 — право на запись проверяется ДО закрытия Claude (промпт «Управление приложениями» всплывает первым);
+//   4 — быстрый статус берётся из installed.json (версия + ElectronAsarIntegrity), без разбора asar;
+//   6 — app.asar читается через Data(.mappedIfSafe);
+//   8 — «Снять патч…» = restore из бэкапа + переподпись ad-hoc.
+
+public enum Patcher {
+    public static let requiredLoaderVersion = Asar.loaderVersion
+    public static let claudeBundleID = "com.anthropic.claudefordesktop"
+    public static let supportDirName = "MyClaude" // лоадер v6 уже смотрит сюда — не переименовывать
+    /// Комплект воркфлоу: `resources/workflow-kit` в бандле → `MyClaude/workflow` рядом с
+    /// command.json (решение 3 плана WF9). Имя папки в Application Support знает текст KICKOFF.md.
+    public static let workflowKitDirName = "workflow-kit"
+    public static let workflowDirName = "workflow"
+
+    /// Значения по умолчанию для claude.json (настройки 👾 Элвиса из ElvisOS).
+    /// `sidePadding: 24` — слово Элвиса 08.10.2026 (WF128; было 5 с 04.09). Та же цифра лежит
+    /// в `LiveStyle.defaultSidePadding` (таргет ClaudeAX его не видит), `claude-patch/claude.json`
+    /// и `DEFAULTS` в `patch-claude.mjs`. На существующих установках это ничего не меняет:
+    /// `ensureConfig` готовый файл не перезаписывает.
+    /// `minWindowWidth: 280` (WF45, задача #5751) — у Элвиса в живом файле стоит 280, у команды
+    /// приезжало 360, и из-за этого две плитки раскладок из четырёх были серыми (ячейка уже
+    /// минимальной ширины окна). Та же цифра — в `claude-patch/claude.json`.
+    /// `windowGap: 5` (WF77, задача #6734) — зазор между окнами при расстановке, столько же
+    /// у Элвиса стоит живьём. Пункта меню у ключа нет, правится руками; ключа нет вовсе —
+    /// `ClaudeActions.windowGap()` подставит те же 5, так что у команды ничего не поедет.
+    public static let configDefaults: [String: Int] = [
+        "minWindowWidth": 280, "sidePadding": 24, "windowGap": 5,
+    ]
+
+    public static let cssFileName = "claude.css"
+    /// Маркеры авто-блока живого claude.css — побайтно те же, что `LiveStyle.markerStart/markerEnd`
+    /// (таргеты `Patcher` и `ClaudeAX` друг друга не видят, поэтому строки продублированы, как
+    /// уже продублирован `sidePadding`).
+    public static let cssMarkerStart = "/* PimpMyClaude:auto */"
+    public static let cssMarkerEnd = "/* /PimpMyClaude:auto */"
+
+    /// Слияние claude.css при установке (WF45, задача #5723). Приложение владеет РОВНО одним
+    /// блоком между маркерами; всё, что человек дописал вне блока, остаётся дословно — это
+    /// обещает `docs/TEAM.md`, и ровно так же делает `LiveStyle.applying`.
+    /// Живого файла нет — кладём файл из бандла целиком; в бандле блока нет — живой не трогаем.
+    public static func mergeCSS(bundled: String, live: String?) -> String {
+        guard let live = live else { return bundled }
+        guard let block = cssBlock(of: bundled) else { return live }
+        var lines = live.components(separatedBy: "\n")
+        // Хвост после последнего перевода строки — не строка файла; финальный \n добавим сами.
+        if lines.last?.isEmpty == true { lines.removeLast() }
+        let starts = lines.indices.filter { isCSSMarker(lines[$0], cssMarkerStart) }
+        let ends = lines.indices.filter { isCSSMarker(lines[$0], cssMarkerEnd) }
+        if starts.count == 1, ends.count == 1, starts[0] < ends[0] {
+            lines.replaceSubrange(starts[0]...ends[0], with: block)
+        } else {
+            // Маркеров нет, они битые или блок задвоился: старый мусор вырезаем от первого
+            // маркера до последнего и дописываем блок в конец (последний выигрывает по каскаду).
+            if let first = (starts + ends).min(), let last = (starts + ends).max() {
+                lines.removeSubrange(first...last)
+            }
+            while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
+            lines += block
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Строки авто-блока файла из бандла (от маркера до маркера включительно); блока нет — nil.
+    private static func cssBlock(of text: String) -> [String]? {
+        let lines = text.components(separatedBy: "\n")
+        guard let start = lines.indices.first(where: { isCSSMarker(lines[$0], cssMarkerStart) }),
+              let end = lines.indices.last(where: { isCSSMarker(lines[$0], cssMarkerEnd) }),
+              start < end else { return nil }
+        return Array(lines[start...end])
+    }
+
+    private static func isCSSMarker(_ line: String, _ marker: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces) == marker
+    }
+
+    /// Редакция страницы из её же текста: строка `const VERSION = "wf79-a-1";` → (79, "a", 1).
+    /// Метки нет или она незнакомого вида — nil.
+    public static func injectVersion(of text: String) -> (Int, String, Int)? {
+        guard let head = text.range(of: "const VERSION = \"") else { return nil }
+        let rest = text[head.upperBound...]
+        guard let tail = rest.firstIndex(of: "\"") else { return nil }
+        let parts = rest[rest.startIndex..<tail].components(separatedBy: "-")
+        guard parts.count == 3, parts[0].hasPrefix("wf"), !parts[1].isEmpty,
+              let wave = Int(parts[0].dropFirst(2)), let step = Int(parts[2]) else { return nil }
+        return (wave, parts[1], step)
+    }
+
+    /// Установка не отнимает фичи (задача #7035, случай 22.09.2026): приложение несёт копию
+    /// `inject.js` с той минуты, когда его собрали, а живую страницу с тех пор могли поправить
+    /// не одну волну. Живая редакция СТАРШЕ той, что в сборке, — живую оставляем: «Пропатчить
+    /// Claude» после обновления Claude чинит патч, а не откатывает страницу на две волны назад.
+    /// Редакция не читается хоть у одного из двоих — кладём файл из сборки, как было до WF79.
+    public static func injectKeepsLive(bundled: String, live: String?) -> Bool {
+        guard let live = live,
+              let liveVersion = injectVersion(of: live),
+              let bundledVersion = injectVersion(of: bundled) else { return false }
+        if liveVersion.0 != bundledVersion.0 { return liveVersion.0 > bundledVersion.0 }
+        if liveVersion.1 != bundledVersion.1 { return liveVersion.1 > bundledVersion.1 }
+        return liveVersion.2 > bundledVersion.2
+    }
+
+    public static var defaultSupportDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+            .appendingPathComponent(supportDirName, isDirectory: true)
+    }
+
+    /// Ресурсы внутри .app: entitlements.plist, inject.js, claude.css (кладёт tools/bundle.sh).
+    public static var bundledResourcesDirectory: URL? {
+        if let override = ProcessInfo.processInfo.environment["PIMPMYCLAUDE_RESOURCES"] {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return Bundle.main.resourceURL
+    }
+
+    /// Копии Claude.app, первой — та, которую macOS открывает по умолчанию.
+    /// Launch Services помнит вообще всё, что когда-либо запускалось с этим bundle id: скрытые огрызки
+    /// (`.Claude-before-….app`, `…app.failed`) и старые бэкапы. Из списка берём только настоящие
+    /// установки в «Программах» — своих и системных, — иначе выбор превращается в список из тридцати папок.
+    public static func locateClaude() -> [URL] {
+        var found: [URL] = []
+        var seen = Set<String>()
+        func add(_ url: URL?) {
+            guard let url = url, FileManager.default.fileExists(atPath: url.appendingPathComponent("Contents/Info.plist").path) else { return }
+            let key = url.standardizedFileURL.resolvingSymlinksInPath().path
+            // Предпочтительная копия Launch Services тоже бывает огрызком: 23.09 ею оказалась
+            // скрытая `.Claude-before-Matrix-1.20186.1.app` — «Пропатчить Claude» её пропатчил и запустил
+            // вторым Claude рядом с настоящим (#7096).
+            guard isVisibleInstall(URL(fileURLWithPath: key, isDirectory: true)) else { return }
+            if seen.insert(key).inserted { found.append(URL(fileURLWithPath: key, isDirectory: true)) }
+        }
+        let userApplications = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
+        let folders = ["/Applications", userApplications.standardizedFileURL.path]
+
+        add(NSWorkspace.shared.urlForApplication(withBundleIdentifier: claudeBundleID))
+        for url in NSWorkspace.shared.urlsForApplications(withBundleIdentifier: claudeBundleID)
+        where isRegularInstall(url, in: folders) { add(url) }
+        add(URL(fileURLWithPath: "/Applications/Claude.app", isDirectory: true))
+        add(userApplications.appendingPathComponent("Claude.app", isDirectory: true))
+        return found
+    }
+
+    private static func isRegularInstall(_ url: URL, in folders: [String]) -> Bool {
+        guard url.pathExtension == "app", !url.lastPathComponent.hasPrefix(".") else { return false }
+        return folders.contains(url.deletingLastPathComponent().standardizedFileURL.path)
+    }
+
+    /// Копия, которую можно показывать и патчить (#7096): `.app`, и ни имя, ни одна папка пути
+    /// не скрытые — мимо идут `.Claude-before-….app`, `….app.failed` и корзина. Где лежит копия,
+    /// не проверяем: у команды Claude бывает не только в «Программах». Чистая — под тестом.
+    public static func isVisibleInstall(_ url: URL) -> Bool {
+        let url = url.standardizedFileURL
+        guard url.pathExtension == "app" else { return false }
+        return !url.pathComponents.contains { $0.hasPrefix(".") }
+    }
+
+    /// Сохранённый выбор копии Claude (`claudeAppPath`, #7096): годится, только если это видимая
+    /// копия из нынешнего списка. `forget` — путь не проходит `isVisibleInstall`, его пора стереть:
+    /// иначе выбор так и держался бы за скрытую копию. Чистая — под тестом.
+    public static func savedClaude(_ saved: String?, among copies: [URL]) -> (url: URL?, forget: Bool) {
+        guard let saved = saved else { return (nil, false) }
+        guard isVisibleInstall(URL(fileURLWithPath: saved, isDirectory: true)) else { return (nil, true) }
+        return (copies.first { $0.path == saved }, false)
+    }
+}
+
+// ------------------------------------------------------------------ ошибки
+
+public enum PatchError: LocalizedError {
+    case claudeNotFound
+    case insideClaude
+    case needsAppManagement(appPath: String, admin: Bool)
+    case entitlementsMissing(String)
+    case claudeWontQuit
+    case noBackup(version: String, directory: String)
+    case badInfoPlist(String)
+    case installBroke(why: String, restored: Bool)
+    case tool(name: String, output: String)
+    /// Второй замок Electron 41+ включён (A2): патч не ставим, Claude не закрываем.
+    case integrityDigestOn(version: String, why: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .claudeNotFound:
+            return "Claude.app не найден. Скачай его с claude.ai/download и положи в «Программы»."
+        case .insideClaude:
+            return "Патч запущен изнутри Claude — он закроет сам себя. Закрой Claude Code в окне Claude и запусти PimpMyClaude из Finder."
+        case .needsAppManagement(let appPath, let admin):
+            let base = "macOS не пускает PimpMyClaude менять \(appPath).\n"
+                + "Системные настройки → Конфиденциальность и безопасность → Управление приложениями → включи PimpMyClaude, потом нажми «Пропатчить Claude» ещё раз."
+            return admin ? base : base + "\n\nТы не администратор этого Мака: зайди под админом или переустанови Claude в свою папку ~/Applications."
+        case .entitlementsMissing(let path):
+            return "В сборке нет entitlements.plist (\(path)) — без него Claude после переподписи потеряет микрофон и экран."
+        case .claudeWontQuit:
+            return "Claude не закрывается — закрой все его окна вручную и нажми «Пропатчить Claude» ещё раз."
+        case .noBackup(let version, let directory):
+            return "Бэкапа для Claude \(version) нет в \(directory). Настоящий откат — переустановить Claude с claude.ai/download."
+        case .badInfoPlist(let path):
+            return "Не читается \(path)"
+        case .installBroke(let why, let restored):
+            let base = "Патч не встал: \(why)\n\n"
+            return restored
+                ? base + "Оригинальный Claude вернулся из бэкапа — он запускается. Нажми «Пропатчить Claude» ещё раз."
+                : base + "Claude сейчас может не запуститься. Нажми «Пропатчить Claude» ещё раз — приложение дочинит хэш и подпись; "
+                    + "не помогло — «Снять патч…» (панель у часов › Ещё) или переустанови Claude с claude.ai/download."
+        case .tool(let name, let output):
+            return "\(name) не отработал: \(output)"
+        case .integrityDigestOn(let version, let why):
+            return "Claude \(version) Пимп пока не патчит: \(why). Claude не тронут — он запускается как был."
+        }
+    }
+}
+
+// ------------------------------------------------------------------ статус
+
+/// Быстрый статус для меню-бара: версия Claude + ElectronAsarIntegrity против installed.json.
+public enum ClaudeState: Equatable {
+    case claudeNotFound
+    case notInstalled(version: String)
+    case lost(version: String, reason: String)
+    case installed(version: String, loaderVersion: Int)
+
+    public var menuTitle: String {
+        switch self {
+        case .claudeNotFound: return "Claude не найден"
+        case .notInstalled(let version): return "Патч не стоит · Claude \(version)"
+        case .lost(let version, let reason): return "Патч слетел (\(reason)) · Claude \(version)"
+        case .installed(let version, let loader): return "Патч стоит · v\(loader) · Claude \(version)"
+        }
+    }
+
+    public var isInstalled: Bool { if case .installed = self { return true }; return false }
+}
+
+/// Подробный статус (разбирает asar) — для окна «Статус…».
+public struct ClaudeFullStatus {
+    public let appPath: String
+    public let version: String
+    public let mainPath: String
+    public let loaderVersion: Int
+    public let headerSHA256: String
+    public let infoPlistHash: String?
+    public let signatureValid: Bool
+    public let backupDirectory: String?
+    public let configText: String?
+
+    public var hashMatches: Bool { infoPlistHash == headerSHA256 }
+
+    public var report: String {
+        var lines = ["Claude \(version) — \(appPath)"]
+        lines.append("Лоадер MyClaude: \(loaderVersion > 0 ? "v\(loaderVersion)" : "не стоит") (нужен v\(Patcher.requiredLoaderVersion))")
+        lines.append("Главный сценарий: \(mainPath)")
+        lines.append("Хэш asar в Info.plist \(hashMatches ? "совпадает" : "НЕ совпадает") с архивом")
+        lines.append("Подпись Claude: \(signatureValid ? "валидна" : "НЕ валидна")")
+        lines.append("Бэкап оригинала: \(backupDirectory ?? "нет")")
+        lines.append("Настройки: \(configText ?? "файла нет, будут значения по умолчанию")")
+        return lines.joined(separator: "\n")
+    }
+}
+
+/// Чем кончилась установка.
+public enum InstallOutcome {
+    case alreadyInstalled(version: String)
+    case repaired(version: String)
+    case installed(version: String)
+}
+
+// ------------------------------------------------------------------ патчер
+
+public struct ClaudePatcher {
+    public var appURL: URL
+    public var supportDirectory: URL
+    /// Где лежат entitlements.plist, inject.js, claude.css. nil — живые файлы не обновляем.
+    public var resourcesDirectory: URL?
+    /// Тест патчит копию: подписывать нечего и Claude трогать нельзя.
+    public var signsApp = true
+    public var managesClaudeProcess = true
+    /// Все копии Claude на Маке — их бэкапы уборка не трогает (G3 WF101). Тест подменяет.
+    public var claudeCopies: () -> [URL] = { Patcher.locateClaude() }
+
+    public init(appURL: URL,
+                supportDirectory: URL = Patcher.defaultSupportDirectory,
+                resourcesDirectory: URL? = Patcher.bundledResourcesDirectory) {
+        self.appURL = appURL
+        self.supportDirectory = supportDirectory
+        self.resourcesDirectory = resourcesDirectory
+    }
+
+    var asarURL: URL { appURL.appendingPathComponent("Contents/Resources/app.asar") }
+    var infoPlistURL: URL { appURL.appendingPathComponent("Contents/Info.plist") }
+    var configURL: URL { supportDirectory.appendingPathComponent("claude.json") }
+    var installedURL: URL { supportDirectory.appendingPathComponent("installed.json") }
+    func backupDirectory(_ version: String) -> URL {
+        supportDirectory.appendingPathComponent("backups", isDirectory: true).appendingPathComponent(version, isDirectory: true)
+    }
+
+    // -------------------------------------------------------------- Пропатчить Claude
+
+    /// Порядок по решению 3: найти → проверить запись (промпт App Management ДО закрытия Claude)
+    /// → закрыть → бэкап → патч → хэш → ad-hoc подпись → открыть Claude.
+    /// `relaunch: false` — Claude после патча не открывать: его откроет вызывающий (обновление
+    /// Claude из Пимпа, WF84 #7078, сперва возвращает окна по снимку).
+    @discardableResult
+    public func install(relaunch: Bool = true, progress: (String) -> Void = { _ in }) throws -> InstallOutcome {
+        try refuseIfInsideClaude()
+        let version = try appVersion()
+        // Второй замок Electron 41+ (A2) — до закрытия Claude и бэкапа: откажем, прежний Claude цел.
+        switch Patcher.asarIntegrityVerdict(framework: Patcher.electronFramework(of: appURL)) {
+        case .ok: break
+        case .refuse(let why): throw PatchError.integrityDigestOn(version: version, why: why)
+        case .unknown(let why): progress("Второй замок Electron (__asar_integrity) не проверен: \(why). Ставлю патч как обычно.")
+        }
+        let entitlements = try entitlementsURL()
+        try ensureConfig()
+
+        let before = try Asar.status(of: asarURL)
+        progress("Claude \(version), главный сценарий \(before.mainPath), лоадер сейчас: \(before.loaderVersion > 0 ? "v\(before.loaderVersion)" : "нет")")
+        progress("Настройки \(configURL.path)")
+
+        if before.loaderVersion == Patcher.requiredLoaderVersion {
+            // Лоадер есть, но прошлый прогон мог упасть между записью архива и подписью:
+            // тогда хэш в Info.plist или подпись протухли, и Claude не запустится.
+            if infoPlistHash() == before.headerSHA256 && (!signsApp || signatureValid()) {
+                progress("Патч уже стоит. Обновляю только живые файлы в Application Support.")
+                try installLiveFiles(progress: progress)
+                try writeInstalled(version: version, headerSHA256: before.headerSHA256, mainPath: before.mainPath)
+                pruneBackups()
+                return .alreadyInstalled(version: version)
+            }
+            progress("Лоадер стоит, но хэш или подпись не сходятся — дочиню.")
+            try waitForWritable(progress: progress)
+            try quitClaude(progress: progress)
+            try setInfoPlistHash(before.headerSHA256)
+            try signAndVerify(entitlements: entitlements, progress: progress)
+            try installLiveFiles(progress: progress)
+            try writeInstalled(version: version, headerSHA256: before.headerSHA256, mainPath: before.mainPath)
+            pruneBackups()
+            if relaunch { relaunchClaude(progress: progress) }
+            return .repaired(version: version)
+        }
+
+        try waitForWritable(progress: progress)
+        try quitClaude(progress: progress)
+        try makeBackup(version: version, loaderVersion: before.loaderVersion, progress: progress)
+        progress("Ставлю лоадер в app.asar…")
+        let result = try Asar.patch(asarURL)
+        // Архив уже переписан: с этой секунды и до удачной подписи Claude не запускается.
+        // Осечка здесь — откат из бэкапа и внятная плашка (WF45, задача #5724).
+        do {
+            try setInfoPlistHash(result.headerSHA256)
+            try signAndVerify(entitlements: entitlements, progress: progress)
+        } catch {
+            throw rollback(after: error, version: version, entitlements: entitlements, progress: progress)
+        }
+        try installLiveFiles(progress: progress)
+        try writeInstalled(version: version, headerSHA256: result.headerSHA256, mainPath: result.mainPath)
+        pruneBackups()
+        if relaunch {
+            progress("Готово. Открываю Claude…")
+            relaunchClaude(progress: progress)
+        }
+        progress("Если macOS заново спросит разрешения (микрофон, экран) — это из-за новой подписи, один раз.")
+        return .installed(version: version)
+    }
+
+    /// Задача #5724. Между `Asar.patch` и удачной подписью Claude сломан: возвращаем оригиналы
+    /// из бэкапа, сделанного минуту назад, и отдаём наверх ошибку, в которой сказано, что нажать.
+    /// Бросать отсюда нечего — исключение возвращается вызывающему, чтобы он его бросил сам.
+    func rollback(after error: Error, version: String, entitlements: URL?, progress: (String) -> Void) -> Error {
+        let why = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        let directory = backupDirectory(version)
+        let backupAsar = directory.appendingPathComponent("app.asar")
+        let backupInfo = directory.appendingPathComponent("Info.plist")
+        guard FileManager.default.fileExists(atPath: backupAsar.path) else {
+            progress("Откатить нечем: бэкапа Claude \(version) в \(directory.path) нет.")
+            return PatchError.installBroke(why: why, restored: false)
+        }
+        progress("Хэш или подпись не дописались — возвращаю оригинальный Claude \(version) из бэкапа…")
+        do {
+            try Data(contentsOf: backupAsar, options: .mappedIfSafe).write(to: asarURL, options: .atomic)
+            if FileManager.default.fileExists(atPath: backupInfo.path) {
+                try Data(contentsOf: backupInfo).write(to: infoPlistURL, options: .atomic)
+            }
+        } catch {
+            progress("Откат не удался: \(error.localizedDescription)")
+            return PatchError.installBroke(why: why, restored: false)
+        }
+        // Подпись после отката — по возможности: именно она и падала. Не вышло — файлы всё равно свои.
+        try? signAndVerify(entitlements: entitlements, progress: progress)
+        progress("Оригинальные app.asar и Info.plist вернулись на место.")
+        return PatchError.installBroke(why: why, restored: true)
+    }
+
+    // -------------------------------------------------------------- Снять патч
+
+    /// Решение 8: возврат оригинальных файлов из бэкапа + переподпись ad-hoc.
+    /// Подпись Apple при этом не возвращается — честный откат только переустановкой Claude.
+    public func restore(progress: (String) -> Void = { _ in }) throws {
+        try refuseIfInsideClaude()
+        let version = try appVersion()
+        let directory = backupDirectory(version)
+        let backupAsar = directory.appendingPathComponent("app.asar")
+        let backupInfo = directory.appendingPathComponent("Info.plist")
+        guard FileManager.default.fileExists(atPath: backupAsar.path) else {
+            throw PatchError.noBackup(version: version, directory: directory.path)
+        }
+        let entitlements = try entitlementsURL()
+        try waitForWritable(progress: progress)
+        try quitClaude(progress: progress)
+        progress("Возвращаю оригинальные app.asar и Info.plist \(version)…")
+        try Data(contentsOf: backupAsar, options: .mappedIfSafe).write(to: asarURL, options: .atomic)
+        if FileManager.default.fileExists(atPath: backupInfo.path) {
+            try Data(contentsOf: backupInfo).write(to: infoPlistURL, options: .atomic)
+        }
+        try signAndVerify(entitlements: entitlements, progress: progress)
+        try? FileManager.default.removeItem(at: installedURL)
+        progress("Готово. Подпись осталась локальной — подпись Apple вернёт только переустановка Claude. Открываю Claude…")
+        relaunchClaude(progress: progress)
+    }
+
+    // -------------------------------------------------------------- Статус
+
+    /// Быстрый статус (решение 4): версия + ElectronAsarIntegrity против installed.json.
+    /// Если installed.json нет или не сходится — один разбор asar, чтобы не соврать про чужую
+    /// установку (патч мог поставить старый patch-claude.mjs); удачную находку записываем.
+    /// Номер лоадера в записи обязан быть нужным (WF45, задача #5722): иначе после подъёма
+    /// лоадера у всей команды остался бы старый лоадер и зелёная галка «Патч стоит».
+    public func state() -> ClaudeState {
+        guard let version = try? appVersion() else { return .claudeNotFound }
+        let recorded = installedRecord()
+        let currentHash = infoPlistHash()
+        if let recorded = recorded, recorded.version == version, recorded.headerSHA256 == currentHash, currentHash != nil,
+           recorded.loaderVersion == Patcher.requiredLoaderVersion {
+            return .installed(version: version, loaderVersion: recorded.loaderVersion)
+        }
+        guard let asar = try? Asar.status(of: asarURL) else {
+            return recorded == nil ? .notInstalled(version: version) : .lost(version: version, reason: "app.asar не читается")
+        }
+        if asar.loaderVersion == Patcher.requiredLoaderVersion && currentHash == asar.headerSHA256 {
+            try? writeInstalled(version: version, headerSHA256: asar.headerSHA256, mainPath: asar.mainPath)
+            return .installed(version: version, loaderVersion: asar.loaderVersion)
+        }
+        let reason: String
+        if asar.loaderVersion == 0 { reason = "Claude обновился" }
+        else if asar.loaderVersion != Patcher.requiredLoaderVersion { reason = "старый лоадер v\(asar.loaderVersion)" }
+        else { reason = "хэш в Info.plist не сходится" }
+        return recorded == nil ? .notInstalled(version: version) : .lost(version: version, reason: reason)
+    }
+
+    /// Подробный статус — как `patch-claude.mjs status`.
+    public func fullStatus() throws -> ClaudeFullStatus {
+        let version = try appVersion()
+        let asar = try Asar.status(of: asarURL)
+        let backup = backupDirectory(version)
+        let hasBackup = FileManager.default.fileExists(atPath: backup.appendingPathComponent("app.asar").path)
+        let config = try? String(contentsOf: configURL, encoding: .utf8)
+        return ClaudeFullStatus(appPath: appURL.path,
+                                version: version,
+                                mainPath: asar.mainPath,
+                                loaderVersion: asar.loaderVersion,
+                                headerSHA256: asar.headerSHA256,
+                                infoPlistHash: infoPlistHash(),
+                                signatureValid: signatureValid(),
+                                backupDirectory: hasBackup ? backup.path : nil,
+                                configText: config?.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces))
+    }
+
+    // -------------------------------------------------------------- Info.plist
+
+    public func appVersion() throws -> String {
+        guard let data = try? Data(contentsOf: infoPlistURL),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let version = plist["CFBundleShortVersionString"] as? String else {
+            throw PatchError.badInfoPlist(infoPlistURL.path)
+        }
+        return version
+    }
+
+    func infoPlistHash() -> String? {
+        guard let data = try? Data(contentsOf: infoPlistURL),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let integrity = plist["ElectronAsarIntegrity"] as? [String: Any],
+              let entry = integrity["Resources/app.asar"] as? [String: Any] else { return nil }
+        return entry["hash"] as? String
+    }
+
+    /// PlistBuddy правит один ключ и не переписывает файл — как в mjs.
+    /// Не вышло (нет PlistBuddy, битый plist) — пишем целиком через PropertyListSerialization.
+    func setInfoPlistHash(_ hash: String) throws {
+        let buddy = "/usr/libexec/PlistBuddy"
+        if FileManager.default.isExecutableFile(atPath: buddy),
+           (try? Shell.run(buddy, ["-c", "Set :ElectronAsarIntegrity:Resources/app.asar:hash \(hash)", infoPlistURL.path])) != nil,
+           infoPlistHash() == hash {
+            return
+        }
+        guard let data = try? Data(contentsOf: infoPlistURL),
+              var plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            throw PatchError.badInfoPlist(infoPlistURL.path)
+        }
+        var integrity = plist["ElectronAsarIntegrity"] as? [String: Any] ?? [:]
+        var entry = integrity["Resources/app.asar"] as? [String: Any] ?? ["algorithm": "SHA256"]
+        entry["hash"] = hash
+        integrity["Resources/app.asar"] = entry
+        plist["ElectronAsarIntegrity"] = integrity
+        let out = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+        try out.write(to: infoPlistURL, options: .atomic)
+    }
+
+    // -------------------------------------------------------------- подпись
+
+    func entitlementsURL() throws -> URL? {
+        guard signsApp else { return nil }
+        guard let directory = resourcesDirectory else { throw PatchError.entitlementsMissing("ресурсы приложения не найдены") }
+        let url = directory.appendingPathComponent("entitlements.plist")
+        guard FileManager.default.fileExists(atPath: url.path) else { throw PatchError.entitlementsMissing(url.path) }
+        return url
+    }
+
+    func signAndVerify(entitlements: URL?, progress: (String) -> Void) throws {
+        guard signsApp, let entitlements = entitlements else { return }
+        progress("Переподписываю Claude локальной подписью…")
+        try Shell.run("/usr/bin/xattr", ["-cr", appURL.path])
+        try Shell.run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", appURL.path])
+        try Shell.run("/usr/bin/codesign", ["--force", "--sign", "-", "--timestamp=none", "--entitlements", entitlements.path, appURL.path])
+        try Shell.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", appURL.path])
+    }
+
+    func signatureValid() -> Bool {
+        (try? Shell.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", appURL.path])) != nil
+    }
+
+    // -------------------------------------------------------------- права на запись
+
+    /// Решение 3: пробная запись в Contents/Resources. Первая неудача поднимает системный промпт
+    /// «Управление приложениями»; после «Разрешить» следующая проба проходит и установка едет дальше.
+    func waitForWritable(timeout: TimeInterval = 60, progress: (String) -> Void) throws {
+        let probe = appURL.appendingPathComponent("Contents/Resources/.pimpmyclaude-write-test")
+        var announced = false
+        let started = Date()
+        let deadline = started.addingTimeInterval(timeout)
+        while true {
+            let errno = writeProbe(probe)
+            if errno == 0 { return }
+            // EACCES обычно означает чужого владельца (промпта не будет), но на новых macOS отказ
+            // «Управления приложениями» тоже может прийти как EACCES — даём промпту 10 с, потом сдаёмся.
+            if errno == EACCES, Date().timeIntervalSince(started) > 10 {
+                throw PatchError.needsAppManagement(appPath: appURL.path, admin: currentUserIsAdmin())
+            }
+            if !announced {
+                announced = true
+                progress("macOS спрашивает разрешение «Управление приложениями» — нажми «Разрешить», дальше сам.")
+            }
+            if Date() >= deadline {
+                throw PatchError.needsAppManagement(appPath: appURL.path, admin: currentUserIsAdmin())
+            }
+            Thread.sleep(forTimeInterval: 0.75)
+        }
+    }
+
+    /// 0 — записалось; иначе errno (EPERM — App Management, EACCES — чужой владелец).
+    private func writeProbe(_ probe: URL) -> Int32 {
+        let fd = open(probe.path, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+        if fd < 0 { return errno }
+        close(fd)
+        unlink(probe.path)
+        return 0
+    }
+
+    private func currentUserIsAdmin() -> Bool {
+        guard let group = getgrnam("admin") else { return false }
+        let admin = group.pointee.gr_gid
+        var list = [gid_t](repeating: 0, count: 128)
+        let count = getgroups(Int32(list.count), &list)
+        guard count > 0 else { return false }
+        return list.prefix(Int(count)).contains(admin)
+    }
+
+    // -------------------------------------------------------------- процессы Claude
+
+    /// Решение 2: свои процессы ищем по bundleURL, закрываем terminate → forceTerminate.
+    func runningClaude() -> [NSRunningApplication] {
+        let base = appURL.standardizedFileURL.resolvingSymlinksInPath().path
+        return NSWorkspace.shared.runningApplications.filter { app in
+            guard let bundle = app.bundleURL?.standardizedFileURL.resolvingSymlinksInPath().path else { return false }
+            return bundle == base || bundle.hasPrefix(base + "/")
+        }
+    }
+
+    func quitClaude(progress: (String) -> Void) throws {
+        guard managesClaudeProcess else { return }
+        let running = runningClaude()
+        guard !running.isEmpty else { return }
+        progress("Закрываю Claude…")
+        running.forEach { $0.terminate() }
+        if waitUntilClosed(seconds: 20) { return }
+        runningClaude().forEach { $0.forceTerminate() }
+        if waitUntilClosed(seconds: 10) { return }
+        throw PatchError.claudeWontQuit
+    }
+
+    private func waitUntilClosed(seconds: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if runningClaude().isEmpty { return true }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return runningClaude().isEmpty
+    }
+
+    /// Не вышло открыть — строкой в журнал (WF45, задача #5727): патч-то встал, исключение тут
+    /// незачем, а молчащее «Открываю Claude…» при закрытом Claude — самое обидное место.
+    func relaunchClaude(progress: (String) -> Void = { _ in }) {
+        guard managesClaudeProcess else { return }
+        do {
+            _ = try Shell.run("/usr/bin/open", ["-a", appURL.path])
+        } catch {
+            let why = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            progress("Claude открыть не удалось: \(why). Открой его сам из «Программ».")
+        }
+    }
+
+    /// Патч нельзя запускать изнутри самого Claude (Claude Code в его окне): закрытие Claude убило бы
+    /// и запустившего. Смотрим цепочку родителей — как refuseIfInsideClaude в mjs.
+    func refuseIfInsideClaude() throws {
+        guard managesClaudeProcess else { return }
+        let inside = appURL.standardizedFileURL.resolvingSymlinksInPath().path + "/Contents/"
+        var pid = getpid()
+        for _ in 0..<30 where pid > 1 {
+            if let path = Processes.executablePath(of: pid), path.hasPrefix(inside) { throw PatchError.insideClaude }
+            guard let parent = Processes.parentPID(of: pid), parent != pid else { return }
+            pid = parent
+        }
+    }
+
+    // -------------------------------------------------------------- бэкап и живые файлы
+
+    /// `loaderVersion` — что сейчас лежит в главном сценарии Claude. В бэкап идёт ТОЛЬКО чистый
+    /// архив (WF45, задача #5726): положить туда пропатченный — значит потом соврать в «Снять патч…»
+    /// («Готово, оригинальные файлы на месте», а лоадер остался навсегда).
+    func makeBackup(version: String, loaderVersion: Int, progress: (String) -> Void) throws {
+        let directory = backupDirectory(version)
+        let asar = directory.appendingPathComponent("app.asar")
+        let info = directory.appendingPathComponent("Info.plist")
+        if FileManager.default.fileExists(atPath: asar.path) && FileManager.default.fileExists(atPath: info.path) { return }
+        guard loaderVersion == 0 else {
+            progress("В Claude \(version) уже стоит лоадер v\(loaderVersion), а чистого бэкапа этой версии нет — "
+                + "в бэкап такой архив не кладу. «Снять патч…» оригинал не вернёт: это переустановка Claude с claude.ai/download.")
+            return
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        progress("Сохраняю оригинал Claude \(version) в \(directory.path)…")
+        try Data(contentsOf: asarURL, options: .mappedIfSafe).write(to: asar, options: .atomic)
+        try Data(contentsOf: infoPlistURL).write(to: info, options: .atomic)
+    }
+
+    /// Бэкапы не копятся (ревизия WF100, z7-r02; было 7 версий, 285 МБ): после удачного патча в
+    /// `backups/` остаются стоящая версия, версии наших прежних копий `Claude-<версия>.previous`
+    /// рядом с Claude.app — «Снять патч…» после отката на прежнюю копию нужен её бэкап — и версии
+    /// всех других копий Claude на Маке (`/Applications`, `~/Applications`; G3 WF101): патч
+    /// одной копии не должен отнимать у другой «Снять патч…».
+    /// Уборка — по возможности: осечка тут патч не роняет.
+    func pruneBackups() {
+        let fm = FileManager.default
+        let root = supportDirectory.appendingPathComponent("backups", isDirectory: true)
+        guard let version = try? appVersion(),
+              let names = try? fm.contentsOfDirectory(atPath: root.path) else { return }
+        let appName = appURL.lastPathComponent
+        let stem = appURL.deletingPathExtension().lastPathComponent + "-"
+        var keep: Set<String> = [version]
+        for name in (try? fm.contentsOfDirectory(atPath: appURL.deletingLastPathComponent().path)) ?? []
+        where ClaudeUpdater.isOwnPrevious(name, appName: appName) {
+            keep.insert(String(name.dropFirst(stem.count).dropLast(ClaudeUpdater.previousSuffix.count)))
+        }
+        for copy in claudeCopies() {
+            if let other = try? ClaudePatcher(appURL: copy, supportDirectory: supportDirectory,
+                                              resourcesDirectory: nil).appVersion() {
+                keep.insert(other)
+            }
+        }
+        for name in names where !keep.contains(name) {
+            var isDirectory: ObjCBool = false
+            let url = root.appendingPathComponent(name, isDirectory: true)
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
+            try? fm.removeItem(at: url)
+        }
+    }
+
+    /// claude.json создаётся значениями по умолчанию и НИКОГДА не перезаписывается.
+    func ensureConfig() throws {
+        try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        guard !FileManager.default.fileExists(atPath: configURL.path) else { return }
+        let data = try JSONSerialization.data(withJSONObject: Patcher.configDefaults, options: [.prettyPrinted, .sortedKeys])
+        try (data + Data("\n".utf8)).write(to: configURL, options: .atomic)
+    }
+
+    /// inject.js и claude.css — живые файлы лоадера v6; при установке обновляем на версию из сборки.
+    /// Туда же ложится комплект воркфлоу (`workflow-kit` → `workflow/`): путь к WORKFLOW.md зашит
+    /// в текст, который вставляет в поле ввода пункт меню «Workflow» (решение 3 плана WF9).
+    func installLiveFiles(progress: (String) -> Void) throws {
+        try ensureConfig()
+        guard let directory = resourcesDirectory else { return }
+        let inject = directory.appendingPathComponent("inject.js")
+        if FileManager.default.fileExists(atPath: inject.path) {
+            let target = supportDirectory.appendingPathComponent("inject.js")
+            let bundled = try Data(contentsOf: inject)
+            let liveText = try? String(contentsOf: target, encoding: .utf8)
+            if let bundledText = String(data: bundled, encoding: .utf8),
+               Patcher.injectKeepsLive(bundled: bundledText, live: liveText) {
+                progress("Живая страница новее, чем в сборке, — оставил её.")
+            } else {
+                try bundled.write(to: target, options: .atomic)
+            }
+        }
+        try installLiveCSS(from: directory, progress: progress)
+        try installWorkflowKit(from: directory)
+        progress("Живые файлы в \(supportDirectory.path) обновлены.")
+    }
+
+    /// claude.css человек правит сам (`docs/TEAM.md` прямо предлагает дописывать свои правила
+    /// выше или ниже авто-блока), поэтому файл из бандла НЕ кладётся поверх (WF45, задача #5723):
+    /// из него берётся только блок между маркерами, остальное живого файла сохраняется дословно.
+    func installLiveCSS(from resources: URL, progress: (String) -> Void) throws {
+        let source = resources.appendingPathComponent(Patcher.cssFileName)
+        guard let bundled = try? String(contentsOf: source, encoding: .utf8) else { return }
+        let target = supportDirectory.appendingPathComponent(Patcher.cssFileName)
+        let live = try? String(contentsOf: target, encoding: .utf8)
+        let merged = Patcher.mergeCSS(bundled: bundled, live: live)
+        guard merged != live else { return }
+        try Data(merged.utf8).write(to: target, options: .atomic)
+        if live != nil { progress("В claude.css обновил только блок PimpMyClaude — свои правила остались на месте.") }
+    }
+
+    /// Комплекта в сборке нет (старый бандл) — молча пропускаем: пункт меню положит его сам.
+    func installWorkflowKit(from resources: URL) throws {
+        try Patcher.installWorkflowKit(from: resources, to: supportDirectory)
+    }
+
+    // -------------------------------------------------------------- installed.json
+
+    struct InstalledRecord {
+        let version: String
+        let headerSHA256: String
+        let loaderVersion: Int
+    }
+
+    func installedRecord() -> InstalledRecord? {
+        guard let data = try? Data(contentsOf: installedURL),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let version = json["version"] as? String,
+              let hash = json["headerSHA256"] as? String else { return nil }
+        // Поля нет — запись древняя, номер лоадера неизвестен: 0 отправит статус разбирать asar,
+        // а тот запишет правду обратно (WF45, задача #5722). Считать её «нужной версией» нельзя.
+        return InstalledRecord(version: version, headerSHA256: hash, loaderVersion: json["loaderVersion"] as? Int ?? 0)
+    }
+
+    func writeInstalled(version: String, headerSHA256: String, mainPath: String) throws {
+        try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        let record: [String: Any] = [
+            "appPath": appURL.path,
+            "version": version,
+            "headerSHA256": headerSHA256,
+            "loaderVersion": Patcher.requiredLoaderVersion,
+            "mainPath": mainPath,
+            "at": ISO8601DateFormatter().string(from: Date()),
+        ]
+        let data = try JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: installedURL, options: .atomic)
+    }
+}
+
+extension Patcher {
+    /// Обновили Пимп поверх старого (ревизия WF100, z9-r01; критик WF101, C5 и C18): живой inject.js
+    /// кладёт только «Пропатчить Claude», и у команды с 1.5.2 на 1.8.x осталась бы страница wf70 без
+    /// Авто-Allow. Зовётся ОДИН раз за запуск, синхронно, до `ax.start()`: страница из бандла СТРОГО
+    /// новее живой — кладём её и комплект workflow/. claude.css не трогаем. Живой нет, редакция
+    /// не читается хоть у одной или живая равна/новее (#7035) — ничего. Лоадер перечитает по mtime.
+    @discardableResult
+    public static func refreshLiveFilesIfBundledNewer(supportDirectory: URL = defaultSupportDirectory,
+                                                      resourcesDirectory: URL? = bundledResourcesDirectory) -> Bool {
+        guard let resources = resourcesDirectory else { return false }
+        let target = supportDirectory.appendingPathComponent("inject.js")
+        guard let bundled = try? Data(contentsOf: resources.appendingPathComponent("inject.js")),
+              let bundledVersion = injectVersion(of: String(decoding: bundled, as: UTF8.self)),
+              let live = try? String(contentsOf: target, encoding: .utf8),
+              let liveVersion = injectVersion(of: live),
+              bundledVersion > liveVersion else { return false }
+        do { try bundled.write(to: target, options: .atomic) } catch {
+            NSLog("PimpMyClaude: страница из сборки не легла: \(error.localizedDescription)")
+            return false
+        }
+        do { try installWorkflowKit(from: resources, to: supportDirectory) } catch {
+            NSLog("PimpMyClaude: комплект workflow из сборки не лёг: \(error.localizedDescription)")
+        }
+        return true
+    }
+
+    static func installWorkflowKit(from resources: URL, to supportDirectory: URL) throws {
+        let source = resources.appendingPathComponent(Patcher.workflowKitDirName, isDirectory: true)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: source.path), !names.isEmpty else { return }
+        let target = supportDirectory.appendingPathComponent(Patcher.workflowDirName, isDirectory: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        for name in names.sorted() where !name.hasPrefix(".") {
+            try Data(contentsOf: source.appendingPathComponent(name))
+                .write(to: target.appendingPathComponent(name), options: .atomic)
+        }
+    }
+}
+
+// ------------------------------------------------------------------ подпроцессы и процессы
+
+enum Shell {
+    /// Утилита не дольше `timeout` — общим запуском `SelfUpdater.run` (stdout и stderr в одну трубу; не уложилась —
+    /// погашена). Раньше ждали без срока (находка R9 проверки 10.10.2026): зависший hdiutil, codesign или spctl
+    /// держал «занято» вечно. Десять минут — с запасом на самое долгое, переподпись и образ Claude.
+    @discardableResult
+    static func run(_ launchPath: String, _ arguments: [String], timeout: TimeInterval = 600) throws -> String {
+        let name = (launchPath as NSString).lastPathComponent
+        guard let run = SelfUpdater.run(launchPath, arguments, timeout: timeout) else {
+            throw PatchError.tool(name: name, output: "не запустилась или не уложилась в \(Int(timeout)) с")
+        }
+        guard run.status == 0 else {
+            throw PatchError.tool(name: name, output: run.output.isEmpty ? "код \(run.status)" : run.output)
+        }
+        return run.output
+    }
+}
+
+enum Processes {
+    static func parentPID(of pid: pid_t) -> pid_t? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        return info.kp_eproc.e_ppid
+    }
+
+    static func executablePath(of pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        return String(cString: buffer)
+    }
+}
