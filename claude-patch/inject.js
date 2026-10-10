@@ -18,7 +18,7 @@
 
 "use strict";
 (() => {
-  const VERSION = "wf209-page-57";
+  const VERSION = "wf209-page-58";
 
   // ---- 0. Снятие прошлого экземпляра -------------------------------------
   // Сначала штатный путь, потом реестр уборки: даже упавшая на середине
@@ -290,6 +290,14 @@
   const READ_LEFT_VARIABLE = "--myclaude-read-left";
   const READ_WIDTH_VARIABLE = "--myclaude-read-width";
   const READ_TIGHT_ATTRIBUTE = "data-myclaude-read-tight";
+  // «Работа идёт» одной строкой (слово Элвиса 10.10 10:20, раздел 12х¹): метка спрятанного серией —
+  // на блоке хода (rest — свёрнут, open — раскрыт, open-first — первый раскрытый под строкой) и на
+  // строке ленты, занятой серией целиком (row); своя строка-сводка (live — работа идёт, done — шла),
+  // её части (arrow | label | ring | steps | failed) и подпись части (текста в узлах нет).
+  const WORK_ATTRIBUTE = "data-myclaude-work";
+  const WORK_LINE_ATTRIBUTE = "data-myclaude-work-line";
+  const WORK_PART_ATTRIBUTE = "data-myclaude-work-part";
+  const WORK_TEXT_ATTRIBUTE = "data-myclaude-work-text";
   // Bypass во всех чатах (#9060, раздел 12с¹): пока страница сама выбирает режим, меню
   // режимов Claude невидимо — без мигания.
   const BYPASS_QUIET_ATTRIBUTE = "data-myclaude-bypass-quiet";
@@ -8302,6 +8310,8 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
   const FOLD_STRIP_LEFT = "calc(var(--myclaude-fold-mid, 7.4px) - .75px)";
   // В прозе Code — весом выше правил WF173, в прочих видах ленты — без неё (как у цитаты WF182).
   const foldStripRule = (tail, body) => `${ANSWER_PROSE} ${tail},${tail}{${body}}`;
+  // «Работа идёт» одной строкой (раздел 12х¹): стрелка её строки стоит на 4 px левее стрелки свёрток.
+  const WORK_STRIP_LEFT = "calc(var(--myclaude-fold-mid, 7.4px) - 4.75px)";
   const FEED_FILE_TILE = '.epitaxy-chat-panel [data-cds="MessageAttachmentsFile"]:not([data-cds-composer-attachments] *)';
   const RULES = [
     // Полоска висит поверх всего и позиционируется координатами: рамка поля
@@ -8834,28 +8844,30 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
     `[${FOLD_WHOLE_ATTRIBUTE}="open"]{margin-bottom:2px}`,
     // «Прочитано» (#9377, раздел 12х; слово Элвиса 10.10: «слева нажимать… на зону… сереньким»,
     // «большими блоками… заметные, но всё же свёрнутые»). Дорожка — свой узел в строке ленты, слева
-    // от текста: в покое волосок, под курсором — подложка по всей высоте ответа и галочка; место и
+    // от текста: под курсором — подложка по всей высоте ответа, её край и галочка; место и
     // ширину даёт замер поля строки (переменные на корне). Текст ответа не сдвигается.
+    // В покое у дорожки не видно ничего (слово Элвиса 10.10 10:20: длинную едва заметную полосу слева
+    // убрать — волосок дорожки шёл по всем строкам хода и читался одной полосой во всю ленту).
     `[${READ_ZONE_ATTRIBUTE}]{position:absolute;top:0;bottom:0;left:var(${READ_LEFT_VARIABLE},2px);width:var(${READ_WIDTH_VARIABLE},20px);z-index:1;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-app-region:no-drag;transition:background-color .15s}`,
-    `[${READ_ZONE_ATTRIBUTE}]::before{content:"";position:absolute;top:0;bottom:0;right:2px;width:1.5px;background:currentColor;opacity:.1;transition:opacity .15s}`,
+    `[${READ_ZONE_ATTRIBUTE}]::before{content:"";position:absolute;top:0;bottom:0;right:2px;width:1.5px;background:currentColor;opacity:0;transition:opacity .15s}`,
     `[${READ_ZONE_ATTRIBUTE}]::after{content:"✓";position:sticky;top:8px;display:block;margin-right:4px;text-align:center;font-size:11px;line-height:16px;opacity:0;pointer-events:none;transition:opacity .15s}`,
     `[${READ_ZONE_ATTRIBUTE}][${READ_HOT_ATTRIBUTE}]{background:rgba(127,127,127,.14)}`,
     `[${READ_ZONE_ATTRIBUTE}][${READ_HOT_ATTRIBUTE}]::before{opacity:.5}`,
     `[${READ_ZONE_ATTRIBUTE}]:hover::after{opacity:.75}`,
     `[${READ_ZONE_ATTRIBUTE}]:active{background:rgba(127,127,127,.26)}`,
     `[${READ_ZONE_ATTRIBUTE}]:focus-visible{outline:2px solid rgba(245,158,11,.7);outline-offset:-2px}`,
-    // Помечено: волосок виднее, галочка — у первой дорожки ответа (она же стоит в порядке Tab).
-    `[${READ_ZONE_ATTRIBUTE}="on"]::before{opacity:.35}`,
+    // Помечено: галочка у первой дорожки ответа (она же стоит в порядке Tab), линии нет.
     `[${READ_ZONE_ATTRIBUTE}="on"][tabindex="0"]::after{opacity:.75}`,
-    // Поле слева от текста уже дорожки (узкое окно, «Поля» 5): волосок — у края окна, а не по буквам;
-    // галочке рядом с текстом места нет — она только у свёрнутого блока, пометку раскрытого несёт волосок.
+    // Поле слева от текста уже дорожки (узкое окно, «Поля» 5): край подложки — у края окна, а не по
+    // буквам; галочке рядом с текстом места нет — она только у свёрнутого блока, пометку раскрытого
+    // несёт короткая риска у его первой строки (не линия во весь ответ).
     `html[${READ_TIGHT_ATTRIBUTE}] [${READ_ZONE_ATTRIBUTE}]::before{right:auto;left:1px}`,
     `html[${READ_TIGHT_ATTRIBUTE}] [${READ_ZONE_ATTRIBUTE}]::after{margin-right:2px;font-size:10px}`,
     `html[${READ_TIGHT_ATTRIBUTE}] :not([${READ_ROW_ATTRIBUTE}="head"],[${READ_ROW_ATTRIBUTE}="bare"])>[${READ_ZONE_ATTRIBUTE}]::after{opacity:0 !important}`,
-    `html[${READ_TIGHT_ATTRIBUTE}] [${READ_ZONE_ATTRIBUTE}="on"]::before{opacity:.6}`,
+    `html[${READ_TIGHT_ATTRIBUTE}] [${READ_ZONE_ATTRIBUTE}="on"][tabindex="0"]::before{top:6px;bottom:auto;height:14px;opacity:.6}`,
     // Ответ ещё пишется — пометить нельзя: дорожка молчит.
     `[${READ_ZONE_ATTRIBUTE}][aria-disabled="true"]{cursor:default;background:none !important}`,
-    `[${READ_ZONE_ATTRIBUTE}][aria-disabled="true"]::before{opacity:.1 !important}`,
+    `[${READ_ZONE_ATTRIBUTE}][aria-disabled="true"]::before{opacity:0 !important}`,
     `[${READ_ZONE_ATTRIBUTE}][aria-disabled="true"]::after{opacity:0 !important}`,
     // После перехода по «непрочитанные N» дорожка ответа коротко горит.
     `@keyframes myclaude-read-hit{0%,40%{background-color:rgba(245,158,11,.22)}100%{background-color:rgba(245,158,11,0)}}`,
@@ -8896,6 +8908,39 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
     `#${READ_NEXT_ID}:active{opacity:.65}`,
     `#${READ_NEXT_ID}:focus-visible{opacity:1;outline:2px solid rgba(245,158,11,.7);outline-offset:1px}`,
     `@media (prefers-reduced-motion: reduce){[${READ_ZONE_ATTRIBUTE}],[${READ_ZONE_ATTRIBUTE}]::before,[${READ_ZONE_ATTRIBUTE}]::after,#${READ_NEXT_ID}{transition:none !important}[${READ_ZONE_ATTRIBUTE}][${READ_HIT_ATTRIBUTE}]{animation:none;background-color:rgba(245,158,11,.22)}[${READ_ZONE_ATTRIBUTE}][${READ_HIT_ATTRIBUTE}]::before{animation:none;opacity:1;background-color:rgb(245,158,11)}}`,
+    // «Работа идёт» одной строкой (слово Элвиса 10.10 10:20, раздел 12х¹). Спрятанное серией — узлы на
+    // местах, вид — высота 0 и прозрачность, НЕ display и не visibility: innerText ленты тот же (полоса
+    // 2б, «Обкэшить», «ждут твоего слова», «Скажи — и сделаю»). Блок хода ещё и вне потока: пустые блоки
+    // держали бы зазоры колонки; строка ленты — как свёрнутая строка «Прочитано».
+    `[${WORK_ATTRIBUTE}="rest"]{position:absolute !important;height:0 !important;min-height:0 !important;margin:0 !important;padding:0 !important;border:0 !important;overflow:hidden !important;opacity:0 !important;pointer-events:none !important}`,
+    `[${WORK_ATTRIBUTE}="row"]{height:0 !important;min-height:0 !important;overflow:hidden !important;opacity:0 !important;pointer-events:none !important}`,
+    // Строка-сводка — в системе свёрток 12ф: тот же знак ▸/▾ тем же весом, плашка под курсором, раскрытое
+    // под полосой. Стрелка стоит на левой линии текста ответа (поле плашки вынесено влево). Подписи —
+    // из атрибутов частей: текста в узле нет, копия и разбор ленты его не видят.
+    `[${WORK_LINE_ATTRIBUTE}]{display:flex;align-items:center;gap:6px;box-sizing:border-box;width:fit-content;max-width:calc(100% + 4px);margin:0 0 0 -4px;padding:2px 6px 2px 4px;border-radius:6px;color:inherit;font-weight:400;white-space:nowrap;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-app-region:no-drag;transition:background-color .15s}`,
+    `[${WORK_LINE_ATTRIBUTE}]:hover{background:rgba(127,127,127,.14)}`,
+    `[${WORK_LINE_ATTRIBUTE}]:active{background:rgba(127,127,127,.24)}`,
+    `[${WORK_LINE_ATTRIBUTE}]:focus-visible{outline:2px solid rgba(245,158,11,.7);outline-offset:1px}`,
+    `[${WORK_PART_ATTRIBUTE}]{flex:none}`,
+    `[${WORK_PART_ATTRIBUTE}]::after{content:attr(${WORK_TEXT_ATTRIBUTE})}`,
+    `[${WORK_PART_ATTRIBUTE}="arrow"]{font-weight:600}`,
+    // Тихое — счёт шагов и вся строка прошедшей серии; цветом — только неудача (её отделяет цвет, без точки).
+    `[${WORK_PART_ATTRIBUTE}="steps"],[${WORK_LINE_ATTRIBUTE}="done"] [${WORK_PART_ATTRIBUTE}="label"]{color:var(--cds-text-secondary,currentColor)}`,
+    // Тесно (узкое окно, крупный шрифт) — сжимается счёт шагов; подпись и неудача остаются целыми.
+    `[${WORK_PART_ATTRIBUTE}="steps"]{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}`,
+    // Красный подмешан к цвету текста: на тёмной теме светлее, на светлой темнее — контраст с фоном от 4,5 : 1.
+    `[${WORK_PART_ATTRIBUTE}="failed"]{color:color-mix(in srgb,#ef4444 65%,currentColor)}`,
+    `[${WORK_PART_ATTRIBUTE}="failed"]:not([${WORK_TEXT_ATTRIBUTE}]){display:none}`,
+    // Кольцо: у идущей серии спокойно вращается (оборот за 1,6 с), у прошедшей — целое и неподвижное.
+    `@keyframes myclaude-work-spin{to{transform:rotate(360deg)}}`,
+    `[${WORK_PART_ATTRIBUTE}="ring"]{box-sizing:border-box;width:12px;height:12px;border:1.5px solid currentColor;border-radius:50%;opacity:.4}`,
+    `[${WORK_LINE_ATTRIBUTE}="live"] [${WORK_PART_ATTRIBUTE}="ring"]{border-top-color:transparent;opacity:.85;animation:myclaude-work-spin 1.6s linear infinite}`,
+    `@media (prefers-reduced-motion: reduce){[${WORK_LINE_ATTRIBUTE}]{transition:none}[${WORK_LINE_ATTRIBUTE}="live"] [${WORK_PART_ATTRIBUTE}="ring"]{animation:none}}`,
+    // Раскрытая серия — под полосой, как раскрытые свёртки (WF225): линия под стрелкой строки, отступ
+    // 10 px; линия идёт сквозь зазоры между блоками и строками ленты, у первого блока — от его верха.
+    `[${WORK_ATTRIBUTE}^="open"]{position:relative !important;box-sizing:border-box !important;padding-left:calc(${WORK_STRIP_LEFT} + 11.5px) !important}`,
+    `[${WORK_ATTRIBUTE}^="open"]::before{content:"";position:absolute;left:${WORK_STRIP_LEFT};top:-16px;bottom:0;border-left:1.5px solid currentColor;pointer-events:none}`,
+    `[${WORK_ATTRIBUTE}="open-first"]::before{top:-2px}`,
     // Карточки файлов в ленте (#9181, «восемь артефактов… ужасно выглядит»): у Claude каждая —
     // квадрат 120×120 с именем, размером и плашкой «HTML». Здесь — плашка в одну строку
     // «имя · размер», ряд плашек переносится; ссылка карточки та же — клик как у Claude.
@@ -23086,7 +23131,8 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
     unread: [], first: null, error: null, heads: new Map(), zones: new Map(), opens: new Map(), rows: new Set(), lines: new Set(),
     hot: null, hit: null, hitTimer: 0, seek: null, jumped: null, clicks: 0, jumps: 0,
   };
-  const readOwn = node => Boolean(node?.hasAttribute?.(READ_ZONE_ATTRIBUTE) || node?.hasAttribute?.(READ_OPEN_ATTRIBUTE) || node?.id === READ_NEXT_ID);
+  const readOwn = node => Boolean(node?.hasAttribute?.(READ_ZONE_ATTRIBUTE) || node?.hasAttribute?.(READ_OPEN_ATTRIBUTE) || node?.id === READ_NEXT_ID
+    || node?.hasAttribute?.(WORK_LINE_ATTRIBUTE));
   // Ход, которому принадлежит строка ленты (любая, и реплика человека тоже). Узел с id хода помнится
   // за строкой, сам id читается с него каждый раз: лента в покое поиском по строкам не ходит, а строка,
   // которую Claude отдал другому ходу (тот же узел, новый атрибут), прежним ходом не назовётся.
@@ -23195,7 +23241,7 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
     }
     const tail = list[list.length - 1];
     const working = host ? host.isResponding === true : pageWorking();
-    return { list, whole: Boolean(host), above: host?.olderHistoryAbove === true, busy: working && tail?.assistant ? tail.id : null };
+    return { list, whole: Boolean(host), above: host?.olderHistoryAbove === true, busy: working && tail?.assistant ? tail.id : null, entries: host?.entries ?? null, working };
   };
   // Ответы ленты, как они сейчас в DOM: ключ → {rows, start, cut, whole, busy}. start — первая
   // строка ответа в DOM и есть его начало (перед ней нет дыры в номерах строк); cut — сколько строк
@@ -23262,6 +23308,9 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
   };
   // Разметка ровно по тому, что сейчас в ленте; ушедшее снято. Раскладку не читает.
   const readPaint = (rows = readRowsNow()) => {
+    // Серии «Работа идёт» (раздел 12х¹) — тем же проходом и раньше дорожек: строка ленты, занятая
+    // свёрнутой серией целиком, дорожку не получает.
+    try { workPaint(rows); } catch (error) { workState.error = `серии не размечены: ${String(error?.message ?? error).slice(0, 80)}`; }
     const groups = readGroups(rows);
     const want = new Map();
     const lines = new Set();
@@ -23272,9 +23321,10 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
       const head = shut ? readHeadOf(group) : null;
       const line = head ? readProse(head) : null;
       if (line) lines.add(line);
-      const main = head ?? group.rows[0];
+      const main = head ?? group.rows.find(row => !workState.rows.has(row)) ?? group.rows[0];
       for (const row of group.rows) {
         want.set(row, !marked ? null : !shut ? "open" : row !== head ? "rest" : line ? "head" : "bare");
+        if (workState.rows.has(row)) continue;
         const zone = readPlace(readState.zones, row, READ_ZONE_ATTRIBUTE);
         if (!zone) continue;
         zone.__myclaudeRead = group.key;
@@ -23302,7 +23352,7 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
       foldSet(open, "aria-label", "Развернуть прочитанный ответ");
       foldSet(open, "title", "Развернуть ответ");
     }
-    for (const [row, zone] of readState.zones) if (!want.has(row)) { try { zone.remove(); } catch {} readState.zones.delete(row); }
+    for (const [row, zone] of readState.zones) if (!want.has(row) || workState.rows.has(row)) { try { zone.remove(); } catch {} readState.zones.delete(row); }
     for (const [row, open] of readState.opens) if (!opens.has(open)) { try { open.remove(); } catch {} readState.opens.delete(row); }
     for (const row of readState.rows) if (!want.get(row)) foldSet(row, READ_ROW_ATTRIBUTE, null);
     for (const node of readState.lines) if (!lines.has(node)) foldSet(node, READ_LINE_ATTRIBUTE, null);
@@ -23342,7 +23392,8 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
   readNext.setAttribute("title", "К следующему непрочитанному ответу");
   // Счёт и кнопка: ноль непрочитанных — кнопки нет.
   const readCount = () => {
-    readState.unread = readUnreadOf(readState.order, readState.marks, readState.busy, readState.above);
+    // Ход, в котором нет ничего, кроме свёрнутой серии «Работа идёт» (раздел 12х¹), — не ответ: читать в нём нечего.
+    readState.unread = readUnreadOf(readState.order.filter(entry => !workState.only.has(entry.id)), readState.marks, readState.busy, readState.above);
     readState.first = readState.order.find(entry => entry.assistant && readState.marks.has(entry.id))?.id ?? null;
     const count = readState.unread.length;
     let dock = null;
@@ -23368,18 +23419,22 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
     readState.whole = order.whole;
     readState.above = order.above;
     readState.busy = order.busy;
+    workSync(order.entries, order.working);
     readPaint(rows);
     readMeasure();
     readCount();
   };
   // Строки ленты приходят заново при прокрутке (новым узлом или прежним, отданным другому ходу):
   // пока в чате есть пометки, разметка сверяется в том же колбэке мутаций, до отрисовки. Свои
-  // вставки сюда не считаются — второго круга нет.
+  // вставки сюда не считаются — второго круга нет. Пометок нет, но есть серии «Работа идёт»
+  // (раздел 12х¹) — сверяются только они.
   const readOnMutation = records => {
-    if (!readState.marks.size) return;
+    if (!readState.marks.size && !workState.map.size) return;
     const foreign = records.some(record => record.type !== "childList"
       || [...(record.addedNodes ?? []), ...(record.removedNodes ?? [])].some(node => !readOwn(node)));
-    if (foreign) readPaint();
+    if (!foreign) return;
+    if (readState.marks.size) readPaint();
+    else workPaint();
   };
   const readStill = () => { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; } };
   const readFlash = key => {
@@ -23545,13 +23600,15 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
   const readAct = (target, event) => {
     const zone = target?.closest?.(`[${READ_ZONE_ATTRIBUTE}]`) ?? null;
     if (zone) { readToggle(zone.__myclaudeRead, event); return true; }
+    const work = target?.closest?.(`[${WORK_LINE_ATTRIBUTE}]`) ?? null;
+    if (work) { workToggle(work.__myclaudeWork); return true; }
     const open = target?.closest?.(`[${READ_OPEN_ATTRIBUTE}]`) ?? null;
     if (open) { readExpand(open.__myclaudeRead); return true; }
     if (target?.closest?.(`#${READ_NEXT_ID}`)) { readJump(); return true; }
     return false;
   };
   const onReadClick = event => {
-    if (!state.alive || !readOwn(event?.target?.closest?.(`[${READ_ZONE_ATTRIBUTE}],[${READ_OPEN_ATTRIBUTE}],#${READ_NEXT_ID}`))) return;
+    if (!state.alive || !readOwn(event?.target?.closest?.(`[${READ_ZONE_ATTRIBUTE}],[${READ_OPEN_ATTRIBUTE}],#${READ_NEXT_ID},[${WORK_LINE_ATTRIBUTE}]`))) return;
     event.preventDefault?.();
     event.stopPropagation?.();
     if (Number(event.detail) > 1) return;
@@ -23609,6 +23666,346 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
       document.documentElement.style.removeProperty(READ_WIDTH_VARIABLE);
       document.documentElement.removeAttribute(READ_TIGHT_ATTRIBUTE);
     } catch {}
+  });
+
+  // ---- 12х¹. «Работа идёт» одной строкой (слово Элвиса 10.10 10:20, WF231) ----
+  // Слово Элвиса по снимку чата: подряд идут ответы из одной строки «Работа идёт» вперемежку со
+  // служебными строками Claude — «взамен большого количества… одна штучка, что работа идёт, и там
+  // что-нибудь крутилось, одной строкой».
+  // Ход ассистента у Claude — список блоков (пропс entries над лентой, у хода items: text — текст
+  // ответа, tools — группа инструментов, task_event — фоновая команда; замер живого окна 10.10,
+  // Claude 2.31226). Серия — отрезок блоков одного хода без обычного текста, в котором строк «Работа
+  // идёт» две и больше: сами строки и всё служебное между ними и по краям, до обычного текста с обеих
+  // сторон. Одна строка «Работа идёт» серией не считается и остаётся как есть (облачко).
+  // • Свёрнутая серия — ОДНА своя строка на её месте: «Работа идёт» с кольцом (серия — хвост чата) или
+  //   «Работа шла» (после неё пришёл текст или реплика человека), счёт шагов и «N не вышло», если
+  //   фоновая команда серии упала. Нажал (Enter, пробел) — серия раскрыта под полосой, как свёртки
+  //   12ф; ещё раз — свёрнута. Раскрытое помнится, пока окно открыто.
+  // • Прячутся только строки «Работа идёт», группы инструментов и строки фоновых команд — по разметке
+  //   Claude, не по тексту; карточка файла, картинка и всё незнакомое внутри серии остаются на виду.
+  // • Узлы Claude не удаляются и не переставляются: метки и правила раздела 4 (высота 0 и
+  //   прозрачность — innerText ленты тот же). Лента виртуальная: счёт и границы серии — по списку
+  //   ходов; строка ленты называет номер своего блока (data-epitaxy-item-index), ход одной строкой
+  //   ленты — блоки подряд, текстовые сверяются со списком по порядку. Не сошлось — ход не трогаем,
+  //   причина — в status().work.lastError.
+  // • Своих проходов нет: список читает тик «Прочитано», разметку ставит его же проход и колбэк мутаций.
+  const WORK_STEP_RE = /^Работа\s+идёт\s*[.…]?\s*(?:💭️?)?\s*[.…]?$/u;
+  const WORK_STEP_HEAD = "Работа идёт";
+  const WORK_TEXT_MAX = 400;
+  const WORK_PROSE = '[data-cds="Prose"]';
+  const workState = {
+    map: new Map(), cache: new WeakMap(), open: new Set(), only: new Set(), lines: new Map(), marked: new Set(), rows: new Set(),
+    count: 0, folded: 0, failed: 0, live: false, error: null, clicks: 0,
+  };
+  // Текст блока — только строка «Работа идёт» (чистая функция): с облачком или без, с точкой или без;
+  // служебные хвосты К-CA (строка состояния, строки расхода) не в счёт. partial — блок ещё печатается:
+  // начало строки «Работа идёт» уже считается ею (серия не мигает, пока дописывается её новая строка).
+  const workTextIs = (raw, partial = false) => {
+    const text = String(raw ?? "");
+    if (text.length > WORK_TEXT_MAX) return false;
+    let hit = false;
+    for (const part of text.split("\n")) {
+      const line = part.replace(/[*_`]/g, "").replace(/\s+/g, " ").trim();
+      if (!line || cleanAnswerLine(line) === "hide") continue;
+      if (hit || !(WORK_STEP_RE.test(line) || (partial && WORK_STEP_HEAD.startsWith(line)))) return false;
+      hit = true;
+    }
+    return hit;
+  };
+  // Серии одного хода (чистая функция). items — блоки хода по порядку [{kind, text, status}]; partial —
+  // ход ещё пишется (последний блок-текст может быть недописан). Ответ — [{from, to, first, steps,
+  // failed, tail}]: границы серии по номерам блоков, первый её шаг, число строк «Работа идёт»,
+  // упавших фоновых команд, и tail — серия доходит до конца хода. Обычный текст и блок незнакомого
+  // вида серию рвут; одна строка «Работа идёт» — не серия.
+  const workSeriesOf = (items, partial = false) => {
+    const list = Array.isArray(items) ? items : [];
+    const typing = partial && list[list.length - 1]?.kind === "text" ? list.length - 1 : -1;
+    const out = [];
+    let run = null;
+    const close = (to, tail) => { if (run && run.steps >= 2) out.push({ ...run, to, tail }); run = null; };
+    list.forEach((item, index) => {
+      const kind = item?.kind;
+      const step = kind === "text" && workTextIs(item.text, index === typing);
+      if (!step && kind !== "tools" && kind !== "task_event") { close(index - 1, false); return; }
+      run ??= { from: index, first: index, steps: 0, failed: 0 };
+      if (step) { if (!run.steps) run.first = index; run.steps += 1; }
+      else if (kind === "task_event" && item.status === "failed") run.failed += 1;
+    });
+    close(list.length - 1, true);
+    return out;
+  };
+  // Серии чата по списку ходов ленты (его читает тик «Прочитано»). Разбор хода помнится за его
+  // объектом: законченный ход заново не читается. Живая серия — хвост последнего хода чата.
+  const workSync = (entries, responding = false) => {
+    const list = Array.isArray(entries) ? entries : [];
+    const map = new Map();
+    const only = new Set();
+    let count = 0;
+    let folded = 0;
+    let failed = 0;
+    let live = false;
+    list.forEach((entry, at) => {
+      if (entry?.author !== "assistant" || typeof entry.id !== "string" || !Array.isArray(entry.items)) return;
+      const last = at === list.length - 1;
+      const partial = last && responding === true;
+      const size = entry.items.length;
+      let known = workState.cache.get(entry);
+      if (!known || partial || known.partial || known.size !== size || known.tail !== entry.items[size - 1]) {
+        const series = workSeriesOf(entry.items, partial).map(item => ({ ...item, key: String(entry.items[item.first]?.id ?? `${entry.id}:${item.first}`) }));
+        const texts = [];
+        entry.items.forEach((item, index) => { if (item?.kind === "text") texts.push(index); });
+        // Весь текст хода — шаги одной серии: кроме неё, в ходе читать нечего.
+        const whole = series.length === 1 && texts.every(index => index >= series[0].from && index <= series[0].to);
+        known = { size, partial, tail: entry.items[size - 1], series, texts, whole };
+        workState.cache.set(entry, known);
+      }
+      if (!known.series.length) return;
+      const series = known.series.map(item => ({ ...item, live: last && item.tail }));
+      map.set(entry.id, { series, texts: known.texts, partial, whole: known.whole });
+      for (const item of series) {
+        count += 1;
+        failed += item.failed;
+        if (item.live) live = true;
+        if (!workState.open.has(item.key)) folded += 1;
+      }
+      if (known.whole && !workState.open.has(series[0].key)) only.add(entry.id);
+    });
+    Object.assign(workState, { map, only, count, folded, failed, live });
+    if (!list.length || !map.size) workState.error = null;
+  };
+  // Колонка блоков хода в строке ленты: первый блочный ребёнок сообщения (перед ним бывает только
+  // заголовок для чтения с экрана, после — действия сообщения).
+  const workHostOf = row => {
+    let message = null;
+    try { message = row.querySelector('[data-cds="AssistantMessage"]'); } catch {}
+    for (const node of message?.children ?? []) {
+      if (node.tagName === "DIV") return node.getAttribute("data-cds") === "Prose" || node.hasAttribute(STAMP_ATTRIBUTE) ? null : node;
+    }
+    return null;
+  };
+  // Номер блока хода у строки ленты; у хода, который лента держит одной строкой, номера нет.
+  const workIndexOf = row => {
+    readEntryOf(row);
+    const raw = readEntries.get(row)?.node?.getAttribute("data-epitaxy-item-index");
+    return raw == null || raw === "" || !Number.isInteger(Number(raw)) ? null : Number(raw);
+  };
+  // Блок текста — только строка «Работа идёт»: по абзацам, как их видит человек.
+  const workProseIs = (prose, partial = false) => {
+    let host = prose;
+    for (let depth = 0; depth < 2 && host.children.length === 1 && host.children[0].tagName === "DIV"; depth += 1) host = host.children[0];
+    const blocks = [...host.children];
+    if (!blocks.length) return workTextIs(prose.textContent, partial);
+    if (blocks.some(block => block.tagName !== "P")) return false;
+    return workTextIs(blocks.map(block => cleanAnswerLines(block).join("\n")).join("\n"), partial);
+  };
+  // Что серия прячет в блоке хода — по разметке Claude (замер живого окна 10.10): строка «Работа
+  // идёт» — блок с одним текстом (обёртка без своего вида — тогда сам текст); группа инструментов —
+  // [data-cds=TurnStatus]; строка фоновых команд — button[data-transcript-keeps-pin] без ключа блока.
+  // Ответ — узел для метки; null — блок остаётся на виду (карточка, картинка, незнакомое); false —
+  // пустая обёртка, прятать нечего.
+  const workTargetOf = (block, prose, partial = false) => {
+    if (prose) return workProseIs(prose, partial) ? (/(?:^|\s)contents(?:\s|$)/.test(block.getAttribute("class") ?? "") ? prose : block) : null;
+    if (prose === null) return null;
+    if (block.getAttribute("data-cds") === "TurnStatus") return block;
+    let pin = null;
+    let keyed = block.hasAttribute("data-item-key");
+    try { pin = block.querySelector("button[data-transcript-keeps-pin]"); keyed ||= Boolean(block.querySelector("[data-item-key]")); } catch {}
+    if (pin && !keyed) return block;
+    return block.children.length || sayNorm(block.textContent) ? null : false;
+  };
+  // Блоки строки ленты, которые серия прячет: [{series, block, target}] по порядку; full — в строке
+  // не остаётся ничего на виду; null — разметка не сошлась со списком.
+  const workMembers = (info, row, host) => {
+    const blocks = [...host.children].filter(node => !node.hasAttribute(WORK_LINE_ATTRIBUTE));
+    // Текст блока: один — он сам, несколько — null (такой блок не строка «Работа идёт»).
+    const proses = new Map();
+    try {
+      for (const prose of host.querySelectorAll(WORK_PROSE)) {
+        let block = prose;
+        while (block && block.parentNode !== host) block = block.parentNode;
+        if (block) proses.set(block, proses.has(block) ? null : prose);
+      }
+    } catch {}
+    const at = workIndexOf(row);
+    const owner = new Map();
+    const typing = new Set();
+    if (at != null) {
+      // Строка ленты одного блока хода: номер блока — в серии или нет.
+      const series = info.series.find(item => item.from <= at && at <= item.to) ?? null;
+      if (series) for (const block of blocks) owner.set(block, series);
+      if (info.partial && series?.live) for (const block of blocks) typing.add(block);
+    } else {
+      // Ход одной строкой ленты: текстовые блоки — по порядку списка, служебное между ними — к серии
+      // соседнего текста.
+      let ordinal = -1;
+      let prev = null;
+      let pending = [];
+      for (const block of blocks) {
+        if (!proses.has(block)) { pending.push(block); continue; }
+        ordinal += 1;
+        const index = info.texts[ordinal];
+        let series = index == null ? null : info.series.find(item => item.from <= index && index <= item.to) ?? null;
+        const last = ordinal >= info.texts.length - 1;
+        if (series && last && info.partial) typing.add(block);
+        if (series && !workTargetOf(block, proses.get(block), typing.has(block))) {
+          // Последний текст хода ещё пишется и уже не «Работа идёт» — он просто остаётся на виду;
+          // расхождение в середине хода — порядок блоков не тот, что в списке.
+          if (!last) return null;
+          series = null;
+        }
+        for (const item of pending) if (prev ?? series) owner.set(item, prev ?? series);
+        pending = [];
+        if (series) owner.set(block, series);
+        prev = series;
+      }
+      for (const item of pending) if (prev) owner.set(item, prev);
+    }
+    const members = [];
+    let full = at != null;
+    for (const block of blocks) {
+      const series = owner.get(block);
+      if (!series) { full = false; continue; }
+      const target = workTargetOf(block, proses.get(block), typing.has(block));
+      if (target) members.push({ series, block, target });
+      else if (target === null) full = false;
+    }
+    return { members, full };
+  };
+  const workMakeLine = () => {
+    const line = document.createElement("div");
+    line.setAttribute(WORK_LINE_ATTRIBUTE, "done");
+    line.setAttribute("role", "button");
+    line.setAttribute("tabindex", "0");
+    for (const part of ["arrow", "label", "ring", "steps", "failed"]) {
+      const node = document.createElement("span");
+      node.setAttribute(WORK_PART_ATTRIBUTE, part);
+      node.setAttribute("aria-hidden", "true");
+      line.appendChild(node);
+    }
+    return line;
+  };
+  const workDress = (line, series, open) => {
+    const label = series.live ? "Работа идёт" : "Работа шла";
+    const steps = `${series.steps} ${usagePlural(series.steps, "шаг", "шага", "шагов")}`;
+    const failed = series.failed ? `${series.failed} не вышло` : null;
+    foldSet(line, WORK_LINE_ATTRIBUTE, series.live ? "live" : "done");
+    foldSet(line, "aria-expanded", open ? "true" : "false");
+    foldSet(line, "aria-label", `${label}, ${steps}${failed ? `, ${failed}` : ""}`);
+    foldSet(line, "title", open ? "Свернуть шаги" : "Показать шаги");
+    const text = { arrow: open ? "▾" : "▸", label, steps: `· ${steps}`, failed };
+    for (const part of line.children) foldSet(part, WORK_TEXT_ATTRIBUTE, text[part.getAttribute(WORK_PART_ATTRIBUTE)] ?? null);
+  };
+  // Разметка ровно по тому, что сейчас в ленте; ушедшее снято. Раскладку читает, только когда
+  // разметка меняется: лента, стоявшая у низа, остаётся у низа.
+  const workPaint = (rows = readRowsNow()) => {
+    if (!workState.map.size && !workState.marked.size && !workState.lines.size) { workState.rows.clear(); return; }
+    const marks = new Map();
+    const spots = new Map();
+    const taken = new Set();
+    let error = null;
+    const found = new Map();
+    if (workState.map.size) {
+      for (const row of rows) {
+        const id = readKeyOf(row);
+        const info = id ? workState.map.get(id) : null;
+        // Свёрнутый прочитанный ответ показывает свой блок (раздел 12х) — серии в нём не трогаем.
+        if (!info || (readState.marks.has(id) && !readState.open.has(id) && id !== readState.busy)) continue;
+        const host = workHostOf(row);
+        if (!host) continue;
+        const made = workMembers(info, row, host);
+        if (!made) { error = "ход в ленте не сошёлся со списком блоков: серии в нём не свёрнуты"; continue; }
+        for (const member of made.members) {
+          const key = member.series.key;
+          if (!found.has(key)) found.set(key, { series: member.series, parts: [] });
+          const parts = found.get(key).parts;
+          if (parts[parts.length - 1]?.row !== row) parts.push({ row, host, members: [], full: made.full && made.members.every(item => item.series === member.series) });
+          parts[parts.length - 1].members.push(member);
+        }
+      }
+    }
+    for (const { series, parts } of found.values()) {
+      const open = workState.open.has(series.key);
+      // Строка-сводка — в первой строке серии, что есть в DOM, перед её первым блоком.
+      spots.set(series.key, { series, open, host: parts[0].host, before: parts[0].members[0].block });
+      let first = true;
+      for (const part of parts) {
+        for (const member of part.members) { marks.set(member.target, open ? (first ? "open-first" : "open") : "rest"); first = false; }
+        if (open || !part.full) continue;
+        taken.add(part.row);
+        if (part !== parts[0]) marks.set(part.row, "row");
+      }
+    }
+    let changed = spots.size !== workState.lines.size || marks.size !== workState.marked.size;
+    if (!changed) for (const [node, value] of marks) if (node.getAttribute(WORK_ATTRIBUTE) !== value) { changed = true; break; }
+    if (!changed) for (const [key, spot] of spots) {
+      const line = workState.lines.get(key);
+      if (!line || line.parentNode !== spot.host || line.nextElementSibling !== spot.before) { changed = true; break; }
+    }
+    let feed = null;
+    let pinned = false;
+    if (changed) {
+      feed = readFeed();
+      try { pinned = Boolean(feed) && feed.scrollHeight - feed.scrollTop - feed.clientHeight < 2; } catch {}
+    }
+    for (const node of workState.marked) if (!marks.has(node)) foldSet(node, WORK_ATTRIBUTE, null);
+    for (const [node, value] of marks) foldSet(node, WORK_ATTRIBUTE, value);
+    workState.marked = new Set(marks.keys());
+    for (const [key, line] of workState.lines) if (!spots.has(key)) { try { line.remove(); } catch {} workState.lines.delete(key); }
+    for (const [key, spot] of spots) {
+      const line = workState.lines.get(key) ?? workMakeLine();
+      if (line.parentNode !== spot.host || line.nextElementSibling !== spot.before) {
+        try { spot.host.insertBefore(line, spot.before); } catch { continue; }
+      }
+      line.__myclaudeWork = key;
+      workState.lines.set(key, line);
+      workDress(line, spot.series, spot.open);
+    }
+    workState.rows = taken;
+    workState.error = error;
+    if (pinned) { try { feed.scrollTop = feed.scrollHeight; } catch {} }
+  };
+  // Раскрыть или свернуть серию. Строка-сводка остаётся там, где её нажали.
+  const workToggle = key => {
+    const line = key ? workState.lines.get(key) : null;
+    if (!line) return false;
+    let top = null;
+    try { top = line.getBoundingClientRect().top; } catch {}
+    const focused = document.activeElement === line;
+    if (workState.open.has(key)) workState.open.delete(key); else workState.open.add(key);
+    workState.clicks += 1;
+    workState.folded += workState.open.has(key) ? -1 : 1;
+    // Ход из одной серии: свёрнут — не ответ для «Прочитано», раскрыт — снова ответ.
+    for (const [id, info] of workState.map) {
+      if (!info.whole || info.series[0].key !== key) continue;
+      if (workState.open.has(key)) workState.only.delete(id); else workState.only.add(id);
+    }
+    readPaint();
+    readCount();
+    const now = workState.lines.get(key);
+    if (!now) return true;
+    if (focused && document.activeElement !== now) { try { now.focus({ preventScroll: true }); } catch {} }
+    try {
+      const feed = readFeed();
+      const delta = top == null || !feed ? 0 : Math.round(now.getBoundingClientRect().top - top);
+      if (Math.abs(delta) > 1) feed.scrollTop += delta;
+    } catch {}
+    return true;
+  };
+  // Сироты прошлой установки — до первой разметки.
+  const workSweep = () => {
+    try {
+      for (const node of document.querySelectorAll(`[${WORK_LINE_ATTRIBUTE}]`)) node.remove();
+      for (const node of document.querySelectorAll(`[${WORK_ATTRIBUTE}]`)) node.removeAttribute(WORK_ATTRIBUTE);
+    } catch {}
+  };
+  workSweep();
+  track(() => {
+    workState.map.clear();
+    workState.lines.clear();
+    workState.marked.clear();
+    workState.rows.clear();
+    workState.only.clear();
+    workSweep();
   });
 
   // ---- 12т. Своя ▶ у команд в вынесенных окнах (#7941, WF103) ---------------
@@ -27607,6 +28004,9 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
         ...(readState.first ? { firstMarked: readState.first } : {}),
         lastError: readState.error ?? (readState.whole ? null : "лента не отдала список ответов: счёт только по строкам на экране"),
       },
+      // «Работа идёт» одной строкой (раздел 12х¹): серий в чате, из них свёрнуто, есть ли живая
+      // (хвост чата), упавших фоновых команд в сериях; lastError — ход не сошёлся со списком блоков.
+      work: { series: workState.count, folded: workState.folded, live: workState.live, failed: workState.failed, lastError: workState.error },
       // Полоска говорит состояние (#7750, раздел 12о): режим need | warm |
       // cold | work | null, заливка в процентах марафона (null — бегущий блик
       // или не работает), минут с последнего сообщения чата, у последнего
@@ -27695,6 +28095,7 @@ html:not([${TEXT_JUSTIFY_ATTRIBUTE}="off"]) .epitaxy-chat-panel [data-cds="Prose
     foldTick, foldToggle, foldFind, foldState,
     readKeyOf, readUnreadOf, readNextOf, readStoreTrim, readStoreApply, readTick, readPaint, readToggle, readExpand, readJump, readState,
     READ_KEY, READ_IDS_MAX, READ_CHATS_MAX, READ_TOTAL_MAX,
+    workTextIs, workSeriesOf, workSync, workPaint, workToggle, workState,
     htmlChromeUrl, galleryUrl, galleryToggle, galleryFromViewer, galleryFromCounts, galleryState,
     signalMode, signalTick, sigState, progressState, progressRefresh, CACHE_WARN_MS, CACHE_TTL_MS,
     markChin, stampText, stampTimes, chinModelShort, chinModelParts, chinEffortShort, chinModeShort, rickShortName, alignSendToRing, RULES, windowTitle,
