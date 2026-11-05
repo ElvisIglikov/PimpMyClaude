@@ -51,17 +51,28 @@ test("#9166б: выбранный и наведённый чат слева — 
   assert.match(String(theme), /--df-selected: #[0-9a-f]{6} !important/, "тема по-прежнему ставит своё на корне");
 });
 
-test("#9166в: точка «идёт» и кружок «простаивает» у чатов — акцентом PMP, не серым и не белым", () => {
+// page-64 (слово Элвиса 11.10 01:40: «цветами не надо красить вот эти кругляшки… Белые же должны быть
+// просто»): акцент PMP у точек (#9166в) снят — точки тоном текста темы, кружок «простаивает» — родной.
+test("page-64: точки чатов слева — тоном текста темы, без акцента PMP; цвет остался только ошибке", () => {
   const loaded = stand();
-  const [run] = ruleWith(loaded, '.status-dot[data-kind="running"]{');
-  assert.ok(run, "правила точки «идёт» нет");
-  assert.match(run, /^aside\.dframe-sidebar /, "только в списке слева");
-  assert.match(bodyOf(run), /background:#a47cf0 !important/);
-  const [idle] = ruleWith(loaded, '.df-leading-slot [role="img"]>span[class~="rounded-full"][class~="border"]{');
-  assert.ok(idle, "правила кружка «простаивает» нет");
-  assert.match(bodyOf(idle), /color:#a47cf0 !important/);
-  // Яркие точки Claude (ready — акцент, awaiting — жёлтая, error) не перекрашены.
-  assert.ok(!rules(loaded).some(line => /status-dot\[data-kind="(ready|awaiting|error)"\]/.test(line)));
+  const [ink] = ruleWith(loaded, 'aside.dframe-sidebar .status-dot:not([data-kind="error"],[data-kind="clay"]){');
+  assert.ok(ink, "правила белых точек нет");
+  assert.match(bodyOf(ink), /^background:var\(--cds-text-primary, currentColor\) !important$/);
+  const [run] = ruleWith(loaded, 'aside.dframe-sidebar .status-dot[data-kind="running"]{');
+  assert.match(bodyOf(run), /^background:var\(--cds-text-muted, currentColor\) !important$/, "«идёт» — приглушённым, как у Claude");
+  assert.ok(rules(loaded).indexOf(run) > rules(loaded).indexOf(ink), "правило «идёт» — после общего");
+  assert.ok(!rules(loaded).some(line => line.includes("#a47cf0") && line.includes("aside.dframe-sidebar")), "акцента PMP в списке слева нет");
+  assert.ok(!rules(loaded).some(line => line.includes('.df-leading-slot [role="img"]>span')), "кружок «простаивает» не перекрашен");
+});
+
+test("page-64: поле «Search» слева — в тон панели: подложка выбранной строки, без тёмной плашки", () => {
+  const loaded = stand();
+  const [field] = ruleWith(loaded, "aside.dframe-sidebar .df-search-field{");
+  assert.ok(field, "правила поля поиска нет");
+  assert.match(bodyOf(field), /background-color:color-mix\(in oklab, var\(--cds-text-primary, currentColor\) 4\.5%, transparent\) !important/);
+  assert.match(bodyOf(field), /font-weight:400 !important/);
+  const [hover] = ruleWith(loaded, "aside.dframe-sidebar .df-search-field:hover{");
+  assert.match(bodyOf(hover), /7%, transparent\) !important/, "под курсором чуть плотнее покоя");
 });
 
 test("#9167: плашки ленты ответа — одним правилом к правому краю, ширина по содержимому; текст ответа не задет", () => {

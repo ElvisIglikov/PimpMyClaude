@@ -1,4 +1,5 @@
 import Foundation
+import Patcher
 
 /// Значение поля command.json: строка, булево (`font.mono`, `frame`), целое (`size.answer`),
 /// вложенный объект (тема, шрифт, размер) или null (сброс слоя). Объект пишется в том порядке
@@ -44,10 +45,9 @@ enum CommandValue {
 /// FIFO для команд меню и отдельный слот низшего приоритета для сводки проектов.
 /// Всё живёт на главной очереди — как и все, кто сюда пишет (меню, хоткеи, StatusFeed).
 final class CommandChannel {
-    /// Папку не переименовывать: лоадер смотрит именно в MyClaude.
-    static let directory = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/MyClaude", isDirectory: true)
-    static let path = directory.appendingPathComponent("command.json")
+    /// Папку не переименовывать: лоадер смотрит именно в MyClaude (`SupportFiles.directory`).
+    static let directory = SupportFiles.directory
+    static let path = directory.appendingPathComponent(SupportFiles.commandFileName)
     /// Сводка проектов (StatusFeed) — единственная команда, которую пишет не Элвис.
     static let statusAction = "status"
     /// Минимальный зазор между записями: лоадер успевает увидеть каждую (опрос — 500 мс).
@@ -108,14 +108,6 @@ final class CommandChannel {
         lastWriteAt.map { now().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
     }
 
-    private static let stamp: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(identifier: "UTC")
-        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        return f
-    }()
-
     private static let clock: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -164,33 +156,15 @@ final class CommandChannel {
                         id: String = makeID(), at: Date = Date()) -> String {
         var parts = ["\"id\":\(jsonString(id))",
                      "\"action\":\(jsonString(action))",
-                     "\"at\":\(jsonString(stamp.string(from: at)))"]
+                     "\"at\":\(jsonString(Stamp.utc.string(from: at)))"]
         parts += fields.map { "\(jsonString($0.key)):\($0.value.json)" }
         return "{" + parts.joined(separator: ",") + "}"
     }
 
-    /// Запись через временный файл рядом и `rename(2)`: лоадер опрашивает файл и не должен
-    /// увидеть его наполовину записанным. tmp обязан лежать в той же папке — иначе rename не атомарен.
+    /// Запись через временный файл рядом и `rename(2)` — `SupportFiles.writeAtomic` (файл 0600, нет папки — 0700).
     @discardableResult
-    static func writeAtomic(_ url: URL, _ body: String) -> Bool {
-        let tmp = url.appendingPathExtension("tmp")
-        let data = Data(body.utf8)
-        do {
-            try data.write(to: tmp, options: .atomic)
-        } catch {
-            // Патч ещё не ставили: папки MyClaude нет.
-            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
-                                                     withIntermediateDirectories: true)
-            guard (try? data.write(to: tmp, options: .atomic)) != nil else { return false }
-        }
-        let moved = tmp.withUnsafeFileSystemRepresentation { from -> Bool in
-            url.withUnsafeFileSystemRepresentation { to -> Bool in
-                guard let from = from, let to = to else { return false }
-                return rename(from, to) == 0
-            }
-        }
-        if !moved { try? FileManager.default.removeItem(at: tmp) }
-        return moved
+    static func writeAtomic(_ url: URL, _ body: String, permissions: Int = SupportFiles.filePermissions) -> Bool {
+        SupportFiles.writeAtomic(url, Data(body.utf8), permissions: permissions)
     }
 
     /// Возвращает, принята ли команда: `true` — записана или стоит в очереди. Что она дошла

@@ -6,15 +6,6 @@ import XCTest
 /// Цвета окон «по проектам» (ProjectPaint) и переключатель «Живой» (`look` у `*`) не спорят: живой фон окна проекта —
 /// всегда от переключателя, цвет — от проекта, неон и плотный текст — тоже от проекта.
 final class LiveProjectsWF200Tests: XCTestCase {
-    private final class Defaults: ThemeDefaults {
-        var values: [String: Any] = [:]
-        func string(forKey key: String) -> String? { values[key] as? String }
-        func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
-        func object(forKey key: String) -> Any? { values[key] }
-        func set(_ value: Any?, forKey key: String) { values[key] = value }
-        func removeObject(forKey key: String) { values.removeValue(forKey: key) }
-    }
-
     private static let laser = Theme(id: "laser", name: "Лазер", type: "dark",
                                      palette: ["accent": "#ff2d55", "background": "#0c0e1c",
                                                "foreground": "#fcdee4", "sidebar": "#080a13",
@@ -73,7 +64,7 @@ final class LiveProjectsWF200Tests: XCTestCase {
         }
         let index = ProjectIndex(sessionsDirectory: sessions, statusURL: status, projectsRoot: root,
                                  home: box, now: { [unowned self] in self.now })
-        let paint = ProjectPaint(index: index, store: store, defaults: Defaults(),
+        let paint = ProjectPaint(index: index, store: store, defaults: MemoryThemeDefaults(),
                                  now: { [unowned self] in self.now })
         paint.send = { [unowned self] command in self.sent.append(command); return true }
         paint.allLook = { [unowned self] in self.all }
@@ -185,31 +176,12 @@ final class LiveProjectsWF200Tests: XCTestCase {
 
     // MARK: меню окна — вид от того, что окно носит
 
-    func testWindowMenuLookStartsFromAllWindowsLive() throws {
-        let defaults = Defaults()
+    func testWindowLookStartsFromAllWindowsLive() throws {
+        let defaults = MemoryThemeDefaults()
         let themes = ThemeStore(defaults: defaults)
         themes.setAllLook(Self.live)
         XCTAssertEqual(themes.effectiveWindowLook(title: "Vkusnoff"), Self.live, "своей записи нет — «всем окнам»")
         themes.setWindowLook(Look(dense: true), title: "Vkusnoff")
         XCTAssertEqual(themes.effectiveWindowLook(title: "Vkusnoff"), Look(dense: true))
-
-        // «Плотный текст» в окне без своей записи шлёт вид С живым фоном — «Живой» на окне не гаснет.
-        var applied: [Layer<Look>] = []
-        var config = MinimizeMenu.MenuConfig()
-        config.windowLook = themes.effectiveWindowLook(title: "Trelvis")
-        config.allLook = themes.allLook
-        config.apply = { _, _, _, _, _, look in applied.append(look) }
-        let dense = try XCTUnwrap(MinimizeMenu.lookItems(config, scope: MenuModel.themeScopeWindow)
-            .first { $0.title == MenuModel.lookDenseTitle })
-        // WF202: «Живого фона» у окна нет (с WF220 нет и «Опытов»); в «Всем окнам ▸» его галка — правда.
-        XCTAssertEqual(MinimizeMenu.lookItems(config, scope: MenuModel.themeScopeWindow).map { $0.title },
-                       [MenuModel.lookDenseTitle])
-        let allLab = try XCTUnwrap(MinimizeMenu.lookItems(config, scope: MenuModel.themeScopeAll)
-            .first { $0.title == MenuModel.lookLabTitle }?.submenu)
-        XCTAssertEqual(allLab.items.first { $0.title == MenuModel.lookAuroraTitle }?.state, .on,
-                       "галка «Живой фон» во «Всем окнам» — правда")
-        let target = try XCTUnwrap(dense.target as? NSObject)
-        target.perform(try XCTUnwrap(dense.action))
-        XCTAssertEqual(applied, [.set(Look(aurora: true, dense: true, scheme: "theme"))])
     }
 }

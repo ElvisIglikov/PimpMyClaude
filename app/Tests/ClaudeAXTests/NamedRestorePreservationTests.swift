@@ -100,7 +100,7 @@ final class NamedRestorePreservationTests: XCTestCase {
         channel.seats.openChat = { _, _, _ in effects += 1 }
         let layout = WindowLayout(name: "Only main", at: now, mode: .five,
             cells: [LayoutCell(folder: "", chat: "main", title: "Main", cell: nil, frame: original[0].frame)])
-        XCTAssertFalse(channel.startRestore(layout, fresh: false))
+        XCTAssertFalse(try channel.requestLayoutRestore(layout, in: channel.directory, at: Date()))
         XCTAssertTrue(protected)
         XCTAssertEqual(effects, 0)
         XCTAssertFalse(channel.isRestoring)
@@ -135,4 +135,22 @@ final class NamedRestorePreservationTests: XCTestCase {
         XCTAssertEqual(screenStore.load().first?.restoreExpected, [])
     }
 
+}
+
+extension PimpChannel {
+    /// WF237: пункта меню «↩︎ Вернуть эти чаты» нет — возврат раскладки запросом канала, как `pimp.py layout restore`
+    /// (тот же `begin`). true — возврат пошёл.
+    @discardableResult
+    func requestLayoutRestore(_ layout: WindowLayout, in box: URL, at: Date) throws -> Bool {
+        seats.layouts = { [layout] }
+        let id = "\(Int(at.timeIntervalSince1970 * 1000))-0237"
+        let body = "{\"id\":\"\(id)\",\"at\":\"\(PimpChannel.stampText(at))\",\"action\":\"layout-restore\","
+            + "\"from\":\"\",\"name\":\"\(layout.name)\",\"fresh\":false}"
+        let url = box.appendingPathComponent(id + ".json")
+        try Data(body.utf8).write(to: url)
+        // Часы теста впереди настоящих: файл «из будущего» уборка канала сочла бы старше часа и стёрла.
+        try FileManager.default.setAttributes([.modificationDate: at], ofItemAtPath: url.path)
+        tick()
+        return isRestoring
+    }
 }

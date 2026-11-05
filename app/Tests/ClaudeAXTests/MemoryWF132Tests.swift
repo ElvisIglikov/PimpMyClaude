@@ -29,7 +29,7 @@ final class MemoryWF132Tests: XCTestCase {
         // vm_stat этого Мака 08.10: внутренние 147 591, очищаемые 52, неперемещаемые 95 181, сжатые 171 353, страница 16 КБ.
         let used = MacMemory.used(internalPages: 147_591, purgeable: 52, wired: 95_181, compressed: 171_353, pageSize: 16_384)
         XCTAssertEqual(used, (147_539 + 95_181 + 171_353) * 16_384)
-        XCTAssertEqual(MacMemory.gigabytes(used), "6,3")
+        XCTAssertEqual(MacMemory.gigabytes(used), "6.3")
         XCTAssertEqual(MacMemory.used(internalPages: 10, purgeable: 20, wired: 1, compressed: 1, pageSize: 1), 2,
                        "очищаемых больше внутренних — без переполнения")
         XCTAssertEqual(MacMemory.gigabytes(8 * Self.gb), "8")
@@ -59,7 +59,7 @@ final class MemoryWF132Tests: XCTestCase {
         XCTAssertEqual(MacMemory.caption(history), "под нагрузкой · за 3 ч без изменений")
         XCTAssertEqual(MacMemory.captionParts(history).word, "под нагрузкой", "слово рисуется цветом уровня")
         let growing = [sample(0, 55, used: 5 * Self.gb), sample(12, 55.4, used: 6 * Self.gb + Self.gb * 3 / 10)]
-        XCTAssertEqual(MacMemory.caption(growing), "в норме · за 12 мин от 5 до 6,3 ГБ")
+        XCTAssertEqual(MacMemory.caption(growing), "в норме · за 12 мин от 5 до 6.3 ГБ")
         XCTAssertEqual(MacMemory.caption([sample(0, 30, nil)]), "", "одна точка, уровня не знаем — подписи нет")
         XCTAssertEqual(MacMemory.caption([sample(0, 40, used: nil), sample(30, 62, used: nil)]),
                        "в норме · за 30 мин от 40 до 62 %", "занятого не знаем — как раньше, проценты нагрузки")
@@ -80,15 +80,14 @@ final class MemoryWF132Tests: XCTestCase {
         }
     }
 
-    func testBandsSplitByLevelAndGap() {
+    /// Сон Мака — разрыв линии. Свопа не знаем (старые точки, чтение не вышло) — красным то, что macOS считает
+    /// нагрузкой; со свопом красное решает он (`MemorySwapWF242Tests`).
+    func testSegmentsSplitByGapAndLoadFallsBackToLevel() {
         let history = [sample(0, 40), sample(1, 42), sample(2, 60, .warn), sample(3, 61, .warn), sample(4, 45),
                        sample(30, 50, nil), sample(31, 90, .critical)]
-        let bands = MacMemory.bands(history)
-        XCTAssertEqual(bands.map { $0.level }, [.normal, .warn, .normal, .normal, .critical])
-        XCTAssertEqual(bands.map { $0.indices }, [[0, 1, 2], [2, 3, 4], [4], [5, 6], [6]],
-                       "соседние полосы делят точку смены; сон Мака — разрыв")
         XCTAssertEqual(MacMemory.segments(history), [[0, 1, 2, 3, 4], [5, 6]])
-        XCTAssertTrue(MacMemory.bands([]).isEmpty)
+        XCTAssertEqual(MacMemory.loaded(history), [false, false, true, true, false, false, true])
+        XCTAssertTrue(MacMemory.loaded([]).isEmpty)
     }
 
     func testNearest() {
@@ -99,13 +98,18 @@ final class MemoryWF132Tests: XCTestCase {
         XCTAssertNil(MacMemory.nearest([], fraction: 0.5))
     }
 
-    func testLiveReadIsPlausibleAndCheap() {
-        let read = MacMemoryMonitor().measureOnce()
-        XCTAssertNotNil(read.sample.level, "kern.memorystatus_vm_pressure_level читается без прав")
-        XCTAssertNotNil(read.sample.pressure)
-        XCTAssertTrue((0...100).contains(read.sample.value ?? -1))
-        XCTAssertGreaterThan(read.sample.total, 0)
-        XCTAssertTrue((1...(read.sample.total)).contains(read.sample.used ?? 0))
-        XCTAssertLessThan(read.milliseconds, 50)
+    /// Живое чтение тем же путём, что тик таймера (`tickNow`): точка в истории правдоподобна и дешева.
+    func testLiveReadIsPlausibleAndCheap() throws {
+        let monitor = MacMemoryMonitor()
+        let started = DispatchTime.now().uptimeNanoseconds
+        monitor.tickNow()
+        let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+        let sample = try XCTUnwrap(monitor.watch(false).last)
+        XCTAssertNotNil(sample.level, "kern.memorystatus_vm_pressure_level читается без прав")
+        XCTAssertNotNil(sample.pressure)
+        XCTAssertTrue((0...100).contains(sample.value ?? -1))
+        XCTAssertGreaterThan(sample.total, 0)
+        XCTAssertTrue((1...(sample.total)).contains(sample.used ?? 0))
+        XCTAssertLessThan(milliseconds, 50)
     }
 }

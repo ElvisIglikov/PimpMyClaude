@@ -1,8 +1,9 @@
 import Foundation
+import Patcher
 
 /// Живой блок стилей в `~/Library/Application Support/MyClaude/claude.css` (решение 1 плана WF14).
 ///
-/// Лоадер v6 вставляет этот файл как **user-origin** CSS (`insertCSS(text,{cssOrigin:"user"})`,
+/// Лоадер вставляет этот файл как **user-origin** CSS (`insertCSS(text,{cssOrigin:"user"})`,
 /// перечитывает по mtime раз в секунду), а user-правило с `!important` по каскаду бьёт даже
 /// инлайн-стиль автора — поэтому и радиус неоновой рамки, и поля по бокам чинятся строками
 /// в файле, без перепатча Claude у всей команды. `inject.js` и лоадер здесь НЕ трогаются.
@@ -11,27 +12,26 @@ import Foundation
 /// (правила Элвиса и правила из бандла) сохраняется дословно.
 ///
 /// Три точки записи, других не нужно: запуск приложения, конец «Пропатчить Claude»/«Снять патч…»
-/// (`Patcher.installLiveFiles` копирует claude.css из бандла ЦЕЛИКОМ и затирает блок)
+/// (`Patcher.installLiveFiles` сливает claude.css из бандла и ставит блок из бандла — тем же `applyingCSSBlock`)
 /// и обработчик ползунка «↔️ Поля по бокам».
 enum LiveStyle {
-    /// Маркеры — побайтно такие, каждый на своей строке.
-    static let markerStart = "/* PimpMyClaude:auto */"
-    static let markerEnd = "/* /PimpMyClaude:auto */"
+    /// Маркеры — побайтно такие, каждый на своей строке (одна копия — у патчера).
+    static let markerStart = Patcher.cssMarkerStart
+    static let markerEnd = Patcher.cssMarkerEnd
 
-    static let cssFileName = "claude.css"
-    static let configFileName = "claude.json"
+    static let cssFileName = SupportFiles.cssFileName
+    static let configFileName = SupportFiles.configFileName
     /// Ключи живого `claude.json`: поля по бокам и необязательный радиус окна.
     static let sidePaddingKey = "sidePadding"
     static let frameRadiusKey = "frameRadius"
 
-    /// Поля по бокам по умолчанию — 24 px (слово Элвиса 08.10.2026, WF128; было 5 с 04.09).
-    /// Та же цифра лежит в `Patcher.configDefaults`, `claude-patch/claude.json` и `DEFAULTS`
-    /// в `patch-claude.mjs`: таргеты `ClaudeAX` и `Patcher` друг друга не видят.
-    static let defaultSidePadding = 24
+    /// Поля по бокам по умолчанию — 24 px (слово Элвиса 08.10.2026, WF128; было 5 с 04.09) — из
+    /// `Patcher.configDefaults`; та же цифра в `claude-patch/claude.json` и `DEFAULTS` в `patch-claude.mjs`.
+    static let defaultSidePadding = Patcher.configDefaults[sidePaddingKey] ?? 24
     /// Ширина окна по умолчанию — только чтобы создать `claude.json`, если его ещё нет;
-    /// у существующего файла свои значения не трогаются (см. `merged`). 280, как в
-    /// `Patcher.configDefaults` и `claude-patch/claude.json` (WF45): на 360 две плитки раскладок серые.
-    static let defaultMinWindowWidth = 280
+    /// у существующего файла свои значения не трогаются (см. `merged`). 280 из `Patcher.configDefaults`
+    /// (WF45): на 360 две плитки раскладок серые.
+    static let defaultMinWindowWidth = Patcher.configDefaults["minWindowWidth"] ?? 280
     /// Границы ползунка: до 40 px (WF156/WF161, #9148 — поля правой колонки широкого вида = sidePadding, зажим
     /// страницы [12, 40]), меньше нуля не бывает. Умолчание и миграция прежние.
     static let minSidePadding = 0
@@ -92,27 +92,7 @@ enum LiveStyle {
     /// маркеры битые или блок задвоился — старый мусор вырезаем от первого до последнего
     /// маркера и пишем блок в конец. Чужие строки за пределами блока сохраняются дословно.
     static func applying(block: String, to text: String) -> String {
-        var lines = text.components(separatedBy: "\n")
-        // Хвост после последнего перевода строки — не строка файла; финальный \n добавим сами.
-        if lines.last?.isEmpty == true { lines.removeLast() }
-        let blockLines = block.components(separatedBy: "\n")
-        let starts = lines.indices.filter { isMarker(lines[$0], markerStart) }
-        let ends = lines.indices.filter { isMarker(lines[$0], markerEnd) }
-
-        if starts.count == 1, ends.count == 1, starts[0] < ends[0] {
-            lines.replaceSubrange(starts[0]...ends[0], with: blockLines)
-        } else {
-            if let first = (starts + ends).min(), let last = (starts + ends).max() {
-                lines.removeSubrange(first...last)
-            }
-            while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
-            lines += blockLines
-        }
-        return lines.joined(separator: "\n") + "\n"
-    }
-
-    private static func isMarker(_ line: String, _ marker: String) -> Bool {
-        line.trimmingCharacters(in: .whitespaces) == marker
+        Patcher.applyingCSSBlock(block.components(separatedBy: "\n"), to: text)
     }
 
     /// Значение целого ключа живого claude.json; файла нет, JSON битый или значение не число — nil.
@@ -157,11 +137,10 @@ enum LiveStyle {
     static var defaultDirectory: URL { CommandChannel.directory }
 
     /// Текущее значение для ползунка: `claude.json` (его читает лоадер и правит сам Элвис),
-    /// иначе память приложения, иначе 5 (критик В7).
+    /// иначе память приложения, иначе `defaultSidePadding` (критик В7).
     static func currentSidePadding(directory: URL = LiveStyle.defaultDirectory,
                                    defaults: UserDefaults = .standard) -> Int {
-        let config = try? String(contentsOf: directory.appendingPathComponent(configFileName),
-                                 encoding: .utf8)
+        let config = LiveConfig.text(at: directory.appendingPathComponent(configFileName))
         if let value = number(config, key: sidePaddingKey) { return clamp(value) }
         if let remembered = defaults.object(forKey: sidePaddingKey) as? Int { return clamp(remembered) }
         return defaultSidePadding
@@ -174,8 +153,7 @@ enum LiveStyle {
                            majorVersion: Int = ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
         -> Bool {
         let url = directory.appendingPathComponent(cssFileName)
-        let config = try? String(contentsOf: directory.appendingPathComponent(configFileName),
-                                 encoding: .utf8)
+        let config = LiveConfig.text(at: directory.appendingPathComponent(configFileName))
         let radius = frameRadius(config: config, majorVersion: majorVersion)
         let old = try? String(contentsOf: url, encoding: .utf8)
         let new = applying(block: block(padding: clamp(padding), radius: radius), to: old ?? "")
@@ -187,7 +165,7 @@ enum LiveStyle {
     @discardableResult
     static func writeConfig(sidePadding: Int, directory: URL = LiveStyle.defaultDirectory) -> Bool {
         let url = directory.appendingPathComponent(configFileName)
-        let old = try? String(contentsOf: url, encoding: .utf8)
+        let old = LiveConfig.text(at: url)
         guard let new = merged(config: old, sidePadding: sidePadding) else {
             NSLog("PimpMyClaude: %@ не разобрался — sidePadding не записан", url.path)
             return false

@@ -88,7 +88,7 @@ test("12ф: сырой <details> — свой заголовок перед <p>,
   assert.deepEqual(kids(parts.box).filter(node => !node.hasAttribute(HEAD)), before);
   assert.equal(n.open.textContent, "<details><summary><b>1. Сайт</b> — первым</summary>");
   assert.equal(n.close.textContent, "</details>");
-  assert.deepEqual(folds(loaded), { count: 1, open: 0, long: 0, shut: 0, clicks: 0 });
+  assert.deepEqual(folds(loaded), { count: 1, open: 0, long: 0, shut: 0, clicks: 0, brief: 0, big: 0, pics: 0, all: 0 });
 });
 
 test("12ф: нажатие, Enter и пробел — открыть/закрыть; повторный проход ничего не дублирует", () => {
@@ -280,8 +280,8 @@ test("12ф: ответ выше двух экранов — тихая кноп�
   assert.equal(whole.getAttribute("role"), "button");
   assert.equal(whole.getAttribute(WHOLE), "open");
   assert.equal(whole.getAttribute(LABEL), "▾ Свернуть ответ");
-  // WF225 (#9426): раскрытое под кнопкой помечено — по метке идёт полоса слева; первый абзац — нет.
-  for (const node of [n.second, n.list, n.last]) assert.equal(node.getAttribute(LONG), "open");
+  // Слово Элвиса 10.10 10:47: полосы вдоль раскрытого ответа нет — под раскрытой кнопкой меток нет.
+  for (const node of [n.second, n.list, n.last]) assert.equal(node.hasAttribute(LONG), false);
   assert.equal(n.first.hasAttribute(LONG), false);
   click(whole);
   assert.equal(whole.getAttribute(WHOLE), "closed");
@@ -293,13 +293,16 @@ test("12ф: ответ выше двух экранов — тихая кноп�
   loaded.parts.row.rect.height = 200;
   tick();
   assert.equal(wholes(loaded).length, 1);
-  assert.deepEqual(folds(loaded), { count: 0, open: 0, long: 1, shut: 1, clicks: 1 });
-  // Развернул — ответ снова высокий, кнопка на месте.
+  assert.deepEqual(folds(loaded), { count: 0, open: 0, long: 1, shut: 1, clicks: 1, brief: 0, big: 0, pics: 0, all: 0 });
+  // Развернул — сначала сводка (#9810, 12ф³), «Подробнее» — весь ответ; ответ снова высокий, кнопка на месте.
   loaded.parts.row.rect.height = 1700;
   key("Enter", whole);
   assert.equal(whole.getAttribute(WHOLE), "open");
+  assert.equal(folds(loaded).brief, 1);
+  key("Enter", loaded.dom.queryAll("[data-myclaude-asum-bar]")[0]);
+  assert.equal(folds(loaded).brief, 0);
   assert.equal(wholes(loaded).length, 1);
-  for (const node of [n.second, n.list, n.last]) assert.equal(node.getAttribute(LONG), "open");
+  for (const node of [n.second, n.list, n.last]) assert.equal(node.hasAttribute(LONG), false);
   // WF225: полоса сама меняет высоту ответа — у порога (2 экрана = 1600) кнопка держится с запасом, не мигает.
   loaded.parts.row.rect.height = 1500;
   tick();
@@ -314,7 +317,7 @@ test("12ф: ответ выше двух экранов — тихая кноп�
 // WF225 (#9426, слово Элвиса 10.10: при развороте свёрнутые группы выделять полосой — большая группа
 // или небольшая): под раскрытой кнопкой «Свернуть ответ» помечено всё, вместе со своими заголовками
 // свёрток; тело <details> несёт обе метки, а правило полосы на них одно — двойной линии нет.
-test("12ф: раскрытая большая свёртка — полоса по метке у всего под кнопкой; <details> внутри — без двойной", () => {
+test("12ф: раскрытая большая свёртка — без полосы и меток под кнопкой; <details> внутри — со своими заголовками", () => {
   const { loaded, n, click } = page({
     height: 1700,
     build: box => ({
@@ -336,12 +339,12 @@ test("12ф: раскрытая большая свёртка — полоса п
   assert.equal(whole.getAttribute(WHOLE), "open");
   assert.equal(n.first.nextElementSibling, whole);
   const [shutHead, openHead] = heads(loaded);
-  // Всё под кнопкой — в полосе: абзацы, списки, код, сырые теги и свои заголовки свёрток.
+  // Слово Элвиса 10.10 10:47: полосы нет — ничего под раскрытой кнопкой не помечено.
   const under = [];
   for (let node = whole.nextElementSibling; node; node = node.nextElementSibling) under.push(node);
-  assert.equal(under.length, 13);
+  assert.equal(under.length, 14, "и нижняя строка «Развернуть всё» (#11631)");
   assert.ok(under.includes(shutHead) && under.includes(openHead));
-  for (const node of under) assert.equal(node.getAttribute(LONG), "open");
+  for (const node of under) assert.equal(node.hasAttribute(LONG), false);
   assert.equal(whole.hasAttribute(LONG), false, "сама кнопка — не тело");
   assert.equal(n.first.hasAttribute(LONG), false);
   // Свои заголовки места не меняют: метки тела у них нет, состояние — своё.
@@ -353,22 +356,25 @@ test("12ф: раскрытая большая свёртка — полоса п
   assert.equal(n.openBody.getAttribute(BODY), "open");
   assert.equal(n.openList.getAttribute(BODY), "open");
   assert.equal(n.list.hasAttribute(BODY), false);
-  // Одно правило линии на обе метки; заголовки, сырые теги и свёрнутый блок «Прочитано» — мимо.
+  // Одно правило линии телу <details>; заголовки, сырые теги и свёрнутый блок «Прочитано» — мимо.
+  // Под раскрытой кнопкой «Свернуть ответ» полосы нет (page-61): ни одного правила на long="open".
   const rules = [...loaded.inner.RULES];
-  const strip = `:is([${BODY}="open"],[${LONG}="open"]):not([${HEAD}],[${RAW}],:is([data-myclaude-read="head"],[data-myclaude-read="bare"]) *)`;
-  const lines = rules.filter(rule => rule.includes("border-left:1.5px solid currentColor") && (rule.includes(`[${LONG}="open"]`) || rule.includes(`[${BODY}="open"]`)) && !rule.includes("::before") && !rule.includes("blockquote:is("));
+  assert.equal(rules.some(rule => rule.includes(`[${LONG}="open"]`)), false, "правил на long=open нет");
+  const strip = `[${BODY}="open"]:not([${HEAD}],[${RAW}],:is([data-myclaude-read="head"],[data-myclaude-read="bare"]) *)`;
+  const lines = rules.filter(rule => rule.includes("border-left:1.5px solid currentColor") && rule.includes(`[${BODY}="open"]`) && !rule.includes("::before"));
   assert.equal(lines.length, 1, "линию узлу полосы даёт ровно одно правило");
   assert.ok(lines[0].endsWith(`,${strip}:not(blockquote,table){${lines[0].slice(lines[0].indexOf("{") + 1)}`));
-  assert.ok(rules.some(rule => rule.startsWith(`[${HEAD}]:is([${BODY}="open"],[${LONG}="open"])::before{`) && rule.includes("border-left:1.5px solid currentColor")), "сквозь свой заголовок линию ведёт его слой");
-  // Свернул ответ — раскрытых меток нет, всё под кнопкой спрятано; развернул — полоса вернулась.
+  assert.ok(rules.some(rule => rule.startsWith(`[${HEAD}][${BODY}="open"]::before{`) && rule.includes("border-left:1.5px solid currentColor")), "сквозь свой заголовок линию ведёт его слой");
+  // Свернул ответ — всё под кнопкой спрятано; развернул — метки сняты, полосы нет.
   click(whole);
   for (const node of under) assert.equal(node.getAttribute(LONG), "closed");
   assert.equal(loaded.dom.queryAll(`[${LONG}="open"]`).length, 0);
   click(whole);
-  for (const node of under) assert.equal(node.getAttribute(LONG), "open");
+  click(loaded.dom.queryAll("[data-myclaude-asum-bar]")[0]);
+  for (const node of under) assert.equal(node.hasAttribute(LONG), false);
   // Текст ответа тот же: узлы на местах, сырые теги целы.
   assert.equal(n.openOpen.textContent, "<details open><summary>Раскрытая</summary>");
-  assert.equal(kids(loaded.parts.box).filter(node => !node.hasAttribute(HEAD)).length, 12);
+  assert.equal(kids(loaded.parts.box).filter(node => !node.hasAttribute(HEAD) && !node.hasAttribute("data-myclaude-fold-all")).length, 12);
   // dispose снимает метки полосы и свои узлы.
   loaded.api.dispose();
   assert.equal(loaded.dom.queryAll(`[${HEAD}]`).length, 0);
@@ -419,6 +425,9 @@ test("12ф: Esc на кнопке «Свернуть ответ» сворачи
   assert.equal(folds(loaded).clicks, 1);
   key(" ", whole);
   assert.equal(whole.getAttribute(WHOLE), "open");
+  assert.equal(folds(loaded).brief, 1, "развернул — сначала сводка");
+  key("Escape", whole);
+  assert.equal(whole.getAttribute(WHOLE), "closed", "Esc на кнопке над сводкой — свёрнут");
 });
 
 test("12ф: короткий ответ — без кнопки «Свернуть ответ»", () => {

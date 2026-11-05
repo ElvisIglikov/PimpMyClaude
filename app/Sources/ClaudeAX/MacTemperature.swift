@@ -12,7 +12,7 @@ import IOKit
 //   • батарея — открытый `AppleSmartBattery` «Temperature» (сотые доли °C): запасной путь, когда чипа нет;
 //   • `ProcessInfo.thermalState` — как оценивает сама macOS, словом.
 // Опрос — раз в минуту на своей очереди (не главный поток), допуск таймера 10 с (macOS склеивает пробуждения),
-// история — 180 точек (3 ч) только в памяти, на диск ничего не пишется.
+// история — 180 точек (3 ч) в памяти и в `temperature-history.json` (#10215).
 
 /// Одно чтение.
 public struct MacTemperatureSample: Equatable {
@@ -32,9 +32,11 @@ public struct MacTemperatureSample: Equatable {
         self.state = state
     }
 
-    /// Что рисуем: чип, без него — батарея.
-    public var value: Double? { chipAverage ?? battery }
-    public var isChip: Bool { chipAverage != nil }
+    /// Что рисуем: самый горячий датчик кристалла, без него — среднее (старые строки файла), без чипа — батарея.
+    /// Было среднее: Мак кипяток, а в панели 52° (#10998, слово Элвиса 27.10: «Температура 52. Так она вовсе не
+    /// не 52»). Среднее по 8–14 датчикам тянут вниз холодные кластеры, а греет Мак самый горячий.
+    public var value: Double? { chipMax ?? chipAverage ?? battery }
+    public var isChip: Bool { chipMax != nil || chipAverage != nil }
 }
 
 /// Чистая часть: разбор датчиков, история, слова, масштаб графика (тесты `TemperatureWF126Tests`).
@@ -104,6 +106,33 @@ public enum MacTemperature {
         if last.isChip, let battery = last.battery { parts.append("батарея \(degrees(battery))") }
         if last.state != .nominal { parts.append("macOS: \(word(last.state))") }
         return parts.joined(separator: " · ")
+    }
+
+    /// Цвет точки (#9818) — как оценивает нагрев сама macOS (`thermalState`): не нагрет — зелёный, слегка — жёлтый,
+    /// сильно и перегрет (macOS уже сбавляет частоту) — красный. Градусы чипа сами по себе не порог: 90° под нагрузкой
+    /// у Apple Silicon — норма, а `thermalState` знает модель Мака.
+    public static func health(_ state: ProcessInfo.ThermalState) -> MacHealth {
+        switch state {
+        case .nominal: return .good
+        case .fair: return .warn
+        case .serious, .critical: return .bad
+        @unknown default: return .good
+        }
+    }
+
+    /// С 03.11.2026 ещё и по градусам (слово: «к семидесяти уже надо видеть, что нагрев пошёл нездоровый»).
+    public static let warnDegrees = 70.0
+    public static let badDegrees = 90.0
+
+    public static func health(_ sample: MacTemperatureSample) -> MacHealth {
+        let state = health(sample.state)
+        guard let value = sample.value else { return state }
+        if state == .bad || value >= badDegrees { return .bad }
+        return state == .warn || value >= warnDegrees ? .warn : .good
+    }
+
+    public static func health(_ history: [MacTemperatureSample]) -> [MacHealth] {
+        history.map { (sample: MacTemperatureSample) in health(sample) }
     }
 
     /// Шкала графика: ступенями по 20° (как в файле 25: 40/60/80/100), не уже 20°.
@@ -226,23 +255,30 @@ enum BatteryTemperature {
     }
 }
 
-/// Опрос раз в минуту на своей очереди; история — в памяти. `onUpdate` зовётся на главном потоке.
+/// Опрос раз в минуту на своей очереди; история — в памяти и в файле (`file`, #10215): после перезапуска Пимпа
+/// график продолжается. `onUpdate` зовётся на главном потоке.
 public final class MacTemperatureMonitor {
     private let queue = DispatchQueue(label: "pimp.temperature", qos: .utility)
     private var timer: DispatchSourceTimer?
     private lazy var sensors = HIDTemperatureSensors()
     private var history: [MacTemperatureSample] = []
-    /// Сколько миллисекунд заняло последнее чтение (для замера нагрузки и статуса).
-    public private(set) var lastReadMilliseconds: Double = 0
+    private let file: ChartHistoryFile<TemperatureRow>?
     public var onUpdate: (([MacTemperatureSample]) -> Void)?
 
-    public init() {}
+    public init(file: URL? = nil) { self.file = file.map(ChartHistoryFile.init(url:)) }
 
     public var running: Bool { timer != nil }
 
     /// Первое чтение сразу, дальше — раз в минуту.
     public func start() {
         guard timer == nil else { return }
+        queue.async { [weak self] in
+            guard let self = self, let file = self.file, self.history.isEmpty else { return }
+            let now = Date()
+            self.history = file.load().map { $0.sample }
+                .filter { now.timeIntervalSince($0.at) < MacTemperature.window && $0.at <= now && $0.value != nil }
+                .suffix(MacTemperature.capacity).map { $0 }
+        }
         let source = DispatchSource.makeTimerSource(queue: queue)
         source.schedule(deadline: .now(), repeating: MacTemperature.interval, leeway: .seconds(10))
         source.setEventHandler { [weak self] in self?.tick() }
@@ -256,6 +292,7 @@ public final class MacTemperatureMonitor {
         timer = nil
         queue.async { [weak self] in
             self?.history = []
+            self?.file?.save([])
             DispatchQueue.main.async { self?.onUpdate?([]) }
         }
     }
@@ -263,22 +300,16 @@ public final class MacTemperatureMonitor {
     /// Одно чтение всех источников (на очереди монитора).
     public func readNow() -> MacTemperatureSample {
         dispatchPrecondition(condition: .onQueue(queue))
-        let started = DispatchTime.now().uptimeNanoseconds
         let chip = sensors?.read().flatMap { MacTemperature.chip($0) }
         let sample = MacTemperatureSample(at: Date(), chipAverage: chip?.average, chipMax: chip?.max,
                                           battery: BatteryTemperature.read(), state: ProcessInfo.processInfo.thermalState)
-        lastReadMilliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
         return sample
-    }
-
-    /// Для замера: синхронное чтение с очереди монитора.
-    public func measureOnce() -> (sample: MacTemperatureSample, milliseconds: Double) {
-        queue.sync { (readNow(), lastReadMilliseconds) }
     }
 
     private func tick() {
         history = MacTemperature.append(readNow(), to: history)
         let snapshot = history
+        file?.save(snapshot.map(TemperatureRow.init))
         DispatchQueue.main.async { [weak self] in self?.onUpdate?(snapshot) }
     }
 }

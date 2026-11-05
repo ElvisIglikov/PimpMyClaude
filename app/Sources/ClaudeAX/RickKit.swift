@@ -1,4 +1,5 @@
 import Foundation
+import Patcher
 
 /// Рик — житель Пимпа (WF216, #9381; слово Элвиса 10.10.2026: «когда люди устанавливают Пимпа, то у них и Рик
 /// сразу появляется»). Комплект `resources/rick-kit` (снимок публичного RickBoss, откуда — `KIT-SOURCE.txt`) едет в
@@ -37,19 +38,19 @@ public enum RickKit {
     /// Есть ли что-то по этому пути: папка, файл или ссылка (даже битая) — чужое не трогаем в любом виде.
     static func isPresent(_ url: URL) -> Bool { (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil }
 
-    /// Поставить Рика живыми путями. `configDefaults` — чем начать `claude.json`, если его ещё нет
-    /// (`Patcher.configDefaults`: таргет ClaudeAX патчер не видит, а `ensureConfig` готовый файл не дополняет).
-    public static func install(configDefaults: [String: Any]) -> Outcome {
+    /// Поставить Рика живыми путями. `claude.json` ещё нет — начинается с `Patcher.configDefaults`
+    /// (`ensureConfig` готовый файл не дополняет).
+    public static func install() -> Outcome {
         install(from: bundledDirectory, root: StatusFeed.projectsRoot(),
-                configURL: CommandChannel.directory.appendingPathComponent(StatusFeed.configFileName),
-                configDefaults: configDefaults)
+                configURL: LiveConfig.url,
+                configDefaults: Patcher.configDefaults)
     }
 
     /// Первый запуск: ставим сами только на новой установке (`PanelColorTiles.isNewInstall` — снимок настроек до
     /// первой записи и `installed.json`); у тех, кто Пимп уже ставил, — nil и ни одного файла: им строка
     /// «Поставить Рика» в настройках панели.
-    public static func firstRun(values: [String: Any], installed: Data?, configDefaults: [String: Any]) -> Outcome? {
-        firstRun(values: values, installed: installed) { install(configDefaults: configDefaults) }
+    public static func firstRun(values: [String: Any], installed: Data?) -> Outcome? {
+        firstRun(values: values, installed: installed) { install() }
     }
 
     static func firstRun(values: [String: Any], installed: Data?, install: () -> Outcome) -> Outcome? {
@@ -65,7 +66,7 @@ public enum RickKit {
         let target = folder(root: root)
         if isPresent(target) { return .exists(target) }
         guard let source = source, fm.fileExists(atPath: source.appendingPathComponent("AGENTS.md").path) else {
-            return .failed("в этой сборке Пимпа нет комплекта Рика")
+            return .failed("в этой сборке PMP нет комплекта Рика")
         }
         let madeRoot = !fm.fileExists(atPath: root.path)
         let draft = root.appendingPathComponent(".\(folderName)-\(UUID().uuidString.prefix(8))", isDirectory: true)
@@ -86,7 +87,7 @@ public enum RickKit {
     /// `mainProject: "Rick"` в claude.json — только если ключ не задан: чужой выбор главного проекта не меняем.
     /// Остальные ключи остаются (merge, как `LiveStyle.merged`); файл не разобрался — не трогаем вовсе.
     static func writeMainProject(configURL: URL, configDefaults: [String: Any]) {
-        let old = try? Data(contentsOf: configURL)
+        let old = LiveConfig.data(at: configURL)
         guard PimpChannel.mainProjectSetting(old) == nil else { return }
         var json = configDefaults
         if let old = old, !old.allSatisfy({ $0 == 0x20 || $0 == 0x0A || $0 == 0x0D || $0 == 0x09 }) {

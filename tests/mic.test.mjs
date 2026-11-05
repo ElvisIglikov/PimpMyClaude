@@ -289,3 +289,41 @@ test("page-43: диктовка при включённой задержке —
   assert.equal(loaded.parts.send.__presses, 0, "ушло мимо отсчёта");
   assert.equal(loaded.api.status().sendDelay.counting, true, "отсчёт не пошёл");
 });
+
+// #9681 (слово Элвиса 11.10: «чтобы диктатор её перехватывал эту кнопку… правой кнопкой… выбирать диктовка
+// какая»): в режиме Диктатора родная кнопка диктовки Claude работает как кружок — её «нажми и держи» гасится,
+// счёт нажатий тот же; её место — приложению полем micNative; правая кнопка — меню приложения, не страницы.
+const nativeEvent = (loaded, type, extra = {}) => {
+  const event = new loaded.win.MouseEvent(type, { cancelable: true, ...extra });
+  event.target = loaded.parts.dictate;
+  loaded.dom.document.dispatchEvent(event);
+  return event;
+};
+
+test("#9681: режим Диктатора — родная кнопка Claude перехвачена и считает нажатия, как кружок", () => {
+  const loaded = open();
+  dictator(loaded);
+  settle(loaded);
+  const down = nativeEvent(loaded, "pointerdown");
+  assert.equal(down.defaultPrevented, true, "родное «нажми и держи» не начинается");
+  nativeEvent(loaded, "click", { detail: 1 });
+  assert.equal(loaded.api.status().mic.dictating, true, "первое нажатие — запись Диктатора пошла");
+  assert.equal(loaded.api.status().mic.starts, 1);
+  nativeEvent(loaded, "click", { detail: 2 });
+  assert.equal(loaded.api.status().mic.dictating, true, "второй щелчок двойного — не новое нажатие");
+  nativeEvent(loaded, "click", { detail: 1 });
+  assert.equal(loaded.api.status().mic.dictating, false, "второе нажатие — остановка");
+  const menu = nativeEvent(loaded, "contextmenu");
+  assert.equal(menu.defaultPrevented, true, "правая кнопка — меню приложения");
+  const spot = JSON.parse(JSON.stringify(loaded.inner.micNativeSpot()));
+  assert.deepEqual(spot, [WIDTH - 150, HEIGHT - 726, 20, 20, 0], "место — от правого и нижнего края");
+});
+
+test("#9681: режим Claude — родную кнопку не трогаем", () => {
+  const loaded = open();
+  settle(loaded);
+  const down = nativeEvent(loaded, "pointerdown");
+  assert.equal(down.defaultPrevented, false);
+  nativeEvent(loaded, "click", { detail: 1 });
+  assert.equal(loaded.api.status().mic.starts, 0, "родная диктовка идёт сама, счёт кружка не трогаем");
+});

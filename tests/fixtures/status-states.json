@@ -1,0 +1,217 @@
+{
+  "about": "Одна таблица заголовков status.md и их состояний для всех разборщиков: tools/pimp.py digest, Swift StatusFeed.isWorkflowHeading / PanelProjects (blockState, tailLine), страница statusParse. Заголовок блока — с начала строки цифра-клавиша или 🔟; значок сильнее слова (WF145). Ревизия WF247: «Сейчас: Workflow …» — не блок, заголовок без слова «Workflow» — блок.",
+  "states": {
+    "running": {
+      "py": "идёт",
+      "js": "run",
+      "swift": "running"
+    },
+    "waiting": {
+      "py": "ждёт",
+      "js": "wait",
+      "swift": "waiting"
+    },
+    "planned": {
+      "py": "впереди",
+      "js": "todo",
+      "swift": "planned"
+    },
+    "done": {
+      "py": "готово",
+      "js": "done",
+      "swift": "done"
+    },
+    "failed": {
+      "py": "упал",
+      "js": "fail",
+      "swift": "failed"
+    }
+  },
+  "headings": [
+    [
+      "1️⃣ Workflow ⏳ идёт",
+      "running"
+    ],
+    [
+      "2️⃣ Workflow 💭 идёт",
+      "running"
+    ],
+    [
+      "3️⃣ Workflow ✅ готово",
+      "done"
+    ],
+    [
+      "4️⃣ Workflow ✅ готово, выложено",
+      "done"
+    ],
+    [
+      "5️⃣ Workflow ⬜ запланирован",
+      "planned"
+    ],
+    [
+      "6️⃣ Workflow ❓ ждёт Элвиса",
+      "waiting"
+    ],
+    [
+      "7️⃣ Workflow ✋ ждёт",
+      "waiting"
+    ],
+    [
+      "8️⃣ Workflow ⚠️ глянь",
+      "waiting"
+    ],
+    [
+      "9️⃣ Workflow 🙋 ответь",
+      "waiting"
+    ],
+    [
+      "🔟 Workflow ⏸️ пауза",
+      "waiting"
+    ],
+    [
+      "1️⃣ Workflow 🛑 упал",
+      "failed"
+    ],
+    [
+      "2️⃣ Workflow ❌ стоп",
+      "failed"
+    ],
+    [
+      "3️⃣ Workflow 🟢 готов",
+      "done"
+    ],
+    [
+      "4️⃣ Workflow кодинг",
+      "running"
+    ],
+    [
+      "5️⃣ Workflow критика",
+      "running"
+    ],
+    [
+      "6️⃣ Workflow запланирован",
+      "planned"
+    ],
+    [
+      "7️⃣ Workflow впереди",
+      "planned"
+    ],
+    [
+      "8️⃣ Workflow ждёт Элвиса",
+      "waiting"
+    ],
+    [
+      "9️⃣ Workflow упал на гейте",
+      "failed"
+    ],
+    [
+      "1️⃣ Workflow",
+      "planned"
+    ],
+    [
+      "🔟 Workflow кодинг",
+      "running"
+    ],
+    [
+      "3⃣ Workflow ✅ готово",
+      "done"
+    ],
+    [
+      "1️⃣ Исследование ✅ готово",
+      "done"
+    ],
+    [
+      "7️⃣ Голоса ✅ в main, «Созвон» ждёт слова",
+      "done"
+    ],
+    [
+      "🔟 из 10 ✅ Workflow: чистка",
+      "done"
+    ],
+    [
+      "2️⃣ Интерфейс 💭 кодинг",
+      "running"
+    ]
+  ],
+  "notHeadings": [
+    "Сейчас: Workflow 2 на проверке.",
+    "Итог: Workflow 5 из 9 готово",
+    "Марафон: Workflow 3 из 9",
+    "Workflow 1 ✅ готово",
+    "✅ Workflow готово",
+    "- 1️⃣ Workflow ✅ готово",
+    "* 2️⃣ Workflow ⏳ идёт",
+    "12 Workflow впереди",
+    "Workflow: план",
+    "# 1️⃣ Workflow"
+  ],
+  "tails": [
+    [
+      "Сейчас: гейт 1.",
+      "now",
+      "гейт 1."
+    ],
+    [
+      "- Сейчас: кодинг батча 2",
+      "now",
+      "кодинг батча 2"
+    ],
+    [
+      "**Сейчас:** проверка",
+      "now",
+      "проверка"
+    ],
+    [
+      "Ждёт Элвиса: глянуть файл 3",
+      "wait",
+      "глянуть файл 3"
+    ],
+    [
+      "* **Ждёт Элвиса:** ответ на вопрос 1",
+      "wait",
+      "ответ на вопрос 1"
+    ],
+    [
+      "Ждёт пользователя: показ",
+      "wait",
+      "показ"
+    ]
+  ],
+  "documents": [
+    {
+      "name": "dictator-like",
+      "text": "# 🎙Проект\nобновлено 20:05\n\n1️⃣ Исследование ✅ готово\n- о чём: что есть у других\n\n2️⃣ Интерфейс (ui) ✅ в main\n- о чём: окно\n\n3️⃣ Значки (znachki) ✅ в main\n\n4️⃣ Ошибки (oshibki) ✅ в main\n\n5️⃣ Ревизия (revizor) ✅ в main\n\n6️⃣ Красота (krasota) ✅ в main\n\n7️⃣ Голоса (golosa) ✅ в main, «Созвон» ждёт слова\n\n8️⃣ Интеграции 1–4 и два гейта ✅ готово\n- шаги 4 из 4\n\nСейчас: марафон готов к main веткой\nЖдёт Элвиса: показ макета\n",
+      "workflows": [
+        "done",
+        "done",
+        "done",
+        "done",
+        "done",
+        "done",
+        "done",
+        "done"
+      ],
+      "now": "марафон готов к main веткой",
+      "wait": "показ макета"
+    },
+    {
+      "name": "keys-are-not-blocks",
+      "text": "# Проект\n\n1️⃣ Workflow 1 — ✅ готово\n- о чём: первое\n\n2️⃣ Workflow 2 — 💭 идёт\n- о чём: второе\n\nСейчас: Workflow 2 на проверке.\nИтог: Workflow 5 из 9 готово\nМарафон: Workflow 3 из 9\n",
+      "workflows": [
+        "done",
+        "running"
+      ],
+      "now": "Workflow 2 на проверке.",
+      "wait": ""
+    },
+    {
+      "name": "tails-as-list-items",
+      "text": "# Проект\n\n1️⃣ Workflow ⏳ идёт\n- о чём: x\n- Сейчас: гейт 1\n* **Ждёт Элвиса:** глянуть\n",
+      "workflows": [
+        "running"
+      ],
+      "now": "гейт 1",
+      "wait": "глянуть"
+    }
+  ]
+}

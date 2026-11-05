@@ -13,8 +13,6 @@ public struct ClaudeUpdateMenu: Equatable {
     public static let retryInterval: TimeInterval = 60 * 60
     /// Когда следующая суточная проверка (UserDefaults, Date).
     public static let nextDailyKey = "claudeUpdateNextDaily"
-    /// Выключатель фоновой загрузки (UserDefaults, Bool): чистая установка — выкл., существующий выбор сохраняется.
-    public static let autoDownloadKey = "claudeAutoDownload"
     /// Про какую готовую версию уже было уведомление (UserDefaults, String) — одно на версию.
     public static let notifiedKey = "claudeUpdateNotifiedVersion"
     public enum Trigger { case menu, daily, manual }
@@ -242,37 +240,31 @@ public struct ClaudeUpdateMenu: Equatable {
 
     // MARK: - «самое время» и одно нажатие
 
-    /// Не работает ни одна страница хотя бы столько — можно предлагать.
+    /// Тихо по всем источникам хотя бы столько — можно предлагать.
     public static let offerIdleSeconds: TimeInterval = 120
     /// Не предлагать чаще (и «Позже» — на столько же).
     public static let offerRepeatSeconds: TimeInterval = 3 * 60 * 60
 
-    /// Пора ли предложить обновиться (план WF87 п. 5): готово И (Claude не запущен ИЛИ окон 0 ИЛИ
-    /// ни одна страница не работает ≥ 120 с) И не предлагали последние 3 ч И не «Позже».
-    /// `anyPageWorking` nil — не знаем (это не «не работает»); `idleSeconds` — секунды с последнего
-    /// «работает» на любой странице (или с первого тихого круга), nil — не наблюдали: не предлагаем. Сессии Claude Code без окна
-    /// страницы не видят — их работа сюда не попадает.
-    public static func shouldOffer(ready: Bool, claudeRunning: Bool, windowCount: Int, anyPageWorking: Bool?,
-                                   idleSeconds: TimeInterval?, lastOfferAt: Date?, snoozeUntil: Date?,
-                                   now: Date) -> Bool {
+    /// Пора ли предложить обновиться (план WF87 п. 5; с WF234 — по общему ответу `WorkNow`): готово И работа не идёт
+    /// нигде — ни на страницах, ни в Workflow, ни в терминальных чатах — И (Claude не запущен ИЛИ окон 0 ИЛИ тихо
+    /// ≥ 120 с) И не предлагали последние 3 ч И не «Позже». Не знаем (источник молчит) — это не «тихо»: не предлагаем.
+    /// Без окон страницам работать негде, поэтому их молчание там не мешает (`WorkNow.seen`).
+    public static func shouldOffer(ready: Bool, claudeRunning: Bool, windowCount: Int, work: WorkNow,
+                                   lastOfferAt: Date?, snoozeUntil: Date?, now: Date) -> Bool {
         guard ready else { return false }
         if let last = lastOfferAt, now.timeIntervalSince(last) < offerRepeatSeconds { return false }
         if let snooze = snoozeUntil, now < snooze { return false }
+        guard work.seen(claudeRunning: claudeRunning, windowCount: windowCount).working == false else { return false }
         if !claudeRunning || windowCount == 0 { return true }
-        guard anyPageWorking == false else { return false }
-        guard let idle = idleSeconds else { return false }
+        guard let idle = work.idleSeconds else { return false }
         return idle >= offerIdleSeconds
     }
 
-    /// Спрашивать ли перед закрытием Claude: без вопроса — только когда Claude не запущен, окон нет
-    /// или известно, что ни одна страница не работает. Не знаем — спрашиваем.
-    public static func needsConfirm(claudeRunning: Bool, windowCount: Int, anyPageWorking: Bool?) -> Bool {
-        claudeRunning && windowCount > 0 && anyPageWorking != false
-    }
-
-    /// Вопрос, когда известно, сколько чатов работает (панель батча C).
-    public static func confirmWorkingTitle(chats: Int) -> String {
-        "Идёт работа в \(chats) \(chats % 10 == 1 && chats % 100 != 11 ? "чате" : "чатах") — обновить всё равно?"
+    /// Спрашивать ли перед закрытием Claude: без вопроса — только когда Claude не запущен, окон нет (закрывать
+    /// нечего — обновление ничего не прервёт) или все источники ответили «тихо» (`WorkNow`, WF234). Работа видна —
+    /// вопрос называет, что прервётся; не знаем — спрашиваем.
+    public static func needsConfirm(claudeRunning: Bool, windowCount: Int, work: WorkNow) -> Bool {
+        claudeRunning && windowCount > 0 && work.working != false
     }
 
     // MARK: - уведомление «Скачалось обновление»

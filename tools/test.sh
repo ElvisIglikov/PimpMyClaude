@@ -1,13 +1,18 @@
 #!/bin/bash
-# Один прогон всех проверок проекта: JS (сторожевые проверки + node --test tests/) и Swift (swift build && swift test).
+# Один прогон всех проверок проекта: JS (сторожевые проверки + node --test tests/), CLI и Swift (swift build && swift test).
 # Решение 5 плана WF24. Зовётся руками, строкой из docs/CHECKLIST.md; git-хука нет намеренно.
-# Использование: tools/test.sh [--js|--swift|--help]
+# Использование: tools/test.sh [--js|--swift|--fast] [--gate] [--help]
 #   без ключа  — всё: сперва JS, потом Swift;
-#   --js       — node --check inject.js и лоадера, сверка портов лоадера, сторожевые проверки, node --test tests/, тесты CLI «Пимп»;
-#   --swift    — cd app && swift build && swift test (пропущенные тесты видны вслух и в сводке).
+#   --fast     — быстрый набор при выкладке (≈ 2,5 мин в тишине, TESTS.md): JS целиком, CLI одним python3 по файлам разом;
+#                без Swift и без второго прогона /usr/bin/python3 — полный набор остаётся за гейтом;
+#   --js       — node --check inject.js, сторожевые проверки, node --test tests/, CLI «Пимп» (python3 из PATH и /usr/bin/python3);
+#   --swift    — cd app && swift build && swift test (пропущенные тесты видны вслух и в сводке);
+#   --gate     — гейт оркестратора: метка VERSION в inject.js строго новее, чем в базе ($PIMP_GATE_BASE, по умолчанию main;
+#                на марафоне — интеграционная ветка, напр. PIMP_GATE_BASE=wf247); в ветке батча не сверяется.
 # Любая красная проверка — ненулевой код возврата и стоп: не починил — не коммитим (слово Элвиса 05.09).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+GATE_BASE="${PIMP_GATE_BASE:-main}"
 INJECT="$ROOT/claude-patch/inject.js"
 TESTS_DIR="$ROOT/tests"
 # node --test без package.json умеет искать файлы с 18-й версии; у нас 26.x.
@@ -32,11 +37,66 @@ plural() {
 }
 
 usage() {
-  sed -n '2,8p' "$0"
+  sed -n '2,11p' "$0"
+}
+
+# Метка новее? $1 — старая, $2 — новая. Правило Patcher.injectVersion / injectKeepsLive: «wfN-буква-M», волна
+# числом, потом буква строкой, потом шаг числом. 0 — новее, 1 — нет, 2 — метка не того вида.
+version_newer() {
+  local LC_ALL=C re='^wf([0-9]+)-([^-]+)-([0-9]+)$' old_wave old_tag old_step
+  [[ "$1" =~ $re ]] || return 2
+  old_wave=$((10#${BASH_REMATCH[1]})); old_tag="${BASH_REMATCH[2]}"; old_step=$((10#${BASH_REMATCH[3]}))
+  [[ "$2" =~ $re ]] || return 2
+  local new_wave=$((10#${BASH_REMATCH[1]})) new_tag="${BASH_REMATCH[2]}" new_step=$((10#${BASH_REMATCH[3]}))
+  if [ "$new_wave" -ne "$old_wave" ]; then [ "$new_wave" -gt "$old_wave" ]; return; fi
+  if [ "$new_tag" != "$old_tag" ]; then [[ "$new_tag" > "$old_tag" ]]; return; fi
+  [ "$new_step" -gt "$old_step" ]
+}
+
+# Реальный путь интерпретатора: python3 из PATH и /usr/bin/python3 бывают одним и тем же.
+python_real() { "$1" -c 'import os, sys; print(os.path.realpath(sys.executable))' 2>/dev/null || true; }
+
+# Наборы CLI «Пимп» одним интерпретатором: все tests/pimp_*_test.py (новый файл попадает в гейт сам).
+# Число тестов и пропуски — в CLI_RAN / CLI_SKIP: без числа пропажу набора никто не увидит (#5749).
+# unittest пишет отчёт в stderr, поэтому 2>&1; -B — без __pycache__ в репозитории.
+run_cli() {
+  local python="$1" log
+  log="$(mktemp)"
+  if ! ( cd "$ROOT" && "$python" -B -m unittest discover -s tests -p 'pimp_*_test.py' ) 2>&1 | tee "$log"; then
+    rm -f "$log"
+    fail "$python -m unittest discover -s tests -p 'pimp_*_test.py': красное (см. вывод выше)"
+  fi
+  CLI_RAN="$(awk '/^Ran [0-9]+ test/ { n = $2 } END { print n + 0 }' "$log")"
+  CLI_SKIP="$(sed -n 's/.*skipped=\([0-9][0-9]*\).*/\1/p' "$log" | tail -1)"
+  CLI_SKIP="${CLI_SKIP:-0}"
+  rm -f "$log"
+  [ "$CLI_RAN" -gt 0 ] || fail "$python: в tests/ не нашлось ни одного теста pimp_*_test.py"
+}
+
+# То же для --fast: каждый файл своим процессом, разом по 4 — подряд CLI идёт ≈ 3,5 мин, разом — по самому
+# долгому файлу (pimp_term ≈ 1,5 мин, замер 31.10.2026, #11441). Красный файл — его отчёт целиком и стоп.
+run_cli_fast() {
+  local python="$1" logs log
+  logs="$(mktemp -d)"
+  ( cd "$ROOT" && find tests -name 'pimp_*_test.py' -type f | sort | xargs -P 4 -I{} sh -c \
+      '"$1" -B -m unittest "$2" > "$3/$(basename "$2").log" 2>&1 || echo "$2" >> "$3/red"' sh "$python" {} "$logs" )
+  if [ -s "$logs/red" ]; then
+    while IFS= read -r file; do printf '\n--- %s\n' "$file"; cat "$logs/$(basename "$file").log"; done < "$logs/red"
+    rm -rf "$logs"
+    fail "$python -m unittest: красное (файлы выше)"
+  fi
+  CLI_RAN=0; CLI_SKIP=0
+  for log in "$logs"/*.log; do
+    CLI_RAN=$(( CLI_RAN + $(awk '/^Ran [0-9]+ test/ { n = $2 } END { print n + 0 }' "$log") ))
+    CLI_SKIP=$(( CLI_SKIP + $(awk 'match($0, /skipped=[0-9]+/) { n = substr($0, RSTART + 8, RLENGTH - 8) } END { print n + 0 }' "$log") ))
+  done
+  rm -rf "$logs"
+  [ "$CLI_RAN" -gt 0 ] || fail "$python: в tests/ не нашлось ни одного теста pimp_*_test.py"
 }
 
 run_js() {
   head2 "JS"
+  local started=$SECONDS
 
   # 1. node вообще есть и достаточно свежий: на старом «node --test» ругается невнятно.
   command -v node >/dev/null 2>&1 || fail "node не найден. Нужен node $MIN_NODE+ (brew install node) — на нём держатся все JS-проверки."
@@ -50,11 +110,14 @@ run_js() {
   say "node $node_version"
 
   # 2. Синтаксис боевого файла. Он уезжает в каждую страницу Claude — падение здесь видно всей команде.
+  #    Страница правится в claude-patch/page/NNN-*.js, inject.js — их склейка (WF248 П3): сперва она побайтно.
   [ -f "$INJECT" ] || fail "нет $INJECT"
+  "$ROOT/tools/page.sh" check || fail "inject.js не равен склейке claude-patch/page/*.js (выше) — тесты гоняли бы не то"
+  say "склейка claude-patch/page/*.js == inject.js"
   node --check "$INJECT"
   say "node --check claude-patch/inject.js — чисто"
 
-  # 3. Модульность: лоадер v6 исполняет файл как обычный скрипт, статический ESM и CommonJS его убьют.
+  # 3. Модульность: лоадер исполняет файл как обычный скрипт, статический ESM и CommonJS его убьют.
   #    Динамический import(...) разрешён намеренно — им ищется стор popout в разделе «новое окно» (WF13).
   if grep -nE '^[[:space:]]*(import|export)[[:space:]]' "$INJECT"; then
     fail "статический ESM в inject.js (строки выше): лоадер исполняет файл как обычный скрипт — перепиши через замыкание."
@@ -85,24 +148,28 @@ run_js() {
   done
   say "claude.json и themes.json разбираются"
 
-  # 6. inject.js изменился относительно main — значит метка VERSION обязана поехать:
-  #    по ней probe на гейте отличает свежий файл от старого в Application Support.
-  if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --verify -q refs/heads/main >/dev/null 2>&1; then
-    if git -C "$ROOT" diff --quiet main -- claude-patch/inject.js; then
-      say "inject.js не отличается от main — сверку VERSION пропускаю"
-    else
-      local tmp old new
-      tmp="$(mktemp)"
-      git -C "$ROOT" show main:claude-patch/inject.js > "$tmp"
-      old="$(version_of "$tmp")"
-      new="$(version_of "$INJECT")"
-      rm -f "$tmp"
-      [ -n "$new" ] || fail "в inject.js не нашлась строка const VERSION = \"…\""
-      [ "$old" != "$new" ] || fail "inject.js правился, а VERSION остался «${new}» — подними метку (wfN-a-M), иначе на гейте не отличить свежий файл от старого."
-      say "VERSION: main «${old}» → «${new}»"
-    fi
+  # 6. Метка VERSION: по ней probe на гейте отличает свежий файл от старого, а «Пропатчить Claude» кладёт страницу
+  #    поверх живой, только если метка в сборке СТРОГО новее (Patcher.injectKeepsLive). В ветке батча не сверяем —
+  #    метку поднимает оркестратор на гейте (план WF248); с --gate inject.js, отличный от main, обязан нести метку новее.
+  local new
+  new="$(version_of "$INJECT")"
+  [ -n "$new" ] || fail "в inject.js не нашлась строка const VERSION = \"…\""
+  if [ -z "$GATE" ]; then
+    say "VERSION «${new}» — со сверкой с базой только на гейте (--gate)"
+  elif ! command -v git >/dev/null 2>&1 || ! git -C "$ROOT" rev-parse --verify -q "${GATE_BASE}^{commit}" >/dev/null 2>&1; then
+    fail "--gate: git или ветки ${GATE_BASE} нет — метку VERSION не с чем сверить"
+  elif git -C "$ROOT" diff --quiet "$GATE_BASE" -- claude-patch/inject.js; then
+    say "inject.js не отличается от ${GATE_BASE} — сверку VERSION пропускаю"
   else
-    say "git или ветки main нет — сверку VERSION пропускаю"
+    local tmp old rc=0
+    tmp="$(mktemp)"
+    git -C "$ROOT" show "${GATE_BASE}:claude-patch/inject.js" > "$tmp"
+    old="$(version_of "$tmp")"
+    rm -f "$tmp"
+    version_newer "$old" "$new" || rc=$?
+    [ "$rc" -ne 2 ] || fail "метка VERSION не вида wfN-буква-M (${GATE_BASE} «${old}», здесь «${new}») — Patcher её не прочтёт."
+    [ "$rc" -eq 0 ] || fail "inject.js правился, а VERSION «${new}» не новее ${GATE_BASE} «${old}» — подними метку (волна, буква, шаг), иначе «Пропатчить Claude» оставит у людей старую страницу."
+    say "VERSION: ${GATE_BASE} «${old}» → «${new}»"
   fi
 
   # 7. Сами наборы.
@@ -120,25 +187,43 @@ run_js() {
   fi
   JS_FILES="${#files[@]}"
   JS_CHECKS="$(awk '/^# pass [0-9]+$/ { n = $3 } END { print n + 0 }' "$out")"
+  JS_SKIPPED="$(awk '/^# skipped [0-9]+$/ { n = $3 } END { print n + 0 }' "$out")"
   rm -f "$out"
+  JS_TIME=$(( SECONDS - started ))
 
-  # 8. CLI «Пимп» (WF36): те же фикстуры канала, что читает Swift-половина.
-  #    Число тестов вынимаем из вывода и печатаем в сводке наравне с JS и Swift
-  #    (#5749): без него пропажу всего набора никто не увидит — сводка выглядела
-  #    бы точно так же. unittest пишет отчёт в stderr, поэтому 2>&1.
-  local cli
-  cli="$(mktemp)"
-  if ! ( cd "$ROOT" && python3 -B -m unittest tests/pimp_cli_test.py tests/pimp_term_test.py tests/pimp_prs_test.py ) 2>&1 | tee "$cli"; then  # -B: без __pycache__ в репозитории
-    rm -f "$cli"
-    fail "python3 -m unittest tests/pimp_cli_test.py tests/pimp_term_test.py tests/pimp_prs_test.py: красное (см. вывод выше)"
+  # 8. CLI «Пимп» (WF36): те же фикстуры канала, что читает Swift-половина. Дважды: python3 из PATH и системный
+  #    /usr/bin/python3 (3.9 на Маках команды; его зовут PimpViewer и скилл) — новый синтаксис в pimp.py 8 дней
+  #    ломал CLI у команды при зелёном гейте (ревизия WF247). Второй прогон — только если это другой интерпретатор;
+  #    без Command Line Tools /usr/bin/python3 не зовём — он лишь предлагает их поставить.
+  started=$SECONDS
+  if [ -n "$FAST" ]; then run_cli_fast python3; else run_cli python3; fi
+  CLI_TESTS="$CLI_RAN"; CLI_SKIPPED="$CLI_SKIP"; CLI_TIME=$(( SECONDS - started ))
+  local system=/usr/bin/python3
+  if [ -n "$FAST" ]; then
+    say "второй прогон CLI (/usr/bin/python3) — только в полном наборе"
+  elif [ -x "$system" ] && xcode-select -p >/dev/null 2>&1 && [ "$(python_real python3)" != "$(python_real "$system")" ]; then
+    started=$SECONDS
+    SYS_VERSION="$("$system" -c 'import platform; print(platform.python_version())')"
+    # Комплект Рика и прочие скрипты tools/ едут команде, тестов CLI у них нет — хотя бы разбор.
+    local py_files
+    py_files="$(find "$ROOT/tools" "$ROOT/resources/rick-kit" "$ROOT/resources/kontekst" -name '*.py' -type f 2>/dev/null | sort)"
+    if [ -n "$py_files" ] && ! printf '%s\n' "$py_files" | "$system" -B -c 'import ast, sys
+for path in sys.stdin.read().split("\n"):
+    if path:
+        ast.parse(open(path, encoding="utf-8").read(), path)'; then
+      fail "скрипт не разбирается системным Python $SYS_VERSION (см. выше) — у команды он не запустится."
+    fi
+    run_cli "$system"
+    SYS_TESTS="$CLI_RAN"; SYS_SKIPPED="$CLI_SKIP"; SYS_TIME=$(( SECONDS - started ))
+  else
+    say "второй прогон CLI пропускаю: /usr/bin/python3 нет, нет Command Line Tools или это тот же python3"
   fi
-  CLI_TESTS="$(awk '/^Ran [0-9]+ test/ { n = $2 } END { print n + 0 }' "$cli")"
-  rm -f "$cli"
   # Число тестов комплекта и пропуск — в сводку, как у CLI (z8-r03): LiveTests молча
   # пропускается без каталога SkilZZZ.
   # В открытой копии (tools/public_export.sh) сборщика комплекта и его теста нет — пропуск, а не красное.
   local kit
   if [ -f "$ROOT/tests/kit_build_test.py" ]; then
+  started=$SECONDS
   kit="$(mktemp)"
   if ! ( cd "$ROOT" && python3 -B -m unittest tests/kit_build_test.py ) 2>&1 | tee "$kit"; then
     rm -f "$kit"
@@ -147,71 +232,24 @@ run_js() {
   KIT_TESTS="$(awk '/^Ran [0-9]+ test/ { n = $2 } END { print n + 0 }' "$kit")"
   KIT_SKIPPED="$(sed -n 's/.*skipped=\([0-9][0-9]*\).*/\1/p' "$kit" | tail -1)"
   rm -f "$kit"
+  KIT_TIME=$(( SECONDS - started ))
   fi
-
-  # 9. Лоадер (WF45, задача #5761). Боевой JS лоадера живёт строкой ДВАЖДЫ: в Loader.swift
-  #    (боевой порт) и в patch-claude.mjs (дев-инструмент). Синтаксис его никто не проверял, а
-  #    расхождение портов глазами не видно. Тело вынимаем из обоих файлов, сверяем побайтно и
-  #    гоняем node --check по вытащенному телу.
-  local dir script rc
-  dir="$(mktemp -d)"
-  script="$dir/loader-check.cjs"
-  cat > "$script" <<'NODE'
-const fs = require("fs");
-const [mjsPath, swiftPath, outPath] = process.argv.slice(2);
-const die = (message) => { process.stderr.write(message + "\n"); process.exit(1); };
-
-const mjs = fs.readFileSync(mjsPath, "utf8");
-const version = (mjs.match(/const LOADER_VERSION = (\d+);/) || [])[1];
-if (!version) die("в patch-claude.mjs не нашёлся const LOADER_VERSION");
-const declaration = mjs.indexOf("const LOADER = String.raw");
-if (declaration < 0) die("в patch-claude.mjs не нашлось объявление const LOADER = String.raw");
-const from = mjs.indexOf("`", declaration) + 1;
-const to = mjs.indexOf("`", from);
-if (!from || to < 0) die("в patch-claude.mjs не закрылась строка LOADER");
-const fromMjs = mjs.slice(from, to)
-  .split("${MARK_START}").join("/* [MyClaude:v" + version + ":start] */")
-  .split("${MARK_END}").join("/* [MyClaude:v" + version + ":end] */")
-  .split("${LOADER_VERSION}").join(version);
-
-const swift = fs.readFileSync(swiftPath, "utf8");
-const head = swift.indexOf("#\"\"\"\n");
-const tail = swift.indexOf("\n\"\"\"#", head);
-if (head < 0 || tail < 0) die("в Loader.swift не нашлась строка лоадера #\"\"\" … \"\"\"#");
-const fromSwift = swift.slice(head + 5, tail);
-fs.writeFileSync(outPath, fromSwift);
-
-if (fromSwift !== fromMjs) {
-  die("тексты лоадера разошлись: Loader.swift " + fromSwift.length + " знаков, patch-claude.mjs "
-    + fromMjs.length + " знаков. Правится только patch-claude.mjs, оттуда переносится в Loader.swift.");
-}
-process.stdout.write("v" + version + ", " + fromSwift.length + " знаков, оба порта совпадают\n");
-NODE
-  rc=0
-  node "$script" "$ROOT/claude-patch/patch-claude.mjs" "$ROOT/app/Sources/Patcher/Loader.swift" "$dir/loader.js" \
-    > "$dir/report" 2>&1 || rc=$?
-  # Синтаксис — даже если порты разошлись: битый JS в лоадере страшнее расхождения.
-  if [ -s "$dir/loader.js" ] && ! node --check "$dir/loader.js"; then
-    rm -rf "$dir"
-    fail "лоадер — не валидный JS (см. вывод выше). Он уезжает в app.asar: битый лоадер = Claude без наших окон у всей команды."
-  fi
-  if [ "$rc" -ne 0 ]; then
-    local why
-    why="$(cat "$dir/report")"
-    rm -rf "$dir"
-    fail "$why"
-  fi
-  say "лоадер: $(cat "$dir/report")"
-  rm -rf "$dir"
+  # Сверка двух портов лоадера (Loader.swift ↔ patch-claude.mjs) и его синтаксис — tests/loader-trust.test.mjs
+  # (побайтно, с версией Asar.loaderVersion, и исполняет лоадер в vm); свой шаг здесь снят как дубль (ревизия WF247).
 }
 
 run_swift() {
   head2 "Swift"
+  local started=$SECONDS
   command -v swift >/dev/null 2>&1 || fail "swift не найден — поставь Xcode или Command Line Tools."
+  # ClaudeAXTests и LookSchemeWF145Tests читают inject.js — он обязан быть свежей склейкой page/ (WF248 П3).
+  "$ROOT/tools/page.sh" check || fail "inject.js не равен склейке claude-patch/page/*.js (выше) — Swift сверял бы не то"
   local out
   out="$(mktemp)"
   # Сборочный Мак задан (tools/m1.sh) — Swift идёт там, рабочий Мак не греется (30.09.2026).
-  local swift_cmd='cd "$ROOT/app" && swift build && swift test'
+  # SDKROOT на Command Line Tools (ноут коллеги, 16.10.2026) ломает swift test: Testing.framework из Xcode не
+  # собирается со старым SDK («no type named 'SendableMetatype'»). Без переменной xcrun берёт SDK Xcode.
+  local swift_cmd='cd "$ROOT/app" && env -u SDKROOT swift build && env -u SDKROOT swift test'
   if [ -n "${PIMP_M1:-}" ] || [ -s "$HOME/.config/pimpmyclaude/m1-host" ]; then
     say "Swift — на сборочном Маке (tools/m1.sh)"
     swift_cmd='"$ROOT/tools/m1.sh" test'
@@ -232,47 +270,80 @@ run_swift() {
     grep -E 'Test skipped' "$out" | sed 's/^/    /' | sort -u
   fi
   rm -f "$out"
+  SWIFT_TIME=$(( SECONDS - started ))
 }
 
 JS_FILES=""
 JS_CHECKS=""
+JS_SKIPPED=""
+JS_TIME=""
 CLI_TESTS=""
+CLI_SKIPPED=""
+CLI_TIME=""
+CLI_RAN=""
+CLI_SKIP=""
+SYS_VERSION=""
+SYS_TESTS=""
+SYS_SKIPPED=""
+SYS_TIME=""
 KIT_TESTS=""
 KIT_SKIPPED=""
+KIT_TIME=""
 SWIFT_TESTS=""
 SWIFT_SKIPPED=""
-case "${1-}" in
+SWIFT_TIME=""
+MODE=""
+GATE=""
+FAST=""
+for arg in "$@"; do
+  case "$arg" in
+    --js|--swift)
+      [ -z "$MODE" ] || { printf 'test.sh: --js и --swift вместе — это и есть прогон без ключа\n\n' >&2; usage >&2; exit 2; }
+      MODE="$arg" ;;
+    --gate) GATE=1 ;;
+    --fast) FAST=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'test.sh: не знаю ключ «%s»\n\n' "$arg" >&2; usage >&2; exit 2 ;;
+  esac
+done
+if [ -n "$FAST" ] && { [ -n "$GATE" ] || [ "$MODE" = --swift ]; }; then
+  printf 'test.sh: --fast — набор при выкладке; гейт и Swift — только полным прогоном\n\n' >&2; usage >&2; exit 2
+fi
+[ -z "$FAST" ] || MODE=--js
+case "$MODE" in
   --js) run_js ;;
   --swift) run_swift ;;
-  -h|--help) usage; exit 0 ;;
   '') run_js; run_swift ;;
-  *) printf 'test.sh: не знаю ключ «%s»\n\n' "$1" >&2; usage >&2; exit 2 ;;
 esac
 
 # Сводка — числами из прогона, а не вшитыми: тестов в проекте прибавляется каждую волну.
+# Пропуски JS и CLI называются в числе (Chromium-стенды, настоящий tmux), время — у каждой части.
 SUMMARY=""
+part() {  # $1 — подпись с числами, $2 — пропущено, $3 — секунды, $4 — «сверх», если пропуск не входит в число
+  local text="$1"
+  if [ "${2:-0}" -gt 0 ] && [ -n "${4:-}" ]; then text="$text, ещё пропущено $2"
+  elif [ "${2:-0}" -gt 0 ]; then text="$text, из них пропущено $2"; fi
+  if [ -n "$3" ]; then text="$text ($3 с)"; fi
+  if [ -n "$SUMMARY" ]; then SUMMARY="$SUMMARY · "; fi
+  SUMMARY="$SUMMARY$text"
+}
 if [ -n "$JS_CHECKS" ]; then
-  SUMMARY="JS: $(plural "$JS_FILES" файл файла файлов), $(plural "$JS_CHECKS" проверка проверки проверок)"
+  part "JS: $(plural "$JS_FILES" файл файла файлов), $(plural "$JS_CHECKS" проверка проверки проверок)" "$JS_SKIPPED" "$JS_TIME" сверх
 fi
 if [ -n "$CLI_TESTS" ]; then
-  if [ -n "$SUMMARY" ]; then SUMMARY="$SUMMARY · "; fi
-  SUMMARY="${SUMMARY}CLI «Пимп»: $(plural "$CLI_TESTS" тест теста тестов)"
+  part "CLI «Пимп»: $(plural "$CLI_TESTS" тест теста тестов)" "$CLI_SKIPPED" "$CLI_TIME"
+fi
+if [ -n "$SYS_TESTS" ]; then
+  part "CLI под /usr/bin/python3 $SYS_VERSION: $(plural "$SYS_TESTS" тест теста тестов)" "$SYS_SKIPPED" "$SYS_TIME"
 fi
 if [ -n "$KIT_TESTS" ]; then
-  if [ -n "$SUMMARY" ]; then SUMMARY="$SUMMARY · "; fi
-  SUMMARY="${SUMMARY}Комплект: $(plural "$KIT_TESTS" тест теста тестов)"
-  if [ "${KIT_SKIPPED:-0}" -gt 0 ]; then
-    SUMMARY="$SUMMARY, из них пропущено $KIT_SKIPPED"
-  fi
+  part "Комплект: $(plural "$KIT_TESTS" тест теста тестов)" "$KIT_SKIPPED" "$KIT_TIME"
 fi
 if [ -n "$SWIFT_TESTS" ]; then
-  if [ -n "$SUMMARY" ]; then SUMMARY="$SUMMARY · "; fi
-  SUMMARY="${SUMMARY}Swift: $(plural "$SWIFT_TESTS" тест теста тестов)"
   # Пропуск идёт в само число сводки: без этого «202 теста» врёт про то, что прогнано (#5760).
-  if [ "${SWIFT_SKIPPED:-0}" -gt 0 ]; then
-    SUMMARY="$SUMMARY, из них пропущено $SWIFT_SKIPPED"
-  fi
+  part "Swift: $(plural "$SWIFT_TESTS" тест теста тестов)" "$SWIFT_SKIPPED" "$SWIFT_TIME"
 fi
+if [ -n "$FAST" ]; then SUMMARY="быстрый набор (без Swift) · $SUMMARY"; fi
 if [ "${SWIFT_SKIPPED:-0}" -gt 0 ]; then
   printf '\n⚠️ %s\n' "$SUMMARY"
 else

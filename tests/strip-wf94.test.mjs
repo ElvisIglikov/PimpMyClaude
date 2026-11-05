@@ -1,12 +1,10 @@
-// Состояние чата (раздел 12о inject.js, #7750, WF94): status().signal.mode —
-// need (нужен Элвис), warm (кэш стынет, 50+ мин тишины), cold (60+ мин), work
-// (чат работает, fill — процент марафона). Приоритет: need > warm/cold > work.
-// Время последнего сообщения при warm/cold — красное. Три полоски окна (ручка
-// поля и дубли у краёв) с #7848 не красятся и не мигают — серые.
+// Красное время последнего сообщения (раздел 12о inject.js, #7750, WF94): 50+ мин тишины — warm,
+// 60+ — cold, время под последним сообщением краснеет (status().signal.stale); чат работает —
+// не краснеет. Три полоски окна (ручка поля и дубли у краёв) с #7848 не красятся и не мигают —
+// серые; режимы need/warm/cold/work полоски (status().signal.mode, fill, changes) сняты в WF248.
 //
-// Стенд: строка сайдбара с сессией чата (как wait-glow.test.mjs) и лента
-// сообщений с entry.timestamp в волокне (как times-wf94.test.mjs). Время —
-// аргументы signalTick(t, wall): монотонное и настенное, часы подменены.
+// Стенд: строка сайдбара с сессией чата и лента сообщений с entry.timestamp в волокне (как
+// times-wf94.test.mjs). Время — аргументы signalTick(t, wall): монотонное и настенное, часы подменены.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadInject, loadInner, plain } from "./load.mjs";
@@ -47,88 +45,48 @@ const page = ({ s = session(), rows = [] } = {}) => {
   return { loaded, s };
 };
 const signal = loaded => plain(loaded.api.status().signal);
-// Режим — из status(); полоски при этом серые: ни атрибута, ни своего стиля (#7848).
-const modes = loaded => {
+// Красное время — из status(); полоски при этом серые: ни атрибута, ни своего стиля (#7848).
+const stale = loaded => {
   for (const sel of RAILS) {
     const node = loaded.document.querySelector(sel);
     assert.ok(node, sel);
     assert.equal(node.hasAttribute("data-myclaude-signal"), false, `${sel} не красится`);
     assert.equal(node.style.getPropertyValue("--myclaude-signal-fill"), "");
   }
-  const mode = signal(loaded).mode;
-  return [mode, mode, mode];
+  return signal(loaded).stale;
 };
 const iso = ms => new Date(ms).toISOString();
 
-test("#7750: приоритет — нужен Элвис > кэш стынет > работает", () => {
+test("#7750: пороги — 50 и 60 минут; режимов полоски больше нет (WF248)", () => {
   const { inner } = loadInner();
-  const { signalMode, CACHE_WARN_MS, CACHE_TTL_MS } = inner;
-  assert.equal(CACHE_WARN_MS, 50 * MIN);
-  assert.equal(CACHE_TTL_MS, 60 * MIN);
-  assert.equal(signalMode({}), "");
-  assert.equal(signalMode({ working: true }), "work");
-  assert.equal(signalMode({ ago: 49 * MIN }), "");
-  assert.equal(signalMode({ ago: 50 * MIN }), "warm");
-  assert.equal(signalMode({ ago: 60 * MIN }), "cold");
-  assert.equal(signalMode({ need: true, ago: 55 * MIN }), "need", "нужен Элвис сильнее кэша");
-  assert.equal(signalMode({ need: true, working: true }), "need");
-  assert.equal(signalMode({ working: true, ago: 70 * MIN }), "work", "чат работает — кэш не стынет");
-});
-
-test("#7750: вопрос человеку — need; касание окна не снимает", () => {
-  const { loaded, s } = page({ s: session({ liveStatus: "awaiting" }) });
-  const { waitTick, signalTick } = loaded.inner;
-  let t = 1e6;
-  waitTick(t); signalTick(t, BASE);
-  assert.deepEqual(modes(loaded), [null, null, null], "не сразу: держится WAIT_HOLD_MS — Авто-Allow не мигает");
-  t += 2000; waitTick(t); signalTick(t, BASE);
-  assert.deepEqual(modes(loaded), ["need", "need", "need"]);
-  loaded.win.dispatchEvent({ type: "keydown", key: "a" });
-  t += 1000; waitTick(t); signalTick(t, BASE);
-  assert.equal(modes(loaded)[2], "need", "ответить всё равно надо");
-  Object.assign(s, { liveStatus: "running", isRunning: true });
-  t += 1000; waitTick(t); signalTick(t, BASE);
-  assert.deepEqual(modes(loaded), ["work", "work", "work"], "ответил — чат работает");
-  assert.equal(signal(loaded).mode, "work");
-});
-
-test("#7750: конец хода (свечение 12и) и «Скажи — и сделаю» (12м) — зелёный", () => {
-  const { loaded, s } = page({ s: session({ liveStatus: "running", isRunning: true }) });
-  const { waitTick, signalTick, attnState } = loaded.inner;
-  let t = 1e6;
-  waitTick(t);
-  Object.assign(s, { liveStatus: "idle", isRunning: false });
-  for (let i = 0; i < 4; i += 1) waitTick(t += 1000);
-  signalTick(t, BASE);
-  assert.equal(modes(loaded)[2], "need");
-  loaded.win.dispatchEvent({ type: "pointerdown" });
-  waitTick(t += 1000); signalTick(t, BASE);
-  assert.equal(modes(loaded)[2], null, "увидел конец хода — свечение и полоска гаснут вместе");
-  attnState.blink = true;
-  signalTick(t += 1000, BASE);
-  assert.equal(modes(loaded)[2], "need", "мигают заголовки «нужен Элвис» — полоска тоже");
-  attnState.blink = false;
-});
-
-test("#7750: работает — work и процент марафона в status(); полоски серые (#7848)", () => {
-  const { loaded } = page({ s: session({ liveStatus: "running", isRunning: true }) });
-  const { waitTick, signalTick, progressState } = loaded.inner;
-  let t = 1e6;
-  waitTick(t); signalTick(t, BASE);
-  assert.equal(modes(loaded)[2], "work");
-  assert.equal(signal(loaded).fill, null);
-  progressState.info = { wf: 2, of: 4, pct: 50, total: 37.5, state: "run" };
-  signalTick(t += 1000, BASE);
-  assert.equal(modes(loaded)[2], "work");
-  assert.equal(signal(loaded).fill, 37.5);
-  progressState.info = null;
-});
-
-test("#7750: стоп на месте — работает, даже если сайдбар молчит", () => {
+  assert.equal(inner.CACHE_WARN_MS, 50 * MIN);
+  assert.equal(inner.CACHE_TTL_MS, 60 * MIN);
+  assert.equal(inner.signalMode, undefined, "signalMode снят");
   const { loaded } = page();
-  loaded.document.body.add("button", { attrs: { "data-testid": "chat-input-stop" } });
   loaded.inner.signalTick(1e6, BASE);
-  assert.equal(modes(loaded)[2], "work");
+  assert.deepEqual(Object.keys(signal(loaded)).sort(), ["ago", "stale"], "в status().signal — только время");
+});
+
+test("#7750: чат работает — время не краснеет и через 70 минут тишины; полоски серые (#7848)", () => {
+  const { loaded, s } = page({ s: session({ liveStatus: "running", isRunning: true }), rows: [["e1", iso(BASE)]] });
+  const { waitTick, signalTick, stampTimes } = loaded.inner;
+  const [row] = loaded.parts.rows;
+  stampTimes();
+  let t = 1e6;
+  waitTick(t); signalTick(t, BASE + 70 * MIN);
+  assert.equal(stale(loaded), null);
+  assert.equal(row.hasAttribute("data-myclaude-stale"), false);
+  Object.assign(s, { liveStatus: "idle", isRunning: false });
+  waitTick(t += 1000); signalTick(t, BASE + 70 * MIN);
+  assert.equal(stale(loaded), "cold", "ход кончился — кэш уже холодный");
+});
+
+test("#7750: стоп на месте — работает, даже если сайдбар молчит: время не краснеет", () => {
+  const { loaded } = page({ rows: [["e1", iso(BASE)]] });
+  loaded.inner.stampTimes();
+  loaded.document.body.add("button", { attrs: { "data-testid": "chat-input-stop" } });
+  loaded.inner.signalTick(1e6, BASE + 70 * MIN);
+  assert.equal(stale(loaded), null);
 });
 
 test("#7750: 50 мин тишины — warm, время последнего сообщения красное; 60 — cold", () => {
@@ -138,15 +96,15 @@ test("#7750: 50 мин тишины — warm, время последнего с
   stampTimes();
   let t = 1e6;
   signalTick(t, BASE + 49 * MIN);
-  assert.deepEqual(modes(loaded), [null, null, null], "49 минут — ещё тихо");
+  assert.equal(stale(loaded), null, "49 минут — ещё тихо");
   assert.equal(last.hasAttribute("data-myclaude-stale"), false);
   signalTick(t += 1000, BASE + 50 * MIN);
-  assert.deepEqual(modes(loaded), ["warm", "warm", "warm"]);
+  assert.equal(stale(loaded), "warm");
   assert.equal(last.getAttribute("data-myclaude-stale"), "warm", "время под ПОСЛЕДНИМ сообщением краснеет");
   assert.equal(old.hasAttribute("data-myclaude-stale"), false, "старое сообщение не трогаем");
   assert.equal(signal(loaded).ago, Math.floor((Date.now() - BASE) / MIN));
   signalTick(t += 1000, BASE + 61 * MIN);
-  assert.equal(modes(loaded)[2], "cold");
+  assert.equal(stale(loaded), "cold");
   assert.equal(last.getAttribute("data-myclaude-stale"), "cold");
 });
 
@@ -156,17 +114,17 @@ test("#7750: новое сообщение снимает красное", () =>
   const [first] = loaded.parts.rows;
   stampTimes();
   signalTick(1e6, BASE + 55 * MIN);
-  assert.equal(modes(loaded)[2], "warm");
+  assert.equal(stale(loaded), "warm");
   assert.equal(first.getAttribute("data-myclaude-stale"), "warm");
   const next = addAnswer(loaded.parts.feed, "e2", iso(BASE + 55 * MIN));
   stampTimes();
   signalTick(1e6 + 1000, BASE + 55 * MIN);
-  assert.equal(modes(loaded)[2], null);
+  assert.equal(stale(loaded), null);
   assert.equal(first.hasAttribute("data-myclaude-stale"), false);
   assert.equal(next.hasAttribute("data-myclaude-stale"), false);
 });
 
-test("#7750: лента пролистана вверх — старые строки не сбивают счёт; вопрос сильнее кэша", () => {
+test("#7750: лента пролистана вверх — старые строки не сбивают счёт; висящий вопрос — время всё равно краснеет", () => {
   const { loaded, s } = page({ rows: [["e1", iso(BASE)]] });
   const { stampTimes, signalTick, waitTick } = loaded.inner;
   const [row] = loaded.parts.rows;
@@ -176,12 +134,17 @@ test("#7750: лента пролистана вверх — старые стр�
   addAnswer(loaded.parts.feed, "e0", iso(BASE - 120 * MIN));
   stampTimes();
   signalTick(1e6, BASE + 10 * MIN);
-  assert.equal(modes(loaded)[2], null, "последнее сообщение — 10 минут назад, а не два часа");
+  assert.equal(stale(loaded), null, "последнее сообщение — 10 минут назад, а не два часа");
+  assert.equal(signal(loaded).ago, Math.floor((Date.now() - BASE) / MIN));
+  // Долистал назад — строка последнего сообщения снова на экране; вопрос висит 55 минут — время под ним красное.
   s.liveStatus = "awaiting";
+  const back = addAnswer(loaded.parts.feed, "e1", iso(BASE));
+  stampTimes();
   let t = 2e6;
   waitTick(t); signalTick(t, BASE + 55 * MIN);
   waitTick(t += 2000); signalTick(t, BASE + 55 * MIN);
-  assert.equal(modes(loaded)[2], "need");
+  assert.equal(stale(loaded), "warm");
+  assert.equal(back.getAttribute("data-myclaude-stale"), "warm");
 });
 
 test("#7848: правила — полоски без сигналов и мигания, красное время осталось", () => {

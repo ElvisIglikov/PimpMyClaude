@@ -6,7 +6,7 @@ final class WF161Tests: XCTestCase {
     private typealias Sent = (action: String, json: String)
 
     private func makeSettings() -> (PageLookSettings, UserDefaults, () -> [Sent]) {
-        let suite = "wf161-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
         let settings = PageLookSettings(defaults: defaults)
@@ -30,12 +30,33 @@ final class WF161Tests: XCTestCase {
         }
     }
 
-    func testNoKeyNoCommand() {
+    /// С 03.11.2026 ключа нет — включено (`docs/decisions/2026-11-03-oformlenie.md`, «Умолчания»): страницам уходит
+    /// `on:"true"`, иначе они держат выключенным; сам выбор не записывается.
+    func testNoKeyMeansOnAndIsSent() {
         let (settings, defaults, sent) = makeSettings()
         settings.beginGeneration()
         for n in 0..<4 { settings.tick(titles: ["\(n)"], at: Self.at.addingTimeInterval(Double(n) * 6)) }
-        XCTAssertTrue(sent().isEmpty)
+        XCTAssertTrue(settings.bypassChats)
+        XCTAssertFalse(sent().isEmpty)
+        XCTAssertTrue(sent().allSatisfy { $0.1.contains("\"on\":\"true\"") })
+        XCTAssertNil(defaults.object(forKey: BypassNew.key))
+    }
+
+    /// Находка 1 проверки слияния Оли: Bypass не разрешён в Claude — без ключа уходит `on:"false"`, страницы меню
+    /// режима не открывают; разрешили — новое поколение получает `true`.
+    func testNoKeyAndNotAllowedSendsOffThenOnWhenAllowed() {
+        let (settings, defaults, sent) = makeSettings()
+        var allowed = false
+        settings.bypassAllowed = { allowed }
+        settings.beginGeneration()
+        settings.tick(titles: ["А"], at: Self.at)
         XCTAssertFalse(settings.bypassChats)
+        XCTAssertFalse(sent().isEmpty)
+        XCTAssertTrue(sent().allSatisfy { $0.1.contains("\"on\":\"false\"") })
+        allowed = true
+        settings.tick(titles: ["А"], at: Self.at.addingTimeInterval(6))
+        XCTAssertTrue(settings.bypassChats)
+        XCTAssertEqual(sent().last?.1, "{\"on\":\"true\"}")
         XCTAssertNil(defaults.object(forKey: BypassNew.key))
     }
 

@@ -1,10 +1,10 @@
 // WF107, батч Б2 (#8126, контракт К2): размер шрифта в поле ввода — один на все окна.
 //
 // Команда Swift → все страницы: {id, action:"composer-font", at, px:N|null}; N — целое
-// 11…32, null — «Как у Claude», прочее — мусор. Примерка: preview:true + адрес окна
-// (title, match|chat — как у примерки theme), хранилище не трогает; конец — прежний
-// theme preview:false. Событие storage ставит размер из другого окна. Страница →
-// приложение: GET /composer-font?px=<N|none>&chat=<id> после колеса и раз при загрузке.
+// 11…32, null — «Как у Claude», прочее — мусор. Примерки (preview:true) нет с WF248 П2: её слало
+// только меню жёлтой кнопки (лист 48 · 2.1) — такая команда мимо. Событие storage ставит размер из
+// другого окна. Страница → приложение: GET /composer-font?px=<N|none>&chat=<id> после колеса и раз
+// при загрузке.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadInject, plain } from "./load.mjs";
@@ -49,7 +49,7 @@ test("команда ставит px и localStorage во всех окнах, n
   command(loaded, { px: 18 });
   assert.equal(font(loaded.parts.editor), "18px");
   assert.equal(loaded.win.localStorage.getItem(KEY), "18");
-  assert.deepEqual(status(loaded), { px: 18, preview: false, pinged: 0 });
+  assert.deepEqual(status(loaded), { px: 18, pinged: 0 });
   command(loaded, { px: null });
   assert.equal(font(loaded.parts.editor), "");
   assert.equal(loaded.parts.editor.getAttribute("data-myclaude-composer-font"), null);
@@ -70,91 +70,37 @@ test("мусор (10, 33, \"abc\", \"18\", 12.5, нет px) — ничего", (
   assert.equal(font(loaded.parts.editor), "32px", "верхняя граница — годится");
 });
 
-test("примерка — только адресованному окну и без записи в хранилище", () => {
-  const loaded = page({ stored: 15 });
-  command(loaded, { preview: true, title: "Чужой", px: 24 });
-  assert.equal(font(loaded.parts.editor), "15px", "чужой заголовок — не наше окно");
-  command(loaded, { preview: true, title: "Trelvis", chat: "local_other", px: 24 });
-  assert.equal(font(loaded.parts.editor), "15px", "чужой чат — не наше окно, даже с нашим заголовком");
-  command(loaded, { preview: true, title: "Trelvis", chat: CHAT, px: 24 });
-  assert.equal(font(loaded.parts.editor), "24px");
-  assert.equal(loaded.win.localStorage.getItem(KEY), "15", "хранилище не тронуто");
-  assert.deepEqual(status(loaded), { px: 24, preview: true, pinged: 0 });
-  // «Как у Claude» под мышью — поле как у Claude, тоже без записи.
-  command(loaded, { preview: true, title: "Trelvis", px: null });
-  assert.equal(font(loaded.parts.editor), "");
-  assert.equal(loaded.win.localStorage.getItem(KEY), "15");
-  // Проход раскладки примерку не снимает.
-  loaded.win.dispatchEvent({ type: "resize" });
-  pass(loaded);
-  assert.equal(font(loaded.parts.editor), "");
-  assert.equal(status(loaded).preview, true);
-});
-
-test("конец примерки (theme preview:false) возвращает сохранённое", () => {
-  const loaded = page({ stored: 15 });
-  command(loaded, { preview: true, title: "Trelvis", px: 24 });
-  themeCommand(loaded, { title: "Чужой", preview: false });
-  assert.equal(font(loaded.parts.editor), "24px", "конец примерки чужого окна — не наш");
-  themeCommand(loaded, { preview: false });
-  assert.equal(font(loaded.parts.editor), "15px");
-  assert.deepEqual(status(loaded), { px: 15, preview: false, pinged: 0 });
-  // Без сохранённого — поле как у Claude.
-  const bare = page();
-  command(bare, { preview: true, title: "Trelvis", px: 22 });
-  themeCommand(bare, { preview: false });
-  assert.equal(font(bare.parts.editor), "");
-});
-
-test("клик после примерки — новое значение и конец своей примерки", () => {
-  const loaded = page({ stored: 15 });
-  command(loaded, { preview: true, title: "Trelvis", px: 24 });
-  command(loaded, { px: 20 });
-  assert.equal(font(loaded.parts.editor), "20px");
-  assert.equal(loaded.win.localStorage.getItem(KEY), "20");
-  assert.equal(status(loaded).preview, false);
-  // Мигание старым размером (endPreview раньше команды) — после команды всё верно.
-  command(loaded, { preview: true, title: "Trelvis", px: 13 });
-  themeCommand(loaded, { preview: false });
-  command(loaded, { px: 13 });
-  assert.equal(font(loaded.parts.editor), "13px");
-});
-
-test("примерка темы и примерка поля снимают друг друга (WF31)", () => {
+// WF248 П2: меню жёлтой кнопки снято, примерку размера поля никто не шлёт. Команда с preview:true (старое
+// приложение) — мимо: ни поля, ни хранилища; примерка темы (её шлёт панель PMP мышью по цветам) и размер поля
+// друг друга больше не трогают.
+test("WF248 П2: примерки размера поля нет — preview:true мимо, примерка темы размер поля не трогает", () => {
   const SAVED = theme("сохранённая", "#2299ff");
   const loaded = page({ stored: 15, storage: { [MAP_KEY]: JSON.stringify({ "chat:Trelvis": { theme: SAVED } }) } });
+  for (const detail of [{ preview: true, title: "Trelvis", chat: CHAT, px: 24 }, { preview: true, title: "Trelvis", px: null }]) {
+    command(loaded, detail);
+    assert.equal(font(loaded.parts.editor), "15px", JSON.stringify(detail));
+    assert.equal(loaded.win.localStorage.getItem(KEY), "15", "хранилище не тронуто");
+  }
+  assert.deepEqual(status(loaded), { px: 15, pinged: 0 }, "поля preview в status() больше нет");
   themeCommand(loaded, { preview: true, theme: theme("пудра", "#ee88aa") });
   assert.equal(loaded.api.status().theme.source, "preview");
-  command(loaded, { preview: true, title: "Trelvis", px: 24 });
-  assert.equal(loaded.api.status().preview, false, "примерка темы снята");
-  assert.equal(loaded.api.status().theme.id, "сохранённая");
-  assert.equal(font(loaded.parts.editor), "24px");
-  themeCommand(loaded, { preview: true, theme: theme("пудра", "#ee88aa") });
-  assert.equal(font(loaded.parts.editor), "15px", "примерка поля снята новой примеркой темы");
-  assert.equal(status(loaded).preview, false);
-  // Выбор темы тоже снимает висящую примерку поля.
-  command(loaded, { preview: true, title: "Trelvis", px: 26 });
-  themeCommand(loaded, { theme: theme("новая", "#11aa44") });
-  assert.equal(font(loaded.parts.editor), "15px");
-  // Выбор размера поля не снимает примерку темы — это делает endPreview меню.
-  themeCommand(loaded, { preview: true, theme: theme("пудра", "#ee88aa") });
   command(loaded, { px: 19 });
-  assert.equal(loaded.api.status().preview, true);
+  assert.equal(font(loaded.parts.editor), "19px");
+  assert.equal(loaded.api.status().preview, true, "выбор размера поля примерку темы не снимает");
+  themeCommand(loaded, { preview: false });
+  assert.equal(loaded.api.status().theme.id, "сохранённая");
+  assert.equal(font(loaded.parts.editor), "19px", "конец примерки темы размер поля не трогает");
+  themeCommand(loaded, { theme: theme("новая", "#11aa44") });
+  assert.equal(font(loaded.parts.editor), "19px", "выбор темы размер поля не трогает");
 });
 
-test("storage из другого окна ставит размер сразу; примерку не сбивает", () => {
+test("storage из другого окна ставит размер сразу", () => {
   const loaded = page({ stored: 15 });
   loaded.win.localStorage.setItem(KEY, "21");
   loaded.win.dispatchEvent({ type: "storage", key: KEY });
   assert.equal(font(loaded.parts.editor), "21px");
   loaded.win.dispatchEvent({ type: "storage", key: "чужой-ключ" });
   assert.equal(font(loaded.parts.editor), "21px");
-  command(loaded, { preview: true, title: "Trelvis", px: 28 });
-  loaded.win.localStorage.setItem(KEY, "14");
-  loaded.win.dispatchEvent({ type: "storage", key: KEY });
-  assert.equal(font(loaded.parts.editor), "28px", "примерка на месте");
-  themeCommand(loaded, { preview: false });
-  assert.equal(font(loaded.parts.editor), "14px", "после примерки — значение другого окна");
   // Хранилище очищено целиком (key null) — как у Claude.
   loaded.win.localStorage.removeItem(KEY);
   loaded.win.dispatchEvent({ type: "storage", key: null });

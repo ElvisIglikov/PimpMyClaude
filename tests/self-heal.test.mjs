@@ -30,9 +30,7 @@ const NODE_IDS = [
   "myclaude-progress-bar",
   "myclaude-progress-tip",
   "myclaude-progress-card",
-  "myclaude-window-frame",
-  // Свечение «ждёт тебя» (WF83, раздел 12и) — свой узел рядом с рамкой.
-  "myclaude-wait-glow",
+  // Неоновой рамки и свечения «ждёт тебя» (myclaude-window-frame, myclaude-wait-glow) с WF248 нет.
   // Хвост ряда номеров «… N» (WF85, #7356) — тоже свой узел, сторож возвращает и его.
   "myclaude-progress-tail",
   // Кнопка «▦ Галерея» (WF97, #7724, раздел 12п).
@@ -43,6 +41,11 @@ const NODE_IDS = [
   // Вуаль попапа и рамка «ждут твоего слова» (WF113, #8256, #8282, раздел 12и¹).
   "myclaude-dim",
   "myclaude-attn-frame",
+  // Панель материалов слева (WF277, #10644, раздел 12п⁴): кнопка «PMP», подложка места, рейка, полоса над местом.
+  "myclaude-dock-button",
+  "myclaude-dock-place",
+  "myclaude-dock-rail",
+  "myclaude-dock-drag",
 ];
 const STATUS_LINE = "💭🟣[Trelvis](docs/status.md) · WF 3 из 8 · 70%💭";
 

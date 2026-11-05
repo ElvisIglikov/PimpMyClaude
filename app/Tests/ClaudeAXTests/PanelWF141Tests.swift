@@ -1,28 +1,16 @@
 import XCTest
 @testable import ClaudeAX
 
-/// WF141 (#9114, #9115, Рик «новые — наверх»): «Цвет Claude» свёрнут по умолчанию, «Живой фон» первой плиткой,
+/// WF141 (#9114, #9115, Рик «новые — наверх»): «Цвет Claude» свёрнут по умолчанию (с WF242 раскрытое не помнится —
+/// `PanelWF242AppTests`), «Живой фон» первой плиткой,
 /// немного крупных плиток; плитки Workflow и `/digest` — свежие наверх, у проекта сводки поле `at`.
 final class PanelWF141Tests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_790_000_000)
 
     // MARK: «Цвет Claude»
 
-    func testColorsCollapsedByDefaultAndRemembered() throws {
-        let suite = "wf141-colors-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        XCTAssertFalse(PanelColorTiles.isOpen(defaults), "нет ключа — свёрнут")
-        PanelColorTiles.setOpen(true, defaults)
-        XCTAssertTrue(PanelColorTiles.isOpen(defaults))
-        PanelColorTiles.setOpen(false, defaults)
-        XCTAssertFalse(PanelColorTiles.isOpen(defaults))
-        XCTAssertNil(defaults.object(forKey: PanelColorTiles.openKey), "свёрнут — ключа нет, как умолчание")
-    }
-
     func testPanelThemesAndLiveThemeExistInCatalog() {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("claude-patch")
+        let root = Repo.root.appendingPathComponent("claude-patch")
         let ids = Set(ThemeCatalog.load(directory: root).map { $0.id })
         XCTAssertFalse(ids.isEmpty)
         for id in ClaudeAXController.panelThemeIDs {
@@ -37,14 +25,14 @@ final class PanelWF141Tests: XCTestCase {
         return PanelProject(folder: "/p/\(name)", name: name, marker: "", isMain: false, updated: updated, now: "",
                             words: [], note: "", waits: false,
                             running: status.workflows.filter { $0.state == .running },
-                            finished: [], planned: [], workflows: status.workflows, marathon: "")
+                            workflows: status.workflows, marathon: "")
     }
 
     func testTilesFreshFirstWithinGroup() {
         let old = project("Old", updated: now.addingTimeInterval(-3600))
         let fresh = project("Fresh", updated: now.addingTimeInterval(-60))
         let unknown = project("Unknown", updated: nil)
-        let snapshot = PanelSnapshot(waiting: [], working: [unknown, old, fresh], others: [], mainEntry: nil, mainName: nil)
+        let snapshot = PanelSnapshot(waiting: [], working: [unknown, old, fresh], others: [])
         let groups = PanelTiles.groups(snapshot, now: now)
         XCTAssertEqual(groups.first?.tiles.map { $0.name }, ["Fresh", "Old", "Unknown"])
     }

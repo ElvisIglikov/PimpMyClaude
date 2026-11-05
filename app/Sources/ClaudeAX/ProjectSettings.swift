@@ -314,7 +314,8 @@ final class ProjectSettingsStore {
         // Тот же текст — файл не трогаем: лишняя запись дёргает mtime, а по нему покраска
         // и решает, что вид проекта изменился.
         guard body != old else { return .written }
-        guard CommandChannel.writeAtomic(url, body) else {
+        // Файл в папке проекта, не в MyClaude: права прежние, 0644.
+        guard CommandChannel.writeAtomic(url, body, permissions: 0o644) else {
             return remember(settings, folder: folder) ? .registry : .failed
         }
         forget(folder: folder)

@@ -30,12 +30,19 @@ const card = (parent, path) => {
 };
 
 // fetchMode: "ok" — ответ сразу, "fail" — отказ (Пимп не запущен), "hang" — ответа нет.
-const page = ({ fetchMode = "ok" } = {}) => {
+// dock — окно с местом под панель материалов слева (WF277): строка «Show sidebar» и .dframe-pane-host.
+const page = ({ fetchMode = "ok", dock = false } = {}) => {
   const nodes = {};
   const loaded = loadInject({
     href: `https://claude.ai/epitaxy/${CHAT}`,
     geometry: { frame: [-1512, -982, 640, 900] },
     html: dom => {
+      if (dock) {
+        const root = dom.document.body.add("div", { class: "dframe-root", rect: { left: 0, top: 0, width: 1200, height: 800 } });
+        root.add("aside", { class: "dframe-sidebar df-hub-rail" }).add("div", { class: "df-collapsed-chrome" })
+          .add("button", { attrs: { "aria-label": "Show sidebar" }, rect: { left: 84, top: 8, width: 28, height: 28 } });
+        root.add("div", { class: "dframe-pane-host", rect: { left: 0, top: 0, width: 1200, height: 800 } });
+      }
       const parts = dom.composer({});
       const feed = dom.document.body.add("div", { attrs: { "data-testid": "epitaxy-virtual-transcript", role: "feed" } });
       const row = feed.add("div", { attrs: { "data-testid": "transcript-row", "data-index": "3" } });
@@ -190,4 +197,34 @@ test("dispose снимает пункт из меню", () => {
   loaded.api.dispose();
   assert.equal(item(list), undefined);
   assert.equal(ours(list).length, 0);
+});
+
+test("панель материалов жива (WF277) — пункт «🖼 Открыть в новом окне» по-прежнему окно PimpViewer, не панель; клик по карточке — в панель", async () => {
+  const { loaded, nodes } = page({ dock: true });
+  loaded.inner.dockAnswer({ ok: true, viewer: "up", docked: true, owner: "this" }, 200);
+  const list = menuFor(loaded, nodes.png);
+  press(list);
+  await settle();
+  const opens = () => loaded.calls.filter(address => address.includes("/open-html?"));
+  assert.deepEqual(opens(), [url(PNG)], "пункт меню — click с рамкой и фоном, без dock=1");
+  assert.equal(loaded.api.status().dock.on, false, "панель пунктом не открывается");
+  loaded.document.dispatchEvent({ type: "click", isTrusted: true, target: nodes.jpg, button: 0, detail: 1 });
+  assert.match(opens().at(-1), new RegExp(`^http://127\\.0\\.0\\.1:47615/open-html\\?mode=click&dock=1&path=${encodeURIComponent(JPG)}&chat=${CHAT}&x=`));
+  assert.equal(loaded.api.status().dock.on, true, "клик по карточке — панель открылась сама");
+});
+
+test("панель материалов стоит в этом окне (WF277) — «🖼 Открыть в новом окне» сперва закрывает её (on=0), фото — окну галереи по ответу, а не в панель", async () => {
+  const { loaded, nodes } = page({ dock: true });
+  loaded.inner.dockAnswer({ ok: true, viewer: "up", docked: true, owner: "this" }, 200);
+  Object.assign(loaded.inner.dockState, { want: true, owner: "this", place: { x: 0, y: 44, w: 420, h: 700, wx: -1512, wy: -982, ww: 640, wh: 900 } });
+  const list = menuFor(loaded, nodes.png);
+  loaded.calls = [];
+  press(list);
+  assert.deepEqual(loaded.calls.map(address => String(address).replace(/&seq=\d+$/, "")),
+    [`http://127.0.0.1:47615/dock?on=0&chat=${CHAT}&wx=-1512&wy=-982&ww=640&wh=900`], "до ответа на on=0 фото не уходит — оно открылось бы в панели");
+  await settle();
+  await settle();
+  const opens = loaded.calls.filter(address => String(address).includes("/open-html?"));
+  assert.deepEqual(opens, [url(PNG)], "по ответу — click с рамкой и фоном, без dock=1");
+  assert.equal(loaded.api.status().dock.on, false, "панель закрыта, как кнопкой");
 });

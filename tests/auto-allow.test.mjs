@@ -143,6 +143,27 @@ for (const text of ['Claude wants to run Bash', 'Run command: npm test', 'Allow 
     assert.equal(p.aa().presses[0].dialog, 'unknown:once'); p.api.dispose();
   });
 }
+// Ревизия WF247 (P2): имена инструментов в тексте разбирались квадратичным регэкспом — 64 КБ без «_»
+// замораживали страницу на секунды каждый тик. Разбор линейный, смысл прежний: имя — с первой буквы цепочки.
+test('имя после цифры — запрет как прежде: 2kaspi_payment, 0xpay_refund, 9pay_now — деньги; 3delete_x — удаление', () => {
+  for (const [input, reason] of [['run 2kaspi_payment now', 'money'], ['0xpay_refund', 'money'], ['9pay_now', 'money'],
+    ['12_3kaspi_go', 'money'], ['3delete_x', 'deletion']]) {
+    assert.equal(autoAllowBlockReason({ tool: 'Bash', text: input, input, readable: true }), reason, input);
+  }
+});
+test('разбор имён линейный: 65 536 знаков любой формы — меньше 200 мс', () => {
+  // Лучший из трёх замеров: квадратичный разбор медленный каждый раз (секунды), а нагруженный Мак
+  // отнимает у одного замера сотни мс — линейный 64 КБ «x_» под сборкой давал 14–250 мс (#11441).
+  for (const text of ['x'.repeat(65536), 'a1'.repeat(32768), `${'x'.repeat(65535)}_`, `${'x'.repeat(100)}__`.repeat(640).slice(0, 65536), 'x_'.repeat(32768)]) {
+    let spent = Infinity;
+    for (let round = 0; round < 3 && spent >= 200; round += 1) {
+      const start = performance.now();
+      autoAllowBlockReason({ tool: 'Bash', text, input: text, readable: true });
+      spent = Math.min(spent, performance.now() - start);
+    }
+    assert.ok(spent < 200, `${text.slice(0, 12)}…: ${spent.toFixed(0)} мс`);
+  }
+});
 for (const input of ['git push', 'rm -rf sample', 'cat .env', 'kaspi', 'mcp__service__send_message']) {
   test(`нестандартный заголовок сохраняет запреты: ${input}`, () => {
     const p = page({ text: `Permission requested: ${input}` }); p.tick();
@@ -257,7 +278,7 @@ test('ограниченные журналы без input, путей, подп
 
 test('status: порядок полей и отдельный Trust сохранены', () => {
   const p = page();
-  assert.deepEqual(Object.keys(p.aa()), ['on', 'switched', 'mutationRuns', 'presses', 'blocked', 'blockedLog', 'journal', 'tickAt', 'roam']);
+  assert.deepEqual(Object.keys(p.aa()), ['on', 'switched', 'mutationRuns', 'presses', 'blocked', 'blockedLog', 'journal', 'tickAt', 'roam', 'bypass']);
   assert.deepEqual(Object.keys(p.aa().roam), ['on', 'mode', 'state', 'chat', 'from', 'since', 'roams', 'lastRoam', 'skipped', 'reason', 'waiting', 'unrendered', 'dryRuns', 'disabled']);
   assert.deepEqual(plain(p.api.status().trust), { presses: 0, refused: 0, last: null, root: null });
   p.api.dispose();

@@ -24,13 +24,13 @@ final class PanelWF189Tests: XCTestCase {
 
     func testVariantsAsBefore() {
         XCTAssertEqual(StatusIcon.Variant.allCases,
-                       [.week, .pmpBar, .percentBar, .percent, .pmp, .bars, .fiveHour, .fable, .projects, .digits])
+                       [.claude, .week, .pmpBar, .percentBar, .percent, .pmp, .bars, .fiveHour, .fable, .projects, .digits])
         XCTAssertEqual(Set(StatusIcon.Variant.allCases.map { $0.name }).count, StatusIcon.Variant.allCases.count)
     }
 
     func testDefaultIsPMPAndWeekWithNumber() {
         let store = defaults()
-        XCTAssertEqual(StatusIcon.variant(store), .week, "ключа нет — PMP и неделя")
+        XCTAssertEqual(StatusIcon.variant(store), .claude, "ключа нет — Claude (WF269)")
         let week = look(.week)
         XCTAssertTrue(week.badge)
         XCTAssertTrue(week.showsNumber)

@@ -64,7 +64,7 @@ final class PanelWF180Tests: XCTestCase {
     }
 
     func testUnaddressedPreviewPlaysInMainWindow() {
-        let suite = "wf180-preview-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let store = UserDefaults(suiteName: suite)!
         addTeardownBlock { store.removePersistentDomain(forName: suite) }
         let settings = PageLookSettings(defaults: store)
@@ -72,7 +72,7 @@ final class PanelWF180Tests: XCTestCase {
         settings.write = { _, fields, _ in sent.append(CommandValue.object(fields).json); return true }
         XCTAssertTrue(settings.previewSendDelayMain(seconds: 3))
         XCTAssertFalse(settings.previewSendDelayMain(seconds: 4), "только 3, 5, 10")
-        XCTAssertEqual(sent, ["{\"style\":\"1.8\",\"size\":100,\"preview\":true,\"seconds\":3}"],
+        XCTAssertEqual(sent, ["{\"style\":\"1.8\",\"size\":150,\"preview\":true,\"seconds\":3}"],
                          "без match/chat — страница играет в главном окне")
     }
 

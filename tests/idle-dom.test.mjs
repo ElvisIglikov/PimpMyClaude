@@ -41,7 +41,8 @@ test('F09: idle DOM budget, 100 ответов / 20 тиков; страхово
   const q = p.dom.queries();
   for (let i = 0; i < 20; i++) p.beat();
   const queries = p.dom.queries() - q;
-  assert.ok(queries < 2000, `idle queries=${queries}; baseline до dirty gate >10000`);
+  // 2000 ровно с #10383 (запрос карточек SendUserFile раз в тик): потолок с запасом в 5 %.
+  assert.ok(queries < 2100, `idle queries=${queries}; baseline до dirty gate >10000`);
   assert.equal(p.api.status().layoutRuns - layouts, 2);
   p.api.dispose();
 });

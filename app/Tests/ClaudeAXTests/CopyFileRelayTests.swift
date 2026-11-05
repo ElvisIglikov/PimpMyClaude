@@ -21,18 +21,6 @@ final class CopyFileRelayTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - метка
-
-    func testPathInHTMLDecodesPercentEncodingAndRefusesJunk() {
-        let path = "/Users/dev/Не удалять/после установки.command"
-        let encoded = path.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
-        XCTAssertEqual(CopyFileRelay.path(inHTML: "<meta charset='utf-8'><!--pimpmyclaude:copy-file:\(encoded)--><a>x</a>"), path)
-        XCTAssertNil(CopyFileRelay.path(inHTML: "<meta charset='utf-8'><b>обычная копия</b>"), "метки нет — путь из ниоткуда")
-        XCTAssertNil(CopyFileRelay.path(inHTML: "<!--pimpmyclaude:copy-file:--><a>x</a>"), "пустая метка")
-        XCTAssertNil(CopyFileRelay.path(inHTML: "<!--pimpmyclaude:copy-file:relative%2Fx.html-->"), "относительный путь")
-        XCTAssertNil(CopyFileRelay.path(inHTML: "<!--pimpmyclaude:copy-file:%2FUsers%2Fx"), "метка без конца")
-    }
-
     func testExplicitCopyWritesFileURLFilenamesAndPath() {
         XCTAssertTrue(CopyFileRelay.write(path: file.path, to: pasteboard))
         XCTAssertEqual(pasteboard.string(forType: .fileURL), file.absoluteString)
@@ -42,16 +30,17 @@ final class CopyFileRelayTests: XCTestCase {
         XCTAssertEqual(urls?.map(\.path), [file.path])
     }
 
-    /// Метку кладёт любая страница (z5-r03): скрытые папки, связки ключей и cookies — буфер не трогаем.
+    /// Путь просит любая страница (z5-r03): скрытые папки, связки ключей и cookies — буфер не трогаем.
     func testClosedPathsAreRefused() {
         let home = "/Users/e"
         for path in ["/Users/e/.ssh/id_ed25519", "/Users/e/proj/.env", "/Users/e/Library/Keychains/login.keychain-db",
-                     "/Users/e/library/cookies/Cookies.binarycookies", "/Users/e/x/../.aws/credentials"] {
-            let encoded = path.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
-            XCTAssertNil(CopyFileRelay.path(inHTML: "<!--pimpmyclaude:copy-file:\(encoded)-->", home: home), path)
+                     "/Users/e/library/cookies/Cookies.binarycookies", "/Users/e/x/../.aws/credentials",
+                     "/Users/e/Library/Keychains"] {
+            XCTAssertTrue(CopyFileRelay.isRefused(path, home: home), path)
         }
-        XCTAssertEqual(CopyFileRelay.path(inHTML: "<!--pimpmyclaude:copy-file:%2FUsers%2Fe%2FLibrary%2FApplication%20Support%2Fa.png-->",
-                                          home: home), "/Users/e/Library/Application Support/a.png")
-
+        for path in ["/Users/e/Library/Application Support/a.png", "/Users/dev/Не удалять/после установки.command",
+                     "/Users/e/Library/KeychainsBackup/a.txt"] {
+            XCTAssertFalse(CopyFileRelay.isRefused(path, home: home), path)
+        }
     }
 }

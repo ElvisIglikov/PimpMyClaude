@@ -1,0 +1,210 @@
+{
+  "about": "Команды command.json: кто их пишет. swift — случай ClaudeCommand (file — где enum), ветка в inject.js есть; ax-only — случай ClaudeCommand, исполняет AX, ветки в inject.js нет; page-only — Swift пишет строкой мимо enum (file — где строка), ветка в inject.js есть; legacy — ветка в inject.js осталась, живого отправителя нет (file — Swift-остаток или сама страница), убирает гейт 1 WF248. Источник — axOnly/pageOnly testCommandContractMatchesInjectJS (app/Tests/ClaudeAXTests/ClaudeAXTests.swift) и ветки if (action === …) inject.js; его читают Swift-тест (С1) и commands-contract.test.mjs (П1).",
+  "commands": [
+    {
+      "action": "workflow",
+      "sender": "swift",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "cashout",
+      "sender": "swift",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "newChat",
+      "sender": "ax-only",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "new-window",
+      "sender": "swift",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "popout-window",
+      "sender": "swift",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "collapse",
+      "sender": "swift",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "expand",
+      "sender": "swift",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "arrange",
+      "sender": "ax-only",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "show",
+      "sender": "ax-only",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "scroll",
+      "sender": "swift",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "auto-allow-once",
+      "sender": "swift",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "mic",
+      "sender": "swift",
+      "file": "app/Sources/ClaudeAX/ClaudeAX.swift"
+    },
+    {
+      "action": "theme",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/ClaudeActions.swift"
+    },
+    {
+      "action": "status",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/CommandChannel.swift"
+    },
+    {
+      "action": "live-colors",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/LiveColors.swift"
+    },
+    {
+      "action": "themes-restore",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/WindowThemeStore.swift"
+    },
+    {
+      "action": "auto-collapse",
+      "sender": "legacy",
+      "file": "app/Sources/ClaudeAX/ClaudeActions.swift"
+    },
+    {
+      "action": "hide-tools",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/ClaudeActions.swift"
+    },
+    {
+      "action": "hide-code",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/ClaudeActions.swift"
+    },
+    {
+      "action": "pinned-look",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/PageLook.swift"
+    },
+    {
+      "action": "mic-refused",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/MicMonitor.swift"
+    },
+    {
+      "action": "dictating",
+      "sender": "legacy",
+      "file": "claude-patch/inject.js"
+    },
+    {
+      "action": "viewer-chat",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/ClaudeAXController.swift"
+    },
+    {
+      "action": "viewer-counts",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/ClaudeAXController.swift"
+    },
+    {
+      "action": "dock",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/HtmlChromeOpener.swift"
+    },
+    {
+      "action": "draft-setup",
+      "sender": "legacy",
+      "file": "app/Sources/ClaudeAX/BlankWindow.swift"
+    },
+    {
+      "action": "send-text",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/PimpChannel.swift"
+    },
+    {
+      "action": "chat-context",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/ChatContext.swift"
+    },
+    {
+      "action": "composer-font",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/ComposerFont.swift"
+    },
+    {
+      "action": "trust-root",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/TrustRoot.swift"
+    },
+    {
+      "action": "main-chat",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/MainChat.swift"
+    },
+    {
+      "action": "send-look",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/PageLook.swift"
+    },
+    {
+      "action": "send-delay",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/PageLook.swift"
+    },
+    {
+      "action": "dim",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/PageLook.swift"
+    },
+    {
+      "action": "auto-continue",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/ClaudeAXController.swift"
+    },
+    {
+      "action": "neon-style",
+      "sender": "legacy",
+      "file": "claude-patch/inject.js"
+    },
+    {
+      "action": "bypass-chats",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/PageLook.swift"
+    },
+    {
+      "action": "text-justify",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/PageLook.swift"
+    },
+    {
+      "action": "clean-answers",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/PageLook.swift"
+    },
+    {
+      "action": "airdrop-guard",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/AirDropWatch.swift"
+    },
+    {
+      "action": "auto-retry",
+      "sender": "page-only",
+      "file": "app/Sources/ClaudeAX/AutoRetry.swift"
+    }
+  ]
+}

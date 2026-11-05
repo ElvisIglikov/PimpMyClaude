@@ -14,7 +14,8 @@ tests/fixtures/pimp/*.json, они же правда для Swift-половин
   pimp.py close <проект>
   pimp.py renew <local_…|проект> [--text T|-] [--model "Opus 5.5"] [--effort low|…|max]
     (WF102: новый чат проекта в рамке старого окна, старое окно закрывается;
-     WF131: чат главного окна — новый чат открывается в главном, старый остаётся в списке слева)
+     WF131: чат главного окна — новый чат открывается в главном, старый остаётся в списке слева;
+     #10904: с --text первым идёт последний ответ прежнего чата Элвису, --no-last-answer — без него)
   pimp.py send (--project <проект> | --chat <local_…>) <текст|->
     (WF103: текст в поле окна и отправка кнопкой страницы; в поле свой текст — не трогает)
   pimp.py arrange [--layout row|4|5|5x2|last|center] [--order Проект,Проект,…] [--center X]
@@ -37,26 +38,31 @@ tests/fixtures/pimp/*.json, они же правда для Swift-половин
     (WF128 К1 v3: Обратный отсчёт; 1.8 «Взлёт» по умолчанию, 1.3 и 1.7 сняты;
      --show — показать в главном окне без отправки; без ключей — что выбрано)
   pimp.py restore-screens     (WF94: окна как стояли на этих мониторах, закрытые не открывает)
-  pimp.py say <фраза|->        (WF75: фраза голосом → DeepSeek → шаги каналом)
   pimp.py gallery [N] [--chat local_…]  (WF98: фото чата по номерам, как в Viewer)
   pimp.py summary              (WF102: что в окнах — только чтение файлов Claude)
+  pimp.py digest               (#9077: сводка всех проектов по status.md и tmux «rick-…» — без приложения)
   pimp.py main <local_…|проект>
     (WF108, #8148: чат — в главное окно Claude, чат, что был там, — в своё окно;
      окна меняются местами)
   pimp.py term <проект> [--resume <cliSessionId> | --from-chat <local_…> | --last]
-               [--text T|-] [--effort xhigh] [--app terminal|iterm]
+               [--text T|-] [--effort low|…|max (high)] [--show] [--app terminal|iterm]
   pimp.py term-send <проект> <текст|->
   pimp.py term-list [--with-terminal]
   pimp.py term-color <проект>
     (WF111: чат проекта в терминале — вкладка «<маркер> <проект>», tmux-сессия «rick-<проект>»;
      вкладка находится по tty из реестра term/<проект>.json, не по заголовку;
-     term-list читает tmux/реестр без Terminal; --with-terminal добавляет старые вкладки без записи;
+     term-list читает tmux/реестр без Terminal и заголовков не ставит (их ставит term), убирает только
+     мёртвые записи реестра; --with-terminal добавляет старые вкладки без записи;
      вкладка Terminal — в цветах окна проекта (вид .pimpmyclaude.json или авто-цвет по имени
      папки, как у Пимпа), term-color — перекрасить; PIMP_TERM_PS / PIMP_TERM_LSOF — для тестов;
-     claude --model claude-opus-5-5 --effort xhigh --permission-mode auto
+     claude --model claude-opus-5-5 --effort high --permission-mode bypassPermissions
      --settings <tools/claude-term-settings.json>; файл проверяется перед новым запуском;
      существующие процессы новых настроек не получают; PIMP_TERM_CLAUDE
-     подменяет claude, PIMP_TERM_TMUX и PIMP_TERM_OSASCRIPT — tmux и osascript для тестов)
+     подменяет claude, PIMP_TERM_TMUX и PIMP_TERM_OSASCRIPT — tmux и osascript для тестов;
+     текст в tmux-чат — пауза, Enter и проверка экрана: не видно в ленте — «не уверен, что дошло»,
+     код 1; PIMP_TERM_WAIT — шаг этой проверки, с, по умолчанию 1.5;
+     есть сессия tmux pimp-hub (сводное окно iTerm2, #10564) — --show выбирает вкладку чата там и
+     выводит iTerm вперёд, окна iTerm нет — открывает его запускателем Пимпа iterm/hub.command)
   pimp.py restart-claude [--force] [--from local_…]
     (WF108: перезапуск Claude путём «Обновить Claude», окна — по снимку; первой строкой
      id запроса, ждёт до 180 с; из чата внутри Claude CLI погибнет вместе с Claude —
@@ -64,6 +70,15 @@ tests/fixtures/pimp/*.json, они же правда для Swift-половин
      «работает» — кнопка стопа в окне или транскрипт чата Claude Desktop за 90 с, чат без
      сессии в индексе Claude Desktop не виден, терминальные claude не в счёт)
   pimp.py prs [--json]         (WF120: открытые PR своего логина/организаций, кроме своих; только чтение gh)
+  pimp.py shot-watch install|uninstall|status [--dry]
+  pimp.py live-check [--json] [--slice main-wide|main-narrow|popout|new|fullscreen|chat]
+    (#10527: окна × проверки health() через probe.js (удаляет его всегда) и самопроверка Пимпа — только
+     чтение; отчёт в MyClaude/live-check/; код 0 — зелёное, 1 — красное, 2 — проверить нельзя;
+     MYCLAUDE_LIVE_WAIT — ожидание, с (10), MYCLAUDE_CLAUDE_APP и MYCLAUDE_SLICE_DIR — для тестов)
+    (#9796: tools/shot_watch.py службой launchd com.elvis.pimp.shotwatch, раз в 60 с; --dry — только plist)
+  pimp.py login <адрес> [--name "App Store Connect"] | --list | --done <id|хост> | --clear
+    (WF302, #11225: очередь MyClaude/logins/ — Chrome вперёд, свечение и стрелка на поле входа, по одному;
+     тот же сайт — тот же вход; ждёт ответа Пимпа MYCLAUDE_LOGIN_WAIT с (5); MYCLAUDE_LOGINS_DIR — для тестов)
 Общие ключи: --json — напечатать сырой ответ приложения вместо строки по-русски.
 
 На выход — ОДНА строка по-русски (у «projects --status» — строка на проект);
@@ -76,15 +91,16 @@ MYCLAUDE_PIMP_WAIT — сколько секунд ждать ответ (по �
 последнего удара <id>.taken, а не от запроса: раскладка открывает окна по
 одному и после каждого перезаписывает метку (WF41),
 MYCLAUDE_PIMP_TAKEN — за сколько секунд приложение обязано взять запрос (5),
-MYCLAUDE_PIMP_BUSY — сколько секунд `open`/`renew`/`send`/`close` повторяют запрос на «занят» (45).
-Голосовой мозг (WF75): MYCLAUDE_VOICE_ENV — файл с ключом DeepSeek,
-MYCLAUDE_VOICE_FAKE — путь к готовому ответу модели (тогда ни ключа, ни сети),
-MYCLAUDE_DOWNLOADS — каталог загрузок, откуда берутся фотки Эйрдропа.
+MYCLAUDE_PIMP_BUSY — сколько секунд `open`/`renew`/`send`/`close` повторяют запрос на «занят» (45),
+MYCLAUDE_PIMP_RESTART_WAIT — сколько секунд `restart-claude` ждёт ответ (180).
+MYCLAUDE_DOWNLOADS — каталог загрузок, откуда paste-airdrop берёт фотки Эйрдропа.
 Сводка (WF102): MYCLAUDE_CLAUDE_SESSIONS — каталог claude-code-sessions Claude,
 MYCLAUDE_CLAUDE_PROJECTS — каталог транскриптов ~/.claude/projects.
 """
 
 import argparse
+import ctypes
+import hashlib
 import json
 import math
 import os
@@ -93,12 +109,11 @@ import random
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -121,15 +136,15 @@ PLACE_WORDS = {
     "below": "под этим чатом",
     "above": "над этим чатом",
 }
-POINT_RE = re.compile(r"^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$")
+# Точка «x,y» — не больше 6 цифр до и после точки у каждой координаты (ревизия WF247, пара к PimpRequest.place):
+# 20 цифр ушли бы в канал, а Swift переводит их в Int ловушкой — Пимп падал бы, пока запрос не устареет.
+POINT_RE = re.compile(r"^-?\d{1,6}(?:\.\d{1,6})?,-?\d{1,6}(?:\.\d{1,6})?$")
+POINT_LIMIT = 100_000
 
 # Раскладки (WF21). В ответе приложение называет применённую раскладку, поэтому
 # словами нужны все пять. С WF77 голая «расставь» («last») идёт умным путём, а в
 # ответе несёт `row` — про неё say_arrange говорит своими словами, не по словарю.
 LAYOUTS = ("row", "4", "5", "5x2", "last", "center")
-# «Главный по центру» (WF102) голосу не отдаём: центр назначает чат, который зовёт,
-# а у Диктатора своего окна нет (критик WF102, C5).
-LAYOUTS_VOICE = ("row", "4", "5", "5x2", "last")
 LAYOUT_WORDS = {
     "row": "как сейчас (лента)",
     "4": "четыре в ряд",
@@ -163,41 +178,25 @@ LOOK_SIZE = (60, 200)
 # Притемнение (WF113): сила в процентах.
 DIM_LEVEL = (20, 80)
 
-# Голосовой Пимп (WF75). Ключ лежит отдельным файлом рядом с каналом: его
-# значение не печатается и не попадает в журнал — только имя модели.
-VOICE_ENV_ENV = "MYCLAUDE_VOICE_ENV"
-VOICE_FAKE_ENV = "MYCLAUDE_VOICE_FAKE"
 DOWNLOADS_ENV = "MYCLAUDE_DOWNLOADS"
-DEFAULT_VOICE_ENV = (Path.home() / "Library" / "Application Support" / "MyClaude"
-                     / "pimp-voice.env")
 DEFAULT_DOWNLOADS = Path.home() / "Downloads"
-VOICE_PROMPT = Path(__file__).resolve().parent / "voice_prompt.md"
-VOICE_MODEL = "deepseek-v4-flash"
-VOICE_BASE = "https://api.deepseek.com"
-VOICE_TIMEOUT_S = 8.0
-VOICE_MAX_TOKENS = 400
-# Общий бюджет фразы: три окна по 65 с (WF102, было 40) плюс тик канала — дольше Диктатор
-# ждать не станет, поэтому договариваем частичным итогом «сделал 2 из 3».
-VOICE_BUDGET_S = 210.0
-VOICE_LOG_LINES = 1000
 BUSY_RETRY_S = 2.0
-# «Открой окно» на занятом Пимпе ждёт очереди, как голос (G4 WF101); тестам — env.
+# «Открой окно» на занятом Пимпе ждёт очереди (G4 WF101); тестам — env.
 OPEN_BUSY_S = 45.0
+# renew ждёт паузы в наборе Элвиса (#11201, WF302): Пимп отвечает busy с typing не дольше 60 с — ждём с запасом.
+RENEW_TYPING_S = 75.0
 HUD_LIMIT = 200
-VOICE_OPEN_LIMIT = 5
-# Ворота стоят в КОДЕ, а не в ответе модели: «уверена» она про себя всегда.
-CLOSE_WORDS = ("закр", "убери окно", "убрать окно")
-PHOTO_WORDS = ("фот", "картин", "снимк", "эйрдроп", "airdrop", "аирдроп")
-# Порция Эйрдропа: фотки приезжают пачкой — берём свежайшую и всё, что легло
-# вплотную к ней, но только то, чего ещё не вставляли (отметка voice-pasted.json).
+# Порция Эйрдропа (paste-airdrop): фотки приезжают пачкой — берём свежайшую и всё, что легло
+# вплотную к ней, но только то, чего ещё не вставляли (отметка voice-pasted.json — имя файла
+# со времён голосового Пимпа WF75, у людей он уже лежит; не переименовывать).
 PHOTO_EXT = (".jpg", ".jpeg", ".png", ".heic", ".heif", ".gif", ".webp")
 AIRDROP_GAP_S = 120.0
 AIRDROP_FRESH_S = 1800.0
 AIRDROP_LIMIT = 20
 
 ERRORS = {
-    "stale": "Пимп не успел взять запрос вовремя — повтори",
-    "busy": "Пимп занят — открывает или возвращает окна",
+    "stale": "PMP не успел взять запрос вовремя — повтори",
+    "busy": "PMP занят — открывает или возвращает окна",
     # Свёрнутых окон приложение не видит вовсе: говорить «Claude не запущен» при живом
     # Claude со свёрнутыми окнами — врать (#5746).
     "no-windows": "Claude не запущен, окон нет или все свёрнуты — разверни окно",
@@ -207,7 +206,7 @@ ERRORS = {
     "chat-not-created": "Чат не создан — страница Claude отказала",
     "screens-unknown": "На этом наборе мониторов окна ещё не запоминал — расставь их, я запомню",
     "too-small": "Мало места: окно не делится пополам",
-    "bad-request": "Пимп не понял запрос",
+    "bad-request": "PMP не понял запрос",
     # Ни одно окно не совпало с ячейкой сетки — запоминать нечего (#5728).
     "not-arranged": "Окна стоят не по сетке — сперва расставь их, потом запоминай раскладку",
     # WF75. Последнего чата нет — Claude переустановлен или проект новый.
@@ -218,7 +217,7 @@ ERRORS = {
     "working-unknown": ("Не перезапускаю: не удалось проверить, идёт ли ответ в чатах — "
                         "--force перезапустит всё равно и оборвёт работающие чаты"),
     "restore-timeout": ("Claude перезапустил, но окна не вернулись за 130 с — "
-                        "«↩️ Вернуть окна» в меню Пимпа"),
+                        "верни их: pimp.py restore-screens"),
 }
 # Перезапуск Claude (WF108): выход до 30 с, запуск до 20 с, возврат окон до 130 с —
 # ждём всего столько, сколько бы ни билось сердце <id>.taken; тестам — env.
@@ -242,6 +241,44 @@ CHATGPT_APP = "chatgpt"
 def pimp_dir() -> Path:
     value = os.environ.get(DIR_ENV, "").strip()
     return Path(value).expanduser() if value else DEFAULT_DIR
+
+
+class TextRefused(ValueError):
+    """Текст ключа не годится: строка по-русски для Элвиса, код 1."""
+
+
+def read_text(raw, limit=None, refused: str = "ничего не сделал"):
+    """Текст аргумента или ключа: «-» — stdin; нулевой символ и длиннее limit — отказ (TextRefused);
+    пробелы по краям вон. None — None, пустой — "" (что с пустым, решает зовущий)."""
+    if raw is None:
+        return None
+    text = sys.stdin.read() if raw == "-" else raw
+    if "\0" in text:
+        raise TextRefused(f"В тексте нулевой символ — {refused}")
+    text = text.strip()
+    if limit is not None and len(text) > limit:
+        raise TextRefused(f"Текст длиннее {limit} знаков — сократи")
+    return text
+
+
+def projects_root() -> Path:
+    """Корень проектов — `projectsRoot` из claude.json (как у приложения), нет его — ~/Projects."""
+    fallback = Path.home() / "Projects"
+    try:
+        config = json.loads((pimp_dir().parent / "claude.json").read_text(encoding="utf-8"))
+        return Path(config.get("projectsRoot") or fallback).expanduser()
+    except (OSError, ValueError, AttributeError, TypeError):
+        return fallback
+
+
+def saved_projects() -> list:
+    """Записи projects.json приложения ({name, folder, lastUsed}); файла нет или он битый — []."""
+    try:
+        body = json.loads((pimp_dir().parent / "projects.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    items = body.get("projects") if isinstance(body, dict) else None
+    return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
 
 
 def seconds(name: str, default: float) -> float:
@@ -436,10 +473,11 @@ def parse_place(value: str) -> str:
     place = (value or "").strip().lower().replace(" ", "")
     if place in PLACES:
         return place
-    if POINT_RE.match(place):
+    # Граница та же, что у приложения (план WF248, С1): |x|, |y| ≤ 100 000 — дальше экранов нет.
+    if POINT_RE.match(place) and all(abs(float(part)) <= POINT_LIMIT for part in place.split(",")):
         return place
     raise argparse.ArgumentTypeError(
-        "место — left, middle, right, below, above или «x,y» (без пробелов)")
+        "место — left, middle, right, below, above или «x,y» (без пробелов, числа до 100 000)")
 
 
 def parse_order(value: str) -> list:
@@ -487,7 +525,7 @@ def say_open(request: dict, data: dict) -> str:
         line = f"{verb} {title} {where}"
     # Приложение кладёт в `layers` ровно две строки: "ok" или пустую (PimpChannel.swift).
     if not data.get("layers"):
-        line += ", но цвет не встал — поставь тему из меню окна"
+        line += ", но цвет не встал — поставь тему в «Оформлении» панели PMP"
     return line
 
 
@@ -497,7 +535,7 @@ def say_error(request: dict, data: dict) -> str:
         names = [str(name) for name in (data.get("projects") or []) if str(name).strip()]
         if names:
             return f"Не нашёл проект «{request.get('project', '')}», есть: " + ", ".join(names)
-        return f"Не нашёл проект «{request.get('project', '')}», и списка Пимп не дал"
+        return f"Не нашёл проект «{request.get('project', '')}», и списка PMP не дал"
     action = request.get("action", "")
     if action == "renew-window":
         # Замена чата (WF102): старое окно закрывается только когда известен новый чат —
@@ -512,7 +550,7 @@ def say_error(request: dict, data: dict) -> str:
                         "окно не перенёс — старый чат остался в главном, перенеси руками или "
                         "pimp.py main")
             # Приложение старше WF131 меняет только вынесенные окна.
-            return "Этот чат в главном окне Claude — эта версия Пимпа его не меняет, обнови Пимп"
+            return "Этот чат в главном окне Claude — эта версия PMP его не меняет, обнови PMP"
         if error == "chat-unknown":
             window = data.get("window") if isinstance(data.get("window"), dict) else {}
             title = str(window.get("title") or "").strip()
@@ -549,7 +587,7 @@ def say_error(request: dict, data: dict) -> str:
         if error == "chat-missing":
             return f"Чат {what} в главном окне не открылся — ничего не поменял"
         if error == "chat-unknown":
-            return "Окно проекта есть, но его чат не опознан — включи «Цвет по проекту» в меню Пимпа"
+            return "Окно проекта есть, но его чат не опознан — включи «Свой цвет у каждого проекта» в «Оформлении» панели PMP"
         if error == "chat-not-created":
             return "Чат в главном окне, а прежний вынести окном не вышло — он в списке слева"
         if error == "no-answer":
@@ -569,7 +607,7 @@ def say_error(request: dict, data: dict) -> str:
         if error == "restore-timeout" and isinstance(data.get("skipped"), list) and data["skipped"]:
             # Снимок сдался (гейт 2 WF108): окна нового Claude не появились — какие чаты не вернулись.
             names = ", ".join(f"«{str(title).strip() or 'без имени'}»" for title in data["skipped"])
-            return f"Claude перезапустил, но окна не вернулись ({names}) — «↩️ Вернуть окна» в меню Пимпа"
+            return f"Claude перезапустил, но окна не вернулись ({names}) — верни их: pimp.py restore-screens"
     if action == "arrange" and error == "window-missing" and request.get("center"):
         return f"Окна «{short_name(request['center'])}» для центра не нашёл — ничего не двигал"
     if error == "too-small" and request["action"] == "arrange" and isinstance(data.get("rows"), int):
@@ -584,7 +622,7 @@ def say_error(request: dict, data: dict) -> str:
                 "уже или выбери другую раскладку")
     if error == "chat-unknown":
         # Чата окна приложение не знает — запоминать нечего: вернулись бы не те
-        # чаты. Лечится тумблером «🗂 Цвет по проекту» и свободным probe.js (WF41).
+        # чаты. Лечится выключателем «Свой цвет у каждого проекта» (бывший «🗂 Цвет по проекту») и свободным probe.js (WF41).
         titles = [str(title).strip() for title in (data.get("windows") or [])
                   if str(title).strip()]
         where = ", ".join(f"«{title}»" for title in titles)
@@ -594,8 +632,8 @@ def say_error(request: dict, data: dict) -> str:
             what = f"не знаю, какие чаты в окнах {where}"
         else:
             what = "не знаю, какие чаты в окнах"
-        return (f"Не могу запомнить: {what} — включи «Цвет по проекту» "
-                "в меню Пимпа или подожди минуту")
+        return (f"Не могу запомнить: {what} — включи «Свой цвет у каждого проекта» "
+                "в «Оформлении» панели PMP или подожди минуту")
     if error == "ambiguous":
         # Двусмысленность — отказ без единого движения: закрыть или вставить не в то
         # окно дороже лишнего вопроса (WF75).
@@ -618,7 +656,7 @@ def say_error(request: dict, data: dict) -> str:
         return "Claude не запущен или окон у него нет"
     if error == "window-missing" and action == "close-window":
         return (f"Окон проекта {short_name(request.get('project', ''))} не нашёл — может, окно уже "
-                "закрыто, или карта чатов молчит: включи «Цвет по проекту»")
+                "закрыто, или карта чатов молчит: включи «Свой цвет у каждого проекта» в «Оформлении» панели PMP")
     if error == "window-missing" and action == "new-window" and request.get("chat") == "last":
         # Старый чат точно есть: окно не вынеслось за 15 с или нет главного окна (z4-r04).
         return ("Окно чата не открылось за 15 с — вынеси его руками или повтори --last; "
@@ -639,7 +677,7 @@ def say_error(request: dict, data: dict) -> str:
     known = ERRORS.get(error)
     if known:
         return known
-    return f"Пимп отказал: {error}" if error else "Пимп отказал молча"
+    return f"PMP отказал: {error}" if error else "PMP отказал молча"
 
 
 def say_arrange(request: dict, data: dict) -> str:
@@ -760,7 +798,32 @@ def say_renew(data: dict) -> str:
     # Модель не встала — текст всё равно ушёл первым сообщением (эталон WF102).
     if data.get("model") == "missed":
         line += "; модель не встала — текст ушёл на той, что стояла"
-    return line
+    # #10261: эффорт не встал — сказать сразу, а не узнать от Элвиса.
+    if data.get("effort") == "missed":
+        line += "; эффорт не встал — поставь вручную"
+    return line + say_draft(data.get("draft"))
+
+
+def say_draft(draft) -> str:
+    """Черновик прежнего чата (#11201, WF302): что страница перенесла в поле нового чата; поля нет — ничего."""
+    if not isinstance(draft, dict):
+        return ""
+    state = str(draft.get("state") or "")
+    want = draft.get("want") if isinstance(draft.get("want"), int) else 0
+    landed = draft.get("landed") if isinstance(draft.get("landed"), int) else 0
+    chars = draft.get("chars") if isinstance(draft.get("chars"), int) else 0
+    files = f"{plural(want, 'вложение', 'вложения', 'вложений')}" if want else ""
+    if state == "ok":
+        what = " и ".join(part for part in ((f"текст {chars} зн." if chars else ""), files) if part)
+        return f"; черновик Элвиса перенёс в поле нового чата ({what})" if what else ""
+    if state == "part":
+        return (f"; черновик перенёс не весь: вложений {landed} из {want} — остальные в поле прежнего чата")
+    if state == "wait":
+        return "; черновик ещё переносится в поле нового чата — проверь его"
+    why = str(draft.get("why") or "").strip()
+    if state == "fail":
+        return f"; черновик не перенёс ({why or 'не лёг в поле'}) — он в поле прежнего чата"
+    return ""
 
 
 def say_paste(data: dict) -> str:
@@ -821,7 +884,7 @@ def say_result(request: dict, data: dict) -> str:
         items = [item for item in (data.get("projects") or []) if isinstance(item, dict)
                  and str(item.get("name") or "").strip()]
         if not items:
-            return "Проектов Пимп пока не знает — открой чат в папке проекта"
+            return "Проектов PMP пока не знает — открой чат в папке проекта"
         if request.get("status"):
             # Со сводкой строка на проект: в одну её не уложить (WF41).
             return "\n".join(say_project(item) for item in items)
@@ -858,14 +921,14 @@ def say_result(request: dict, data: dict) -> str:
         if missing > 0:
             line += f"; {missing} не нашёл — закрытые чаты не открываю"
         return line
-    return "Пимп ответил, но я не знаю на что"
+    return "PMP ответил, но я не знаю на что"
 
 
 SILENT_LINES = {
-    "write": "Не смог положить запрос Пимпу",
-    "silent": "Пимп не запущен",
-    "timeout": "Пимп взял запрос и не ответил — посмотри, жив ли он",
-    "bad": "Пимп ответил непонятным файлом",
+    "write": "Не смог положить запрос PMP",
+    "silent": "PMP не запущен",
+    "timeout": "PMP взял запрос и не ответил — посмотри, жив ли он",
+    "bad": "PMP ответил непонятным файлом",
 }
 
 
@@ -891,7 +954,7 @@ def send(request: dict, total=None):
     return "ok", data, raw
 
 
-def run(request: dict, as_json: bool) -> int:
+def run(request: dict, as_json: bool, note: str = "") -> int:
     warn_probe(pimp_dir())
     restart = request.get("action") == "restart-claude"
     if restart and not as_json:
@@ -900,15 +963,23 @@ def run(request: dict, as_json: bool) -> int:
         print(request["id"], flush=True)
     total = seconds("MYCLAUDE_PIMP_RESTART_WAIT", RESTART_WAIT_S) if restart else None
     kind, data, raw = send(request, total)
+    typed_at = None
     if request.get("action") in ("new-window", "renew-window", "send", "close-window"):
-        # Занят — повторяем новым id и свежим at (как deliver у голоса).
+        # Занят — повторяем новым id и свежим at: у старого id ответ уже лежит, а `at` старше 30 с даст stale.
         deadline = time.monotonic() + seconds("MYCLAUDE_PIMP_BUSY", OPEN_BUSY_S)
-        while (kind == "ok" and data.get("ok") is False and str(data.get("error") or "") == "busy"
-               and time.monotonic() + BUSY_RETRY_S < deadline):
+        while kind == "ok" and data.get("ok") is False and str(data.get("error") or "") == "busy":
+            # #11201: Элвис печатает — Пимп держит смену чата до паузы (не дольше минуты), ждём её.
+            if data.get("typing") is True and typed_at is None:
+                typed_at = time.monotonic()
+                deadline = max(deadline, typed_at + seconds("MYCLAUDE_PIMP_TYPING", RENEW_TYPING_S))
+            if time.monotonic() + BUSY_RETRY_S >= deadline:
+                break
             time.sleep(BUSY_RETRY_S)
             request["id"] = new_id()
             request["at"] = now_iso()
             kind, data, raw = send(request)
+    if typed_at is not None and kind == "ok" and data.get("ok"):
+        note += f"; ждал паузы в наборе {round(time.monotonic() - typed_at)} с"
     if kind != "ok":
         # В режиме --json непонятный ответ печатаем как есть и молчим: лишняя строка
         # сверху сломала бы разбор тому, кто нас позвал.
@@ -925,7 +996,8 @@ def run(request: dict, as_json: bool) -> int:
     if as_json:
         print(raw.strip())
     else:
-        print(say_result(request, data))
+        # note — приписка зовущего к удаче (renew без последнего ответа, #10904).
+        print(say_result(request, data) + (note if data.get("ok") else ""))
     return 0 if data.get("ok") else 1
 
 
@@ -1002,405 +1074,6 @@ def airdrop_batch():
             break
     batch.reverse()
     return [str(item) for _, item in batch], newest, ""
-
-
-# ---- Мозг: фраза голосом → шаги ------------------------------------------------
-
-class VoiceError(RuntimeError):
-    """Не ответил, ответил не тем или ответить нечем."""
-
-    def __init__(self, message: str, head: str = "Пимп не понял"):
-        super().__init__(message)
-        self.head = head
-
-    def line(self) -> str:
-        return f"{self.head}: {self}"
-
-
-def voice_env_path() -> Path:
-    value = os.environ.get(VOICE_ENV_ENV, "").strip()
-    return Path(value).expanduser() if value else DEFAULT_VOICE_ENV
-
-
-def voice_env(path: Path) -> dict:
-    """Строки вида ИМЯ=значение. Значения наружу не отдаются — только сюда."""
-    values = {}
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        name, _, value = line.partition("=")
-        values[name.strip()] = value.strip().strip('"').strip("'")
-    return values
-
-
-def voice_prompt_text(names: list) -> str:
-    try:
-        body = VOICE_PROMPT.read_text(encoding="utf-8")
-    except OSError as error:
-        raise VoiceError(f"нет файла {VOICE_PROMPT.name} ({error})")
-    # В модель уходят ТОЛЬКО имена проектов: папки Элвиса наружу не отдаём (WF75).
-    return body + "\n## Список проектов\n\n" + ", ".join(names) + "\n"
-
-
-def voice_json(content: str) -> dict:
-    """Терпимый разбор: модель иногда заворачивает ответ в ```json … ```."""
-    text = (content or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
-    for attempt in (text, ""):
-        if attempt == "":
-            match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-            attempt = match.group(0) if match else ""
-        if not attempt:
-            break
-        try:
-            data = json.loads(attempt)
-        except ValueError:
-            continue
-        if isinstance(data, dict):
-            return data
-    raise VoiceError("модель ответила не JSON")
-
-
-class VoiceNoRedirect(urllib.request.HTTPRedirectHandler):
-    """Не переносить фразу и Authorization на адрес из ответа сервера."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise urllib.error.HTTPError(req.full_url, code, "redirect refused", headers, fp)
-
-
-def voice_endpoint(base: str) -> str:
-    """Ключ и голосовая фраза уходят только по HTTPS, без реквизитов в URL."""
-    try:
-        parsed = urllib.parse.urlsplit(base)
-        valid = (parsed.scheme == "https" and bool(parsed.hostname)
-                 and parsed.username is None and parsed.password is None
-                 and not parsed.query and not parsed.fragment
-                 and not any(c.isspace() or ord(c) < 32 for c in base))
-        parsed.port  # негодный номер порта тоже даёт понятный отказ
-    except ValueError:
-        valid = False
-    if not valid:
-        raise VoiceError("адрес DeepSeek должен быть HTTPS без логина, пароля и параметров")
-    return base.rstrip("/") + "/chat/completions"
-
-
-def voice_net(phrase: str, names: list, values: dict):
-    """Один POST и жёсткий срок: рассуждения выключены, ответ — объект JSON."""
-    key = values.get("DEEPSEEK_API_KEY", "").strip()
-    model = (values.get("DEEPSEEK_MODEL") or VOICE_MODEL).strip()
-    base = (values.get("DEEPSEEK_BASE_URL") or VOICE_BASE).strip().rstrip("/")
-    endpoint = voice_endpoint(base)
-    payload = {
-        "model": model,
-        "messages": [{"role": "system", "content": voice_prompt_text(names)},
-                     {"role": "user", "content": phrase}],
-        "response_format": {"type": "json_object"},
-        "max_tokens": VOICE_MAX_TOKENS,
-        "thinking": {"type": "disabled"},
-    }
-    request = urllib.request.Request(
-        endpoint,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        # Ключ только заголовком: в URL он попал бы в логи прокси.
-        headers={"Authorization": "Bearer " + key,
-                 "Content-Type": "application/json; charset=utf-8"},
-        method="POST")
-    try:
-        with urllib.request.build_opener(VoiceNoRedirect()).open(request, timeout=VOICE_TIMEOUT_S) as answer:
-            body = answer.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as error:
-        detail = ""
-        try:
-            detail = error.read().decode("utf-8", "replace")[:300].lower()
-        except Exception:      # noqa: BLE001 — тело ошибки читаться не обязано
-            pass
-        if error.code == 400 and "model" in detail:
-            raise VoiceError(f"модель {model} не принята", head="Пимп")
-        raise VoiceError(f"DeepSeek ответил ошибкой {error.code}")
-    except (urllib.error.URLError, TimeoutError, OSError):
-        raise VoiceError(f"DeepSeek не ответил за {int(VOICE_TIMEOUT_S)} с")
-    except UnicodeError:
-        # Заголовок берёт только латиницу: кривой ключ иначе свалил бы CLI трассой.
-        raise VoiceError("ключ DeepSeek не годится — в нём не латинские знаки",
-                         head="Пимп")
-    try:
-        answer = json.loads(body)
-        content = answer["choices"][0]["message"]["content"]
-    except (ValueError, KeyError, IndexError, TypeError):
-        raise VoiceError("DeepSeek прислал ответ незнакомого вида")
-    return voice_json(content), str(answer.get("model") or model)
-
-
-def voice_ask(phrase: str, names: list):
-    """Спросить мозг: (ответ модели, имя модели).
-
-    MYCLAUDE_VOICE_FAKE проверяется ДО ключа и сети: тесты гоняют настоящий CLI,
-    и уйти в живой DeepSeek с ключом Элвиса им нельзя ни при каких условиях.
-    """
-    fake = os.environ.get(VOICE_FAKE_ENV, "").strip()
-    if fake:
-        try:
-            data = json.loads(Path(fake).expanduser().read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise VoiceError(f"подставной ответ не читается ({error})")
-        if not isinstance(data, dict):
-            raise VoiceError("подставной ответ не объект")
-        return data, str(data.get("model") or "fake")
-    path = voice_env_path()
-    try:
-        values = voice_env(path)
-    except OSError:
-        values = {}
-    if not values.get("DEEPSEEK_API_KEY", "").strip():
-        raise VoiceError(f"ключа DeepSeek нет — впиши DEEPSEEK_API_KEY в {path}",
-                         head="Пимп")
-    return voice_net(phrase, names, values)
-
-
-def voice_project(value, names: list):
-    """Проект берётся только из живого списка: открыть чужую папку
-    дороже лишнего вопроса (тот же запрет, что в скилле)."""
-    want = str(value or "").strip()
-    for name in names:
-        if name.lower() == want.lower():
-            return name
-    return None
-
-
-def voice_steps(answer: dict, phrase: str, names: list):
-    """Ответ модели → (шаги, отказы). Ворота стоят ЗДЕСЬ, в коде: «уверена» ли
-    модель, она решает сама, и защитой это не работает (критик WF75, п. 10).
-    """
-    low = phrase.lower()
-    steps, refused, opened = [], [], 0
-    raw = answer.get("steps")
-    for item in (raw if isinstance(raw, list) else []):
-        if not isinstance(item, dict):
-            continue
-        action = str(item.get("action") or "").strip()
-        asked = str(item.get("project") or "").strip()
-        project = voice_project(asked, names) if action in ("open", "close") else None
-        if action in ("open", "close") and not project:
-            refused.append(f"не знаю проект «{asked}»")
-            continue
-        if action == "none":
-            steps.append({"action": "none", "say": str(item.get("say") or "").strip()})
-        elif action == "open":
-            if opened >= VOICE_OPEN_LIMIT:
-                refused.append(f"больше {VOICE_OPEN_LIMIT} окон за раз не открываю")
-                continue
-            opened += 1
-            place = str(item.get("place") or "").strip().lower()
-            chat = str(item.get("chat") or "").strip().lower()
-            steps.append({"action": "open", "project": project,
-                          "place": place if place in PLACES else "right",
-                          "chat": "last" if chat == "last" else "new"})
-        elif action == "close":
-            if not any(word in low for word in CLOSE_WORDS):
-                refused.append("окно не закрывал: слова «закрой» в твоей фразе нет")
-                continue
-            steps.append({"action": "close", "project": project})
-        elif action == "arrange":
-            layout = str(item.get("layout") or "").strip().lower()
-            asked_order = item.get("order")
-            order = [voice_project(name, names)
-                     for name in (asked_order if isinstance(asked_order, list) else [])]
-            steps.append({"action": "arrange",
-                          "layout": layout if layout in LAYOUTS_VOICE else "last",
-                          "order": [name for name in order if name]})
-        elif action in ("layout_save", "layout_restore"):
-            name = str(item.get("name") or "").strip()
-            if not name:
-                refused.append("не расслышал имя раскладки")
-                continue
-            step = {"action": action, "name": name}
-            if action == "layout_restore":
-                step["fresh"] = item.get("fresh") is True
-            steps.append(step)
-        elif action == "paste_airdrop":
-            if not any(word in low for word in PHOTO_WORDS):
-                refused.append("фоток не вставлял: про фотки в твоей фразе нет")
-                continue
-            steps.append({"action": "paste_airdrop"})
-        elif action in ("paste_clipboard", "projects", "windows"):
-            steps.append({"action": action})
-        else:
-            refused.append(f"шага «{action}» я не умею")
-    # Несколько окон подряд сами собой встают стопкой — раскладку добавляем, если
-    # модель о ней не сказала: порядок берём тот, в котором она назвала проекты.
-    if opened >= 2 and not any(step["action"] == "arrange" for step in steps):
-        steps.append({"action": "arrange", "layout": "last", "auto": True,
-                      "order": [step["project"] for step in steps
-                                if step["action"] == "open"]})
-    return steps, refused
-
-
-VOICE_ACTIONS = {
-    "open": "new-window", "close": "close-window", "arrange": "arrange",
-    "layout_save": "layout-save", "layout_restore": "layout-restore",
-    "paste_airdrop": "paste", "paste_clipboard": "paste",
-    "projects": "projects", "windows": "windows",
-}
-
-
-def step_request(step: dict, paths=None) -> dict:
-    """Шаг → запрос канала. Порядок ключей — как в эталонах (build_request рядом)."""
-    action = VOICE_ACTIONS[step["action"]]
-    request = {"id": new_id(), "at": now_iso(), "action": action, "from": from_chat()}
-    if action == "new-window":
-        request["project"] = step["project"]
-        request["place"] = step["place"]
-        if step["chat"] == "last":
-            request["chat"] = "last"
-    elif action == "close-window":
-        request["project"] = step["project"]
-    elif action == "paste":
-        # Голос всегда вставляет в переднее окно: Элвис жмёт F5 в том чате, куда
-        # диктует, — это то же самое, что его собственное ⌘V.
-        request["front"] = True
-        if paths:
-            request["paths"] = paths
-    elif action == "arrange":
-        request["layout"] = step["layout"]
-        if step.get("order"):
-            request["order"] = step["order"]
-    elif action == "layout-save":
-        request["name"] = step["name"]
-    elif action == "layout-restore":
-        request["name"] = step["name"]
-        request["fresh"] = step["fresh"]
-    return request
-
-
-def deliver(request: dict, deadline: float):
-    """Отправить и на «занят» повторить с НОВЫМ id и свежим at: у старого id ответ
-    уже лежит, второй раз приложение его не возьмёт, а `at` старше 30 с даст stale."""
-    while True:
-        kind, data, _ = send(request)
-        if kind != "ok" or str(data.get("error") or "") != "busy":
-            return kind, data
-        if time.monotonic() + BUSY_RETRY_S >= deadline:
-            return "ok", data
-        time.sleep(BUSY_RETRY_S)
-        request["id"] = new_id()
-        request["at"] = now_iso()
-
-
-def voice_names(deadline: float):
-    """Живой список проектов: (имена, что сказать, если не вышло)."""
-    request = {"id": new_id(), "at": now_iso(), "action": "projects", "from": from_chat()}
-    kind, data = deliver(request, deadline)
-    if kind != "ok":
-        return None, SILENT_LINES[kind]
-    if not data.get("ok"):
-        return None, say_error(request, data)
-    names = [str(item.get("name") or "").strip() for item in (data.get("projects") or [])
-             if isinstance(item, dict) and str(item.get("name") or "").strip()]
-    if not names:
-        return None, "Проектов Пимп пока не знает — открой чат в папке проекта"
-    return names, ""
-
-
-def voice_do(step: dict, deadline: float):
-    """Один шаг: (вышло ли, строка для Элвиса)."""
-    action = step["action"]
-    if action == "none":
-        return True, step.get("say") or "Понял, ничего не трогаю"
-    paths, mark = None, 0.0
-    if action == "paste_airdrop":
-        paths, mark, why = airdrop_batch()
-        if not paths:
-            return False, why
-    request = step_request(step, paths)
-    kind, data = deliver(request, deadline)
-    if kind != "ok":
-        return False, SILENT_LINES[kind]
-    line = say_result(request, data)
-    if not data.get("ok"):
-        return False, line
-    if action == "paste_airdrop":
-        write_mark(mark)
-    return True, line
-
-
-def voice_hud(text: str) -> None:
-    """Плашка — не итог: ответ не разбираем. Канал отвечает на hud и занятым."""
-    text = (text or "").strip()[:HUD_LIMIT]
-    if not text:
-        return
-    send({"id": new_id(), "at": now_iso(), "action": "hud",
-          "from": from_chat(), "text": text})
-
-
-def voice_log(phrase: str, steps: list, refused: list, result: str,
-              started: float, model: str) -> None:
-    """Журнал 0600 рядом с каналом: тут лежит речь Элвиса, ключа — нет."""
-    record = {"at": now_iso(), "phrase": phrase, "steps": steps, "refused": refused,
-              "result": result, "ms": int((time.monotonic() - started) * 1000),
-              "model": model}
-    path = pimp_dir().parent / "voice-log.jsonl"
-    try:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            lines = []
-        lines = [line for line in lines if line.strip()]
-        lines.append(json.dumps(record, ensure_ascii=False))
-        handle = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(handle, "w", encoding="utf-8") as file:
-            file.write("\n".join(lines[-VOICE_LOG_LINES:]) + "\n")
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-
-
-def run_say(phrase: str) -> int:
-    """«Пимп, открой три чата…»: фраза → шаги → канал. Текст приходит с мусором
-    распознавания, поэтому смысл вынимает модель, а разрешает — код."""
-    started = time.monotonic()
-    deadline = started + VOICE_BUDGET_S
-    warn_probe(pimp_dir())
-    phrase = (phrase or "").strip()
-    if not phrase:
-        print("Пимп не понял: фраза пустая")
-        return 1
-    names, trouble = voice_names(deadline)
-    if names is None:
-        print(trouble)
-        return 1
-    try:
-        answer, model = voice_ask(phrase, names)
-    except VoiceError as error:
-        voice_hud(error.line())
-        voice_log(phrase, [], [], error.line(), started, "")
-        print(error.line())
-        return 1
-    steps, refused = voice_steps(answer, phrase, names)
-    lines, fails, done = [], list(refused), 0
-    # Дописанный нами `arrange` Элвис не заказывал — в счёт «сделал N из M» он не идёт.
-    total = len(refused) + sum(1 for step in steps if not step.get("auto"))
-    for step in steps:
-        if time.monotonic() >= deadline:
-            fails.append("на остальное времени не хватило")
-            break
-        ok, line = voice_do(step, deadline)
-        (lines if ok else fails).append(line)
-        done += 1 if ok and not step.get("auto") else 0
-    if fails:
-        result = (f"Сделал {done} из {total}" if done else "Не вышло") + ": " + "; ".join(fails)
-    else:
-        result = "; ".join(lines) or "Пимп не понял, что сделать"
-    # Плашке — короткая фраза модели, в stdout — что вышло на самом деле; сорвалось
-    # хоть что-то — плашка говорит ровно то же, что stdout, иначе соврёт.
-    said = str(answer.get("say") or "").strip()
-    voice_hud(said if (said and not fails) else result)
-    voice_log(phrase, steps, refused, result, started, model)
-    print(result)
-    # Ни одного сделанного шага — это отказ, даже когда жаловаться не на что.
-    return 1 if (fails or not lines) else 0
 
 
 def run_paste_airdrop(args) -> int:
@@ -1530,7 +1203,11 @@ def session_files(chat: str = "local_*"):
 # #8364: чат Рика — папка проекта Rick (как путь голоса Рика `<projectsRoot>/Rick/voice`).
 RICK_PROJECT = "Rick"
 RICK_VOICE_PREFIX = "Голос Элвиса:"
-RICK_BUS = os.path.expanduser("~/Projects/Rick/tools/rick_bus.py")
+
+
+def rick_bus() -> str:
+    """Почта Рика: RickKit ставит Рика в <projectsRoot>/Rick, у человека команды корень бывает свой."""
+    return str(projects_root() / RICK_PROJECT / "tools" / "rick_bus.py")
 
 
 def send_to_rick(args) -> bool:
@@ -1558,8 +1235,18 @@ def session_by_title(title: str):
     return found[0] if len(found) == 1 else None
 
 
-def transcript_tail(cli_session: str) -> list:
-    """Записи хвоста транскрипта (≤ 512 КБ). Файл длиннее — первая строка рваная, её вон."""
+def read_tail(path: Path, limit: int) -> list:
+    """Строки хвоста файла (≤ limit байт). Файл длиннее — первая строка рваная, её вон. OSError — зовущему."""
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - limit))
+        lines = handle.read(limit).split(b"\n")
+    return lines[1:] if size > limit else lines
+
+
+def transcript_tail(cli_session: str, limit: int = TAIL_BYTES) -> list:
+    """Записи хвоста транскрипта (≤ limit байт, по умолчанию 512 КБ)."""
     if not cli_session:
         return []
     paths = []
@@ -1573,16 +1260,9 @@ def transcript_tail(cli_session: str) -> list:
     # Как ChatContext.transcript: копия с самой свежей записью, а не первая папка по алфавиту.
     newest = max(paths)[2]
     try:
-        with newest.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            size = handle.tell()
-            handle.seek(max(0, size - TAIL_BYTES))
-            tail = handle.read()
+        lines = read_tail(newest, limit)
     except OSError:
         return []
-    lines = tail.split(b"\n")
-    if size > TAIL_BYTES:
-        lines = lines[1:]
     records = []
     for raw in lines:
         try:
@@ -1659,6 +1339,139 @@ def todo_items(answer: str) -> list:
     return items[:SUMMARY_TODO]
 
 
+# ---- Последний ответ прежнего чата — в начале нового (#10904) ---------------------
+# Слово Элвиса 24.10.2026: «чтобы этот чат начинался с твоего последнего ответа мне… чтобы я нить
+# повествования не терял». renew с --text ставит в начало первого сообщения нового чата последний
+# ответ прежнего чата Элвису: итог законченного хода, в котором было слово человека. Ходы почты и
+# уведомлений (<task-notification>, письма окон) и сам ход, где зовут renew, не в счёт. Верх до черты
+# страница показывает целиком (раздел 545), новый чат его не повторяет — так сказано строкой под чертой.
+LAST_ANSWER_LIMIT = 6000
+# Транскрипт Рика — 10+ МБ, между ответом Элвису и сменой бывают десятки ходов почты с картинками.
+LAST_ANSWER_TAIL = 8 * 1024 * 1024
+LAST_ANSWER_RULE = "———"
+# Записи «user», которые пишет не человек: служебные строки Claude Code и сообщения других сессий.
+NOT_HUMAN = ("Another Claude session sent a message", "Caveat:", "[Request interrupted",
+             "[Your previous response", "[Image")
+LAST_ANSWER_MISSING = "; последний ответ прежнего чата не нашёл — новый чат начат без него"
+
+
+def human_said(content) -> bool:
+    """Слово человека: его текст, вставка (<pasted_content>) или картинка; не результат инструмента,
+    не уведомление (<task-notification>, <system-reminder>, <cross-session-message> и прочие «<…»)."""
+    if isinstance(content, list):
+        if any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content):
+            return False
+        text = " ".join(str(block.get("text") or "") for block in content
+                        if isinstance(block, dict) and block.get("type") == "text")
+        if not text.strip():
+            return any(isinstance(block, dict) and block.get("type") == "image" for block in content)
+    elif isinstance(content, str):
+        text = content
+    else:
+        return False
+    text = text.lstrip()
+    if not text:
+        return False
+    if text.startswith("<"):
+        return text.startswith("<pasted_content")
+    return not text.startswith(NOT_HUMAN)
+
+
+def answer_to_human(records: list):
+    """(текст, время ISO) последнего законченного ответа на слово человека; нет — ("", "").
+    Ответ — ВСЕ куски сообщения с end_turn (один message.id лежит несколькими записями: думанье,
+    текст); слово могло прийти и посреди хода — вложением queued_command."""
+    asked, ends, texts, stamps = False, [], {}, {}
+    for index, record in enumerate(records):
+        if record.get("isSidechain"):
+            continue
+        kind = record.get("type")
+        message = record.get("message") if isinstance(record.get("message"), dict) else {}
+        if kind == "user":
+            if not record.get("isMeta") and human_said(message.get("content")):
+                asked = True
+        elif kind == "attachment":
+            attached = record.get("attachment") if isinstance(record.get("attachment"), dict) else {}
+            if attached.get("type") == "queued_command" and human_said(attached.get("prompt")):
+                asked = True
+        elif kind == "assistant":
+            mid = str(message.get("id") or f"record-{index}")
+            for block in message.get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    texts.setdefault(mid, []).append(str(block.get("text") or ""))
+            stamps[mid] = str(record.get("timestamp") or stamps.get(mid) or "")
+            if message.get("stop_reason") == "end_turn" and asked:
+                ends.append(mid)
+                asked = False
+    for mid in reversed(ends):
+        text = "\n".join(texts.get(mid, [])).strip()
+        if text:
+            return text, stamps.get(mid, "")
+    return "", ""
+
+
+def local_clock(stamp: str) -> str:
+    """ЧЧ:ММ по часам этого Мака; не сегодня — «ДД.ММ ЧЧ:ММ»; не разобрать — пусто."""
+    try:
+        moment = datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).astimezone()
+    except ValueError:
+        return ""
+    today = datetime.now().astimezone().date()
+    return moment.strftime("%H:%M") if moment.date() == today else moment.strftime("%d.%m %H:%M")
+
+
+def clip_answer(text: str, limit: int) -> str:
+    """Не длиннее limit (плюс пометка): режем по строке или слову и говорим, сколько показали."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    edge = max(cut.rfind("\n"), cut.rfind(" "))
+    if edge > limit * 0.8:
+        cut = cut[:edge]
+    cut = cut.rstrip()
+    return f"{cut}\n\n… (обрезал: здесь {len(cut)} из {len(text)} знаков, целиком — в прежнем чате)"
+
+
+def renew_session(target: str):
+    """Файл сессии прежнего чата: local_… — он сам; проект — свой чат, если он из папки проекта.
+    (сессия или None, знали ли, какой чат искать)."""
+    if CHAT_RE.match(target):
+        return next(session_files(target), None), True
+    own = from_chat()
+    if not CHAT_RE.match(own):
+        return None, False
+    session = next(session_files(own), None)
+    folder = str((session or {}).get("cwd") or (session or {}).get("originCwd") or "").rstrip("/")
+    if folder and Path(folder).name.lower() == Path(target.rstrip("/")).name.lower():
+        return session, True
+    return None, False
+
+
+def with_last_answer(target: str, text: str):
+    """(текст первого сообщения, приписка к строке вывода): сверху — последний ответ прежнего чата
+    Элвису, под чертой — служебное новому чату и текст зовущего."""
+    session, known = renew_session(target)
+    if session is None:
+        return text, LAST_ANSWER_MISSING if known else ""
+    answer, stamp = answer_to_human(transcript_tail(str(session.get("cliSessionId") or ""),
+                                                    LAST_ANSWER_TAIL))
+    if not answer:
+        return text, LAST_ANSWER_MISSING
+    folder = str(session.get("cwd") or session.get("originCwd") or "").rstrip("/")
+    rick = Path(folder).name.lower() == RICK_PROJECT.lower()
+    who, former = ("Рика", "прежнего Рика") if rick else (short_name(folder) or "чата", "прежнего чата")
+    clock = local_clock(stamp)
+    head = f"Последний ответ {who} тебе (из прежнего чата{', ' + clock if clock else ''}):"
+    note = (f"Блок выше — последний ответ {former} Элвису; Элвис его видит в начале чата — "
+            "дословно не повторяй, продолжай по тексту ниже.")
+    frame = len(head) + len(LAST_ANSWER_RULE) + len(note) + len(text) + 8
+    # Пометка обрезки — до сотни знаков: держим запас, чтобы всё влезло в потолок renew.
+    room = min(LAST_ANSWER_LIMIT, RENEW_TEXT_LIMIT - frame - 120)
+    if room < 200:
+        return text, "; последний ответ прежнего чата не влез — текст передачи почти в потолок renew"
+    return f"{head}\n\n{clip_answer(answer, room)}\n\n{LAST_ANSWER_RULE}\n{note}\n\n{text}", ""
+
+
 def window_card(window: dict, now_ms: float) -> dict:
     chat = str(window.get("chat") or "").strip()
     folder = str(window.get("folder") or "").strip()
@@ -1720,12 +1533,17 @@ def run_summary(as_json: bool) -> int:
     warn_probe(pimp_dir())
     request = {"id": new_id(), "at": now_iso(), "action": "windows", "from": from_chat()}
     kind, data, raw = send(request)
+    live = None if as_json else live_check_line()
     if kind != "ok":
         print(f"Не смог положить запрос в {pimp_dir()}: {raw}" if kind == "write"
               else SILENT_LINES[kind])
+        if live:
+            print(live)
         return 1
     if not data.get("ok"):
         print(say_error(request, data))
+        if live:
+            print(live)
         return 1
     # ChatGPT (запись с app) — не окно Claude: у него нет ни сессии, ни транскрипта.
     windows = [item for item in (data.get("windows") or [])
@@ -1747,6 +1565,8 @@ def run_summary(as_json: bool) -> int:
             age = f"{card['activityMinutes']} мин назад" if card['activityMinutes'] is not None else "—"
             lines.append(f"{card['name']} ({card['kind']}) · ctx {ctx} · {age}")
         print("\n".join(lines))
+    if live:
+        print(live)
     return 0
 
 
@@ -1782,6 +1602,11 @@ UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 TERM_SHELLS = ("login", "sh", "-sh", "zsh", "-zsh", "bash", "-bash", "fish", "-fish")
 # Многострочный текст — «вставкой» (bracketed paste): иначе каждая строка ушла бы Enter'ом.
 PASTE_OPEN, PASTE_CLOSE = "\x1b[200~", "\x1b[201~"
+# Доставка в tmux (приём комплекта Рика, resources/rick-kit/tools/term.py cmd_send): Enter сразу за длинным текстом
+# claude глотает (Рик, 09.10) — пауза в полшага, Enter, до трёх проверок экрана; текст висит в поле — второй Enter.
+TERM_WAIT_ENV = "PIMP_TERM_WAIT"            # шаг проверки, с (тесты — сотые)
+TERM_WAIT_S = 1.5
+TERM_RULE_RE = re.compile(r"^\s*[─━-]{20,}\s*$")   # линейки поля ввода claude
 # Файлы запуска старше часа (чужой сбой) — вон при следующем `term`.
 TERM_STALE_S = 3600.0
 # Чтение старых вкладок — только явно; зависший Terminal не держит список дольше 10 с.
@@ -1800,6 +1625,12 @@ on run argv
     end try
     set custom title of t to (item 2 of argv)
     set title displays custom title of t to true
+    try
+      set title displays device name of t to false
+      set title displays shell path of t to false
+      set title displays window size of t to false
+      set title displays file name of t to false
+    end try
     activate
     try
       set dev to tty of t
@@ -1830,6 +1661,12 @@ on run argv
         if tty of t is (item 1 of argv) and (count of (processes of t)) > 0 then
           set custom title of t to (item 2 of argv)
           set title displays custom title of t to true
+          try
+            set title displays device name of t to false
+            set title displays shell path of t to false
+            set title displays window size of t to false
+            set title displays file name of t to false
+          end try
           return "1"
         end if
       end repeat
@@ -1988,10 +1825,19 @@ def term_settings_path() -> Path:
         if not isinstance(data, dict) or set(data) != {"permissions"}:
             raise ValueError("expected permissions only")
         permissions = data["permissions"]
-        if not isinstance(permissions, dict) or set(permissions) != {"allow", "ask", "deny"}:
-            raise ValueError("expected allow/ask/deny")
+        # Лист 48, 4.3 (слово Элвиса 17.10 00:37 «делай, как сам решил»): только запреты, как у терминалов Рика
+        # (Rick/tools/term-deny.json); allow допустим, запреты обязательны и непусты.
+        if not isinstance(permissions, dict) or "deny" not in permissions:
+            raise ValueError("expected deny (allow optional)")
+        # #11339 (слово Элвиса 31.10.2026 04:00: «Терминалы без вопросов пусть работают»): правило ask спрашивает
+        # и в Bypass — терминал встаёт на «Do you want to proceed?»; запреты — только deny, отказом программы.
+        if "ask" in permissions:
+            raise TermError(f"Файл разрешений {path}: правила ask спрашивают и в Bypass — новый чат не запущен; "
+                            "запреты — только deny")
+        if not set(permissions) <= {"allow", "deny"}:
+            raise ValueError("expected deny (allow optional)")
         for key, rules in permissions.items():
-            if not isinstance(rules, list) or (key != "allow" and not rules) \
+            if not isinstance(rules, list) or (key == "deny" and not rules) \
                     or any(not isinstance(rule, str) or not rule.strip() for rule in rules):
                 raise ValueError("expected nonempty permission strings")
     except (OSError, ValueError, UnicodeError, RecursionError):
@@ -2032,10 +1878,20 @@ def osascript(script: str, *argv: str, timeout: float = 120.0) -> str:
     return done.stdout.strip()
 
 
+def tmux_env() -> dict:
+    """Окружение с UTF-8 локалью (#11620): без неё (запуск из launchd) tmux 3.7 меняет в выводе табуляцию
+    и не-ASCII на «_», и разбор `-F '…\t…'` ломается. Локаль своя у человека — не трогаем."""
+    env = dict(os.environ)
+    locale = env.get("LC_ALL") or env.get("LC_CTYPE") or env.get("LANG") or ""
+    if "utf8" not in locale.lower().replace("-", ""):
+        env["LC_ALL" if env.get("LC_ALL") else "LC_CTYPE"] = "en_US.UTF-8"
+    return env
+
+
 def tmux(*argv: str):
     binary = tmux_binary()
     try:
-        return subprocess.run([binary, *argv], capture_output=True, text=True, timeout=15)
+        return subprocess.run([binary, *argv], capture_output=True, text=True, timeout=15, env=tmux_env())
     except (OSError, subprocess.TimeoutExpired) as error:
         raise TermError(f"tmux не отработал: {error}")
 
@@ -2212,23 +2068,17 @@ def term_chat_project(chat: dict):
     name = chat.get("project") or chat["name"][len(TERM_PREFIX):]
     if chat.get("folder"):
         return name, chat["folder"]
-    try:
-        body = json.loads((pimp_dir().parent / "projects.json").read_text(encoding="utf-8"))
-        for item in body.get("projects", []):
-            if isinstance(item, dict) and term_name(str(item.get("name") or "")).lower() == chat["name"].lower():
-                return item["name"], str(item.get("folder") or "")
-    except (OSError, ValueError, AttributeError, TypeError):
-        pass
-    try:
-        config = json.loads((pimp_dir().parent / "claude.json").read_text(encoding="utf-8"))
-        root = Path(config.get("projectsRoot") or Path.home() / "Projects").expanduser()
-    except (OSError, ValueError, AttributeError, TypeError):
-        root = Path.home() / "Projects"
-    return name, str(root / name)
+    for item in saved_projects():
+        if term_name(str(item.get("name") or "")).lower() == chat["name"].lower():
+            return str(item["name"]), str(item.get("folder") or "")
+    return name, str(projects_root() / name)
 
 
 def term_title(name: str, folder: str) -> str:
-    for relative in ("docs/status.md", "audit/status.md"):
+    # #10464: имя — из первой строки сводки, иначе паспорта (у VkusSES сводки нет: «# 🧼 VkusSES — …»), если она
+    # начинается с маркера проекта; то же правило у приложения (PanelTerminals.title). Сам маркер в заголовок не идёт
+    # (#10564, слово Элвиса 22.10: «Убери все иконки с терминалов — это правило»).
+    for relative in ("docs/status.md", "audit/status.md", "AGENTS.md", "CLAUDE.md"):
         try:
             with (Path(folder) / relative).open(encoding="utf-8") as handle:
                 heading = plain(handle.readline(4096)).lstrip("# ")
@@ -2237,7 +2087,7 @@ def term_title(name: str, folder: str) -> str:
         match = re.match(r"([\u2300-\u27ff\U0001f000-\U0001faff\ufe0f\u200d]+)\s*(.+)", heading)
         if match:
             label = re.split(r"\s+[—–|·-]\s+", match[2], maxsplit=1)[0].strip()
-            return match[1] + " " + label
+            return label or name
     return name
 
 
@@ -2245,7 +2095,6 @@ def term_title(name: str, folder: str) -> str:
 # такой-то, марафон, столько-то из стольких-то Workflow». Источник — status.md проектов (их ведут чаты и терминалы,
 # формат — PanelProjects.parse приложения) и живые tmux-сессии «rick-…»; приложение и канал не нужны.
 DIGEST_STALE_S = 24 * 3600
-DIGEST_HEAD_RE = re.compile(r"^\S*\s*Workflow\b\s*(.*)$")
 # WF145: одно правило состояний для всех разборщиков status.md (приложение — PanelProjects.stateMarks/stateWords,
 # страница — statusParse): значок сильнее слова, порядок — по силе; ни значка, ни слова — «впереди».
 DIGEST_MARKS = (("упал", ("🛑", "❌")), ("ждёт", ("✋", "⚠", "❓", "🙋", "⏸")), ("впереди", ("⬜",)),
@@ -2267,12 +2116,26 @@ def digest_state(heading: str) -> str:
     return "впереди"
 
 
-def digest_root() -> Path:
-    try:
-        config = json.loads((pimp_dir().parent / "claude.json").read_text(encoding="utf-8"))
-        return Path(config.get("projectsRoot") or Path.home() / "Projects").expanduser()
-    except (OSError, ValueError, AttributeError, TypeError):
-        return Path.home() / "Projects"
+def digest_heading(line: str) -> bool:
+    """Начало блока Workflow — как StatusFeed.isWorkflowHeading приложения: с начала строки цифра-клавиша
+    («3️⃣», «3⃣») или 🔟. Слово «Workflow» не нужно («1️⃣ Исследование ✅ готово»), а «Сейчас: Workflow 2 …»
+    и «Итог: Workflow …» — не блок."""
+    line = line.strip()
+    if line.startswith("\U0001F51F"):
+        return True
+    return len(line) > 1 and "0" <= line[0] <= "9" and line[1] in ("\uFE0F", "\u20E3")
+
+
+def digest_tail(line: str):
+    """Строка «Сейчас: …» / «Ждёт Элвиса: …» / «Ждёт пользователя: …» — как PanelProjects.tailLine: и пунктом
+    списка, и жирным. → ("now" | "wait", значение) или None."""
+    body = line[2:].lstrip(" ") if line.startswith(("- ", "* ")) else line
+    if body.startswith("**"):
+        body = body[2:]
+    for key, field in (("Сейчас:", "now"), ("Ждёт Элвиса:", "wait"), ("Ждёт пользователя:", "wait")):
+        if body.startswith(key):
+            return field, body[len(key):].replace("**", "").strip()
+    return None
 
 
 def digest_parse(text: str) -> dict:
@@ -2284,16 +2147,15 @@ def digest_parse(text: str) -> dict:
         if not out["title"] and line.startswith("# "):
             out["title"] = line[2:].strip()
             continue
-        head = DIGEST_HEAD_RE.match(line)
-        if head and not line.startswith(("-", "*")):
+        # Строки-ключи раньше заголовка: «Сейчас: Workflow 2 на проверке.» — не блок.
+        tail = digest_tail(line)
+        if tail:
+            if tail[1]:
+                out[tail[0]] = tail[1]
+            continue
+        if digest_heading(line):
             block = {"state": digest_state(line), "about": "", "steps": ""}
             out["workflows"].append(block)
-            continue
-        if line.startswith("Сейчас:"):
-            out["now"] = line[len("Сейчас:"):].strip()
-            continue
-        if line.startswith(("Ждёт Элвиса:", "Ждёт пользователя:")):
-            out["wait"] = line.split(":", 1)[1].strip()
             continue
         if block is None:
             if line and not line.startswith(("обновлено", "#")):
@@ -2307,19 +2169,146 @@ def digest_parse(text: str) -> dict:
     return out
 
 
+def digest_worktrees(folder: Path) -> list:
+    """Рабочие деревья папки по .git/worktrees/*/gitdir (там путь к <дерево>/.git) — как PanelProjects.worktrees."""
+    out = []
+    try:
+        names = sorted(item.name for item in (folder / ".git" / "worktrees").iterdir())
+    except OSError:
+        return out
+    for name in names:
+        try:
+            git = (folder / ".git" / "worktrees" / name / "gitdir").read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            continue
+        if git.endswith("/.git") and Path(git[:-5]).is_dir():
+            out.append(Path(git[:-5]))
+    return out
+
+
+def digest_seen() -> dict:
+    """Память приложения «когда содержимое сводки стало таким» (#10315, К-FL, flow-seen.json рядом с каналом):
+    {sha256 текста, первые 16 байт hex: changed, сек с 1970}. Пишет только приложение; нет файла, битый — пусто."""
+    try:
+        body = json.loads((pimp_dir().parent / "flow-seen.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return {}
+    entries = body.get("entries") if isinstance(body, dict) else None
+    out = {}
+    for key, entry in (entries.items() if isinstance(entries, dict) else ()):
+        changed = entry.get("changed") if isinstance(entry, dict) else None
+        if isinstance(changed, (int, float)) and not isinstance(changed, bool) and math.isfinite(changed):
+            out[key] = float(changed)
+    return out
+
+
+def digest_changed(data: bytes, mtime: float, seen: dict, now: float) -> float:
+    """Когда содержимое сводки стало таким (#10315): из памяти приложения, нет записи — mtime (не позже «сейчас»).
+    git не зовём: незнакомый текст со свежим mtime (checkout, worktree add) остаётся «свежим», пока приложение его
+    не увидит."""
+    known = seen.get(hashlib.sha256(data).hexdigest()[:32])
+    return known if known is not None else min(now, mtime)
+
+
+def digest_status_file(folder: Path, seen=None, now=None):
+    """status.md папки; есть рабочие деревья — тот, чьё СОДЕРЖИМОЕ менялось позже, при равенстве — по mtime,
+    дальше — главная папка (#9519, #10315: PanelProjects.readStatus). → (путь, текст, mtime, changed) или None."""
+    seen = {} if seen is None else seen
+    now = time.time() if now is None else now
+    best = None
+    for tree in [folder] + digest_worktrees(folder):
+        path = next((tree / rel for rel in ("docs/status.md", "audit/status.md") if (tree / rel).is_file()), None)
+        if path is None:
+            continue
+        try:
+            data = path.read_bytes()
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        read = (path, data.decode("utf-8", errors="replace"), mtime, digest_changed(data, mtime, seen, now))
+        if best is None or (read[3], read[2]) > (best[3], best[2]):
+            best = read
+    return best
+
+
+def digest_folder_key(folder: Path) -> str:
+    """Папка проекта как в ключе «Не напоминать» (MutedWaits.folderKey): ссылки раскрыты; /private спереди
+    снимается, если без него путь есть (так раскрывает ссылки Foundation)."""
+    real = os.path.realpath(str(folder))
+    if real.startswith("/private/") and os.path.exists(real[len("/private"):]):
+        real = real[len("/private"):]
+    return real
+
+
+def digest_iso(raw):
+    """ISO 8601 приложения («…T10:00:00.123Z» или без долей) → секунды; не то — None."""
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        stamp = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return stamp.timestamp() if stamp.tzinfo else None
+
+
+def digest_muted() -> dict:
+    """Заглушённые «Ждёт Элвиса:» (#9820, К-MW, muted-waits.json рядом с каналом): {ключ: until (сек) или None —
+    пока текст не сменится}. Нет файла, битый, чужая версия — пусто (всё напоминается); мусорная запись — мимо."""
+    try:
+        body = json.loads((pimp_dir().parent / "muted-waits.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return {}
+    if not isinstance(body, dict) or body.get("version") != 1 or isinstance(body.get("version"), bool) \
+            or not isinstance(body.get("muted"), list):
+        return {}
+    out = {}
+    for entry in body["muted"]:
+        key = entry.get("key") if isinstance(entry, dict) else None
+        if not isinstance(key, str) or "|" not in key:
+            continue
+        raw = entry.get("until")
+        until = None if raw is None else digest_iso(raw)
+        if raw is not None and until is None:
+            continue
+        # Тот же ключ дважды (правка руками): заглушает любая живая запись, как MutedWaits.isMuted.
+        if key in out and (out[key] is None or (until is not None and until < out[key])):
+            continue
+        out[key] = until
+    return out
+
+
+def digest_is_muted(muted: dict, folder: Path, text: str, now: float) -> bool:
+    """Строка «Ждёт Элвиса:» проекта заглушена до срока (не включая его) или пока текст тот же."""
+    if not muted or nothing_said(text):
+        return False
+    key = digest_folder_key(folder) + "|" + hashlib.sha1(text.strip().encode("utf-8")).hexdigest()
+    if key not in muted:
+        return False
+    until = muted[key]
+    return until is None or now < until
+
+
 def digest_collect(root: Path, sessions: dict, now: float) -> list:
+    seen = digest_seen()
+    muted = digest_muted()
     items = []
     for folder in sorted(root.iterdir() if root.is_dir() else [], key=lambda p: p.name.lower()):
         # Рабочее дерево git (.git — файл) — копия проекта для параллельного прогона, не проект: как isWorktree панели.
         if not folder.is_dir() or folder.name.startswith(".") or (folder / ".git").is_file():
             continue
-        status = next((folder / rel for rel in ("docs/status.md", "audit/status.md") if (folder / rel).is_file()), None)
+        status = digest_status_file(folder, seen, now)
         term = TERM_PREFIX + folder.name
         if status is None and term not in sessions:
             continue
-        parsed = digest_parse(status.read_text(encoding="utf-8", errors="replace")) if status else digest_parse("")
+        parsed = digest_parse(status[1]) if status else digest_parse("")
+        if digest_is_muted(muted, folder, parsed["wait"], now):
+            parsed["wait"] = ""
         flows = parsed["workflows"]
-        stale = bool(status) and now - status.stat().st_mtime > DIGEST_STALE_S
+        # #10315: свежесть — по времени изменения содержимого, не по mtime (checkout и worktree add его обновляют).
+        stale = bool(status) and now - status[3] > DIGEST_STALE_S
         running = [i for i, flow in enumerate(flows, 1) if flow["state"] == "идёт"]
         # «ждут» — строка «Ждёт Элвиса» или Workflow, что ждёт его (как ProjectsDigest); «впереди» — не ждёт.
         waits = (bool(parsed["wait"]) and not nothing_said(parsed["wait"])) or any(
@@ -2363,7 +2352,7 @@ def digest_text(items: list) -> str:
             lines.append(head)
             for flow in item["running"]:
                 steps = f" (шаги {flow['steps'].replace('/', ' из ')})" if flow["steps"] else ""
-                lines.append(f"    {flow['n']}-й идёт{steps}: {clip(flow["about"], 90)}")
+                lines.append(f"    {flow['n']}-й идёт{steps}: {clip(flow['about'], 90)}")
             tail = item["now"] if group == "идут" else item["wait"]
             if tail:
                 lines.append(f"    {'Сейчас' if group == 'идут' else 'Ждёт'}: {clip(tail, 110)}")
@@ -2375,19 +2364,24 @@ def run_digest(as_json: bool) -> int:
         sessions = tmux_sessions()
     except TermError:
         sessions = {}
-    items = digest_collect(digest_root(), sessions, time.time())
+    items = digest_collect(projects_root(), sessions, time.time())
     print(json.dumps(items, ensure_ascii=False, indent=2) if as_json else digest_text(items))
+    live = None if as_json else live_check_line()
+    if live:
+        print(live)
     return 0
 
 
-def term_set_title(chat: dict, title: str, tabs: bool = True) -> None:
+def term_set_title(chat: dict, title: str) -> None:
     if chat["kind"] == "tmux":
         target = "=" + chat["name"]
         # Опции сессии, без -g: соседние сессии сохраняют свои заголовки.
         # В формате tmux буквальный # экранируется как ##.
         # set-option разбирает target-window: двоеточие сохраняет точное имя сессии (=).
+        # Строка состояния tmux внизу («[rick-…:tmux*» и имя Мака) — тоже слово tmux в окне (#10564): снята.
         commands = [("set-option", "-t", target + ":", "set-titles", "on"),
-                    ("set-option", "-t", target + ":", "set-titles-string", title.replace("#", "##"))]
+                    ("set-option", "-t", target + ":", "set-titles-string", title.replace("#", "##")),
+                    ("set-option", "-t", target + ":", "status", "off")]
         windows = tmux("list-windows", "-t", target, "-F", "#{window_id}")
         if windows.returncode != 0:
             raise TermError(f"Не прочитал окна tmux {chat['name']} для заголовка")
@@ -2397,8 +2391,11 @@ def term_set_title(chat: dict, title: str, tabs: bool = True) -> None:
         for command in commands:
             if tmux(*command).returncode != 0:
                 raise TermError(f"Не закрепил заголовок tmux {chat['name']}")
-    elif tabs:
+    else:
         osascript(OSA_TITLE, chat["tty"], title)
+
+
+TERM_TAIL_BYTES = 3_000_000  # хвост транскрипта терминала: последняя запись с usage
 
 
 def term_summary(chat: dict) -> dict:
@@ -2418,13 +2415,7 @@ def term_summary(chat: dict) -> dict:
         return card
     modified, _, newest = max(candidates)
     try:
-        with newest.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            size = handle.tell()
-            handle.seek(max(0, size - 3_000_000))
-            lines = handle.read(3_000_000).splitlines()
-        if size > 3_000_000:
-            lines = lines[1:]
+        lines = read_tail(newest, TERM_TAIL_BYTES)
         card["activityMinutes"] = max(0, int((time.time() - modified) / 60))
         for line in reversed(lines):
             try:
@@ -2460,15 +2451,10 @@ def term_payload(text: str) -> str:
 
 def term_text(raw) -> str:
     """--text / аргумент: «-» — stdin; пустой — None для term, отказ для term-send решает зовущий."""
-    if raw is None:
-        return None
-    text = sys.stdin.read() if raw == "-" else raw
-    if "\0" in text:
-        raise TermError("В тексте нулевой символ — ничего не сделал")
-    text = text.strip()
-    if len(text) > TERM_TEXT_LIMIT:
-        raise TermError(f"Текст длиннее {TERM_TEXT_LIMIT} знаков — сократи")
-    return text or None
+    try:
+        return read_text(raw, TERM_TEXT_LIMIT) or None
+    except TextRefused as refused:
+        raise TermError(str(refused)) from None
 
 
 def term_projects() -> list:
@@ -2478,11 +2464,7 @@ def term_projects() -> list:
     kind, data, _ = send(request)
     items = data.get("projects") if kind == "ok" and data.get("ok") else None
     if not isinstance(items, list):
-        try:
-            body = json.loads((pimp_dir().parent / "projects.json").read_text(encoding="utf-8"))
-            items = body.get("projects") if isinstance(body, dict) else None
-        except (OSError, ValueError):
-            items = None
+        items = saved_projects()
     return [(str(item.get("name") or "").strip(), str(item.get("folder") or "").strip())
             for item in (items or []) if isinstance(item, dict)
             and str(item.get("name") or "").strip() and str(item.get("folder") or "").strip()]
@@ -2502,6 +2484,17 @@ def term_project(raw: str):
     projects = term_projects()
     hit = next((p for p in projects if p[0] == wanted), None) \
         or next((p for p in projects if p[0].lower() == wanted.lower()), None)
+    if hit is None and "/" not in wanted and not wanted.startswith("."):
+        # Проекта нет в списке приложения (в нём только открывавшиеся окнами), а папка с таким
+        # именем лежит прямо в корне проектов — это он и есть (как у digest); имя — как на диске.
+        try:
+            folders = [item for item in projects_root().iterdir() if item.is_dir()]
+        except OSError:
+            folders = []
+        same = [item for item in folders if item.name == wanted] \
+            or [item for item in folders if item.name.lower() == wanted.lower()]
+        if len(same) == 1:
+            return same[0].name, str(same[0])
     if hit is None:
         names = ", ".join(name for name, _ in projects[:30]) or "список пуст"
         raise TermError(f"Проекта «{wanted}» не знаю — есть: {names}")
@@ -2575,17 +2568,167 @@ def term_tab_ttys(chat: dict) -> list:
     return [chat["tty"]] if chat["kind"] == "terminal" else tmux_client_ttys(chat["name"])
 
 
+# Сводное окно iTerm2 (#10564): есть сессия tmux pimp-hub — чаты живут вкладками одного окна iTerm (tmux -CC);
+# ведёт её Пимп (ITermHub в TerminalKeeper.swift), он же пишет запускатель iterm/hub.command. Окно чата связано
+# в hub (link-window) с меткой окна @pimp-chat: по ней Пимп убирает окна умерших чатов, вкладки человека не трогает.
+ITERM_HUB = "pimp-hub"
+
+# Предохранитель окон iTerm (#10976, как ITermHub.alarm в Пимпе): профиль iTerm сам запускает окна («Initial Text» с
+# .command, AppleScript или open — так 27.10.2026 iTerm дорос до 380 окон) или псевдотерминалы у предела macOS —
+# hub.command не открываем. Окна iTerm CLI не считает: без прав на iTerm их видит только Пимп.
+ITERM_PREFS = Path.home() / "Library" / "Preferences" / "com.googlecode.iterm2.plist"
+ITERM_DYNAMIC = Path.home() / "Library" / "Application Support" / "iTerm2" / "DynamicProfiles"
+ITERM_PTY_SHARE = 0.8
+
+
+def iterm_launches(text: str) -> bool:
+    """«Initial Text» запускает окна или скрипты: .command, AppleScript, open."""
+    lower = text.lower()
+    return any(mark in lower for mark in (".command", "osascript", "applescript", ".scpt")) \
+        or re.search(r"(^|[\s;&|(])open(\s|$)", lower) is not None
+
+
+def iterm_profiles() -> list:
+    """Профили iTerm: из его настроек и из файлов DynamicProfiles; не прочлось — без них."""
+    out = []
+    try:
+        out += plistlib.loads(ITERM_PREFS.read_bytes()).get("New Bookmarks", [])
+    except (OSError, ValueError, AttributeError, plistlib.InvalidFileException):
+        pass
+    for path in sorted(ITERM_DYNAMIC.glob("*.json")) if ITERM_DYNAMIC.is_dir() else []:
+        try:
+            out += json.loads(path.read_text(encoding="utf-8")).get("Profiles", [])
+        except (OSError, ValueError, AttributeError):
+            continue
+    return [profile for profile in out if isinstance(profile, dict)]
+
+
+def pty_usage() -> tuple:
+    """Псевдотерминалы: заняты (/dev/ttysNNN) и предел macOS (kern.tty.ptmx_max); предел не прочли — 0."""
+    used = sum(1 for name in os.listdir("/dev") if re.fullmatch(r"ttys\d{3,}", name))
+    limit, size = ctypes.c_int(0), ctypes.c_size_t(ctypes.sizeof(ctypes.c_int))
+    try:
+        ok = ctypes.CDLL(None).sysctlbyname(b"kern.tty.ptmx_max", ctypes.byref(limit), ctypes.byref(size), None, 0) == 0
+    except (OSError, AttributeError):
+        ok = False
+    return used, limit.value if ok else 0
+
+
+def iterm_alarm():
+    """Почему окно iTerm сейчас не открывать; можно — None. Слова — как в панели Пимпа."""
+    name = next((str(profile.get("Name", "?")) for profile in iterm_profiles()
+                 if iterm_launches(str(profile.get("Initial Text", "")))), None)
+    if name is not None:
+        return f"iTerm: профиль «{name}» сам открывает окна (Initial Text) — окна не открываю"
+    used, limit = pty_usage()
+    if limit and used >= limit * ITERM_PTY_SHARE:
+        return f"Терминалов {used} из {limit} — новые окна iTerm не открываю"
+    return None
+
+
+def term_hub() -> bool:
+    """Есть ли сводная сессия; сервера нет или tmux отказал — нет."""
+    done = tmux("list-sessions", "-F", "#{session_name}")
+    return done.returncode == 0 and ITERM_HUB in [line.partition("\t")[0] for line in done.stdout.splitlines()]
+
+
+def term_hub_show(session_name: str, title: str) -> str:
+    """Вкладка чата в окне iTerm сводной сессии: окно не в hub — связать (метка, имя — заголовок), выбрать,
+    iTerm вперёд (`open -a iTerm`, без AppleScript); окна iTerm у hub нет — открыть его через hub.command Пимпа.
+    Ответ — слова для строки «… — показал»."""
+    # Показ по слову человека: Пимп, видя свежий iterm/show-at, iTerm не прячет (ITermQuiet, #11016).
+    mark = pimp_dir().parent / "iterm" / "show-at"
+    try:
+        mark.parent.mkdir(parents=True, exist_ok=True)
+        mark.write_text(f"{time.time():.0f}\n", encoding="utf-8")
+    except OSError:
+        pass
+    own = tmux("list-windows", "-t", "=" + session_name, "-F", "#{window_id}")
+    window = next((line.strip() for line in own.stdout.splitlines() if line.strip().startswith("@")), "") \
+        if own.returncode == 0 else ""
+    if not window:
+        raise TermError(f"Не прочитал окно tmux {session_name} — вкладку в iTerm не показал")
+    hub = tmux("list-windows", "-t", "=" + ITERM_HUB, "-F", "#{window_id}")
+    if window not in hub.stdout.split():
+        for step in (("set-option", "-w", "-t", window, "@pimp-chat", "1"),
+                     ("rename-window", "-t", window, title),
+                     ("select-pane", "-t", window, "-T", title),
+                     ("link-window", "-d", "-s", window, "-t", f"={ITERM_HUB}:")):
+            if tmux(*step).returncode != 0:
+                raise TermError(f"Не связал окно {session_name} со сводной сессией {ITERM_HUB}")
+    if tmux("select-window", "-t", f"={ITERM_HUB}:{window}").returncode != 0:
+        raise TermError(f"Не выбрал вкладку {session_name} в сводной сессии {ITERM_HUB}")
+    clients = tmux("list-clients", "-t", "=" + ITERM_HUB, "-F", "#{client_control_mode}")
+    controlled = clients.returncode == 0 and "1" in clients.stdout.split()
+    argv = ["/usr/bin/open", "-a", "iTerm"]
+    if not controlled:
+        command = pimp_dir().parent / "iterm" / "hub.command"
+        if not command.is_file():
+            raise TermError("Окна iTerm у сводной сессии нет, а запускателя iterm/hub.command нет — его пишет "
+                            "Пимп; запусти PimpMyClaude")
+        alarm = iterm_alarm()
+        if alarm:
+            raise TermError(alarm)
+        argv.append(str(command))
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise TermError(f"iTerm не открылся: {error}")
+    if done.returncode != 0:
+        raise TermError("iTerm не открылся: " + (done.stderr.strip()[:200] or f"код {done.returncode}"))
+    return "показал вкладкой в iTerm" if controlled else "открыл окно iTerm на его вкладке"
+
+
+def term_wait(share: float = 1.0) -> None:
+    time.sleep(seconds(TERM_WAIT_ENV, TERM_WAIT_S) * share)
+
+
+def term_delivered(name: str, probe: str) -> str:
+    """«дошло» — текст в ленте или в очереди (queued); «в поле» — висит в поле ввода между линейками;
+    иначе «не видно». Как delivered комплекта Рика."""
+    done = tmux("capture-pane", "-p", "-J", "-t", f"={name}:", "-S", "-80")
+    if done.returncode != 0:
+        return "не видно"
+    lines = done.stdout.rstrip("\n").splitlines()[-80:]
+    rules = [i for i, line in enumerate(lines) if TERM_RULE_RE.match(line)]
+    box, above = (lines[rules[-2] + 1:rules[-1]], lines[:rules[-2]]) if len(rules) > 1 else ([], lines)
+    if any(probe in line or "Pasted text" in line for line in box):
+        return "в поле"
+    if re.search(r"queued", "\n".join(lines), re.I) or any(probe in line for line in above):
+        return "дошло"
+    return "не видно"
+
+
 def term_deliver(chat: dict, text: str) -> None:
     payload = term_payload(text)
     if not payload:
         raise TermError("Текст пустой — ничего не отправил")
     if chat["kind"] == "tmux":
         target = f"={chat['name']}:"
-        done = tmux("send-keys", "-t", target, "-l", "--", payload)
-        if done.returncode == 0:
-            done = tmux("send-keys", "-t", target, "Enter")
-        if done.returncode != 0:
-            raise TermError(f"tmux не принял текст: {done.stderr.strip() or done.returncode}")
+
+        def keys(*argv: str) -> None:
+            done = tmux("send-keys", "-t", target, *argv)
+            if done.returncode != 0:
+                raise TermError(f"tmux не принял текст: {done.stderr.strip() or done.returncode}")
+
+        bare = payload[len(PASTE_OPEN):-len(PASTE_CLOSE)] if payload.startswith(PASTE_OPEN) else payload
+        probe = next(part.strip() for part in re.split(r"[\n\t]", bare) if part.strip())[:40].strip()
+        keys("-l", "--", payload)
+        term_wait(0.5)
+        keys("Enter")
+        state = "не видно"
+        for _ in range(3):   # занятый чат рисует ленту не сразу: не одна пауза, а до трёх проверок
+            term_wait()
+            state = term_delivered(chat["name"], probe)
+            if state != "не видно":
+                break
+        if state == "в поле":
+            keys("Enter")
+            term_wait()
+            state = term_delivered(chat["name"], probe)
+        if state != "дошло":
+            raise TermError(f"Не уверен, что дошло в {chat['name']} ({state}) — посмотри: "
+                            f"tmux capture-pane -p -t '={chat['name']}:'")
         return
     # Terminal сам добавляет Enter (\r) после текста — проверено на живой вкладке.
     if osascript(OSA_ACT, "send", chat["tty"], payload, "\n".join(TERM_SHELLS)) != "sent":
@@ -2595,7 +2738,7 @@ def term_deliver(chat: dict, text: str) -> None:
 # ---- цвет вкладки = цвет окна проекта --------------------------------------------
 # Окну проекта Пимп ставит (ProjectPaint.wanted): вид из <папка>/.pimpmyclaude.json (нет файла —
 # запасной реестр project-views.json); вида нет вовсе — авто-цвет по имени папки
-# (AutoPaint.projectTheme); тумблер «🗂 Цвет по проекту» выключен или "theme": null — цвета нет.
+# (AutoPaint.projectTheme); выключатель «Свой цвет у каждого проекта» выключен или "theme": null — цвета нет.
 # Страница красит окно палитрой: фон = background, текст = foreground, акцент (курсор) = accent.
 PIMP_BUNDLE_ID = "com.elvis.pimpmyclaude"
 PROJECT_PAINT_KEY = "projectPaintEnabled"   # ProjectPaint.enabledKey
@@ -2616,7 +2759,7 @@ def term_hex(value, fallback: str) -> str:
 
 
 def project_paint_enabled() -> bool:
-    """Тумблер «🗂 Цвет по проекту» из настроек приложения; нет ключа — включён (как в Swift)."""
+    """Выключатель «Свой цвет у каждого проекта» (бывший «🗂 Цвет по проекту») из настроек приложения; нет ключа — включён (как в Swift)."""
     try:
         with open(Path.home() / "Library" / "Preferences" / f"{PIMP_BUNDLE_ID}.plist", "rb") as file:
             value = plistlib.load(file).get(PROJECT_PAINT_KEY)
@@ -2809,7 +2952,8 @@ def run_term_color(args) -> int:
 
 def run_term(args) -> int:
     text = term_text(args.text)
-    effort = args.effort
+    # «extra» — слово меню Claude и renew, у claude --effort та же ступень зовётся xhigh (#10261).
+    effort = "xhigh" if args.effort == "extra" else args.effort
     resume, note = None, ""
     if args.resume is not None:
         resume = args.resume.strip().lower()
@@ -2857,6 +3001,8 @@ def run_term(args) -> int:
     # Слово Элвиса 01.10 ~02:20: окна терминалов не нужны («вертикальный монитор нужен для HTML») —
     # с tmux чат живёт фоном, окно — только по --show.
     background = bool(tmux_bin) and not args.show
+    # Есть сводное окно iTerm2 (#10564) — окно чата по --show — его вкладка там, не Terminal.
+    hub = bool(tmux_bin) and args.show and term_hub()
     if existing and background and existing["kind"] == "tmux":
         line = f"Терминальный чат {existing['name']} уже идёт фоном (tmux; окно — term {name} --show)"
         if text:
@@ -2868,20 +3014,23 @@ def run_term(args) -> int:
         print(line)
         return 0
     if existing:
-        ttys = term_tab_ttys(existing) if args.app == "terminal" else []
-        shells = "\n".join(TERM_SHELLS)
-        shown = next((tty for tty in ttys if osascript(OSA_ACT, "show", tty, "", shells) == "shown"), None)
-        if existing["kind"] == "tmux" and not shown and not existing.get("attached"):
-            # «=имя» — в кавычках: shlex.quote «=» не кавычит, а zsh (EQUALS) раскрыл бы голое =слово в путь
-            # команды — «zsh: rick-… not found». Имя из term_name — только буквы, цифры, «_» и «-».
-            attach = f"exec {shlex.quote(tmux_bin)} attach -t '={existing['name']}'"
-            dev = osascript(OSA_OPEN_ITERM if args.app == "iterm" else OSA_OPEN_TERMINAL,
-                            attach, title)
-            if args.app == "terminal" and TTY_RE.match(dev):
-                ttys.append(dev)
-        line = f"Терминал {existing['name']} уже открыт — показал"
-        if args.app == "terminal":
-            line += term_paint_note(ttys, theme_folder)
+        if hub and existing["kind"] == "tmux":
+            line = f"Терминал {existing['name']} уже открыт — {term_hub_show(existing['name'], title)}"
+        else:
+            ttys = term_tab_ttys(existing) if args.app == "terminal" else []
+            shells = "\n".join(TERM_SHELLS)
+            shown = next((tty for tty in ttys if osascript(OSA_ACT, "show", tty, "", shells) == "shown"), None)
+            if existing["kind"] == "tmux" and not shown and not existing.get("attached"):
+                # «=имя» — в кавычках: shlex.quote «=» не кавычит, а zsh (EQUALS) раскрыл бы голое =слово в путь
+                # команды — «zsh: rick-… not found». Имя из term_name — только буквы, цифры, «_» и «-».
+                attach = f"exec {shlex.quote(tmux_bin)} attach -t '={existing['name']}'"
+                dev = osascript(OSA_OPEN_ITERM if args.app == "iterm" else OSA_OPEN_TERMINAL,
+                                attach, title)
+                if args.app == "terminal" and TTY_RE.match(dev):
+                    ttys.append(dev)
+            line = f"Терминал {existing['name']} уже открыт — показал"
+            if args.app == "terminal":
+                line += term_paint_note(ttys, theme_folder)
         if text:
             term_deliver(existing, text)
             line += ", текст отправил"
@@ -2922,6 +3071,10 @@ def run_term(args) -> int:
         print(f"Открыл терминальный чат {session_name} фоном в tmux, без окна ({folder}){what}{note}; "
               f"окно — term {name} --show")
         return 0
+    if hub:
+        print(f"Открыл терминальный чат {session_name} в {folder} (tmux), "
+              f"{term_hub_show(session_name, title)}{what}{note}")
+        return 0
     if tmux_bin:
         command = f"{shlex.quote(tmux_bin)} attach -t '={session_name}'"
         how = "tmux"
@@ -2958,11 +3111,9 @@ def run_term_list(as_json: bool, with_terminal: bool = False) -> int:
                    key=lambda chat: (chat["kind"] != "tmux", chat["name"]))
     if problems:
         print(f"Вкладки Terminal не прочитал: {problems[0]}", file=sys.stderr)
+    # Список только читает (ревизия WF247): заголовок вкладки и опции tmux ставит `term` при запуске и показе.
     items = []
     for chat in chats:
-        name, folder = term_chat_project(chat)
-        title = term_title(name, folder)
-        term_set_title(chat, title, tabs=with_terminal and not problems)
         item = {"name": chat["name"], "kind": chat["kind"], "record": chat["record"]}
         item.update({"attached": chat["attached"]} if chat["kind"] == "tmux" else {"tty": chat["tty"]})
         items.append(item)
@@ -3273,6 +3424,764 @@ def build_request(args) -> dict:
     return request
 
 
+# 🔥 #9796: сторож вставки снимков (tools/shot_watch.py) — служба launchd, раз в 60 с «scan --quiet».
+# Сети нет, кроме того, что делают локальные trelvis.py (задача) и rick_bus.py (строка Рику).
+SHOT_WATCH_LABEL = "com.elvis.pimp.shotwatch"
+SHOT_WATCH_EVERY_S = 60
+# Системный 3.9: путь Homebrew меняется с версией, а гейт гоняет CLI и под /usr/bin/python3.
+SHOT_WATCH_PYTHON = "/usr/bin/python3"
+
+
+def shot_watch_paths() -> dict:
+    """Пути службы: plist в LaunchAgents, состояние и журнал — рядом, в MyClaude/shot-watch/; trelvis.py и почта
+    Рика — от корня проектов. SHOT_WATCH_AGENTS, SHOT_WATCH_LOG — для тестов."""
+    home = pimp_dir().parent / "shot-watch"
+    agents = Path(os.environ.get("SHOT_WATCH_AGENTS") or Path.home() / "Library" / "LaunchAgents")
+    return {"plist": agents / (SHOT_WATCH_LABEL + ".plist"), "dir": home,
+            "state": home / "state.json", "log": home / "watch.log",
+            "script": Path(__file__).resolve().parent / "shot_watch.py",
+            "dictator": Path(os.environ.get("SHOT_WATCH_LOG") or Path.home() / "Library" / "Application Support"
+                             / "Dictatorik" / "dictatorik.log"),
+            "trelvis": projects_root() / "TrelvisCom" / "trelvis.py", "bus": Path(rick_bus())}
+
+
+def shot_watch_plist(paths: dict) -> dict:
+    python = SHOT_WATCH_PYTHON if Path(SHOT_WATCH_PYTHON).exists() else sys.executable
+    return {"Label": SHOT_WATCH_LABEL,
+            "ProgramArguments": [python, str(paths["script"]), "scan", "--quiet"],
+            "StartInterval": SHOT_WATCH_EVERY_S, "RunAtLoad": True,
+            "ProcessType": "Background", "LowPriorityIO": True,
+            "EnvironmentVariables": {"SHOT_WATCH_STATE": str(paths["state"]),
+                                     "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"},
+            "StandardOutPath": str(paths["log"]), "StandardErrorPath": str(paths["log"])}
+
+
+def launchctl(*args):
+    """(код, вывод) launchctl; SHOT_WATCH_LAUNCHCTL подменяет его тестам."""
+    command = [os.environ.get("SHOT_WATCH_LAUNCHCTL") or "launchctl"] + list(args)
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as error:
+        return 1, str(error)
+    return done.returncode, (done.stdout or "") + (done.stderr or "")
+
+
+def first_line(text: str) -> str:
+    return next((line.strip() for line in text.splitlines() if line.strip()), "без ответа")[:200]
+
+
+def shot_watch_gaps(paths: dict) -> str:
+    """Чего не хватает сторожу на этом Маке — хвостом строки; всё на месте — пусто."""
+    gaps = []
+    if not paths["dictator"].is_file():
+        gaps.append("журнала Диктатора пока нет — читать нечего")
+    if not paths["trelvis"].is_file():
+        gaps.append(f"нет {paths['trelvis']} — задачи заводить нечем")
+    if not paths["bus"].is_file():
+        gaps.append(f"нет {paths['bus']} — Рику не напишет")
+    return "".join("; " + gap for gap in gaps)
+
+
+def run_shot_watch(args) -> int:
+    paths = shot_watch_paths()
+    service = f"gui/{os.getuid()}/{SHOT_WATCH_LABEL}"
+    if args.dry and args.op != "install":
+        print("Ключ --dry — только с install")
+        return 1
+    if args.op == "install":
+        if not paths["script"].is_file():
+            print(f"Нет {paths['script']} — сторожа ставить не из чего")
+            return 1
+        body = plistlib.dumps(shot_watch_plist(paths))
+        if args.dry:
+            print(body.decode("utf-8"), end="")
+            return 0
+        paths["dir"].mkdir(parents=True, exist_ok=True)
+        paths["plist"].parent.mkdir(parents=True, exist_ok=True)
+        launchctl("bootout", service)  # стоял прежний — снять: bootstrap поверх него откажет
+        temp = paths["plist"].with_name(paths["plist"].name + ".tmp")
+        temp.write_bytes(body)
+        os.replace(temp, paths["plist"])
+        code, out = launchctl("bootstrap", f"gui/{os.getuid()}", str(paths["plist"]))
+        if code != 0:
+            paths["plist"].unlink(missing_ok=True)
+            print(f"Сторож снимков не включился: launchctl — {first_line(out)}")
+            return 1
+        print(f"Сторож снимков включён: раз в {SHOT_WATCH_EVERY_S} с читает журнал Диктатора, не вставился снимок — "
+              f"задача проекту Диктатора; журнал сторожа — {paths['log']}" + shot_watch_gaps(paths))
+        return 0
+    loaded = launchctl("print", service)
+    if args.op == "uninstall":
+        if loaded[0] != 0 and not paths["plist"].exists():
+            print("Сторож снимков и так не стоит")
+            return 0
+        if loaded[0] == 0:
+            code, out = launchctl("bootout", service)
+            if code != 0:
+                print(f"Сторож снимков не снялся: launchctl — {first_line(out)}")
+                return 1
+        paths["plist"].unlink(missing_ok=True)
+        print(f"Сторож снимков снят; состояние и журнал остались в {paths['dir']}")
+        return 0
+    if loaded[0] != 0:
+        print("Сторож снимков не стоит" + (": файл службы есть, launchd его не знает" if paths["plist"].exists()
+                                           else "") + " — включить: python3 tools/pimp.py shot-watch install")
+        return 1
+    runs = re.search(r"^\s*runs = (\d+)", loaded[1], re.M)
+    exit_code = re.search(r"^\s*last exit code = (.+)$", loaded[1], re.M)
+    try:
+        state = json.loads(paths["state"].read_text(encoding="utf-8"))
+        today = state.get("tasks", {}).get(datetime.now().strftime("%Y-%m-%d"), {})
+    except (OSError, ValueError, AttributeError):
+        today = {}
+    tasks = ", ".join(f"#{number}" for number in sorted(set(today.values()), key=str))
+    print(f"Сторож снимков стоит: раз в {SHOT_WATCH_EVERY_S} с, проходов {runs.group(1) if runs else '?'}, "
+          f"последний выход {exit_code.group(1).strip() if exit_code else '?'}; "
+          + (f"сегодня задачи {tasks}" if tasks else "сегодня сбоев не было")
+          + f"; журнал — {paths['log']}" + shot_watch_gaps(paths))
+    return 0
+
+
+# ---- WF302, #11225: вход на сайт — очередь logins/ (контракт К-LOGIN, docs/contracts/630-wf302-login.md) ----------
+# Запрос <id>.json пишет только CLI (и только CLI его удаляет: --done/--clear); <id>.state.json — только приложение
+# (LoginBeacon.swift, опрос раз в секунду). Тот же хост уже ждёт — тот же вход: перезаписываем его запрос с again.
+LOGINS_DIR_ENV = "MYCLAUDE_LOGINS_DIR"        # каталог очереди (тесты); нет — рядом с pimp/
+LOGIN_WAIT_ENV = "MYCLAUDE_LOGIN_WAIT"        # сколько ждать ответа Пимпа, с (5)
+LOGIN_WAIT_S = 5.0
+LOGIN_URL_LIMIT = 2000
+LOGIN_NAME_LIMIT = 120
+LOGIN_FINISHED = ("done", "gone", "failed")
+LOGIN_WORDS = {"waiting": "ждёт", "shown": "Chrome впереди, стрелка на поле входа", "done": "вошёл",
+               "gone": "вкладку закрыли", "failed": "не вышло"}
+
+
+def logins_dir() -> Path:
+    value = os.environ.get(LOGINS_DIR_ENV, "").strip()
+    return Path(value).expanduser() if value else pimp_dir().parent / "logins"
+
+
+def login_url(raw: str):
+    """Адрес входа: без схемы — https://; только http(s) с хостом, без пробелов и управляющих, ≤ 2000. Нет — None."""
+    from urllib.parse import urlsplit
+    text = (raw or "").strip()
+    if not text or len(text) > LOGIN_URL_LIMIT or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in text):
+        return None
+    if "://" not in text:
+        text = "https://" + text
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return None
+    return text if parts.scheme.lower() in ("http", "https") and parts.hostname else None
+
+
+def login_host(url: str) -> str:
+    """Хост строчными без www. — как LoginQueue.host у приложения."""
+    from urllib.parse import urlsplit
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
+    return host[4:] if host.startswith("www.") else host
+
+
+def login_read(path: Path):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def login_entries(folder: Path) -> list:
+    """Запросы очереди с их состояниями, в порядке прихода: [(request, state|None)]."""
+    entries = []
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return entries
+    for name in names:
+        if name.startswith(".") or not name.endswith(".json") or name.endswith(".state.json"):
+            continue
+        request = login_read(folder / name)
+        if not request or request.get("id") != name[:-5]:
+            continue
+        entries.append((request, login_read(folder / f"{name[:-5]}.state.json")))
+    entries.sort(key=lambda entry: (str(entry[0].get("at", "")), str(entry[0].get("id", ""))))
+    return entries
+
+
+def login_line(request: dict, state) -> str:
+    name = request.get("name") or login_host(str(request.get("url", "")))
+    if not state:
+        return f"Вход «{name}» — в очереди, Пимп ещё не ответил (id {request.get('id')})"
+    word = LOGIN_WORDS.get(state.get("state"), str(state.get("state")))
+    reason = str(state.get("reason") or "").strip()
+    return f"Вход «{name}» — {word}" + (f": {reason}" if reason else "") + f" (id {request.get('id')})"
+
+
+def login_settled(state, since: str) -> bool:
+    """Ответ Пимпа уже есть: не «ждёт», или свежее «в очереди» (за другим входом)."""
+    if not state:
+        return False
+    if state.get("state") != "waiting":
+        return True
+    return str(state.get("at", "")) >= since and str(state.get("reason", "")).startswith("в очереди")
+
+
+def run_login(args) -> int:
+    folder = logins_dir()
+    as_json = getattr(args, "as_json", False)
+    picked = [bool(args.url), args.list, args.done is not None, args.clear]
+    if sum(picked) != 1:
+        print("Скажи одно: адрес входа, --list, --done <id|хост> или --clear")
+        return 1
+    if args.name is not None and not args.url:
+        print("Ключ --name — только с адресом входа")
+        return 1
+    entries = login_entries(folder)
+    if args.list:
+        if as_json:
+            print(json.dumps([{"request": r, "state": s} for r, s in entries], ensure_ascii=False))
+        elif not entries:
+            print("Входов в очереди нет")
+        else:
+            for request, state in entries:
+                print(login_line(request, state))
+        return 0
+    if args.clear or args.done is not None:
+        key = (args.done or "").strip().lower()
+        chosen = [r for r, _ in entries if args.clear or r.get("id") == key
+                  or login_host(str(r.get("url", ""))) == (key[4:] if key.startswith("www.") else key)]
+        if not chosen:
+            print("Входов в очереди нет" if args.clear else f"Такого входа нет: {args.done}")
+            return 0 if args.clear else 1
+        for request in chosen:
+            try:
+                (folder / f"{request['id']}.json").unlink()
+            except OSError:
+                pass
+        print(f"Снял входов: {len(chosen)} — Пимп погасит маяк за секунду")
+        return 0
+    url = login_url(args.url)
+    if url is None:
+        print("Адрес входа не годится: нужен http(s) с сайтом, без пробелов, до 2000 знаков — ничего не сделал")
+        return 1
+    name = (args.name or "").strip()
+    if len(name) > LOGIN_NAME_LIMIT or any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
+        print(f"Имя входа — до {LOGIN_NAME_LIMIT} знаков, без управляющих — ничего не сделал")
+        return 1
+    host = login_host(url)
+    since = now_iso()
+    same = next((r for r, s in entries if login_host(str(r.get("url", ""))) == host
+                 and not (s and s.get("state") in LOGIN_FINISHED)), None)
+    if same is not None:
+        # Тот же сайт уже ждёт — тот же вход: метка again будит маяк, погасший по 30 мин.
+        request = dict(same, again=since)
+        if name:
+            request["name"] = name
+    else:
+        request = {"v": 1, "id": new_id(), "url": url, "name": name, "at": since, "from": from_chat()}
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    write_private(folder / f"{request['id']}.json", json.dumps(request, ensure_ascii=False))
+    try:
+        wait = float(os.environ.get(LOGIN_WAIT_ENV, "") or LOGIN_WAIT_S)
+    except ValueError:
+        wait = LOGIN_WAIT_S
+    deadline = time.time() + max(wait, 0)
+    state_path = folder / f"{request['id']}.state.json"
+    state = login_read(state_path)
+    while not login_settled(state, since) and time.time() < deadline:
+        time.sleep(0.2)
+        state = login_read(state_path)
+    if as_json:
+        print(json.dumps({"request": request, "state": state}, ensure_ascii=False))
+    elif state is None:
+        print(f"Пимп не ответил за {wait:g} с — вход «{name or host}» в очереди, покажу, когда Пимп запустится "
+              f"(id {request['id']})")
+    else:
+        print(login_line(request, state))
+    return 0 if state is not None and state.get("state") != "failed" else 1
+
+
+# ---- #10527: живая проверка окон — только чтение (контракт К-HEALTH, docs/contracts/550-…) ----------
+# probe.js по правилу владения (CHECKLIST 1.4): кладём своё выражение, ждём ответ страниц, удаляем ВСЕГДА.
+# Раздел приложения — ручка live-check канала «Пимп». Отчёт — MyClaude/live-check/ (by:"cli").
+LIVE_WAIT_ENV = "MYCLAUDE_LIVE_WAIT"          # сколько ждать страницы и Пимпа, с (10; тесты — меньше)
+LIVE_WAIT_S = 10.0
+CLAUDE_APP_ENV = "MYCLAUDE_CLAUDE_APP"        # путь к Claude.app (тесты)
+DEFAULT_CLAUDE_APP = Path("/Applications/Claude.app")
+SLICE_DIR_ENV = "MYCLAUDE_SLICE_DIR"          # куда класть слепки (тесты); по умолчанию — каталог репозитория
+LIVE_KEEP = 50
+LIVE_DATED_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-claude-[\w.-]+\.json$")
+LIVE_PROBE_HEAD = "// pimp live-check v1 "
+LIVE_PROBE_BODY = ('(() => { const m = window.__myclaude; if (!m) return null; if (typeof m.health !== "function") '
+                   'return { v: 0 }; const h = m.health(); return h === null ? { v: 0, other: true } : h; })()')
+LIVE_SLICE_HEAD = "// pimp live-check slice v1 "
+LIVE_APP_CHECKS = ("statusItem", "iconNumber", "stripWindow", "clickLog", "panelOpaque")
+SLICE_VIEWS = ("main-wide", "main-narrow", "popout", "new", "fullscreen", "chat")
+SLICE_ARIA = ("Show sidebar", "Hide sidebar", "Message actions", "Mode", "Scroll to bottom", "Stop dictation",
+              "Resize sidebar", "Open in main window", "Keep window on top", "Copy code", "Close")
+SLICE_ARIA_PREFIX = ("Model:", "Effort:", "Usage:", "View image")
+SLICE_ATTRS = ("aria-hidden", "aria-expanded", "data-state", "data-perf-row", "data-is-streaming",
+               "data-perf-row-streaming", "data-find-omitted", "contenteditable", "type", "aria-haspopup")
+SLICE_PRESENCE = ("data-pane-title",)        # только наличие: значение — текст чата
+SLICE_CLAUDE_IDS = ("myclaude-image-undo-composer-v1", "myclaude-remove-last-composer-image-v1")  # id Claude-узлам дала страница (раздел 200)
+SLICE_LIMIT = 40000
+# Слепок — только чтением: имена тегов, классы, testid, белые списки атрибутов, прямоугольники. Текстовых узлов,
+# title/alt/placeholder/href/src/value нет; id — только латиницей (якоря заголовков ленты из текста не идут);
+# наше (id/классы myclaude-*) вырезано, кроме узлов Claude с нашим id (они остаются без id), script/style не пишутся,
+# у svg детей нет. Ответ — строкой JSON: объект глубже ~48 уровней канал probe отдаёт пустым.
+LIVE_SLICE_JS = """(() => {
+  const want = __WANT__;
+  const m = window.__myclaude;
+  if (!m || typeof m.health !== "function") return null;
+  const h = m.health();
+  if (!h || h.v !== 1 || h.page !== want.page || h.chat !== want.chat || h.kind !== want.kind) return null;
+  const EXACT = new Set(__EXACT__), PREFIX = __PREFIX__, ATTRS = __ATTRS__, PRESENCE = __PRESENCE__, LIMIT = __LIMIT__;
+  const CLAUDE_IDS = new Set(__CLAUDE_IDS__);
+  const SAFE_ID = /^[A-Za-z_][A-Za-z0-9_:.-]{0,63}$/;
+  let count = 0;
+  const attr = (el, name) => (typeof el.getAttribute === "function" ? el.getAttribute(name) : null);
+  const aria = value => {
+    if (typeof value !== "string") return null;
+    if (EXACT.has(value)) return value;
+    for (const prefix of PREFIX) if (value.startsWith(prefix)) return prefix + "\\u2026";
+    return null;
+  };
+  const tagOf = el => String(el.tagName || "").toLowerCase();
+  const ours = el => { const id = String(attr(el, "id") || ""); return id.startsWith("myclaude-") && !CLAUDE_IDS.has(id); };
+  const walk = el => {
+    count += 1;
+    const t = tagOf(el);
+    const n = { t };
+    const id = attr(el, "id");
+    if (id && SAFE_ID.test(id) && !id.startsWith("myclaude-")) n.id = id;
+    const c = String(attr(el, "class") || "").split(/\\s+/).filter(name => name && !name.startsWith("myclaude-"));
+    if (c.length) n.c = c;
+    const tid = attr(el, "data-testid");
+    if (tid) n.tid = tid;
+    const cds = attr(el, "data-cds");
+    if (cds) n.cds = cds;
+    const role = attr(el, "role");
+    if (role) n.role = role;
+    const label = aria(attr(el, "aria-label"));
+    if (label) n.aria = label;
+    const a = {};
+    let any = false;
+    for (const name of ATTRS) {
+      const value = attr(el, name);
+      if (value !== null && value !== undefined) { a[name] = String(value).slice(0, 64); any = true; }
+    }
+    for (const name of PRESENCE) if (attr(el, name) !== null) { a[name] = ""; any = true; }
+    if (any) n.a = a;
+    const box = el.getBoundingClientRect();
+    n.r = [Math.round(box.left), Math.round(box.top), Math.round(box.width), Math.round(box.height)];
+    if (t !== "svg") {
+      const k = [];
+      for (const kid of Array.from(el.children || [])) {
+        if (count >= LIMIT) break;
+        const kt = tagOf(kid);
+        if (kt === "script" || kt === "style" || ours(kid)) continue;
+        k.push(walk(kid));
+      }
+      if (k.length) n.k = k;
+    }
+    return n;
+  };
+  const root = walk(document.body);
+  return JSON.stringify({ pimpSlice: want.nonce, page: h.version, viewport: [window.innerWidth, window.innerHeight],
+                         dpr: window.devicePixelRatio, nodes: count, root });
+})()"""
+
+
+def claude_version() -> str:
+    """Версия Claude.app: Info.plist (правда после самообновления Claude), нет — installed.json, нет — unknown."""
+    app = Path(os.environ.get(CLAUDE_APP_ENV, "").strip() or DEFAULT_CLAUDE_APP).expanduser()
+    try:
+        with (app / "Contents" / "Info.plist").open("rb") as handle:
+            version = str(plistlib.load(handle).get("CFBundleShortVersionString") or "").strip()
+        if version:
+            return version
+    except (OSError, ValueError, AttributeError, plistlib.InvalidFileException):
+        pass
+    try:
+        version = json.loads((pimp_dir().parent / "installed.json").read_text(encoding="utf-8")).get("version")
+        if isinstance(version, str) and version.strip():
+            return version.strip()
+    except (OSError, ValueError, AttributeError):
+        pass
+    return "unknown"
+
+
+def live_dir() -> Path:
+    return pimp_dir().parent / "live-check"
+
+
+def iso_ms() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def write_private(path: Path, body: str) -> None:
+    """Временный файл рядом, 0600, rename: читатель не увидит половину отчёта."""
+    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    handle = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as file:
+            file.write(body)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+class ProbeBusy(Exception):
+    """probe.js держит чужая разведка: канал не наш, ничего не трогаем."""
+
+
+class ProbeChannel:
+    """Канал probe.js на время проверки (CHECKLIST 1.4): берём, если файла нет или он приложения
+    (`// myclaude-chats v1`), и удаляем probe.js ВСЕГДА на выходе — и при ошибке, и при Ctrl-C."""
+
+    def __init__(self, support: Path):
+        self.support = support
+        self.probe = support / "probe.js"
+        self.result = support / "probe-result.json"
+        self.taken = False
+
+    def __enter__(self):
+        try:
+            with self.probe.open("r", encoding="utf-8", errors="replace") as handle:
+                first = handle.readline().strip()
+        except FileNotFoundError:
+            first = None
+        if first is not None and not first.startswith(PROBE_MARK + " v1"):
+            raise ProbeBusy(first)
+        self.taken = True
+        return self
+
+    def __exit__(self, *_exc):
+        if self.taken:
+            try:
+                self.probe.unlink()
+            except FileNotFoundError:
+                pass
+        return False
+
+    def ask(self, script: str, accept, wait: float):
+        """Положить скрипт и дождаться probe-result.json новее записи, который принимает accept(results).
+        Отдаёт список results или None (не дождались)."""
+        self.support.mkdir(parents=True, exist_ok=True)
+        tmp = self.support / f".probe.js.{os.getpid()}.tmp"
+        tmp.write_text(script, encoding="utf-8")
+        os.replace(tmp, self.probe)
+        wrote = self.probe.stat().st_mtime_ns
+        deadline = time.monotonic() + wait
+        seen = None
+        while time.monotonic() < deadline:
+            try:
+                stamp = self.result.stat().st_mtime_ns
+            except OSError:
+                stamp = None
+            if stamp is not None and stamp > wrote and stamp != seen:
+                try:
+                    body = json.loads(self.result.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    body = None              # лоадер дописывает файл — прочтём на следующем шаге
+                results = body.get("results") if isinstance(body, dict) else None
+                if isinstance(results, list):
+                    seen = stamp
+                    if accept(results):
+                        return results
+            time.sleep(POLL_S)
+        return None
+
+
+def app_round(results: list) -> bool:
+    """Круг приложения (ChatProbe): его ответы несут nonce — это не наш ответ, ждём дальше."""
+    return any(isinstance(entry, dict) and isinstance(entry.get("result"), dict) and "nonce" in entry["result"]
+               for entry in results)
+
+
+def ask_pimp_live(box: dict) -> None:
+    """Ручка live-check канала «Пимп» (в нитке): нет taken за 5 с или ответа за 10 с — app:null."""
+    request = {"id": new_id(), "at": now_iso(), "action": "live-check", "from": from_chat()}
+    box["request"] = request
+    kind, data, _raw = send(request, total=seconds(LIVE_WAIT_ENV, LIVE_WAIT_S))
+    if kind == "ok" and data.get("ok") and isinstance(data.get("app"), dict):
+        box["app"] = data["app"]
+    else:
+        reason = {"silent": "не взял запрос", "timeout": "не ответил вовремя", "bad": "ответ не разобрал",
+                  "write": "запрос не положил"}.get(kind)
+        box["why"] = reason or ("ответил ошибкой " + str(data.get("error") or "без ответа"))
+
+
+def check_rows(checks) -> list:
+    return [item for item in (checks if isinstance(checks, list) else []) if isinstance(item, dict)]
+
+
+def red_ids(checks) -> list:
+    return [str(item.get("id")) for item in check_rows(checks) if item.get("ok") is False]
+
+
+def live_report(results: list, app, claude: str) -> tuple:
+    """Отчёт по контракту и заметки для таблицы: (report, null_pages)."""
+    pages, unchecked, null_pages = [], 0, 0
+    for entry in results:
+        if not isinstance(entry, dict) or "error" in entry:
+            continue
+        result = entry.get("result")
+        if isinstance(result, dict) and result.get("v") == 1:
+            pages.append({"id": entry.get("id"), "health": result})
+        elif isinstance(result, dict) and result.get("v") == 0 and result.get("other") is True:
+            continue                       # страница не чата: health() ответил null — проверять нечего
+        elif isinstance(result, dict) and result.get("v") == 0:
+            unchecked += 1
+        elif result is None and str(entry.get("url") or "").startswith("https://claude.ai/"):
+            null_pages += 1
+    red = []
+    for page in pages:
+        health = page["health"]
+        for check in red_ids(health.get("checks")):
+            red.append({"window": str(health.get("kind") or ""), "chat": str(health.get("chat") or ""),
+                        "check": check})
+    red.extend({"window": "main", "chat": "", "check": "install"} for _ in range(null_pages))
+    if app is None:
+        red.append({"window": "app", "chat": "", "check": "answer"})
+    else:
+        red.extend({"window": "app", "chat": "", "check": check} for check in red_ids(app.get("checks")))
+    report = {"v": 1, "at": iso_ms(), "by": "cli", "claude": claude,
+              "pimp": app.get("version") if app is not None else None,
+              "ok": not red, "red": red, "pages": pages, "unchecked": unchecked, "app": app}
+    return report, null_pages
+
+
+def save_live_report(report: dict) -> Path:
+    folder = live_dir()
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    body = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+    claude = re.sub(r"[^\w.-]", "_", str(report.get("claude") or "unknown"))
+    dated = folder / f"{datetime.now().strftime('%Y-%m-%d')}-claude-{claude}.json"
+    write_private(dated, body)
+    write_private(folder / "live-check.json", body)
+    try:
+        old = sorted((path for path in folder.iterdir() if LIVE_DATED_RE.match(path.name)),
+                     key=lambda path: path.stat().st_mtime)
+    except OSError:
+        old = []
+    for path in old[:max(0, len(old) - LIVE_KEEP)]:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    return dated
+
+
+def live_paint(sign: str) -> str:
+    if not sys.stdout.isatty():
+        return sign
+    return {"✓": "\033[32m✓\033[0m", "✗": "\033[31m✗\033[0m"}.get(sign, sign)
+
+
+def live_sign(item: dict) -> str:
+    if item.get("ok") is False:
+        return "✗"
+    return "–" if item.get("skip") else "✓"
+
+
+def live_label(health: dict) -> str:
+    title = str(health.get("title") or "").strip()
+    if len(title) > 24:
+        title = title[:23] + "…"
+    kind = str(health.get("kind") or "?")
+    return f"{kind} {'широкое' if health.get('wide') else 'узкое'} {title}".rstrip()
+
+
+def live_table(report: dict, null_pages: int, app_why: str, path: Path) -> str:
+    pages = [page["health"] for page in report["pages"]]
+    versions = []
+    for health in pages:
+        version = str(health.get("version") or "?")
+        if version not in versions:
+            versions.append(version)
+    lines = [f"Claude {report['claude']} · страница {', '.join(versions)} · "
+             f"{datetime.now().strftime('%Y-%m-%d %H:%M')}"]
+    ids = []
+    for health in pages:
+        for item in check_rows(health.get("checks")):
+            if str(item.get("id")) not in ids:
+                ids.append(str(item.get("id")))
+    labels = [live_label(health) for health in pages]
+    width = max(len(label) for label in labels) + 2
+    lines.append(" " * width + " ".join(ids))
+    for label, health in zip(labels, pages):
+        signs = {str(item.get("id")): live_sign(item) for item in check_rows(health.get("checks"))}
+        cells = [live_paint(signs.get(name, " ")) + " " * len(name) for name in ids]
+        lines.append(label.ljust(width) + "".join(cells).rstrip())
+    app = report["app"]
+    if app is None:
+        lines.append(f"Пимп: не ответил ({app_why})")
+    else:
+        lines.append(f"Пимп {app.get('version') or '?'}: " + " · ".join(
+            f"{item.get('id')} {live_paint(live_sign(item))}" for item in check_rows(app.get("checks"))))
+    for label, health in zip(labels, pages):
+        for item in check_rows(health.get("checks")):
+            if item.get("ok") is False:
+                lines.append(f"{live_paint('✗')} {label} · {item.get('id')}: {item.get('why') or ''}")
+    for _ in range(null_pages):
+        lines.append(f"{live_paint('✗')} main · install: страница claude.ai без инжекта (ответила null)")
+    if app is None:
+        lines.append(f"{live_paint('✗')} Пимп · answer: {app_why}")
+    else:
+        for item in check_rows(app.get("checks")):
+            if item.get("ok") is False:
+                lines.append(f"{live_paint('✗')} Пимп · {item.get('id')}: {item.get('why') or ''}")
+    if report["unchecked"]:
+        lines.append("Без health() — " + plural(report["unchecked"], "страница", "страницы", "страниц")
+                     + ": там страница старше сторожей")
+    lines.append(f"Отчёт: {path}")
+    return "\n".join(lines)
+
+
+def slice_page(pages: list, view: str):
+    for page in pages:
+        health = page["health"]
+        kind, wide = health.get("kind"), bool(health.get("wide"))
+        if ((view in ("main-wide", "fullscreen") and kind == "main" and wide)
+                or (view == "main-narrow" and kind == "main" and not wide)
+                or (view in ("popout", "new") and kind == view)
+                or (view == "chat" and health.get("mode") == "chat")):
+            return page
+    return None
+
+
+def slice_script(health: dict, nonce: str) -> str:
+    want = {"page": health.get("page"), "chat": health.get("chat"), "kind": health.get("kind"), "nonce": nonce}
+    body = (LIVE_SLICE_JS.replace("__WANT__", json.dumps(want, ensure_ascii=False))
+            .replace("__EXACT__", json.dumps(list(SLICE_ARIA)))
+            .replace("__PREFIX__", json.dumps(list(SLICE_ARIA_PREFIX)))
+            .replace("__ATTRS__", json.dumps(list(SLICE_ATTRS)))
+            .replace("__PRESENCE__", json.dumps(list(SLICE_PRESENCE)))
+            .replace("__CLAUDE_IDS__", json.dumps(list(SLICE_CLAUDE_IDS)))
+            .replace("__LIMIT__", str(SLICE_LIMIT)))
+    return LIVE_SLICE_HEAD + nonce + "\n" + body + "\n"
+
+
+def slice_dir() -> Path:
+    value = os.environ.get(SLICE_DIR_ENV, "").strip()
+    return Path(value).expanduser() if value else Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "claude-dom"
+
+
+def take_slice(channel: ProbeChannel, pages: list, view: str, claude: str, wait: float) -> tuple:
+    """Слепок одной страницы вида view: (код, строка). Код 2 — окна такого вида нет или оно не ответило."""
+    page = slice_page(pages, view)
+    if page is None:
+        return 2, f"Слепок: нет окна вида {view}"
+    nonce = new_id()
+
+    def answer_of(results):
+        for entry in results:
+            if not isinstance(entry, dict) or entry.get("id") != page["id"]:
+                continue
+            result = entry.get("result")
+            if isinstance(result, str):    # слепок приходит строкой JSON (контракт --slice)
+                try:
+                    result = json.loads(result)
+                except ValueError:
+                    continue
+            if isinstance(result, dict) and result.get("pimpSlice") == nonce:
+                return result
+        return None
+
+    results = channel.ask(slice_script(page["health"], nonce), lambda got: answer_of(got) is not None, wait)
+    if results is None:
+        return 2, f"Слепок: окно вида {view} не ответило за {wait:g} с"
+    answer = answer_of(results)
+    data = {"v": 1, "claude": claude, "page": answer.get("page"), "view": view, "at": iso_ms(),
+            "viewport": answer.get("viewport"), "dpr": answer.get("dpr"), "root": answer.get("root")}
+    folder = slice_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    # Имя — «<мажор>.<минор>-<вид>» (3.1623-main-wide.json): так его ждёт tests/claude-dom-replay.test.mjs.
+    name = re.sub(r"[^\w.-]", "_", ".".join(claude.split(".")[:2]))
+    path = folder / f"{name}-{view}.json"
+    write_private(path, json.dumps(data, ensure_ascii=False, indent=1) + "\n")
+    os.chmod(path, 0o644)                  # фикстура репозитория, не личный файл
+    nodes = answer.get("nodes") if isinstance(answer.get("nodes"), int) else 0
+    note = f" — упёрся в потолок {SLICE_LIMIT}, слепок неполный" if nodes >= SLICE_LIMIT else ""
+    return 0, f"Слепок: {path} ({plural(nodes, 'узел', 'узла', 'узлов')}){note}"
+
+
+def run_live_check(args) -> int:
+    as_json = getattr(args, "as_json", False)
+
+    def stop(text: str) -> int:
+        print(text, file=sys.stderr if as_json else sys.stdout)
+        return 2
+
+    if args.press:
+        return stop("--press: этап 3, не сделан")
+    support = pimp_dir().parent
+    wait = seconds(LIVE_WAIT_ENV, LIVE_WAIT_S)
+    # kill (SIGTERM) — тоже через finally: probe.js не остаётся висеть и глушить приложение.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    claude = claude_version()
+    box = {}
+    try:
+        with ProbeChannel(support) as channel:
+            # Пимп спрашиваем параллельно со страницами: оба ждут до 10 с, вместе — не 20.
+            asker = threading.Thread(target=ask_pimp_live, args=(box,), daemon=True)
+            asker.start()
+            nonce = new_id()
+            results = channel.ask(LIVE_PROBE_HEAD + nonce + "\n" + LIVE_PROBE_BODY + "\n",
+                                  lambda found: not app_round(found), wait)
+            if results is None:
+                return stop(f"Страницы не ответили за {wait:g} с (Claude не запущен или лоадер не тот) — "
+                            "отчёт не писал")
+            asker.join(wait + 1)
+            report, null_pages = live_report(results, box.get("app"), claude)
+            if not report["pages"]:
+                return stop("Ни одной страницы с health(): без health() — " + str(report["unchecked"])
+                            + ", без инжекта — " + str(null_pages) + "; отчёт не писал")
+            path = save_live_report(report)
+            code = 0 if report["ok"] else 1
+            if as_json:
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+            else:
+                print(live_table(report, null_pages, box.get("why") or "не ответил", path))
+            if args.slice:
+                slice_code, line = take_slice(channel, report["pages"], args.slice, claude, wait)
+                print(line, file=sys.stderr if as_json else sys.stdout)
+                if slice_code:
+                    code = slice_code
+            return code
+    except ProbeBusy as busy:
+        return stop(f"Канал probe занят: «{str(busy)[:80]}» — чужая разведка; проверку не начинал "
+                    "(CHECKLIST 1.4)")
+
+
+def live_check_line():
+    """Строка для summary и digest: последний отчёт красный и про ту Claude, что стоит сейчас."""
+    try:
+        report = json.loads((live_dir() / "live-check.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(report, dict) or report.get("ok") is not False:
+        return None
+    version = claude_version()
+    if report.get("claude") != version:
+        return None
+    red = [item for item in (report.get("red") or []) if isinstance(item, dict)]
+    checks = []
+    for item in red:
+        if str(item.get("check")) not in checks:
+            checks.append(str(item.get("check")))
+    return (f"проверка окна Claude {version}: {plural(len(red), 'красное', 'красных', 'красных')}"
+            f" ({', '.join(checks)})")
+
+
 def desktop_refused(args, environ=None) -> bool:
     """#9116: агент без --desktop не открывает и не трогает окна Claude Desktop."""
     environ = os.environ if environ is None else environ
@@ -3294,7 +4203,7 @@ def main(argv=None) -> int:
                         help="агенту: окна Claude Desktop трогать можно (только Элвис/Рик, #9116)")
     parser = argparse.ArgumentParser(
         prog="pimp.py", parents=[common],
-        description="Пимп: окна Claude из любого чата.")
+        description="PMP: окна Claude из любого чата.")
     subs = parser.add_subparsers(dest="command", required=True)
 
     opener = subs.add_parser("open", parents=[common], help="открыть новое окно Claude в проекте")
@@ -3325,6 +4234,8 @@ def main(argv=None) -> int:
     renewer.add_argument("--model", default=None, help="подпись модели в меню, например «Opus 5.5»")
     renewer.add_argument("--effort", choices=EFFORTS, default=None,
                          help="low | medium | high | extra | max")
+    renewer.add_argument("--no-last-answer", dest="no_last_answer", action="store_true",
+                         help="без последнего ответа прежнего чата в начале текста (#10904)")
     sender = subs.add_parser("send", parents=[common],
                              help="вставить текст в поле окна и отправить (кнопкой страницы)")
     target = sender.add_mutually_exclusive_group(required=True)
@@ -3347,11 +4258,8 @@ def main(argv=None) -> int:
                             help="в единственное окно проекта (по умолчанию — переднее окно)")
     hudder = subs.add_parser("hud", parents=[common], help="показать плашку на экране")
     hudder.add_argument("text", help="текст плашки, до 200 знаков")
-    sayer = subs.add_parser("say", parents=[common],
-                            help="фраза голосом: разобрать мозгом и исполнить")
-    sayer.add_argument("text", help="фраза после слова «Пимп»; «-» — читать со stdin")
     lister = subs.add_parser("projects", parents=[common],
-                             help="список проектов, которые знает Пимп")
+                             help="список проектов, которые знает PMP")
     lister.add_argument("--status", action="store_true",
                         help="ещё и сводка status.md с открытыми окнами проекта")
     subs.add_parser("windows", parents=[common], help="список окон Claude")
@@ -3403,8 +4311,9 @@ def main(argv=None) -> int:
                        help="продолжить чат окна local_… (его в окне Claude потом не держать)")
     which.add_argument("--last", action="store_true", help="последний чат папки (claude --continue)")
     termer.add_argument("--text", default=None, help="начальная фраза чату; «-» — читать со stdin")
-    termer.add_argument("--effort", choices=TERM_EFFORTS, default="high",
-                        help="low | medium | high | xhigh | max (по умолчанию high — окна не выше HIGH, 02.10.2026)")
+    termer.add_argument("--effort", choices=TERM_EFFORTS + ("extra",), default="high",
+                        help="low | medium | high | xhigh (= extra, как у renew) | max "
+                             "(по умолчанию high — окна не выше HIGH, 02.10.2026)")
     termer.add_argument("--show", action="store_true",
                         help="открыть окно Терминала (с tmux чат иначе идёт фоном, без окна)")
     termer.add_argument("--app", choices=("terminal", "iterm"), default="terminal",
@@ -3421,6 +4330,25 @@ def main(argv=None) -> int:
     term_colorer.add_argument("project", help="имя проекта (как в term) или абсолютный путь")
     subs.add_parser("prs", parents=[common],
                     help="открытые запросы команды в репозиториях своего логина и организаций (только чтение)")
+    checker = subs.add_parser("live-check", parents=[common],
+                              help="проверка окон Claude и Пимпа только чтением (#10527): таблица, отчёт "
+                                   "в MyClaude/live-check/; код 0 — зелёное, 1 — красное, 2 — проверить нельзя")
+    checker.add_argument("--slice", choices=SLICE_VIEWS, default=None,
+                         help="ещё снять слепок разметки окна этого вида в tests/fixtures/claude-dom/")
+    checker.add_argument("--press", action="store_true", help="нажатия в пробном окне — этап 3, не сделан")
+    watcher = subs.add_parser("shot-watch", parents=[common],
+                              help="сторож вставки снимков Диктатора службой launchd (#9796): поставить, снять, "
+                                   "как стоит (код 0 — стоит, 1 — нет)")
+    watcher.add_argument("op", choices=("install", "uninstall", "status"))
+    watcher.add_argument("--dry", action="store_true", help="с install: показать plist, ничего не ставить")
+    loginer = subs.add_parser("login", parents=[common],
+                              help="вход на сайт (#11225): Chrome с этой страницей вперёд, свечение и стрелка на "
+                                   "поле входа; несколько — очередью по одному")
+    loginer.add_argument("url", nargs="?", default=None, help="адрес страницы входа (без схемы — https://)")
+    loginer.add_argument("--name", default=None, help="как назвать вход на плашке («App Store Connect»)")
+    loginer.add_argument("--list", action="store_true", help="очередь входов и их состояния")
+    loginer.add_argument("--done", default=None, metavar="ID|ХОСТ", help="снять вход из очереди")
+    loginer.add_argument("--clear", action="store_true", help="снять все входы")
 
     # Кодов у нас всего два: 0 — сделал, 1 — не вышло. Ругань argparse
     # (её код 2) сводим к тому же 1 и одной строке по-русски; --help не трогаем.
@@ -3434,12 +4362,8 @@ def main(argv=None) -> int:
     if desktop_refused(args):
         print(DESKTOP_REFUSAL)
         return 1
-    # «Скажи фразу» — не действие канала: мозг сам разложит её на шаги.
     if args.command == "gallery":
         return run_gallery(args)
-    if args.command == "say":
-        text = sys.stdin.read() if args.text == "-" else args.text
-        return run_say(text)
     if args.command == "summary":
         return run_summary(getattr(args, "as_json", False))
     if args.command == "digest":
@@ -3448,23 +4372,29 @@ def main(argv=None) -> int:
         return run_term_command(args)
     if args.command == "prs":
         return run_pr_command(args)
+    if args.command == "shot-watch":
+        return run_shot_watch(args)
+    if args.command == "live-check":
+        return run_live_check(args)
+    if args.command == "login":
+        return run_login(args)
     if args.command == "arrange" and args.center and args.layout != "center":
         print("Ключ --center — только с --layout center")
         return 1
-    if args.command == "renew" and args.text is not None:
-        if args.text == "-":
-            args.text = sys.stdin.read()
-        args.text = args.text.strip()
-        if len(args.text) > RENEW_TEXT_LIMIT:
-            print(f"Текст длиннее {RENEW_TEXT_LIMIT} знаков — сократи передачу")
-            return 1
-        if not args.text:
-            args.text = None
+    note = ""
+    try:
+        if args.command == "renew":
+            args.text = read_text(args.text, RENEW_TEXT_LIMIT, "окно не менял") or None
+            # #10904: новый чат начинается с последнего ответа прежнего Элвису.
+            if args.text and not args.no_last_answer:
+                args.text, note = with_last_answer(args.target, args.text)
+        if args.command == "send":
+            args.text = read_text(args.text, SEND_TEXT_LIMIT, "ничего не отправил")
+    except TextRefused as refused:
+        print(refused)
+        return 1
     if args.command == "send":
         # Проверки — до канала: плохой запрос в окно Элвиса не уходит вовсе.
-        if args.text == "-":
-            args.text = sys.stdin.read()
-        args.text = args.text.strip()
         if args.chat is not None and not CHAT_RE.match(args.chat):
             print("Ключ --chat — это local_… окна; проект — через --project")
             return 1
@@ -3474,16 +4404,10 @@ def main(argv=None) -> int:
         if not args.text:
             print("Текст пустой — ничего не отправил")
             return 1
-        if "\0" in args.text:
-            print("В тексте нулевой символ — ничего не отправил")
-            return 1
-        if len(args.text) > SEND_TEXT_LIMIT:
-            print(f"Текст длиннее {SEND_TEXT_LIMIT} знаков — сократи")
-            return 1
         # #8364 (слово Элвиса 01.10 ~02:20: в его поле ввода служебное не слать): в поле
         # чата Рика пишет только голос Элвиса (rick_bus шлёт «Голос Элвиса: …»); окна отвечают Рику почтой.
         if send_to_rick(args) and not args.text.startswith(RICK_VOICE_PREFIX):
-            print("В поле Рика окна не пишут — ответь почтой: python3 " + RICK_BUS
+            print("В поле Рика окна не пишут — ответь почтой: python3 " + rick_bus()
                   + ' tell --from <проект> "…"; ничего не отправил')
             return 1
     if args.command == "dim" and args.level is not None:
@@ -3526,7 +4450,7 @@ def main(argv=None) -> int:
                          }.get(args.command, args.command))
     if args.command == "paste-airdrop":
         return run_paste_airdrop(args)
-    return run(build_request(args), getattr(args, "as_json", False))
+    return run(build_request(args), getattr(args, "as_json", False), note)
 
 
 if __name__ == "__main__":

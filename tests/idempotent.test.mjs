@@ -32,9 +32,6 @@ const NODE_IDS = [
   "myclaude-progress-bar",
   "myclaude-progress-tip",
   "myclaude-progress-card",
-  "myclaude-window-frame",
-  // Свечение «ждёт тебя» (WF83, раздел 12и) — свой узел рядом с рамкой.
-  "myclaude-wait-glow",
   // Хвост «… N» ряда с прокруткой (WF85, #7356) — свой узел рядом с рядом;
   // вне режима прокрутки он есть, но спрятан.
   "myclaude-progress-tail",
@@ -51,7 +48,11 @@ const NODE_IDS = [
 // снять все три вместе с переменной.
 const EDITOR_ATTRIBUTES = "[data-myclaude-editor-root],[data-myclaude-editor],[data-myclaude-composer-block]";
 const HEIGHT_VARIABLE = "--myclaude-input-height";
-const THEME_STYLE_ID = "myclaude-theme";
+// Узлы снятых неоновой рамки и свечения «ждёт тебя» (WF248): страница их не ставит, а сироты
+// прежних установок снимает (разделы 2а и 12и).
+// Корень сквозной истории (раздел 13б, WF301) ставится только в чате с цепочкой — сирота прежней установки
+// снимается следующей.
+const ORPHAN_IDS = ["myclaude-window-frame", "myclaude-wait-glow", "myclaude-chain"];
 const MAP_KEY = "myclaude-themes-v1";
 const HEIGHT_KEY = "myclaude-input-height-v1";
 const STAGE_KEY = "myclaude-input-stage-v1";
@@ -66,13 +67,15 @@ const THEME = {
     sidebar: "#000811", panel: "#00223a", muted: "#88aabb",
   },
 };
-// Четыре слоя разом: тема, шрифт и размер живут таблицами adoptedStyleSheets
-// (счётчик sheets), рамка — своим узлом. Утечка любого слоя видна в счётчиках.
+// Четыре слоя разом: тема, шрифт, размер и оформление живут таблицами adoptedStyleSheets
+// (счётчик sheets). Утечка любого слоя видна в счётчиках. frame (снятая рамка) в старой
+// записи лежит по-прежнему — страница его молча пропускает.
 const LAYERS = {
   theme: THEME,
   font: { id: "SF Mono", family: "SF Mono", mono: true },
   size: { answer: 16, question: 14 },
   frame: true,
+  look: { dense: true },
 };
 
 // Страница: композер Claude Code + последний ответ со строкой состояния.
@@ -119,24 +122,25 @@ test("установка встаёт: объект в окне, версия �
   assert.equal(again.version, loaded.version, "версия та же, что вернула первая установка");
 });
 
-test("второй прогон: по одному узлу ручки, полосы, подсказки и рамки; листы не растут, сирота снята", () => {
+test("второй прогон: по одному узлу ручки, полосы и подсказки; листы не растут, сироты сняты", () => {
   const loaded = open();
   assert.deepEqual(nodes(loaded), one, "после первой установки — ровно по одному узлу");
+  for (const id of ORPHAN_IDS) assert.equal(loaded.dom.queryAll(`#${id}`).length, 0, `${id}: узла нет`);
   const sheets = loaded.counters.sheets;
   assert.ok(sheets > 0, "слои живут таблицами adoptedStyleSheets, а не <style>");
-  // Осиротевший <style id="myclaude-theme"> от старой установки (или зеркальная
-  // копия из главного окна) обязан уйти на следующем прогоне — раздел 2а.
-  const orphan = loaded.document.createElement("style");
-  orphan.id = THEME_STYLE_ID;
-  orphan.textContent = ":root{--myclaude-orphan:1}";
-  loaded.document.body.appendChild(orphan);
-  assert.equal(loaded.dom.queryAll(`#${THEME_STYLE_ID}`).length, 1, "сирота подброшена");
+  // Оверлеи снятых рамки и свечения от старой установки обязаны уйти на следующем прогоне.
+  for (const id of ORPHAN_IDS) {
+    const orphan = loaded.document.createElement("div");
+    orphan.id = id;
+    loaded.document.body.appendChild(orphan);
+    assert.equal(loaded.dom.queryAll(`#${id}`).length, 1, `${id}: сирота подброшена`);
+  }
 
   const again = loaded.reload();
   assert.equal(again.error, null);
   assert.deepEqual(nodes(loaded), one, "второй прогон узлы не удвоил");
   assert.equal(loaded.counters.sheets, sheets, "число таблиц стилей не выросло");
-  assert.equal(loaded.dom.queryAll(`#${THEME_STYLE_ID}`).length, 0, "сирота снята вторым прогоном");
+  for (const id of ORPHAN_IDS) assert.equal(loaded.dom.queryAll(`#${id}`).length, 0, `${id}: сирота снята вторым прогоном`);
 });
 
 test("счётчики стаба после второго прогона: подписок, наблюдателей и интервалов столько же", () => {

@@ -7,3 +7,7 @@ useDefault = true
 [[allowlists]]
 description = "localStorage key names of the page script"
 regexes = ['''^myclaude-[a-z0-9._:-]+$''']
+
+[[allowlists]]
+description = "UserDefaults key names in Swift (camelCase word with a task number)"
+regexes = ['''^(?:micChoiceWF9681|keepOldDefaults1105)$''']

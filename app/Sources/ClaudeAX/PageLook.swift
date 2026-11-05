@@ -54,19 +54,19 @@ public struct SendDelaySetting: Equatable {
     public let on: Bool
     public let seconds: Int
 
-    /// По умолчанию — 3 с (слово Элвиса 07.10.2026: «Трёхсекундного отсчёта достаточно»).
-    public init(on: Bool = true, seconds: Int = 3) {
+    /// По умолчанию — 2 с (слово Элвиса 19.10.2026, #10361: «У ракеты сними ожидание, 2 секунды сделай»; до того 3 с).
+    public init(on: Bool = true, seconds: Int = 2) {
         self.on = on
-        self.seconds = Self.validSeconds(seconds) ? seconds : 3
+        self.seconds = Self.validSeconds(seconds) ? seconds : 2
     }
 
-    static func validSeconds(_ value: Int) -> Bool { [3, 5, 10].contains(value) }
+    static func validSeconds(_ value: Int) -> Bool { [2, 3, 5, 10].contains(value) }
 
     static func parse(_ raw: Any?) -> SendDelaySetting? {
         guard let raw = raw as? [String: Any],
               let on = raw["on"] as? NSNumber, CFGetTypeID(on) == CFBooleanGetTypeID(),
               let seconds = raw["seconds"] as? NSNumber, CFGetTypeID(seconds) != CFBooleanGetTypeID(),
-              [3.0, 5.0, 10.0].contains(seconds.doubleValue) else { return nil }
+              [2.0, 3.0, 5.0, 10.0].contains(seconds.doubleValue) else { return nil }
         return SendDelaySetting(on: on.boolValue, seconds: seconds.intValue)
     }
 
@@ -83,16 +83,6 @@ public enum CountdownSound: String, CaseIterable {
     public static let configKey = "countdownSound"
     public static let defaultsKey = "countdownSound"
     public static let fallback = CountdownSound.bell
-
-    public var title: String {
-        switch self {
-        case .bell: return "🔔 Мягкий колокольчик"
-        case .tick: return "🕰 Тик"
-        case .drop: return "💧 Капля"
-        case .retro: return "👾 Ретро-бип"
-        case .off: return "🔇 Без звука"
-        }
-    }
 
     /// Имя без значка — строка «Звук» панели (WF180: «эмодзи меня бесят»).
     public var name: String {
@@ -135,12 +125,6 @@ public enum CountdownSound: String, CaseIterable {
     }
 
     var fields: [(key: String, value: CommandValue)] { [(key: "sound", value: .string(rawValue))] }
-
-    /// Подменю «🔊 Звук отсчёта ▸»: пять пунктов по порядку, галка только у текущего.
-    public static let menuTitle = "🔊 Звук отсчёта"
-    public static func menuItems(selected: CountdownSound) -> [(sound: CountdownSound, title: String, checked: Bool)] {
-        allCases.map { (sound: $0, title: $0.title, checked: $0 == selected) }
-    }
 }
 
 /// Клавиши отсчёта (WF126 §7.2, поправки критика 1–2): второй Enter и ⇧Enter во время счёта — полями
@@ -157,16 +141,6 @@ public struct EnterKeys: Equatable {
     public init(second: Second = .cancel, shift: Shift = .newline) {
         self.second = second
         self.shift = shift
-    }
-
-    /// Подпись отсчёта — как `sendDelayLabel` страницы.
-    public func label(left: Int) -> String {
-        let shiftTail = shift == .send ? " · ⇧Enter — сразу" : ""
-        switch second {
-        case .cancel: return "Отправка через \(left) · Enter или Esc — отмена\(shiftTail)"
-        case .send: return "Отправка через \(left) · Enter — сразу · Esc — отмена"
-        case .nothing: return "Отправка через \(left)\(shiftTail) · Esc — отмена"
-        }
     }
 
     static func fields(second: Second?, shift: Shift?) -> [(key: String, value: CommandValue)] {
@@ -275,23 +249,21 @@ public enum TextLook {
     public static var sidePadding: Int { LiveStyle.currentSidePadding() }
 }
 
-/// «Закреплённые» (#8743): показывать ли у закреплённых чатов название проекта и таймер. Команда
-/// `{"id","action":"pinned-look","at","folder","clock"}` всем окнам → localStorage страницы (раздел 2е).
+/// «Закреплённые» (#8743): показывать ли у закреплённых чатов название проекта. Команда
+/// `{"id","action":"pinned-look","at","folder"}` всем окнам → localStorage страницы (раздел 2е). Часиков у
+/// закреплённых нет с page-64 (WF241): поле `clock` страница принимала и ничего не меняла — с WF237 его нет.
 /// Нет ключа приложения — показывать, как было до настройки.
 public struct PinnedLook: Equatable {
     public static let folderKey = "pinnedFolderShown"
-    public static let clockKey = "pinnedClockShown"
     static let action = "pinned-look"
     public var folder: Bool
-    public var clock: Bool
 
-    public init(folder: Bool = true, clock: Bool = true) {
+    public init(folder: Bool = true) {
         self.folder = folder
-        self.clock = clock
     }
 
     var fields: [(key: String, value: CommandValue)] {
-        [(key: "folder", value: .bool(folder)), (key: "clock", value: .bool(clock))]
+        [(key: "folder", value: .bool(folder))]
     }
 }
 
@@ -300,7 +272,7 @@ public struct PinnedLook: Equatable {
 /// адресованное окно (`match`/`chat`, без них — главное) проигрывает отсчёт, ничего не отправляя.
 public enum SendLook {
     static let action = "send-look"
-    /// UserDefaults приложения: вид строкой (нет — «1.8» «Ракета», до WF180 звался «Взлёт») и размер в процентах (нет — 100). Старый ключ
+    /// UserDefaults приложения: вид строкой (нет — «1.8» «Ракета», до WF180 звался «Взлёт») и размер в процентах (нет — 150, слово 03.11.2026). Старый ключ
     /// `sendLookStyle` (там у всех «1.5» с WF119) не читается.
     public static let styleKey = "sendLookStyleWF128"
     public static let sizeKey = "sendLookSize"
@@ -310,10 +282,9 @@ public enum SendLook {
         ("1.2", "Удар"), ("1.4", "Кольцо"), ("1.6", "Шнур"), ("1.5", "Спокойная цифра"),
     ]
     public static let defaultStyle = "1.8"
-    public static let menuTitle = "🚀 Вид отсчёта"
     public static let minSize = 60
     public static let maxSize = 200
-    public static let defaultSize = 100
+    public static let defaultSize = 150
     public static let step = 10
 
     public static func isStyle(_ style: String) -> Bool { styles.contains { $0.id == style } }
@@ -382,6 +353,8 @@ final class PageLookSettings {
     var mainMatch: () -> String? = { nil }
     /// Claude запущен — показать отсчёт есть где.
     var isRunning: () -> Bool = { false }
+    /// Bypass разрешён в самом Claude (`BypassNew.permission() == .allowed`); живьём — чтение с кэшем.
+    var bypassAllowed: () -> Bool = { true }
     private let dimSwitch = AutoAllowSwitch()
     private let lookSwitch = AutoAllowSwitch()
     private let delaySwitch = AutoAllowSwitch()
@@ -391,6 +364,14 @@ final class PageLookSettings {
     private let bypassSwitch = AutoAllowSwitch()
     private let justifySwitch = AutoAllowSwitch()
     private let cleanSwitch = AutoAllowSwitch()
+    private let hideSwitch = AutoAllowSwitch()
+    /// «Прятать инструменты» (#10334), каким его видел прошлый тик: выбор сменился — новое поколение повтора.
+    private var hideSeen: Bool?
+    /// Bypass, каким его видел прошлый тик: сменилось (разрешили в Claude, нажали в панели) — поколение заново.
+    private var bypassSeen: Bool?
+    /// «Прятать код и планы» (#7976) — тот же повтор поколениям, что у «Прятать инструменты».
+    private let hideCodeSwitch = AutoAllowSwitch()
+    private var hideCodeSeen: Bool?
     /// Живой `claude.json` (WF151, звук отсчёта); nil — файла нет (тесты без своего файла живой не читают).
     let configURL: URL?
     /// id чатов окон главного проекта (`keep` команды `dim`); в UserDefaults не пишется — это не выбор.
@@ -490,7 +471,7 @@ final class PageLookSettings {
     /// Звук отсчёта, если его выбирали: ключ `countdownSound` в `claude.json`, иначе память приложения; nil — не
     /// выбирали (рассылки нет, страница звучит своим `bell`).
     var chosenCountdownSound: CountdownSound? {
-        if let sound = CountdownSound.fromConfig(configURL.flatMap { try? Data(contentsOf: $0) }) { return sound }
+        if let sound = CountdownSound.fromConfig(configURL.flatMap { LiveConfig.data(at: $0) }) { return sound }
         guard let raw = defaults.object(forKey: CountdownSound.defaultsKey) else { return nil }
         return CountdownSound.parse(raw)
     }
@@ -502,7 +483,7 @@ final class PageLookSettings {
     /// `send-delay` только с полем `sound`; новое поколение — повтор страницам, что откроются позже.
     func setCountdownSound(_ sound: CountdownSound) {
         defaults.set(sound.rawValue, forKey: CountdownSound.defaultsKey)
-        if let url = configURL, let old = try? String(contentsOf: url, encoding: .utf8) {
+        if let url = configURL, let old = LiveConfig.text(at: url) {
             if let new = CountdownSound.merged(config: old, sound: sound) {
                 if new != old { _ = CommandChannel.writeAtomic(url, new) }
             } else {
@@ -515,30 +496,28 @@ final class PageLookSettings {
 
     /// «Закреплённые» (#8743): выбор приложения; ключа нет — показывать.
     var pinned: PinnedLook {
-        PinnedLook(folder: defaults.object(forKey: PinnedLook.folderKey) as? Bool ?? true,
-                   clock: defaults.object(forKey: PinnedLook.clockKey) as? Bool ?? true)
+        PinnedLook(folder: defaults.object(forKey: PinnedLook.folderKey) as? Bool ?? true)
     }
 
     private var pinnedChosen: Bool {
-        defaults.object(forKey: PinnedLook.folderKey) != nil || defaults.object(forKey: PinnedLook.clockKey) != nil
+        defaults.object(forKey: PinnedLook.folderKey) != nil
     }
 
     func setPinned(_ look: PinnedLook) {
         defaults.set(look.folder, forKey: PinnedLook.folderKey)
-        defaults.set(look.clock, forKey: PinnedLook.clockKey)
         _ = write(PinnedLook.action, look.fields, .normal)
         pinnedSwitch.beginGeneration()
     }
 
-    /// «Bypass permissions во всех чатах» (#9060 путь Б): ключа нет — выкл и страницам ничего не шлём.
-    var bypassChats: Bool { defaults.bool(forKey: BypassNew.key) }
+    /// «Bypass permissions во всех чатах» (#9060 путь Б): ключа нет — включено, только если Bypass разрешён в Claude;
+    /// не разрешён — страница открывала бы в каждом чате невидимое меню режима без пункта (находка 1 проверки слияния Оли).
+    var bypassChats: Bool { defaults.object(forKey: BypassNew.key) as? Bool ?? bypassAllowed() }
 
     /// Выбор пишется сразу, команда `bypass-chats` уходит всем страницам; новое поколение — повтор.
     func setBypassChats(_ on: Bool) {
         defaults.set(on, forKey: BypassNew.key)
         _ = write(BypassNew.action, BypassNew.fields(on: on), .normal)
         bypassSwitch.beginGeneration()
-        justifySwitch.beginGeneration()
     }
 
     /// Выравнивание текста (WF167): ключа нет — показываем умолчание страницы, страницам ничего не шлём.
@@ -559,6 +538,19 @@ final class PageLookSettings {
         defaults.set(on, forKey: CleanAnswers.key)
         _ = write(CleanAnswers.action, CleanAnswers.fields(on: on), .normal)
         cleanSwitch.beginGeneration()
+    }
+
+    /// Выбор, которого в панели больше нет (#10334), один раз на запуске встаёт в ближайший из тех, что есть: иначе
+    /// ни один сегмент не выделен, а страницы каждое поколение получают выбор, который человеку не поменять.
+    /// Задержка 3 с → 2 с (#10361: «2 секунды сделай», сегмента «3 с» нет); Enter во время отсчёта «ничего» →
+    /// «отменяет» (с WF180 выбор из двух); ⇧Enter «отправляет сразу» → «перенос строки» (WF192: «Никаких быстрых
+    /// отправок. Всё на таймере всегда», строки ⇧Enter в панели нет с WF180). Ключа нет — ничего не пишется.
+    func migrateLegacy() {
+        if let saved = savedSendDelay, saved.seconds == 3 {
+            defaults.set(["on": saved.on, "seconds": SendDelaySetting().seconds], forKey: SendDelaySetting.key)
+        }
+        if savedSecond == .nothing { defaults.set(EnterKeys.Second.cancel.rawValue, forKey: EnterKeys.secondKey) }
+        if savedShift == .send { defaults.set(EnterKeys.Shift.newline.rawValue, forKey: EnterKeys.shiftKey) }
     }
 
     /// Показ панели не меняет выбор отсчёта и вида, только рисует его у выбранного окна.
@@ -589,6 +581,8 @@ final class PageLookSettings {
         bypassSwitch.beginGeneration()
         justifySwitch.beginGeneration()
         cleanSwitch.beginGeneration()
+        hideSwitch.beginGeneration()
+        hideCodeSwitch.beginGeneration()
     }
 
     /// Тик 2 с: повтор выбора страницам этого поколения.
@@ -605,8 +599,15 @@ final class PageLookSettings {
         if let sound = chosenCountdownSound {
             soundSwitch.tick(titles: titles, at: at) { _ in write(SendDelaySetting.action, sound.fields, .normal) }
         }
-        if defaults.object(forKey: BypassNew.key) != nil {
-            let fields = BypassNew.fields(on: bypassChats)
+        // Ключа нет — всё равно шлём: с 03.11.2026 умолчание «включено» там, где Bypass разрешён (`bypassChats`), а
+        // страница без команды держит выключенным — переключатель панели показывал бы «вкл», а чаты оставались бы без Bypass.
+        do {
+            let on = bypassChats
+            if on != bypassSeen {
+                if bypassSeen != nil { bypassSwitch.beginGeneration() }
+                bypassSeen = on
+            }
+            let fields = BypassNew.fields(on: on)
             bypassSwitch.tick(titles: titles, at: at) { _ in write(BypassNew.action, fields, .normal) }
         }
         if defaults.object(forKey: TextLook.justifyKey) is Bool {
@@ -616,6 +617,28 @@ final class PageLookSettings {
         if defaults.object(forKey: CleanAnswers.key) is Bool {
             let fields = CleanAnswers.fields(on: cleanAnswers)
             cleanSwitch.tick(titles: titles, at: at) { _ in write(CleanAnswers.action, fields, .normal) }
+        }
+        // «Прятать инструменты» (#10334, К-B1): выбор, сделанный при закрытом Claude, страницам не доходил — лоадер не
+        // шлёт команду, записанную до его запуска. Теперь он повторяется поколениями, как `text-justify`; нажатие в
+        // панели (`ClaudeActions.setHideTools` пишет ключ и команду сразу) тик видит сменой значения — поколение заново.
+        // Ключа нет — молчим: страница и так прячет.
+        if let on = defaults.object(forKey: ClaudeActions.hideToolsKey) as? Bool {
+            if on != hideSeen {
+                hideSeen = on
+                hideSwitch.beginGeneration()
+            }
+            let fields: [(key: String, value: CommandValue)] = [(key: "on", value: .string(on ? "true" : "false"))]
+            hideSwitch.tick(titles: titles, at: at) { _ in write("hide-tools", fields, .normal) }
+        }
+        // «Прятать код и планы» (#7976, К-HC) — та же ошибка, что #10334 починил у «Прятать инструменты»: выбор
+        // при закрытом Claude и новые страницы его не получали. Повтор поколениями тем же проводом, что выключатель.
+        if let on = defaults.object(forKey: ClaudeActions.hideCodeKey) as? Bool {
+            if on != hideCodeSeen {
+                hideCodeSeen = on
+                hideCodeSwitch.beginGeneration()
+            }
+            let fields: [(key: String, value: CommandValue)] = [(key: "on", value: .string(on ? "true" : "false"))]
+            hideCodeSwitch.tick(titles: titles, at: at) { _ in write("hide-code", fields, .normal) }
         }
         if let setting = savedSendDelay {
             delaySwitch.tick(titles: titles, at: at) { _ in write(SendDelaySetting.action, setting.fields, .normal) }

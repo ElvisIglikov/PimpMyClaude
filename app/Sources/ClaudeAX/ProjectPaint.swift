@@ -141,15 +141,12 @@ final class ProjectPaint {
     /// попапов уходит на старый путь по заголовку. В `init` канал НЕ лезет: `ProjectPaint`
     /// собирают напрямую тесты, и новый параметр сломал бы им сборку (критик В6 плана WF29).
     var chatPages: () -> [ChatPage] = { [] }
-    /// Чат попапа по AX-заголовку и РАМКЕ окна (план WF77): заголовок носят два окна —
-    /// решает рамка, а без неё ничья и nil, как до WF77. Заглушки — тоже nil.
-    var chatForTitle: (String, CGRect?) -> String? = { _, _ in nil }
     /// Отправка команды; false — не записалась, попробуем на следующем тике.
     var send: (ProjectPaintCommand) -> Bool = { _ in false }
-    /// Окно красила «Раскрасить по кругу» — она сильнее проекта (критик Б3 плана WF15).
-    /// Ручной выбор с WF20 сюда не считается: он и есть вид проекта (решение 3.2).
-    var isWindowBusy: (String) -> Bool = { _ in false }
-    var isTargetBusy: ((ProjectTarget) -> Bool)?
+    /// Окно красила «Раскрасить по кругу» — она сильнее проекта (критик Б3 плана WF15): автотема
+    /// окна по его ключу памяти (`ProjectTarget.memoryKey`). Ручной выбор с WF20 сюда не считается:
+    /// он и есть вид проекта (решение 3.2). Живьём вешает контроллер.
+    var isTargetBusy: (ProjectTarget) -> Bool = { _ in false }
     /// Задан вид «всем окнам» — проект его не перебивает (критик Б3).
     var isAllWindowsSet: () -> Bool = { false }
     /// Вид «всем окнам» (`look` у `*`): из него переключатель «Живой» панели берёт живой фон и схему (#9182 п.10).
@@ -240,7 +237,7 @@ final class ProjectPaint {
         for target in targets() { paint(target) }
     }
 
-    /// Строка для `statusText` приложения (живая проверка на гейте): тумблер, папка главного
+    /// Сводка покраски для тестов и отладки: тумблер, папка главного
     /// окна, сколько окон покрашено проектом, сколько из них опознано по чату и папка чипа
     /// на домашнем экране (план WF37 C2) — по ней на гейте видно, откуда взялся цвет.
     var status: String {
@@ -285,7 +282,7 @@ final class ProjectPaint {
         let pages = chatPages()
         if let main = index.mainWindow() {
             // Свежий ответ страницы сильнее адреса из status.json (решение 8 плана WF29);
-            // протухший не в счёт — пусть решает лоадер. Расхождение видно в statusText.
+            // протухший не в счёт — пусть решает лоадер.
             let answer = pages.first { $0.kind == .main && ChatProbe.isRecent($0, at: now()) }
             // Назвала страница свой чат — он и решает, даже если индекс такого чата не знает:
             // тогда папки просто НЕТ. Откатиться на чат из status.json значило бы покрасить
@@ -350,7 +347,7 @@ final class ProjectPaint {
         // «Раскрасить по кругу» сильнее проекта (критик Б3 плана WF15): окно остаётся
         // неотмеченным, и как только память о нём очистят, проект его покрасит. А вот ручной
         // выбор окно больше не «занимает» — он сам стал видом проекта (решение 3.2 плана WF20).
-        guard !(isTargetBusy?(target) ?? isWindowBusy(target.title)) else { return false }
+        guard !isTargetBusy(target) else { return false }
         // Панель «Своя тема» владеет примеркой этого окна (решение 1.6 плана WF20): обычная
         // команда `theme` погасила бы её на странице, и ползунок остался бы без цвета.
         // Отпечаток не трогаем — закроют панель, и ближайший тик покрасит окно как обычно.
@@ -463,11 +460,16 @@ final class ProjectPaint {
         }
         look.aurora = all.aurora
         look.scheme = all.aurora ? all.scheme : nil
+        look.motion = all.aurora ? all.motion : .still
         return look.layer
     }
 
-    /// Часть отпечатка от «Живого» всем окнам — у проектов со своим `look`.
-    static func liveDigest(_ all: Look) -> String { all.aurora ? "|live:" + all.schemeID : "|live:off" }
+    /// Часть отпечатка от «Живого» всем окнам — у проектов со своим `look`: сменили схему или движение (#9994) —
+    /// окна проекта получают вид заново.
+    static func liveDigest(_ all: Look) -> String {
+        guard all.aurora else { return "|live:off" }
+        return "|live:" + all.schemeID + ":" + all.motion.rawValue
+    }
 
     /// Слой из файла; проект его не задаёт, а прошлый ставил — сброс.
     private func layer<Value>(_ want: Layer<Value>, _ previous: Mark?, _ key: String) -> Layer<Value> {
@@ -645,13 +647,6 @@ final class ProjectPaint {
         guard !clean.isEmpty, clean != ProjectPaint.mainWindowTitle else {
             return index.mainWindow()?.folder
         }
-        // Сперва чат окна (план WF29): по нему папка верна и после переименования чата,
-        // а заголовок попапа — снимок имени на момент выноса в окно. Заголовок носят два
-        // окна — чат выбирается рамкой (план WF77): без неё оба окна получали проект
-        // первого, и цвет в одном менялся сразу в обоих (#6734).
-        if let chat = chatForTitle(clean, frame), let folder = index.folder(for: chat) {
-            return folder
-        }
         return index.folder(forTitle: clean)
     }
 
@@ -663,10 +658,6 @@ final class ProjectPaint {
             return target(for: page)
         }
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let chat = chatForTitle(clean, frame), let folder = index.folder(for: chat) {
-            return ProjectTarget(key: ProjectPaint.chatPrefix + chat, match: nil, chat: chat,
-                                 title: clean, folder: folder)
-        }
         if let folder = index.folder(forTitle: clean) {
             return ProjectTarget(key: ProjectPaint.windowPrefix + clean, match: nil, chat: nil,
                                  title: clean, folder: folder)
@@ -695,6 +686,10 @@ final class ProjectPaint {
     /// заголовок бывает настоящим заголовком чата, а в цели покраски стоит заглушка «Claude».
     /// Рамка (план WF77) нужна там же, где и всюду, — развести окна-однофамильцев; её нет
     /// (зовут из панели «Своя тема», где окна под рукой нет) — ключ по заголовку, как до WF77.
+    ///
+    /// В бою контроллер ставит оба резолвера всегда. Ветки «резолвера нет» (по заголовку, по
+    /// status.json) в бою недостижимы и живы только ради стендов Fix7727Tests, LiveProjectsWF200Tests
+    /// и WindowThemeStoreTests (вне полосы С1 WF248): снять вместе с переводом их на windowIdentity.
     var windowIdentity: ((String, CGRect?) -> WindowIdentity)?
     var pageIdentity: ((ChatPage) -> WindowIdentity)?
 
@@ -714,7 +709,6 @@ final class ProjectPaint {
         if let main = index.mainWindow()?.session?.title, main == clean {
             return ProjectPaint.mainKey
         }
-        if let chat = chatForTitle(clean, frame) { return ProjectPaint.chatPrefix + chat }
         return ProjectPaint.windowPrefix + clean
     }
 
@@ -729,8 +723,7 @@ final class ProjectPaint {
     /// - попап есть, а главной страницы с этой заглушкой нет — заглушку носит ровно он: ключ
     ///   его чата, а чата он не назвал (или их два) — ключ по заголовку;
     /// - есть и то и другое — заглушку носят двое, и она не называет никого: ключ по
-    ///   заголовку, ни `main`, ни чужой чат (то же правило, что у `ChatProbe.chat(forTitle:)`:
-    ///   лучше не покрасить, чем покрасить чужим цветом).
+    ///   заголовку, ни `main`, ни чужой чат (лучше не покрасить, чем покрасить чужим цветом).
     ///
     /// Карта пуста (тумблер выключен, канал занял агент, кругов ещё не было) — окно главное,
     /// как раньше: без ответов страниц отличить их нечем.

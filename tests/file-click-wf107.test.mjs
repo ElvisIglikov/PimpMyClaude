@@ -15,6 +15,10 @@ const CHAT = "local_bbbb-2222";
 const HTML = "/Users/dev/Projects/PimpMyClaude/docs/16.html";
 const PNG = "/Users/dev/Projects/Risovalka/out/hero.png";
 const PDF = "/Users/dev/Projects/PimpMyClaude/docs/offer.pdf";
+// WF277 (#10644): md, txt и ролики — наши только при годной панели материалов (tests/materials-dock-wf277.test.mjs);
+// без неё у них прежних путей нет, клик остаётся Claude (его правая панель).
+const MD = "/Users/dev/Projects/PimpMyClaude/docs/plan-wf277-2026-10-23.md";
+const MP4 = "/Users/dev/Desktop/Запись экрана 23.10.mp4";
 const FRAME = "&frame=-1512,-982,640,900&bg=1c1917";
 const BUSY = "data-myclaude-busy";
 const url = (path, mode = "click", tail = FRAME) =>
@@ -42,6 +46,8 @@ const page = ({ fetchMode = "ok" } = {}) => {
       nodes.html = card(row, HTML);
       nodes.png = card(row, PNG);
       nodes.pdf = card(row, PDF);
+      nodes.md = card(row, MD);
+      nodes.mp4 = card(row, MP4);
       const prose = row.add("div", { class: "prose" });
       nodes.mdPdf = prose.add("a", { attrs: { href: `file://${PDF}` }, text: "offer.pdf" });
       nodes.mdHtml = prose.add("a", { attrs: { href: HTML }, text: "16.html" });
@@ -138,6 +144,15 @@ test("PDF — click без рамки и фона, как было", async () =>
   click(loaded, nodes.pdf);
   await settle();
   assert.deepEqual(loaded.calls, [url(PDF, "click", "")]);
+});
+
+test("md и ролик без панели материалов (WF277) — клик остаётся Claude: глушить их, а Пимпу отклонять — тишина", async () => {
+  const { loaded, nodes } = page();
+  assert.equal(click(loaded, nodes.md.querySelector("span")), true);
+  assert.equal(click(loaded, nodes.mp4), true);
+  await settle();
+  assert.deepEqual(loaded.calls.filter(address => String(address).includes("/open-html?")), []);
+  assert.equal(chrome(loaded).clicks, 0);
 });
 
 test("повтор того же файла, пока ждём, — ничего; через 3 с — снова", async () => {

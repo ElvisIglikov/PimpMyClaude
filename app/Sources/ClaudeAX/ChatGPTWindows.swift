@@ -43,8 +43,7 @@ final class ChatGPTWindows {
         }
         guard !apps.isEmpty else { return nil }
         let pids = Set(apps.map { $0.processIdentifier })
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+        let list = WindowInfo.list([.optionOnScreenOnly, .excludeDesktopElements])
         let onScreen = ChatGPTWindows.layerZero(list, pids: pids)
         guard !onScreen.isEmpty else { return nil }
         var standard: [pid_t: [ChatGPTWindow]] = [:]
@@ -54,16 +53,11 @@ final class ChatGPTWindows {
             let matches = standard[entry.pid]?.filter { ClaudeActions.frameMatches($0.frame, entry.frame) } ?? []
             guard matches.count == 1, var found = matches.first else { continue }
             let quartz = list.filter {
-                ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == entry.pid
-                    && ($0[kCGWindowLayer as String] as? NSNumber)?.intValue == 0
-                    && (($0[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) >= Double(ClaudeApp.minWindowAlpha)
-                    && ($0[kCGWindowBounds as String] as? NSDictionary).flatMap {
-                        CGRect(dictionaryRepresentation: $0 as CFDictionary)
-                    }.map { ClaudeActions.frameMatches($0, entry.frame) } == true
+                $0.pid == entry.pid && $0.layer == 0 && $0.alpha >= ClaudeApp.minWindowAlpha
+                    && ClaudeActions.frameMatches($0.frame, entry.frame)
             }
-            guard quartz.count == 1,
-                  let id = (quartz[0][kCGWindowNumber as String] as? NSNumber)?.uint32Value, id > 0 else { continue }
-            found.id = id; found.pid = entry.pid
+            guard quartz.count == 1, quartz[0].id > 0 else { continue }
+            found.id = quartz[0].id; found.pid = entry.pid
             return found
         }
         return nil
@@ -96,14 +90,9 @@ final class ChatGPTWindows {
               app.bundleIdentifier.map({ bundleIDs.contains($0) }) == true,
               let same = Self.standardWindows(pid: window.pid).first(where: { CFEqual($0.element, window.element) })
         else { return nil }
-        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-            as? [[String: Any]] ?? []
-        let matches = info.filter { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == window.id
-            && ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == window.pid }
-        guard matches.count == 1,
-              let bounds = matches[0][kCGWindowBounds as String] as? NSDictionary,
-              let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
-              ClaudeActions.frameMatches(same.frame, frame) else { return nil }
+        let matches = WindowInfo.list([.optionOnScreenOnly, .excludeDesktopElements])
+            .filter { $0.id == window.id && $0.pid == window.pid }
+        guard matches.count == 1, ClaudeActions.frameMatches(same.frame, matches[0].frame) else { return nil }
         return same.frame
     }
 
@@ -134,17 +123,9 @@ final class ChatGPTWindows {
 
     /// Окна слоя 0 этих процессов из списка оконного сервера, спереди назад. Прозрачные и
     /// служебная мелочь мимо — тем же ситом, что у окон Claude.
-    static func layerZero(_ list: [[String: Any]], pids: Set<pid_t>) -> [(pid: pid_t, frame: CGRect)] {
-        list.compactMap { info in
-            guard let owner = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
-                  pids.contains(owner),
-                  (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
-                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
-                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
-            let alpha = (info[kCGWindowAlpha as String] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 1
-            guard !ClaudeApp.isServiceWindow(frame: rect, alpha: alpha) else { return nil }
-            return (pid: owner, frame: rect)
-        }
+    static func layerZero(_ list: [WindowInfo], pids: Set<pid_t>) -> [(pid: pid_t, frame: CGRect)] {
+        list.filter { pids.contains($0.pid) && $0.layer == 0 && !ClaudeApp.isServiceWindow(frame: $0.frame, alpha: $0.alpha) }
+            .map { (pid: $0.pid, frame: $0.frame) }
     }
 
     /// Целевая рамка ChatGPT (WF94): правая полоса рабочей области шириной ОДНОГО столбца

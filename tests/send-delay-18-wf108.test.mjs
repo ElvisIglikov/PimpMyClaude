@@ -33,14 +33,14 @@ test("спокойная цифра: один неподвижный узел р
   const node = digits(p);
   assert.equal(node.getAttribute("role"), "timer");
   assert.equal(node.title, "Отменить отправку");
-  assert.equal(node.textContent, "3", "по умолчанию — 3 с (слово Элвиса 07.10)");
+  assert.equal(node.textContent, "2", "по умолчанию — 2 с (слово Элвиса 19.10, #10361; с 07.10 было 3)");
   assert.equal(node.children.length, 0);
   assert.equal(node.style.getPropertyValue("pointer-events"), "auto");
   assert.deepEqual(["left", "top", "width", "height"].map(k => node.style.getPropertyValue(k)), ["260px", "700px", "24px", "24px"]);
   assert.notEqual(node.style.getPropertyValue("background"), node.style.getPropertyValue("color"));
   advance(p, 1);
   assert.ok(digits(p) === node);
-  assert.equal(node.textContent, "2");
+  assert.equal(node.textContent, "1");
   quiet(p);
   p.api.dispose();
 });

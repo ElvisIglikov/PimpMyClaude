@@ -8,7 +8,7 @@ import { loadInner } from "./load.mjs";
 
 const { inner } = loadInner({ title: "Trelvis" });
 const {
-  themeCss, epitaxyCss, fontCss, sizeCss, frameShadow,
+  themeCss, epitaxyCss, fontCss, sizeCss,
   normalizeTheme, normalizeFont, normalizeSize, normalizeHex, mixHex, hslTriple,
 } = inner;
 
@@ -150,13 +150,6 @@ test("normalizeHex и normalizeTheme на мусоре не бросают и п
   assert.equal(dirty.palette.accent, "#60a5fa", "цвет из фолбэка тёмной темы");
   assert.ok(!/[<>{};*\\/"']/.test(dirty.id + dirty.name), "знаки, которыми закрывают правило, вычищены");
   assert.doesNotThrow(() => themeCss(dirty));
-});
-
-test("frameShadow не теряет акцент", () => {
-  const shadow = frameShadow("#ff8800");
-  assert.equal((shadow.match(/#ff8800/g) ?? []).length, 3, "три тени одним цветом");
-  assert.ok(shadow.startsWith("inset 0 0 0 2px"), "линия в две точки");
-  assert.ok(!/NaN|undefined/.test(shadow));
 });
 
 test("mixHex и hslTriple считают, а не выдумывают", () => {

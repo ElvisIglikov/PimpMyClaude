@@ -21,7 +21,7 @@ final class SelfUpdateWF217AppTests: XCTestCase {
             .appendingPathComponent("pimp-self-update-app-\(UUID().uuidString)", isDirectory: true)
         apps = scratch.appendingPathComponent("Applications", isDirectory: true)
         try fm.createDirectory(at: apps, withIntermediateDirectories: true)
-        suite = "pimp-self-update-test-\(UUID().uuidString)"
+        suite = testSuiteName()
         defaults = UserDefaults(suiteName: suite)
     }
 
@@ -159,7 +159,7 @@ final class SelfUpdateWF217AppTests: XCTestCase {
         XCTAssertTrue(driver.installAtLaunch(), "подменили себя — вызывающий выходит")
         XCTAssertEqual(version(.pimp), "1.10.20")
         XCTAssertEqual(relaunched, [pimpApp], "помощник откроет новую версию")
-        XCTAssertEqual(driver.look().note, "Пимп обновился до 1.10.20")
+        XCTAssertEqual(driver.look().note, "PMP обновился до 1.10.20")
         XCTAssertFalse(driver.installAtLaunch(), "новая версия на своём запуске второй раз не ставится")
         // Панель показала строку — больше её нет.
         driver.clearNotes()

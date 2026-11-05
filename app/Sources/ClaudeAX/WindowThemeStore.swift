@@ -153,10 +153,6 @@ final class WindowThemeStore {
 
     var count: Int { entries.count }
 
-    /// Строка для `statusText`: сколько ключей в файле и сколько команд возврата ушло
-    /// в этом поколении.
-    var status: String { "\(count)/\(sent)" }
-
     // MARK: - поколение
 
     /// Новое поколение: старт приложения или смена pid Claude (решение 5). Счётчик команд
@@ -280,6 +276,8 @@ final class WindowThemeStore {
             for field in fields {
                 if case .bool(let on) = field.value { raw[field.key] = on }
                 if case .string(let text) = field.value { raw[field.key] = text }
+                if case .decimal(let number) = field.value { raw[field.key] = number }
+                if case .number(let number) = field.value { raw[field.key] = number }
             }
             guard let look = Look.from(raw) else { continue }
             if raw["neon"] as? Bool == true { out.neon = true }
@@ -351,7 +349,7 @@ final class WindowThemeStore {
     static func body(_ entries: [String: WindowThemeEntry], at: Date) -> String {
         CommandValue.object([
             (key: "version", value: .number(version)),
-            (key: "at", value: .string(stamp.string(from: at))),
+            (key: "at", value: .string(Stamp.utc.string(from: at))),
             (key: "entries", value: object(entries, withStamp: true)),
         ]).json
     }
@@ -598,7 +596,9 @@ final class WindowThemeStore {
             if CFGetTypeID(number as CFTypeRef) == CFBooleanGetTypeID() {
                 return .bool(number.boolValue)
             }
-            return .number(number.intValue)
+            // Дробь — дробью: `intValue` срезал бы 0.8 в 0.
+            let double = number.doubleValue
+            return double.isFinite && double != double.rounded() ? .decimal(double) : .number(number.intValue)
         }
         guard let raw = json as? [String: Any] else { return nil }
         let order = fieldOrder[field] ?? []
@@ -616,16 +616,9 @@ final class WindowThemeStore {
         "palette": Theme.paletteOrder,
         "font": ["id", "family", "mono"],
         "size": [Size.answerKey, Size.questionKey],
-        "look": Look.keys + [Look.schemeKey],
+        // flySpeed/flyChaos — ключи снятых светлячков (#11211): старые записи людей держат прежний порядок байт.
+        "look": Look.keys + [Look.schemeKey, Look.motionKey, "flySpeed", "flyChaos"],
     ]
 
     static func milliseconds(_ date: Date) -> Int { Int(date.timeIntervalSince1970 * 1000) }
-
-    private static let stamp: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(identifier: "UTC")
-        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        return f
-    }()
 }

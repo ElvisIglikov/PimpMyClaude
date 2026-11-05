@@ -59,7 +59,7 @@ const outcome = loaded => {
 
 test("send-text: пустое поле — текст вставлен, «отправить» нажата, поле опустело — sent", () => {
   const loaded = page();
-  assert.deepEqual(plain(loaded.api.status().send), { id: null, state: null, at: null, sends: 0, queue: 0, queued: 0 });
+  assert.deepEqual(plain(loaded.api.status().send), { id: null, state: null, at: null, sends: 0, queue: 0, queued: 0, cleared: 0 });
   send(loaded);
   assert.equal(loaded.parts.send.__presses, 0, "не в том же такте, что вставка");
   loaded.advance(300);

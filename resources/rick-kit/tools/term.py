@@ -33,7 +33,10 @@ PREFIX, CTX_LIMIT = "rick-", 300_000
 TRUST_RX = re.compile(r"trust (the files in )?this folder|project you created or one you trust", re.I)
 BYPASS_RX = re.compile(r"Bypass Permissions mode", re.I)
 AUTO_RX = re.compile(r"Enable auto mode\?", re.I)   # отдельный диалог: ни BYPASS_RX, ни ASK_RX его не ловят
-ASK_RX = re.compile(r"Do you want to |Would you like to ", re.I)
+ASK_RX = re.compile(r"^[\s│]*(Do you want|Would you like to )", re.I | re.M)
+# меню диалога Claude: пункт с номером под курсором («❯ 1. Yes») или нижняя строка без номеров (доверие к папке
+# в 2.1.318: «❯ No, exit» … «Enter to confirm · Esc to cancel»); реплика в ленте — «❯ текст», без номера и без них
+MENU_RX = re.compile(r"^[\s│]*(❯\s*\d+\.\s|Enter to confirm\b|Esc to (cancel|exit)\b)", re.M)
 RULE_RX = re.compile(r"^\s*[─━-]{20,}\s*$")
 CLAUDE_FILES = (".claude", ".mcp.json")   # чужие хуки, MCP, skills/agents/commands с allowed-tools
 TRUST = "доверие к папке"
@@ -251,6 +254,13 @@ def choice(pane, label):
     return (re.search(r"(\d)\.\s*" + label, pane) or [None, None])[1]
 
 
+def asked(pane, rx):
+    """Хвост экрана (15 строк), если внизу диалог Claude: признак rx и меню «❯ N.»; иначе None.
+    Та же фраза выше или без меню — текст ленты, не диалог (05.11.2026, #11665)."""
+    tail = "\n".join(pane.splitlines()[-15:])
+    return tail if MENU_RX.search(tail) and rx.search(tail) else None
+
+
 def dialogs(sess, cfg):
     """Диалоги первого запуска на видимом экране. Возвращает пометку; неразобранный — TermError.
 
@@ -262,9 +272,9 @@ def dialogs(sess, cfg):
     risky = [f for f in CLAUDE_FILES if folder and os.path.lexists(os.path.join(folder, f))]
     for _ in range(3):
         pane = capture(sess)
-        kind, rx, yes, mode = next((d for d in DIALOGS if d[1].search(pane)), (None,) * 4)
+        kind, rx, yes, mode = next((d for d in DIALOGS if asked(pane, d[1])), (None,) * 4)
         if not kind:
-            if ASK_RX.search(tail := "\n".join(pane.splitlines()[-15:])) and choice(tail, "Yes"):
+            if (tail := asked(pane, ASK_RX)) and choice(tail, "Yes"):
                 raise TermError("в %s ждёт вопрос «Do you want…» — посмотри term.py read и ответь сам" % sess)
             return ", ".join(notes)
         if not cfg.get("term_confirm_dialogs") and not (kind == TRUST and mine and not risky):
@@ -273,11 +283,11 @@ def dialogs(sess, cfg):
                             "term_confirm_dialogs в config.json" % (sess, kind, why, exact(sess)))
         if mode and cfg.get("permission_mode") != mode:
             raise TermError("в %s просят %s, а в config.json он не задан — не подтверждаю" % (sess, kind))
-        if not (digit := choice(pane, yes)):
+        if not (digit := choice(asked(pane, rx), yes)):
             raise TermError("в %s диалог «%s», но пункта «%s» не вижу — ответь сам" % (sess, kind, yes))
         keys(sess, digit)
         wait()
-        if rx.search(capture(sess)):
+        if asked(capture(sess), rx):
             keys(sess, "Enter")
             wait()
         notes.append("подтвердил: " + kind)
@@ -369,10 +379,10 @@ def jsonl_cwd(path):
 def question(sess):
     """Хвост экрана (до 15 строк), если чат стоит на диалоге или вопросе «Do you want…»; иначе None."""
     try:
-        tail = "\n".join(capture(sess).splitlines()[-15:])
+        pane = capture(sess)
     except TermError:   # чат погас между list-sessions и capture
         return None
-    return tail if any(rx.search(tail) for rx in (TRUST_RX, BYPASS_RX, AUTO_RX, ASK_RX)) else None
+    return next(filter(None, (asked(pane, rx) for rx in (TRUST_RX, BYPASS_RX, AUTO_RX, ASK_RX))), None)
 
 
 def cmd_list(args, cfg):

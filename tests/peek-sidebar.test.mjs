@@ -47,15 +47,17 @@ test("WF144: при открытом меню Claude ручка, дубли, м�
 
 // WF179 (#9205, снимок 09.10 02:30: ячейки полосы Рика читались сквозь панель «Контекст / лимиты»
 // Claude — `[role="dialog"][data-cds="Popover"]`): наши слои уступают не только меню и спискам, но и
-// диалогам и поповерам Claude. Полоса Рика, её карточки и полоска 2б — прячутся; ручка, дубли, рейка,
+// диалогам и поповерам Claude. Панель оркестрации и полоска 2б — прячутся; ручка, дубли, рейка,
 // микрофон, галерея, PMP — пропускают мышь. Свои диалоги (#myclaude-…) не в счёт, подсказки — тоже.
-test("WF179: открыт поповер или диалог Claude — полоса Рика, карточки и полоска 2б спрятаны, наши кнопки пропускают мышь", () => {
+// С WF239 (page-60) полосы Рика и её карточек нет вовсе — в правиле их id тоже нет.
+test("WF179: открыт поповер или диалог Claude — панель оркестрации и полоска 2б спрятаны, наши кнопки пропускают мышь", () => {
   const loaded = loadInject({ html: "composer", title: "Trelvis" });
   const css = String(loaded.dom.query("#myclaude-input-handle-style").textContent ?? "");
-  const hide = css.split("\n").find(line => line.startsWith("body:has(") && line.includes(":is(#myclaude-rick-cells"));
-  assert.ok(hide, "правила «уступить поповеру» у полосы Рика нет");
+  const hide = css.split("\n").find(line => line.startsWith("body:has(") && line.includes(":is(#myclaude-pmp-panel"));
+  assert.ok(hide, "правила «уступить поповеру» у слоёв над полем нет");
+  assert.doesNotMatch(hide, /myclaude-rick/, "в правиле остались узлы снятого блока Рика");
   assert.match(hide, /\{visibility:hidden!important\}$/);
-  for (const id of ["myclaude-rick-cells", "myclaude-rick-card", "myclaude-rick-flow", "myclaude-progress-bar", "myclaude-progress-tip", "myclaude-progress-card", "myclaude-progress-tail"]) {
+  for (const id of ["myclaude-pmp-panel", "myclaude-progress-bar", "myclaude-progress-tip", "myclaude-progress-card", "myclaude-progress-tail"]) {
     assert.ok(hide.includes(`#${id}`), `#${id} рисовался бы поверх поповера Claude`);
   }
   const pass = css.split("\n").find(line => line.startsWith('body:has([role="menu"]') && line.includes(") :is(#myclaude-input-handle"));

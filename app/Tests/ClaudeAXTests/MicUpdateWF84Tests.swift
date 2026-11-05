@@ -8,11 +8,6 @@ final class MicUpdateWF84Tests: XCTestCase {
     private static let id = "1756900000123-0042"
     private static let at = Date(timeIntervalSince1970: 1_756_900_000)
 
-    private static let fixtures = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("tests/fixtures/cashout", isDirectory: true)
-
     private func click(_ item: NSMenuItem) {
         guard let action = item.action, let target = item.target as? NSObject else {
             return XCTFail("у пункта «\(item.title)» нет действия")
@@ -95,7 +90,7 @@ final class MicUpdateWF84Tests: XCTestCase {
 
     func testParseMicSpot() throws {
         // Эталон батча P: у попапа в режиме письма кружка нет — `mic: null`.
-        let raw = try Data(contentsOf: MicUpdateWF84Tests.fixtures.appendingPathComponent("probe-answer-popout.json"))
+        let raw = try Data(contentsOf: Repo.fixture("cashout/probe-answer-popout.json"))
         var result = try XCTUnwrap(JSONSerialization.jsonObject(with: raw) as? [String: Any])
         let nonce = try XCTUnwrap(result["nonce"] as? String)
         func parse(_ result: [String: Any]) throws -> ChatPage? {

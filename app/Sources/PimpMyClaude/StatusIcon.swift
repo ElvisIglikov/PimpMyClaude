@@ -2,7 +2,7 @@ import AppKit
 import ClaudeAX
 
 /// Акцент PMP (WF126, `docs/wf126-spec.md` §5): красит плашку PMP на значке и в панели, кнопки действия и текущую
-/// фазу. Хранится id в `UserDefaults["pmpAccent"]`; нет или чужое — фиолетовый. С WF189 (слово Элвиса 09.10 04:00:
+/// фазу. Хранится id в `UserDefaults["pmpAccent"]`; нет или чужое — графит, он же белый (слово 03.11.2026: «белый всем нравится, это стильно»). С WF189 (слово Элвиса 09.10 04:00:
 /// «цветов побольше… по цветовому кругу эти цвета выставь, чтоб красиво было») — девять, по кругу от красного к
 /// розовому, графит последним; жёлтого и голубого нет: жёлтый — «ждёт» и рядом с янтарём, голубой — между бирюзой и синим.
 enum PMPAccent: String, CaseIterable {
@@ -11,7 +11,7 @@ enum PMPAccent: String, CaseIterable {
     static let key = "pmpAccent"
 
     static var current: PMPAccent {
-        UserDefaults.standard.string(forKey: key).flatMap(PMPAccent.init(rawValue:)) ?? .violet
+        UserDefaults.standard.string(forKey: key).flatMap(PMPAccent.init(rawValue:)) ?? .graphite
     }
 
     /// Имя — только подсказкой по наведению (WF189: «названия цветов не пиши»).
@@ -34,7 +34,7 @@ enum PMPAccent: String, CaseIterable {
         case .red: return 0xF0524F
         case .orange: return 0xFB7B30
         case .amber: return 0xF59E0B
-        case .green: return 0x5FC48F
+        case .green: return 0x6FB08E
         case .teal: return 0x5BC8C0
         case .blue: return 0x7AA2F7
         case .violet: return 0xA98BFA
@@ -42,10 +42,6 @@ enum PMPAccent: String, CaseIterable {
         case .graphite: return 0xECECEE
         }
     }
-
-    /// Идущие Workflow в плитках (31.1): цвет PMP; красный, оранжевый, зелёный, бирюзовый и янтарь — белым, чтобы
-    /// не спутать с тревогой (красный), «готов» (зелёный) и «ждёт» (жёлтый).
-    var runHex: UInt32 { [.red, .orange, .green, .teal, .amber].contains(self) ? 0xECECEE : hex }
 
     /// Цвет плашки на светлой строке меню (WF193): графит #ECECEE там почти не виден — тёмный графит; бирюза, синий
     /// и фиолетовый — чуть темнее, чтобы вырезанные буквы читались. Остальные — как есть. Панель всегда тёмная.
@@ -145,6 +141,7 @@ enum StatusIconArt {
     /// Ширина картинки: у сводки — по тексту справа от плашки (без плашки — от края, с местом под метку), иначе —
     /// как решил `StatusIcon.look`.
     static func width(_ look: StatusIcon.Look) -> CGFloat {
+        if look.spark, !look.outlined, !look.spinner { return claudeLayout(look).width }
         guard let summary = look.text else { return look.width }
         let text = summaryWidth(summary)
         if look.badge { return 30 + text + 2 }
@@ -154,8 +151,78 @@ enum StatusIconArt {
     /// Начало сводки без плашки «PMP» (WF174, «только цифры»).
     static let textLeft: CGFloat = 1
 
+    // MARK: вид «Claude» (WF269, #10220)
+
+    /// Оранжевый Claude — цвет искры на обеих строках меню.
+    static let claudeOrange = PMPAccent.fromHex(0xD97757)
+    static let claudeFont = roundedFont(13, .semibold, digits: true)
+    /// Искра: центр и длина лучей (8 лучей, длинные и короткие через один).
+    static let sparkCenter = NSPoint(x: 8, y: 11)
+    static let sparkLong: CGFloat = 6.2, sparkShort: CGFloat = 4.4, sparkLine: CGFloat = 1.9
+
+    struct ClaudeLayout { let label: String; let degrees: String?; let numberX: CGFloat; let degreesX: CGFloat; let width: CGFloat }
+
+    static func claudeLayout(_ look: StatusIcon.Look) -> ClaudeLayout {
+        let label = look.number.map { "\($0)%" } ?? "—"
+        let degrees = look.degrees.map { "\($0)°" }
+        func w(_ s: String) -> CGFloat { NSAttributedString(string: s, attributes: [.font: claudeFont]).size().width }
+        let numberX: CGFloat = sparkCenter.x + sparkLong + sparkLine / 2 + 3
+        // Правый край — по чернилам последнего знака (у «%» и «°» справа пустой отступ шрифта).
+        func ink(_ s: String) -> CGFloat {
+            NSAttributedString(string: s, attributes: [.font: claudeFont])
+                .boundingRect(with: NSSize(width: 200, height: 40), options: [.usesLineFragmentOrigin, .usesDeviceMetrics]).maxX
+        }
+        let degreesX = numberX + w(label) + 4
+        let right = degrees.map { degreesX + ink($0) } ?? numberX + ink(label)
+        return ClaudeLayout(label: label, degrees: degrees, numberX: numberX, degreesX: degreesX, width: ceil(right) + 1)
+    }
+
+    /// Своя восьмилучевая искра (не логотип): лучи из центра, скруглённые концы.
+    static func sparkPath(center: NSPoint) -> NSBezierPath {
+        let path = NSBezierPath()
+        for i in 0..<8 {
+            let angle = CGFloat(i) * .pi / 4 - .pi / 2
+            let length = i % 2 == 0 ? sparkLong : sparkShort
+            path.move(to: NSPoint(x: center.x + cos(angle) * 1.2, y: center.y + sin(angle) * 1.2))
+            path.line(to: NSPoint(x: center.x + cos(angle) * length, y: center.y + sin(angle) * length))
+        }
+        path.lineWidth = sparkLine
+        path.lineCapStyle = .round
+        return path
+    }
+
+    private static func drawClaude(_ look: StatusIcon.Look, dark: Bool, fg: NSColor) {
+        let layout = claudeLayout(look)
+        claudeOrange.setStroke()
+        sparkPath(center: sparkCenter).stroke()
+        let numberColor = look.number == nil || look.stale ? fg.withAlphaComponent(0.5) : fg
+        left(layout.label, font: claudeFont, color: numberColor, x: layout.numberX, baseline: 14.6)
+        if let degrees = layout.degrees {
+            let color: NSColor
+            switch look.heat {
+            case .normal: color = fg
+            case .low: color = dark ? .systemYellow : .systemOrange
+            case .critical: color = .systemRed
+            }
+            left(degrees, font: claudeFont, color: color, x: layout.degreesX, baseline: 14.6)
+        }
+    }
+
+    private static func left(_ string: String, font: NSFont, color: NSColor, x: CGFloat, baseline: CGFloat) {
+        let attributed = NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color])
+        attributed.draw(with: NSRect(x: x, y: baseline - font.ascender, width: attributed.size().width + 2,
+                                     height: font.ascender - font.descender + 2),
+                        options: [.usesLineFragmentOrigin])
+    }
+
     private static func draw(_ look: StatusIcon.Look, dark: Bool, spin: CGFloat, accent: NSColor, in cg: CGContext) {
         let fg = foreground(dark: dark)
+        if look.spark, !look.outlined, !look.spinner {
+            drawClaude(look, dark: dark, fg: fg)
+            // Метка беды — в правом верхнем углу последнего знака.
+            drawMark(look.mark, at: NSPoint(x: claudeLayout(look).width - 3, y: 4.6), accent: PMPAccent.onBar(accent, dark: dark), in: cg)
+            return
+        }
         let accent = PMPAccent.onBar(accent, dark: dark)
         let badge = NSRect(x: 1, y: 4, width: 23, height: 14)
         let pmpFont = roundedFont(8, .heavy)
@@ -204,17 +271,19 @@ enum StatusIconArt {
             let label = look.number.map { compact ? "\($0)%" : String($0) } ?? "—"
             let box: CGFloat = label.count >= 3 ? 23 : 16
             // Число — цветом строки меню, красной бывает только полоска под ним (#8142: «чересчур это ярко… Перебор»).
-            let numberColor = look.number == nil ? fg.withAlphaComponent(0.5) : fg
+            // Последнее известное, не свежее (#9824), — тем же бледным, что прочерк: число есть, но не «сейчас».
+            let numberColor = look.number == nil || look.stale ? fg.withAlphaComponent(0.5) : fg
+            let barInk = look.stale ? fg.withAlphaComponent(0.5) : fg
             text(label, font: roundedFont(13, .semibold, digits: true), color: numberColor, centerX: compact ? contentWidth / 2 : 28 + box / 2,
                  baseline: 14.6)
             if !compact {
-                bar(x: 28, y: 17.4, width: box, height: 2, fill: look.number, level: look.level, fg: fg, dark: dark)
+                bar(x: 28, y: 17.4, width: box, height: 2, fill: look.number, level: look.level, fg: barInk, dark: dark)
             } else if look.underline {
                 // «Проценты с полоской» (WF189): полоска под числом, по его ширине — как у «PMP и неделя».
                 let wide = NSAttributedString(string: label, attributes: [.font: roundedFont(13, .semibold, digits: true)])
                     .size().width
                 bar(x: (contentWidth - wide) / 2, y: 17.4, width: wide, height: 2, fill: look.number, level: look.level,
-                    fg: fg, dark: dark)
+                    fg: barInk, dark: dark)
             }
         } else if let summary = look.text {
             let line = summaryText(summary, color: fg)
@@ -227,7 +296,7 @@ enum StatusIconArt {
                 // Одна полоска («PMP с полоской», WF189) — по середине плашки, три — рядами.
                 bar(x: 28, y: look.bars.count == 1 ? 9.5 : [5.5, 9.9, 14.3][min(i, 2)], width: 18,
                     height: look.bars.count == 1 ? 3 : 2.6, fill: spent,
-                    level: i < look.barLevels.count ? look.barLevels[i] : .normal, fg: fg, dark: dark)
+                    level: i < look.barLevels.count ? look.barLevels[i] : .normal, fg: look.stale ? fg.withAlphaComponent(0.5) : fg, dark: dark)
             }
         }
 
@@ -236,10 +305,14 @@ enum StatusIconArt {
         if !compact, !look.badge, let summary = look.text {
             corner.x = textLeft + summaryWidth(summary) + 5
         }
-        switch look.mark {
-        case .patchLost:
+        drawMark(look.mark, at: corner, accent: accent, in: cg)
+    }
+
+    private static func drawMark(_ mark: StatusIcon.Mark, at corner: NSPoint, accent: NSColor, in cg: CGContext) {
+        switch mark {
+        case .patchLost, .accessLost, .guardLost:
             cut(NSBezierPath(ovalIn: NSRect(x: corner.x - 4.5, y: corner.y - 4.5, width: 9, height: 9)), in: cg)
-            NSColor.systemRed.setFill()
+            (mark == .patchLost ? NSColor.systemRed : NSColor.systemOrange).setFill()
             NSBezierPath(ovalIn: NSRect(x: corner.x - 3.3, y: corner.y - 3.3, width: 6.6, height: 6.6)).fill()
         case .updateReady:
             let tri = NSBezierPath()

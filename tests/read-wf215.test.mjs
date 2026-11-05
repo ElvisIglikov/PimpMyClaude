@@ -274,7 +274,7 @@ test("12х: дорожка — свой узел в каждой строке о
   assert.equal(first.getAttribute("tabindex"), "0");
   assert.equal(first.getAttribute("aria-label"), "Прочитано");
   assert.equal(first.getAttribute("aria-pressed"), "false");
-  assert.equal(first.getAttribute("title"), "Отметить прочитанным");
+  assert.equal(first.getAttribute("title"), "Отметить прочитанным и свернуть", "#9506: подсказка называет, что будет по нажатию");
   assert.equal(first.textContent, "", "подписи в тексте нет: копия и разбор ответа её не видят");
   for (const k of [1, 2]) {
     const more = zone("msg_A", k);
@@ -288,6 +288,9 @@ test("12х: дорожка — свой узел в каждой строке о
   const root = loaded.document.documentElement;
   assert.equal(root.style.getPropertyValue("--myclaude-read-left"), "2px");
   assert.equal(root.style.getPropertyValue("--myclaude-read-width"), "20px");
+  // #9506: подложка блока — от левого края дорожки (2) до правого края текста (24 + 752) с тем же полем
+  // 22, что слева, и не шире строки (800): 798 − 2 = 796.
+  assert.equal(root.style.getPropertyValue("--myclaude-read-span"), "796px");
   assert.equal(root.hasAttribute("data-myclaude-read-tight"), false);
   // Повторный проход ничего не дублирует.
   loaded.inner.readTick(); loaded.inner.readTick();
@@ -413,6 +416,60 @@ test("12х: наведение на дорожку подсвечивает до
   assert.equal(zone("msg_A", 0).hasAttribute(HOT), true, "переход между строками того же ответа — подсветка не мигает");
   loaded.dom.document.dispatchEvent({ type: "pointerout", target: zone("msg_A", 2), relatedTarget: loaded.parts.feed });
   for (const k of [0, 1, 2]) assert.equal(zone("msg_A", k).hasAttribute(HOT), false);
+});
+
+// #9506 (слово Элвиса 10.10 ~11:00: «когда я на край навожу… должно выделяться») и #9649 («фоном со
+// скруглёнными краешками… только с задержкой»): подложка — слой каждой дорожки ответа; края блока —
+// у первой и последней дорожки на виду, там она скруглена.
+test("#9506: края подложки блока — у первой и последней строки ответа; у ответа в одну строку — оба; свёрнутые строки краёв не держат", () => {
+  const { zone, click } = page({ entries: CHAT5() });
+  const EDGE = "data-myclaude-read-edge";
+  assert.deepEqual([0, 1, 2].map(k => zone("msg_A", k).getAttribute(EDGE)), ["top", null, "bottom"]);
+  assert.equal(zone("msg_D").getAttribute(EDGE), "top bottom");
+  click(zone("msg_B"));
+  assert.equal(zone("msg_B").getAttribute(EDGE), "top bottom", "свёрнутый блок — одна строка, скруглён целиком");
+  for (const k of [1, 2]) assert.equal(zone("msg_B", k).getAttribute(EDGE), null);
+});
+
+test("#9506: фокус с клавиатуры зажигает весь блок, как курсор; фокус мышью — нет; уход фокуса гасит", () => {
+  const { loaded, zone } = page({ entries: CHAT5() });
+  const first = zone("msg_C");
+  const own = first.matches.bind(first);
+  first.matches = selector => selector === ":focus-visible" || own(selector);
+  loaded.dom.document.dispatchEvent({ type: "focusin", target: first });
+  for (const k of [0, 1, 2]) assert.equal(zone("msg_C", k).hasAttribute(HOT), true);
+  // Курсор ушёл с другого ответа — подсветка по фокусу остаётся.
+  loaded.dom.document.dispatchEvent({ type: "pointerover", target: zone("msg_A") });
+  loaded.dom.document.dispatchEvent({ type: "pointerout", target: zone("msg_A"), relatedTarget: loaded.parts.feed });
+  assert.equal(zone("msg_C").hasAttribute(HOT), true);
+  assert.equal(zone("msg_A").hasAttribute(HOT), false);
+  loaded.dom.document.dispatchEvent({ type: "focusout", target: first, relatedTarget: loaded.parts.feed });
+  for (const k of [0, 1, 2]) assert.equal(zone("msg_C", k).hasAttribute(HOT), false);
+  // Фокус после нажатия мышью (не :focus-visible) — блок ведёт курсор, не фокус.
+  const mouse = zone("msg_D");
+  const plainMatch = mouse.matches.bind(mouse);
+  mouse.matches = selector => selector !== ":focus-visible" && plainMatch(selector);
+  loaded.dom.document.dispatchEvent({ type: "focusin", target: mouse });
+  assert.equal(mouse.hasAttribute(HOT), false);
+});
+
+test("#9506: вид — у дорожки нет ни полосы, ни подложки-полосы; под курсором подложка всего блока со скруглёнными краями, с задержкой", () => {
+  const rules = [...inner.RULES];
+  const veil = rules.find(rule => rule.startsWith(`[${ZONE}]::before{`));
+  assert.match(veil, /left:0;width:var\(--myclaude-read-span,100%\);background:color-mix\(in srgb,currentColor 8%,transparent\);opacity:0;pointer-events:none/);
+  assert.ok(!/border|right:2px;width:1\.5px/.test(veil), "волосок-полоса вернулась");
+  // Курсор — подложка видна после задержки 0,3 с; уход — гаснет сразу (переход покоя без задержки).
+  assert.ok(rules.includes(`[${ZONE}][${HOT}]::before{opacity:1;transition:opacity .2s ease .3s}`));
+  assert.match(veil, /transition:opacity \.15s\}$/);
+  assert.ok(rules.includes(`[${ZONE}][data-myclaude-read-edge~="top"]::before{border-top-left-radius:8px;border-top-right-radius:8px}`));
+  assert.ok(rules.includes(`[${ZONE}][data-myclaude-read-edge~="bottom"]::before{border-bottom-left-radius:8px;border-bottom-right-radius:8px}`));
+  // Своей подложки, линии и кольца вдоль дорожки нет ни в каком состоянии.
+  assert.ok(!rules.some(rule => /^\[data-myclaude-read-zone\][^{]*\{[^}]*background:rgba/.test(rule)), "подложка-полоса у самой дорожки");
+  assert.ok(!rules.some(rule => rule.includes("display:none !important") && rule.startsWith(`[${ZONE}]::before`)), "подложку блока гасит старое правило");
+  assert.ok(rules.includes(`[${ZONE}]:focus-visible::after{opacity:.75;outline:2px solid rgba(245,158,11,.7);outline-offset:-1px}`));
+  // Переход по «непрочитанные N» — блок коротко горит той же подложкой.
+  assert.ok(rules.includes(`[${ZONE}][${HIT}]::before{animation:myclaude-read-hit 1.4s ease-out}`));
+  assert.ok(!rules.some(rule => rule.includes(`[${ZONE}][${HIT}]`) && rule.includes("animation:none !important")), "вспышку гасит старое правило");
 });
 
 test("12х: ответ, который ещё пишется, пометить нельзя — ни последний при идущей работе, ни строку с меткой потока", () => {
@@ -722,6 +779,7 @@ test("12х: dispose убирает всё своё — дорожки, кноп�
   assert.equal(loaded.dom.query(`#${NEXT}`), null);
   assert.equal(root.style.getPropertyValue("--myclaude-read-left"), "");
   assert.equal(root.style.getPropertyValue("--myclaude-read-width"), "");
+  assert.equal(root.style.getPropertyValue("--myclaude-read-span"), "");
   assert.equal(root.hasAttribute("data-myclaude-read-tight"), false);
   assert.deepEqual(stored()[CHAT].ids, ["msg_B"], "пометки — данные человека, уборка их не трогает");
   // Нажатие после уборки ничего не делает.

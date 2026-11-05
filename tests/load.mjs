@@ -19,7 +19,7 @@
 // `node --test tests/` на node 26 НЕ работает (каталог он пытается загрузить
 // как модуль) — путь к каталогу заменяется списком файлов: `node --test
 // tests/*.test.mjs`.
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import vm from "node:vm";
@@ -28,6 +28,16 @@ import { createDom } from "./dom.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const INJECT_PATH = process.env.MYCLAUDE_INJECT ?? path.join(ROOT, "claude-patch", "inject.js");
 export const injectSource = () => readFileSync(INJECT_PATH, "utf8");
+
+// Сторож склейки (WF248 П3): страницу правят в claude-patch/page/NNN-*.js, inject.js — их склейка
+// (tools/page.sh build). Одиночный `node --test tests/x.test.mjs` без сборки гонял бы устаревший inject.js
+// и давал ложный зелёный. Своя копия (MYCLAUDE_INJECT) не сверяется. Порядок — по имени, как cat в page.sh.
+const PAGE_DIR = path.join(ROOT, "claude-patch", "page");
+if (!process.env.MYCLAUDE_INJECT && existsSync(PAGE_DIR)) {
+  const glued = readdirSync(PAGE_DIR).filter(name => /^\d{3}-[a-z0-9-]+\.js$/.test(name)).sort()
+    .map(name => readFileSync(path.join(PAGE_DIR, name), "utf8")).join("");
+  if (glued !== injectSource()) throw new Error("claude-patch/inject.js ≠ склейка claude-patch/page/*.js — запусти tools/page.sh build (правили inject.js — tools/page.sh split)");
+}
 
 export const loadInject = ({
   html = null,

@@ -5,7 +5,8 @@ import Patcher
 /// Что и чем проверяется перед установкой и сама подмена — `Patcher/SelfUpdater`.
 /// Проверка: на запуске Пимпа и Claude (не чаще раза в 15 мин) и фоном не чаще раза в 6 часов.
 /// Установка: Пимп — на своём запуске (до интерфейса) и после запуска Claude, как только момент тихий (канал
-/// «Пимп» свободен, окна вернулись), но не позже 5 минут; Viewer — в любой тихий момент, пока он не запущен.
+/// «Пимп» свободен, окна вернулись, работа нигде не идёт — WF234), но не позже 5 минут; Viewer — в любой тихий
+/// момент, пока он не запущен.
 /// Выключатель выключен — ни сети, ни установки; выключили посреди круга — он кончается перед следующим шагом.
 /// Живёт на главной очереди; сеть, распаковка и подмена — на своей.
 final class SelfUpdateDriver {
@@ -22,9 +23,18 @@ final class SelfUpdateDriver {
     var launchPatience: TimeInterval = 10
 
     /// Что показывает группа «Обновления» и строка панели.
+    struct Row: Equatable {
+        let title: String
+        let version: String
+        let text: String
+        let good: Bool
+    }
+
     struct Look: Equatable {
         var on = true
         var line = ""
+        /// Строки «Обновлений»: продукт, версия, что с ним, всё ли хорошо.
+        var rows: [Row] = []
         var note: String?
     }
 
@@ -50,9 +60,7 @@ final class SelfUpdateDriver {
     /// Состояние поменялось — панели пора перечитать `look()`.
     var onChange: () -> Void = {}
     /// Пимп подменил себя: помощник ждёт выхода и откроет новую версию.
-    var relaunch: (URL) -> Void = { app in
-        if !SelfUpdater.relaunch(app) { _ = try? Process.run(URL(fileURLWithPath: "/usr/bin/open"), arguments: ["-n", app.path]) }
-    }
+    var relaunch: (URL) -> Void = { SelfUpdater.relaunchOrOpen($0) }
     var quit: () -> Void = { NSApp.terminate(nil) }
     /// Других запущенных копий Пимпа нет: при второй копии подменять бандл нельзя — первая осталась бы жить
     /// из папки отката, а помощник открыл бы её же.
@@ -207,7 +215,14 @@ final class SelfUpdateDriver {
                                              state: state.products[viewer.key]) {
             line += " · " + tail
         }
-        return Look(on: on, line: line, note: SelfUpdater.noteLine(state.notes))
+        let row = { (product: SelfUpdateProduct, app: URL) -> Row in
+            let installed = SelfUpdater.installedVersion(app, bundleID: product.bundleID) ?? "—"
+            let status = SelfUpdater.status(installed: installed, state: state.products[product.key], enabled: on,
+                                            place: self.updater.placeProblem(app, product: product))
+            return Row(title: product.title, version: installed, text: status.text, good: status.good)
+        }
+        let rows = [row(pimp, pimpApp)] + (viewerApp().map { [row(viewer, $0)] } ?? [])
+        return Look(on: on, line: line, rows: rows, note: SelfUpdater.noteLine(state.notes))
     }
 
     /// Строку «обновился» панель показала — больше не показываем.

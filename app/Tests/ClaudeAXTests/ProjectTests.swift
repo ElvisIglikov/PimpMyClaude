@@ -9,18 +9,6 @@ private final class Clock {
     func advance(_ seconds: TimeInterval = 10) { now = now.addingTimeInterval(seconds) }
 }
 
-/// UserDefaults в памяти: тумблер «Красить чаты по проекту» и показанные подсказки не должны
-/// попадать в живые настройки приложения.
-private final class ProjectDefaults: ThemeDefaults {
-    private var values: [String: Any] = [:]
-
-    func string(forKey key: String) -> String? { values[key] as? String }
-    func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
-    func object(forKey key: String) -> Any? { values[key] }
-    func set(_ value: Any?, forKey key: String) { values[key] = value }
-    func removeObject(forKey key: String) { values.removeValue(forKey: key) }
-}
-
 /// Стенд покраски: индекс и файлы во временной папке, команды складываются в `sent`,
 /// а всё, что живьём приходит из AX и меню, ставится полями стенда.
 private final class PaintRig {
@@ -29,7 +17,7 @@ private final class PaintRig {
     let sessions: URL
     let status: URL
     let clock = Clock()
-    let defaults = ProjectDefaults()
+    let defaults = MemoryThemeDefaults()
     let store: ProjectSettingsStore
     let index: ProjectIndex
     let paint: ProjectPaint
@@ -71,17 +59,14 @@ private final class PaintRig {
             return true
         }
         paint.windowTitles = { [unowned self] in self.titles }
-        paint.isWindowBusy = { [unowned self] title in self.busy.contains(title) }
+        // Стенд по заголовку (резолвера окна нет): цели без ключа памяти, «по кругу» — по заголовку.
+        paint.isTargetBusy = { [unowned self] target in self.busy.contains(target.title) }
         paint.isAllWindowsSet = { [unowned self] in self.allWindows }
         paint.isMenuOpen = { [unowned self] in self.menuOpen }
         paint.lastMenuCommand = { [unowned self] in self.lastMenuCommand }
         paint.showNotice = { [unowned self] text in self.notices.append(text) }
         // Ровно та же проводка, что живьём вешает ClaudeAXController на ChatProbe.
         paint.chatPages = { [unowned self] in self.pages }
-        paint.chatForTitle = { [unowned self] title, frame in
-            ChatProbe.chat(forTitle: title, frame: frame, in: self.pages,
-                           nativeWindows: self.pages.map { WindowIdentity.Native(title: $0.title, frame: $0.frame) })
-        }
     }
 
     func folder(_ name: String) -> URL { root.appendingPathComponent(name, isDirectory: true) }
@@ -90,9 +75,22 @@ private final class PaintRig {
     /// `frame` (план WF77) — рамка окна страницы; ею различаются окна-однофамильцы.
     func page(_ kind: ChatPage.Kind, _ chat: String?, _ title: String,
               store: String = ChatProbe.storeOK, path: String = "",
-              folder: String? = nil, frame: CGRect? = nil) -> ChatPage {
+              folder: String? = nil, frame: CGRect? = nil, id: CGWindowID? = nil) -> ChatPage {
         ChatPage(kind: kind, chat: chat, title: title, path: path, store: store, folder: folder,
-                 frame: frame, at: clock.now)
+                 frame: frame, windowId: id, at: clock.now)
+    }
+
+    /// Резолвер окна — как живьём (`WindowIdentity.resolveNative`): окна AX с номерами от лоадера,
+    /// страницы карты — `pages` стенда со своим `windowId`. Без него покраска идёт по заголовку.
+    func identify(_ native: [WindowIdentity.Native]) {
+        paint.windowIdentity = { [unowned self] title, frame in
+            WindowIdentity.resolveNative(title: title, frame: frame, pages: self.pages, nativeWindows: native,
+                                         at: self.clock.now)
+        }
+        paint.pageIdentity = { [unowned self] page in
+            WindowIdentity.resolveNative(id: page.windowId, title: page.title, frame: nil, pages: self.pages,
+                                         nativeWindows: native, at: self.clock.now)
+        }
     }
 
     /// Главное окно на домашнем экране (план WF37 C2): сессии у него нет вовсе, и папку
@@ -281,7 +279,7 @@ final class ProjectTests: XCTestCase {
 
         let index = ProjectIndex(sessionsDirectory: sessions, statusURL: status, projectsRoot: root,
                                  home: box, now: { clock.now })
-        XCTAssertEqual(index.recentProjects(limit: MenuModel.newWindowProjectsLimit).map { $0.name },
+        XCTAssertEqual(index.recentProjects(limit: 8).map { $0.name },
                        ["Проект3", "Проект1", "Проект2", "Проект4", "Проект5", "Проект6",
                         "Проект7", "Проект8"])
         XCTAssertEqual(index.recentProjects(limit: 3).map { $0.name },
@@ -702,13 +700,6 @@ final class ProjectTests: XCTestCase {
         return rig
     }
 
-    private func click(_ item: NSMenuItem) {
-        guard let action = item.action, let target = item.target else {
-            return XCTFail("пункт «\(item.title)» ничего не делает")
-        }
-        _ = target.perform(action, with: item)
-    }
-
     /// Живой `ClaudeActions` поверх стенда: команды пишутся во временный файл, а крючок
     /// «окну задали вид» ведёт в покраску по проекту — ровно так его вешает `ClaudeAXController`.
     /// Окно под кнопкой стенд считает безымянным, а пустой заголовок покраска понимает как
@@ -720,10 +711,10 @@ final class ProjectTests: XCTestCase {
         let actions = ClaudeActions(app: IsolatedClaudeApp.make(), commands: channel,
                                     themes: [ProjectTests.indigo, ProjectTests.arctic],
                                     fonts: [ProjectTests.menlo],
-                                    themeStore: ThemeStore(defaults: ProjectDefaults()),
-                                    myThemes: MyThemesStore(url: rig.box.appendingPathComponent("my.json")),
-                                    autoPaintStore: AutoPaintStore(defaults: ProjectDefaults()),
-                                    liveColorsStore: LiveColorsStore(defaults: ProjectDefaults()))
+                                    themeStore: ThemeStore(defaults: MemoryThemeDefaults()),
+                                    myThemes: MyThemesStore(url: rig.box.appendingPathComponent("my.json")))
+        // Окно стенда безымянное — для действий это главное окно (в бою решает резолвер окна).
+        actions.windowIdentity = ClaudeAXTests.resolver(main: [""])
         actions.onWindowViewChanged = { [unowned rig] _, windowFrame, theme, font, size, frame, look in
             // Заголовок берёт стенд, а не окно: живой AX подсовывает сюда окно Элвиса, и
             // проверки зависели бы от того, как сейчас назван его чат (#6667). Стенд всегда
@@ -732,6 +723,51 @@ final class ProjectTests: XCTestCase {
                                        font: font, size: size, frame: frame, look: look)
         }
         return actions
+    }
+
+    /// Живой путь занятости (ревизия WF247, урок 13): в бою цели берутся из ответов страниц через
+    /// резолвер окна и несут ключ памяти (`c:<чат>` / `n:<окно>`); «по кругу» сверяется ПО НЕМУ —
+    /// проводка та же, что у контроллера (`actions.autoPaintedThemes[target.memoryKey]`, ключа нет —
+    /// окно занято). Двойник по заголовку (`isWindowBusy`) снят в WF248.
+    func testProjectPaintSkipsAutoPaintedTargetByMemoryKey() throws {
+        let rig = makeRig()
+        rig.store.write(ProjectSettings(name: "Dictatorik", theme: .set(ProjectTests.arctic)),
+                        to: rig.folder("Dictatorik"))
+        let frame = CGRect(x: 500, y: 40, width: 400, height: 800)
+        func answer() -> ChatPage {
+            ChatPage(kind: .popout, chat: "local_b2", title: "Dictatoric", store: ChatProbe.storeOK,
+                     frame: frame, windowId: 202, at: rig.clock.now)
+        }
+        rig.pages = [answer()]
+        let native = [WindowIdentity.Native(title: "Dictatoric", frame: frame, id: 202)]
+        rig.paint.windowIdentity = { [unowned rig] title, frame in
+            WindowIdentity.resolveNative(title: title, frame: frame, pages: rig.pages, nativeWindows: native,
+                                         at: rig.clock.now)
+        }
+        rig.paint.pageIdentity = { [unowned rig] page in
+            WindowIdentity.resolveNative(id: page.windowId, title: page.title, frame: nil, pages: rig.pages,
+                                         nativeWindows: native, at: rig.clock.now)
+        }
+        var autoPainted: Set<String> = ["c:local_b2"]
+        var asked: [String?] = []
+        rig.paint.isTargetBusy = { target in
+            asked.append(target.memoryKey)
+            guard let key = target.memoryKey else { return true }
+            return autoPainted.contains(key)
+        }
+
+        rig.paint.tick()
+        XCTAssertEqual(asked, ["c:local_b2"], "занятость спрошена по ключу памяти цели")
+        XCTAssertTrue(rig.sent.isEmpty, "окно красила «по кругу» — проект его не трогает")
+
+        // Память об окне очистили — ближайший тик красит его цветом проекта.
+        autoPainted = []
+        rig.clock.advance()
+        rig.pages = [answer()]
+        rig.paint.tick()
+        let command = try XCTUnwrap(rig.sent.last)
+        XCTAssertEqual(command.chat, "local_b2")
+        XCTAssertEqual(command.theme.value?.id, ProjectTests.arctic.id)
     }
 
     func testProjectPaintFingerprintSkipsRepeat() throws {
@@ -900,15 +936,6 @@ final class ProjectTests: XCTestCase {
         rig.busy = ["Dictatoric"]
         rig.paint.tick()
         XCTAssertTrue(rig.sent.isEmpty, "окно красила «по кругу» — не трогаем")
-
-        // Ручной выбор окно больше НЕ занимает: галки в памяти приложения проекту не помеха.
-        let actions = makeActions(rig)
-        actions.themeStore.setWindowTheme("indigo", title: "Dictatoric")
-        actions.themeStore.setWindowFont("menlo", title: "Dictatoric")
-        actions.themeStore.setWindowSize(Size(answer: 16), title: "Dictatoric")
-        XCTAssertFalse(actions.isWindowAutoPainted(title: "Dictatoric"),
-                       "ручной выбор снова «занял» окно — цвет нового проекта на него не встанет")
-        XCTAssertFalse(actions.isWindowAutoPainted(title: ""))
 
         // Память об окне очистили («Всё как у Claude») — проект красит его ближайшим тиком.
         rig.busy = []
@@ -1170,7 +1197,7 @@ final class ProjectTests: XCTestCase {
         XCTAssertTrue(rig.notices.isEmpty)
     }
 
-    func testPreviewAndAutoPaintDoNotWriteProject() throws {
+    func testPreviewAndAllWindowsDoNotWriteProject() throws {
         let rig = makeRig()
         let pimp = rig.folder("PimpMyClaude")
         let actions = makeActions(rig)
@@ -1180,13 +1207,7 @@ final class ProjectTests: XCTestCase {
         // есть, на голой машине нет (#6667). Проверяем то, ради чего тест и написан, — что
         // в проект не попало ничего.
         actions.previewTheme(ProjectTests.indigo, window: nil)
-        actions.previewFont(ProjectTests.menlo, window: nil)
         actions.endPreview(window: nil)
-        XCTAssertNil(rig.store.settings(in: pimp))
-
-        // «🌈 Раскрасить по кругу» пишет команды мимо `remember`: сколько бы окон она ни
-        // покрасила, файла проекта после неё нет.
-        actions.autoPaint(preset: AutoPaint.presets[0])
         XCTAssertNil(rig.store.settings(in: pimp))
 
         // «Всем окнам» — тоже мимо: вид проекта задаёт только окно (`scope:"window"`).
@@ -1361,61 +1382,6 @@ final class ProjectTests: XCTestCase {
         XCTAssertTrue(rig.sent.isEmpty)
     }
 
-    /// «🖥 Всем окнам ▸» — последний пункт «⋯ Ещё ▸» (с WF71).
-    private func allWindows(in menu: NSMenu) throws -> NSMenu {
-        let more = try XCTUnwrap(menu.items.last?.submenu, "«Ещё ▸» не последний")
-        let item = try XCTUnwrap(more.items.last)
-        XCTAssertEqual(item.title, MenuModel.allWindowsTitle, "«Всем окнам ▸» не последний в «Ещё ▸»")
-        return try XCTUnwrap(item.submenu)
-    }
-
-    /// Переписан из `testMenuHasProjectItem`: подменю «🗂 Проект ▸» больше нет, остался один
-    /// тумблер «🗂 Цвет по проекту» в «🖥 Всем окнам ▸» (решение 3.4 плана WF20), а само
-    /// «Всем окнам ▸» с WF71 стоит последним в «⋯ Ещё ▸».
-    func testMenuHasProjectColorToggle() throws {
-        var toggled: [Bool] = []
-        var config = MinimizeMenu.MenuConfig()
-        config.themes = [ProjectTests.indigo]
-        config.projectColor = true
-        config.setProjectColor = { toggled.append($0) }
-
-        let menu = MinimizeMenu.build(config: config)
-        // Ни подменю проекта, ни «Записать этот вид», ни лишнего разделителя сверху; тумблера
-        // на верхнем уровне тоже нет.
-        XCTAssertNil(menu.items.first { $0.title.hasPrefix("Проект") })
-        XCTAssertNil(menu.items.first { $0.title.contains("в проект") })
-        XCTAssertNil(menu.items.first { $0.title.contains("AGENTS.md") })
-        XCTAssertNil(menu.items.first { $0.title == MenuModel.projectColorTitle })
-        XCTAssertFalse(try XCTUnwrap(menu.items.first).isSeparatorItem)
-
-        // Тумблер стоит после разделителя и ПЕРЕД «🌈 Раскрасить по кругу ▸».
-        let all = try allWindows(in: menu)
-        XCTAssertEqual(Array(all.items.map { $0.isSeparatorItem ? "—" : $0.title }.suffix(4)),
-                       ["—", MenuModel.projectColorTitle, MenuModel.autoPaintTitle,
-                        MenuModel.liveColorsTitle])
-        let toggle = try XCTUnwrap(all.items.first { $0.title == MenuModel.projectColorTitle })
-        XCTAssertEqual(toggle.state, .on, "по умолчанию цвет по проекту включён")
-        XCTAssertNotNil(toggle.image)
-        XCTAssertNil(toggle.submenu)
-        click(toggle)
-        XCTAssertEqual(toggled, [false], "клик переключает тумблер")
-
-        // Выключенный — без галки, клик включает обратно.
-        config.projectColor = false
-        let off = try allWindows(in: MinimizeMenu.build(config: config))
-        let offToggle = try XCTUnwrap(off.items.first { $0.title == MenuModel.projectColorTitle })
-        XCTAssertEqual(offToggle.state, .off)
-        click(offToggle)
-        XCTAssertEqual(toggled, [false, true])
-
-        // Меню собрано без сведений о проекте — тумблера нет вовсе.
-        config.projectColor = nil
-        let bare = try allWindows(in: MinimizeMenu.build(config: config))
-        XCTAssertNil(bare.items.first { $0.title == MenuModel.projectColorTitle })
-        XCTAssertEqual(Array(bare.items.map { $0.isSeparatorItem ? "—" : $0.title }.suffix(3)),
-                       ["—", MenuModel.autoPaintTitle, MenuModel.liveColorsTitle])
-    }
-
     // MARK: - «🗂 <Проект>» в меню (план WF71 п. 3)
 
     /// Тема проекта окна под кнопкой: без файла — авто-цвет и имя папки, с файлом — тема
@@ -1498,40 +1464,6 @@ final class ProjectTests: XCTestCase {
         // Папку не знаем — молчим.
         rig.paint.repaintProject(forTitle: "Разговор ни о чём")
         XCTAssertEqual(rig.sent.count, 2)
-    }
-
-    /// «Применить ▸» у своей темы (план WF71 п. 2): «Только этому окну» в проект не пишет,
-    /// «Окнам проекта …» пишет, как любой ручной выбор, «Всем окнам» — запись «всем окнам».
-    func testMyThemeTargetsWriteProjectOnlyForProjectWindows() throws {
-        let rig = makeRig()
-        let pimp = rig.folder("PimpMyClaude")
-        let actions = makeActions(rig)
-        let my = MyTheme(id: "user-1", name: "Матрица", type: "dark",
-                         palette: ProjectTests.indigo.palette, font: nil)
-
-        // Только этому окну: команда ушла, память «последнее применённое» знает её, файла
-        // проекта нет (записи по заголовку тут не бывает — у окна теста заголовок пустой).
-        XCTAssertTrue(actions.apply(myTheme: my, scope: MenuModel.themeScopeWindow, window: nil,
-                                    toProject: false))
-        XCTAssertNil(rig.store.settings(in: pimp), "«Только этому окну» ушло в проект")
-        XCTAssertTrue(rig.notices.isEmpty)
-        XCTAssertEqual(actions.lastAppliedTheme?.id, "user-1")
-        XCTAssertNil(actions.themeStore.allThemeID)
-        XCTAssertTrue(try String(contentsOf: rig.box.appendingPathComponent("command.json"),
-                                 encoding: .utf8).contains("\"theme\":{\"id\":\"user-1\""))
-
-        // Окнам проекта: тот же выбор, но он стал видом проекта.
-        rig.clock.advance(CommandChannel.minInterval + 1)
-        XCTAssertTrue(actions.apply(myTheme: my, scope: MenuModel.themeScopeWindow, window: nil))
-        XCTAssertEqual(rig.store.settings(in: pimp)?.theme.value?.id, "user-1")
-        XCTAssertEqual(rig.notices, [MenuModel.projectWritten("PimpMyClaude")])
-
-        // Всем окнам: запись «всем окнам», проект не трогается.
-        try FileManager.default.removeItem(at: rig.store.url(in: pimp))
-        rig.clock.advance(CommandChannel.minInterval + 1)
-        XCTAssertTrue(actions.apply(myTheme: my, scope: MenuModel.themeScopeAll, window: nil))
-        XCTAssertEqual(actions.themeStore.allThemeID, "user-1")
-        XCTAssertNil(rig.store.settings(in: pimp))
     }
 
     // MARK: - чат окна вместо заголовка (план WF29, задачи #5448 и #5455)
@@ -1732,20 +1664,28 @@ final class ProjectTests: XCTestCase {
     /// главного окна; заголовок-ничья не пишет никуда.
     func testManualChoiceWritesToChatFolder() throws {
         let rig = makeRig()
-        rig.pages = [rig.page(.main, "local_a1", "PimpMyClaude"),
-                     rig.page(.popout, "local_b2", "Bro Flow продолжение")]
+        let mainFrame = CGRect(x: 0, y: 34, width: 490, height: 859)
+        let popFrame = CGRect(x: 500, y: 34, width: 490, height: 859)
+        let twinA = CGRect(x: 1000, y: 34, width: 490, height: 859)
+        let twinB = CGRect(x: 1500, y: 34, width: 490, height: 859)
+        rig.identify([WindowIdentity.Native(title: "PimpMyClaude", frame: mainFrame, id: 1),
+                      WindowIdentity.Native(title: "Bro Flow продолжение", frame: popFrame, id: 2),
+                      WindowIdentity.Native(title: "Двойник", frame: twinA, id: 3),
+                      WindowIdentity.Native(title: "Двойник", frame: twinB, id: 4)])
+        rig.pages = [rig.page(.main, "local_a1", "PimpMyClaude", id: 1),
+                     rig.page(.popout, "local_b2", "Bro Flow продолжение", id: 2)]
 
-        rig.paint.noteManualChoice(title: "Bro Flow продолжение", theme: .set(ProjectTests.arctic),
-                                   font: .keep, size: .keep, frame: .keep)
+        rig.paint.noteManualChoice(title: "Bro Flow продолжение", windowFrame: popFrame,
+                                   theme: .set(ProjectTests.arctic), font: .keep, size: .keep, frame: .keep)
         XCTAssertEqual(rig.store.settings(in: rig.folder("Dictatorik"))?.theme.value?.id, "arctic")
         XCTAssertNil(rig.store.settings(in: rig.folder("PimpMyClaude")),
                      "выбор в попапе уехал в проект главного окна")
         XCTAssertEqual(rig.notices, [MenuModel.projectWritten("Dictatorik")])
 
-        // Два окна с одним заголовком назвали РАЗНЫЕ чаты — не пишем никуда.
+        // Два окна с одним заголовком назвали РАЗНЫЕ чаты, рамки окна нет — не пишем никуда.
         rig.notices = []
-        rig.pages = [rig.page(.popout, "local_b2", "Двойник"),
-                     rig.page(.popout, "local_a1", "Двойник")]
+        rig.pages = [rig.page(.popout, "local_b2", "Двойник", id: 3),
+                     rig.page(.popout, "local_a1", "Двойник", id: 4)]
         rig.paint.noteManualChoice(title: "Двойник", theme: .set(ProjectTests.indigo), font: .keep,
                                    size: .keep, frame: .keep)
         XCTAssertEqual(rig.store.settings(in: rig.folder("Dictatorik"))?.theme.value?.id, "arctic")
@@ -1766,10 +1706,13 @@ final class ProjectTests: XCTestCase {
                    cwd: rig.folder("PimpMyClaude"), at: 2800)
         putSession(rig.sessions, id: "local_d2", title: "Ожидание задачи",
                    cwd: rig.folder("Dictatorik"), at: 2700)
-        rig.pages = [rig.page(.popout, "local_p1", "Ожидание задачи", frame: left),
-                     rig.page(.popout, "local_d2", "Ожидание задачи", frame: middle)]
+        // Окна различает номер от лоадера (резолвер окна); рамки страниц нарочно перепутаны.
+        rig.identify([WindowIdentity.Native(title: "Ожидание задачи", frame: left, id: 11),
+                      WindowIdentity.Native(title: "Ожидание задачи", frame: middle, id: 12)])
+        rig.pages = [rig.page(.popout, "local_p1", "Ожидание задачи", frame: middle, id: 11),
+                     rig.page(.popout, "local_d2", "Ожидание задачи", frame: left, id: 12)]
 
-        // Ключ окна — своего чата у каждого; рамки нет вовсе — ключ по заголовку, как до WF77.
+        // Ключ окна — своего чата у каждого; рамки нет вовсе — ключ по заголовку.
         XCTAssertEqual(rig.paint.windowKey(forTitle: "Ожидание задачи", frame: left), "c:local_p1")
         XCTAssertEqual(rig.paint.windowKey(forTitle: "Ожидание задачи", frame: middle), "c:local_d2")
         XCTAssertEqual(rig.paint.windowKey(forTitle: "Ожидание задачи"), "w:Ожидание задачи")
@@ -1879,8 +1822,8 @@ final class ProjectTests: XCTestCase {
 
         // Ключи остальных окон: опознанное — по чату, неопознанное — по заголовку,
         // безымянное и заглушка — само главное окно.
+        // (Ключ опознанного попапа по чату — через резолвер окна, testTwinTitlesFollowWindowFrame.)
         rig.pages = [rig.page(.popout, "local_b2", "Bro Flow продолжение")]
-        XCTAssertEqual(rig.paint.windowKey(forTitle: "Bro Flow продолжение"), "c:local_b2")
         XCTAssertEqual(rig.paint.windowKey(forTitle: "Разговор ни о чём"), "w:Разговор ни о чём")
         XCTAssertEqual(rig.paint.windowKey(forTitle: " "), ProjectPaint.mainKey)
         XCTAssertEqual(rig.paint.windowKey(forTitle: ProjectPaint.mainWindowTitle),
@@ -1938,9 +1881,9 @@ final class ProjectTests: XCTestCase {
         rig.pages = [rig.page(.popout, nil, stub)]
         XCTAssertEqual(rig.paint.windowKey(forTitle: stub), ProjectPaint.windowPrefix + stub)
 
-        // Окна с настоящими именами правило не трогает вовсе.
+        // Окна с настоящими именами правило не трогает вовсе (ключ попапа по чату — через резолвер
+        // окна, testTwinTitlesFollowWindowFrame).
         rig.pages = [rig.page(.main, "local_a1", stub), rig.page(.popout, "local_b2", "Dictatoric")]
-        XCTAssertEqual(rig.paint.windowKey(forTitle: "Dictatoric"), "c:local_b2")
         XCTAssertEqual(rig.paint.windowKey(forTitle: "PimpMyClaude"), ProjectPaint.mainKey)
         XCTAssertEqual(rig.paint.windowKey(forTitle: " "), ProjectPaint.mainKey)
     }

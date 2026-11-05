@@ -31,7 +31,6 @@ final class PanelWF174AppTests: XCTestCase {
     }
 
     func testSnapshotIcons() throws {
-        guard let dir = ProcessInfo.processInfo.environment["PMP_SNAPSHOT_DIR"] else { return }
         let images = StatusIcon.Variant.allCases.map { IconSample.image($0, accent: PMPAccent.violet.nsColor) }
         let width = images.map { $0.size.width }.max() ?? 60
         let canvas = NSImage(size: NSSize(width: width * 4 + 20, height: 30 * CGFloat(images.count)), flipped: true) { _ in
@@ -45,11 +44,12 @@ final class PanelWF174AppTests: XCTestCase {
         let tiff = try XCTUnwrap(canvas.tiffRepresentation)
         let rep = try XCTUnwrap(NSBitmapImageRep(data: tiff))
         let png = try XCTUnwrap(rep.representation(using: NSBitmapImageRep.FileType.png, properties: [:]))
+        guard let dir = ProcessInfo.processInfo.environment["PMP_SNAPSHOT_DIR"] else { return }
         try png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("icons.png"))
     }
 
     func testSnapshotPanel() throws {
-        guard let dir = ProcessInfo.processInfo.environment["PMP_SNAPSHOT_DIR"] else { return }
+        let dir = ProcessInfo.processInfo.environment["PMP_SNAPSHOT_DIR"]
         let chips = try chips()
         for (name, live, choice) in [("live-on", true, WindowColorChoice.theme("mint")),
                                      ("live-off", false, WindowColorChoice.theme("lemonade")),
@@ -65,7 +65,7 @@ final class PanelWF174AppTests: XCTestCase {
                 model.settingsGroup = .enter
             }
             model.phase = .open
-            model.colorsOpen = true
+            model.layout.setCollapsed(PanelWidget.colors.rawValue, false)
             model.windowThemes = chips
             model.allThemes = chips
             model.windowColor = choice
@@ -85,6 +85,7 @@ final class PanelWF174AppTests: XCTestCase {
             let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
             view.cacheDisplay(in: view.bounds, to: rep)
             let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+            guard let dir = dir else { continue }
             try png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("panel-\(name).png"))
         }
     }

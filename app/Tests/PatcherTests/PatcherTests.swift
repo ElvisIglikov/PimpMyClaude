@@ -268,8 +268,8 @@ final class LoaderTests: XCTestCase {
     }
 
     func testLoaderMarkersAreVersionSeven() {
-        XCTAssertTrue(claudeLoaderSource.hasPrefix("/* [MyClaude:v8:start] */\n"))
-        XCTAssertTrue(claudeLoaderSource.hasSuffix("/* [MyClaude:v8:end] */\n"))
+        XCTAssertTrue(claudeLoaderSource.hasPrefix("/* [MyClaude:v9:start] */\n"))
+        XCTAssertTrue(claudeLoaderSource.hasSuffix("/* [MyClaude:v9:end] */\n"))
         XCTAssertEqual(Asar.loaderVersion(of: claudeLoaderSource), Patcher.requiredLoaderVersion)
         XCTAssertEqual(Asar.stripLoader(claudeLoaderSource + "// хвост"), "// хвост")
     }

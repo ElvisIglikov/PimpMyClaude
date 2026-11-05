@@ -18,13 +18,13 @@ let seq = 0;
 const send = (loaded, detail) => loaded.dom.command({
   id: `wf204-${++seq}`, action: "theme", at: "now", scope: "window", title: "Trelvis", ...detail,
 });
-const LIVE = { "*": { look: { aurora: true, scheme: "sea" } } };
+const LIVE = { "*": { look: { aurora: true, scheme: "sea", motion: "live" } } };
 
 test("«🧹 Всё как у Claude» в меню окна не гасит «Живой»: ни на экране, ни в памяти, ни после перезапуска", () => {
   const loaded = open(LIVE);
   assert.equal(lookOf(loaded).aurora, true);
   send(loaded, { theme: null, font: null, size: null, frame: null, look: null });
-  assert.deepEqual(lookOf(loaded), { aurora: true, neon: false, dense: false, scheme: "sea", source: "window" });
+  assert.deepEqual(lookOf(loaded), { aurora: true, neon: false, dense: false, scheme: "sea", motion: "live", source: "window" });
   assert.ok(loaded.dom.sheets().includes("myclaude-aurora-a"), "живой фон на экране");
   assert.equal(stored(loaded)["chat:Trelvis"]?.look, undefined, "у `*` один живой фон — сбрасывать окну нечего, \"none\" не пишется");
   const again = open(stored(loaded));
@@ -34,29 +34,30 @@ test("«🧹 Всё как у Claude» в меню окна не гасит «Ж
 
 test("сброс окна гасит свой неон поверх `*`, а живой фон и схема остаются от `*`", () => {
   const loaded = open({ "*": { look: { aurora: true, neon: true, scheme: "forest" } } });
-  assert.deepEqual(lookOf(loaded), { aurora: true, neon: true, dense: false, scheme: "forest", source: "all" });
+  assert.deepEqual(lookOf(loaded), { aurora: true, neon: true, dense: false, scheme: "forest", motion: "still", source: "all" });
   send(loaded, { look: null });
   assert.equal(stored(loaded)["chat:Trelvis"].look, "none", "неон у `*` есть — сброс окна его перекрывает");
   const again = open(stored(loaded));
-  assert.deepEqual(lookOf(again), { aurora: true, neon: false, dense: false, scheme: "forest", source: "chat" });
+  assert.deepEqual(lookOf(again), { aurora: true, neon: false, dense: false, scheme: "forest", motion: "still", source: "chat" });
 });
 
 test("старые записи чатов — \"none\" и look без живого фона — «Живой» больше не гасят; неон и плотность — свои", () => {
   const none = open({ ...LIVE, "chat:Trelvis": { look: "none" } });
-  assert.deepEqual(lookOf(none), { aurora: true, neon: false, dense: false, scheme: "sea", source: "chat" });
+  assert.deepEqual(lookOf(none), { aurora: true, neon: false, dense: false, scheme: "sea", motion: "live", source: "chat" });
   const dense = open({ ...LIVE, "chat:Trelvis": { look: { aurora: false, neon: false, dense: true } } });
-  assert.deepEqual(lookOf(dense), { aurora: true, neon: false, dense: true, scheme: "sea", source: "chat" });
-  const scheme = open({ ...LIVE, "chat:Trelvis": { look: { aurora: true, scheme: "sunset" } } });
+  assert.deepEqual(lookOf(dense), { aurora: true, neon: false, dense: true, scheme: "sea", motion: "live", source: "chat" });
+  const scheme = open({ ...LIVE, "chat:Trelvis": { look: { aurora: true, scheme: "sunset", motion: "image" } } });
   assert.equal(lookOf(scheme).scheme, "sea", "схема — от «Живого» панели");
+  assert.equal(lookOf(scheme).motion, "live", "движение (#9994) — тоже от «Живого» панели");
 });
 
 test("«Живой» выключен (у `*` нет живого фона) — старый живой фон чата не оживает, неон чата цел", () => {
   const loaded = open({ "chat:Trelvis": { look: { aurora: true, neon: true, scheme: "sunset" } } });
-  assert.deepEqual(lookOf(loaded), { aurora: false, neon: true, dense: false, scheme: "violet", source: "chat" });
+  assert.deepEqual(lookOf(loaded), { aurora: false, neon: true, dense: false, scheme: "violet", motion: "still", source: "chat" });
   assert.ok(!loaded.dom.sheets().includes("myclaude-aurora-a"));
   // Неон окна из меню окна — свой, живой фон всё так же от `*`.
   send(loaded, { look: { neon: false, dense: true } });
-  assert.deepEqual(lookOf(loaded), { aurora: false, neon: false, dense: true, scheme: "violet", source: "window" });
+  assert.deepEqual(lookOf(loaded), { aurora: false, neon: false, dense: true, scheme: "violet", motion: "still", source: "window" });
 });
 
 test("смена чата и themes-restore — то же правило: живой фон от `*`", () => {
@@ -77,12 +78,12 @@ test("примерка показывает ровно примеряемое, �
   send(loaded, { preview: true, look: { neon: true } });
   assert.equal(lookOf(loaded).neon, true);
   send(loaded, { preview: false });
-  assert.deepEqual(lookOf(loaded), { aurora: true, neon: false, dense: false, scheme: "sea", source: "all" });
+  assert.deepEqual(lookOf(loaded), { aurora: true, neon: false, dense: false, scheme: "sea", motion: "live", source: "all" });
 });
 
 test("«Живой» всем окнам: выключили — гаснет и у окна с записью; включили — загорается", () => {
   const loaded = open({ ...LIVE, "chat:Trelvis": { look: { neon: true } } });
-  assert.deepEqual(lookOf(loaded), { aurora: true, neon: true, dense: false, scheme: "sea", source: "chat" });
+  assert.deepEqual(lookOf(loaded), { aurora: true, neon: true, dense: false, scheme: "sea", motion: "live", source: "chat" });
   send(loaded, { scope: "all", look: null });
   assert.equal(lookOf(loaded).aurora, false);
   send(loaded, { scope: "all", look: { aurora: true, scheme: "lavender" } });

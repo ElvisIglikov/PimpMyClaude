@@ -2,15 +2,6 @@ import AppKit
 import XCTest
 @testable import ClaudeAX
 
-private final class WF84Defaults: ThemeDefaults {
-    var values: [String: Any] = [:]
-    func string(forKey key: String) -> String? { values[key] as? String }
-    func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
-    func object(forKey key: String) -> Any? { values[key] }
-    func set(_ value: Any?, forKey key: String) { values[key] = value }
-    func removeObject(forKey key: String) { values.removeValue(forKey: key) }
-}
-
 /// Меню WF84 (батч M1): «💬 Новый чат» на ⌘B (#7072, контракты К1 и К2), повтор команды по поколениям
 /// страниц (К3, Авто-Allow возвращён в WF121), серый замок (#7199, К6) и «↩️ Вернуть окна» (#7065). Всё на
 /// подставных данных — ни AX, ни живого Claude, ни перехвата ввода.
@@ -19,13 +10,8 @@ final class MenusWF84Tests: XCTestCase {
     private static let at = Date(timeIntervalSince1970: 1_756_900_000)
     private static let mainMatch = "/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74"
 
-    private static let repositoryRoot = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().deletingLastPathComponent()
-
     private func fixture(_ name: String) throws -> String {
-        try String(contentsOf: MenusWF84Tests.repositoryRoot
-            .appendingPathComponent("tests/fixtures/cashout/\(name)"), encoding: .utf8)
+        try String(contentsOf: Repo.fixture("cashout/\(name)"), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -122,26 +108,6 @@ final class MenusWF84Tests: XCTestCase {
 
     // MARK: - «↩️ Вернуть окна» под «Расставить»
 
-    private func click(_ item: NSMenuItem) {
-        guard let action = item.action, let target = item.target as? NSObject else {
-            return XCTFail("у пункта «\(item.title)» нет действия")
-        }
-        target.perform(action)
-    }
-
-    func testRestoreWindowsSitsUnderArrange() throws {
-        var config = MinimizeMenu.MenuConfig()
-        var asked = 0
-        config.restoreWindows = { asked += 1 }
-        let menu = MinimizeMenu.build(config: config)
-        let more = try XCTUnwrap(menu.items.first { $0.title == MenuModel.moreTitle }?.submenu)
-        let titles = more.items.map { $0.title }
-        let arrange = try XCTUnwrap(titles.firstIndex(of: "Расставить"))
-        XCTAssertEqual(titles[arrange + 1], MenuModel.restoreWindowsTitle)
-        click(more.items[arrange + 1])
-        XCTAssertEqual(asked, 1)
-    }
-
     // MARK: - К3: повтор по поколениям страниц (общий `AutoAllowSwitch`)
 
     func testAutoAllowCommandBytes() {
@@ -163,10 +129,8 @@ final class MenusWF84Tests: XCTestCase {
             XCTFail("разнесённые по времени команды не должны ждать очереди")
         })
         let actions = ClaudeActions(app: IsolatedClaudeApp.make(), commands: channel, themes: [], fonts: [],
-                                    themeStore: ThemeStore(defaults: WF84Defaults()),
-                                    myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")),
-                                    autoPaintStore: AutoPaintStore(defaults: WF84Defaults()),
-                                    liveColorsStore: LiveColorsStore(defaults: WF84Defaults()))
+                                    themeStore: ThemeStore(defaults: MemoryThemeDefaults()),
+                                    myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")))
         for on in [true, false] {
             actions.autoAllowOn = { on }
             actions.perform(.autoAllow, on: nil)

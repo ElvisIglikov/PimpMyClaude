@@ -101,11 +101,16 @@ public enum ClaudeUpdateError: LocalizedError {
     case integrityRefused(version: String, why: String)
     /// Перезапуск без обновления (`restart-claude`, WF108) не удался — причина строкой.
     case restartFailed(String)
+    /// Ставили при закрытом Claude (WF283, `closeRunning: false`), а его открыли до подмены — не закрываем: человек
+    /// работает. Не сбой: бандл не тронут, поставим, когда Claude снова закроют.
+    case claudeOpened
 
     public var errorDescription: String? {
         switch self {
         case .restartFailed(let why):
             return why
+        case .claudeOpened:
+            return "Claude открыли, пока готовилось обновление. Claude не тронут — обновлю, когда его закроют."
         case .feed(let why):
             return "Не узнал, есть ли новая версия Claude: \(why)"
         case .cancelled:
@@ -135,7 +140,7 @@ public enum ClaudeUpdateError: LocalizedError {
                 ? "Новый Claude встал, но патч на него не лёг: \(why). Вернул прежний Claude с патчем — всё как было."
                 : "Новый Claude встал, но патч на него не лёг: \(why). Прежний Claude лежит в \(previous)."
         case .integrityRefused(let version, let why):
-            return "Claude \(version) Пимп пока не патчит: \(why). Стоящий Claude не тронут, эту версию больше не качаю."
+            return "Claude \(version) PMP пока не патчит: \(why). Стоящий Claude не тронут, эту версию больше не качаю."
         }
     }
 }
@@ -175,8 +180,6 @@ public struct ClaudeUpdater {
     public var appURL: URL
     public var supportDirectory: URL
     public var resourcesDirectory: URL?
-    /// Third-party feeds and archives require an explicit policy, including manual retries.
-    public var allowMirrors: Bool
     /// Как у `ClaudePatcher`: тест гоняет весь путь на копии — не подписывать и Claude не трогать.
     public var signsApp = true
     public var managesClaudeProcess = true
@@ -193,12 +196,10 @@ public struct ClaudeUpdater {
 
     public init(appURL: URL,
                 supportDirectory: URL = Patcher.defaultSupportDirectory,
-                resourcesDirectory: URL? = Patcher.bundledResourcesDirectory,
-                allowMirrors: Bool = false) {
+                resourcesDirectory: URL? = Patcher.bundledResourcesDirectory) {
         self.appURL = appURL
         self.supportDirectory = supportDirectory
         self.resourcesDirectory = resourcesDirectory
-        self.allowMirrors = allowMirrors
     }
 
     var parentDirectory: URL { appURL.deletingLastPathComponent() }
@@ -319,7 +320,8 @@ public struct ClaudeUpdater {
         let (first, second) = compareVersions(official.version, mirror.version) == .orderedDescending
             ? (official, mirror) : (mirror, official)
         return ClaudeRelease(version: first.version, url: first.url, sha256: first.sha256, size: first.size,
-                             format: first.format, mirrors: first.mirrors, fallbacks: [second])
+                             format: first.format, mirrors: first.mirrors,
+                             fallbacks: first.fallbacks + [second] + second.fallbacks)
     }
 
     /// Ответ проверки. Новее стоящего хоть у кого — `available`; «последняя» — только когда ответили
@@ -364,16 +366,23 @@ public struct ClaudeUpdater {
     // -------------------------------------------------------------- 1. фид
 
     /// Два-три коротких запроса с таймаутом: манифест R2 (не ответил — GitHub API) и официальный
-    /// редирект без идентификаторов. Недоступность одного не блокирует другой.
+    /// редирект без идентификаторов. Недоступность одного не блокирует другой. Зеркала — всегда (с WF126 выключателя
+    /// нет, вопрос 9 ревизии 16.10: не возвращать); подделку из любого источника режет `verifyBundle` — bundle id,
+    /// версия, подпись Anthropic с Team ID и Gatekeeper.
     public func check(timeout: TimeInterval = 10) throws -> ClaudeFeedAnswer {
         let installed = try installedVersion()
-        if !allowMirrors {
-            let official = try Self.parseOfficialRedirect(resolveRedirect(Self.officialRedirect, timeout))
-            return Self.compareVersions(official.version, installed) == .orderedDescending
-                ? .available(installed: installed, release: official) : .latest(installed: installed, feed: official.version)
-        }
-        let mirror = Result { try mirrorRelease(timeout: timeout) }
+        var mirror = Result { try mirrorRelease(timeout: timeout) }
         let official = Result { try Self.parseOfficialRedirect(resolveRedirect(Self.officialRedirect, timeout)) }
+        // #11258: манифест R2 отстал от Anthropic (живьём 30.10: R2 4.29.0, Anthropic 4.4212.0) — спросим
+        // GitHub API: его релиз той же версии встаёт в гонку полосой с sha256 и размером, R2 — запасным.
+        if let r2 = try? mirror.get(), let anthropic = try? official.get(),
+           Self.compareVersions(anthropic.version, r2.version) == .orderedDescending,
+           let github = try? Self.parseMirrorFeed(fetchMetadata(Self.mirrorFeed, timeout)),
+           Self.compareVersions(github.version, anthropic.version) == .orderedSame {
+            mirror = .success(ClaudeRelease(version: github.version, url: github.url, sha256: github.sha256,
+                                            size: github.size, format: github.format, mirrors: github.mirrors,
+                                            fallbacks: [r2]))
+        }
         return try Self.combine(installed: installed, mirror: mirror, official: official)
     }
 
@@ -399,8 +408,7 @@ public struct ClaudeUpdater {
         }
         var lastError: Error = ClaudeUpdateError.download("нет доступных источников")
         let refused = refusedVersions()
-        for group in Self.versionGroups(release).map({ Self.allowedReleases($0, allowMirrors: allowMirrors) }).filter({ !$0.isEmpty })
-        where Self.compareVersions(group[0].version, installed) == .orderedDescending {
+        for group in Self.versionGroups(release) where Self.compareVersions(group[0].version, installed) == .orderedDescending {
             if control?.isCancelled == true { throw ClaudeUpdateError.cancelled }
             if let why = refused[group[0].version] {
                 lastError = ClaudeUpdateError.integrityRefused(version: group[0].version, why: why)
@@ -434,10 +442,10 @@ public struct ClaudeUpdater {
 
     /// Полосы гонки одной версии: у каждой свои размер и sha256; один адрес — одна полоса (с
     /// известным sha256 важнее).
-    static func sources(_ group: [ClaudeRelease], allowMirrors: Bool = true) -> [DownloadSource] {
+    static func sources(_ group: [ClaudeRelease]) -> [DownloadSource] {
         var result: [DownloadSource] = []
         for release in group {
-            for url in [release.url] + release.mirrors where allowedSource(url, allowMirrors: allowMirrors) {
+            for url in [release.url] + release.mirrors {
                 let source = DownloadSource(id: sourceID(url), title: sourceTitle(url), url: url,
                                             expectedSize: release.size, sha256: release.sha256, format: release.format)
                 if let index = result.firstIndex(where: { $0.url == url }) {
@@ -448,23 +456,6 @@ public struct ClaudeUpdater {
             }
         }
         return result
-    }
-
-    static func allowedSource(_ url: URL, allowMirrors: Bool) -> Bool {
-        // Local archives are the existing test/offline path and never contact a third party.
-        if url.isFileURL { return true }
-        if allowMirrors { return true }
-        guard url.user == nil, url.password == nil, url.port == nil || url.port == 443 else { return false }
-        return (try? parseOfficialRedirect(url)) != nil
-    }
-
-    static func allowedReleases(_ group: [ClaudeRelease], allowMirrors: Bool) -> [ClaudeRelease] {
-        group.compactMap { release in
-            let urls = ([release.url] + release.mirrors).filter { allowedSource($0, allowMirrors: allowMirrors) }
-            guard let first = urls.first else { return nil }
-            return ClaudeRelease(version: release.version, url: first, sha256: release.sha256, size: release.size,
-                                 format: release.format, mirrors: Array(urls.dropFirst()))
-        }
     }
 
     /// Имя источника для людей: «R2», «GitHub», «Anthropic», «файл».
@@ -491,12 +482,15 @@ public struct ClaudeUpdater {
     private func prepareVersion(_ group: [ClaudeRelease], installed: String, control: DownloadControl?,
                                 progress: (String) -> Void) throws -> PreparedClaudeUpdate {
         let fm = FileManager.default
-        try fm.createDirectory(at: downloadDirectory, withIntermediateDirectories: true)
-        // Держим архивы только этой версии: старые из прошлых попыток и недокачанные гонки убираем.
+        try SupportFiles.ensureDirectory(downloadDirectory)
+        // Держим архивы только этой версии: старые из прошлых попыток убираем. Недокачанные гонки (#11258)
+        // этой и более новых версий остаются — следующая гонка докачает с места; старее — убираем.
         let keep = Set(group.map { archiveURL($0).lastPathComponent })
+        let version = group[0].version
         for name in (try? fm.contentsOfDirectory(atPath: downloadDirectory.path)) ?? []
         where (name.hasPrefix("Claude-") && (name.hasSuffix(".zip") || name.hasSuffix(".dmg")) && !keep.contains(name))
-            || name.hasPrefix("race-") {
+            || (name.hasPrefix("race-")
+                && (Self.compareVersions(String(name.dropFirst("race-".count)), version) ?? .orderedAscending) == .orderedAscending) {
             try? fm.removeItem(at: downloadDirectory.appendingPathComponent(name))
         }
         var excluded: [URL] = []
@@ -537,16 +531,14 @@ public struct ClaudeUpdater {
                 return (release, archive, nil)
             }
         }
-        let sources = Self.sources(group, allowMirrors: allowMirrors).filter { !excluding.contains($0.url) }
+        let sources = Self.sources(group).filter { !excluding.contains($0.url) }
         guard !sources.isEmpty else { throw ClaudeUpdateError.download("источников больше нет") }
         let version = group[0].version
         let size = group.map { $0.size }.max() ?? 0
         progress("Качаю Claude \(version)" + (size > 0 ? " (\(size / 1_000_000) МБ)…" : "…"))
         let raceDirectory = downloadDirectory.appendingPathComponent("race-\(version)", isDirectory: true)
-        defer { try? fm.removeItem(at: raceDirectory) }
         let race = ClaudeDownloadRace(sources: sources, directory: raceDirectory, rules: raceRules,
                                       configuration: raceConfiguration())
-        race.allowsRedirect = { Self.allowedSource($0, allowMirrors: allowMirrors) }
         race.onSnapshot = control?.onSnapshot
         let winner: RaceWinner = try withoutActuallyEscaping(progress) { log in
             race.log = log
@@ -554,6 +546,8 @@ public struct ClaudeUpdater {
             control?.attach(race)
             return try race.run()
         }
+        // Папку гонки — только после победы: провал и отмена оставляют `.part` для докачки (#11258).
+        defer { try? fm.removeItem(at: raceDirectory) }
         let source = winner.source
         let release = ClaudeRelease(version: version, url: source.url, sha256: source.sha256 ?? "",
                                     size: source.expectedSize ?? 0, format: source.format)
@@ -624,11 +618,12 @@ public struct ClaudeUpdater {
         attached = false
     }
 
-    /// Второй замок Electron 41+ в новом бандле (A2): `used ≠ 0` — отказ, запомненный по версии;
-    /// не прочитали — строка в журнал и дальше, как раньше.
+    /// Второй замок Electron 41+ в новом бандле (A2): включён по известной формуле — патч его перепишет
+    /// (#11144); незнакомая версия или digest не сходится — отказ, запомненный по версии; не прочитали —
+    /// строка в журнал и дальше, как раньше.
     func refuseIfIntegrityOn(_ app: URL, version: String, progress: (String) -> Void) throws {
-        switch Patcher.asarIntegrityVerdict(framework: Patcher.electronFramework(of: app)) {
-        case .ok: return
+        switch Patcher.asarIntegrityVerdict(framework: Patcher.electronFramework(of: app), integrity: Patcher.asarIntegrity(of: app)) {
+        case .ok, .digest: return
         case .unknown(let why):
             progress("Второй замок Electron (__asar_integrity) не проверен: \(why).")
         case .refuse(let why):
@@ -636,8 +631,7 @@ public struct ClaudeUpdater {
             refused[version] = why
             let body: [String: Any] = ["pimpBuild": pimpBuild, "versions": refused]
             if let data = try? JSONSerialization.data(withJSONObject: body, options: [.prettyPrinted, .sortedKeys]) {
-                try? FileManager.default.createDirectory(at: downloadDirectory, withIntermediateDirectories: true)
-                try? data.write(to: downloadDirectory.appendingPathComponent(Self.refusedFileName), options: .atomic)
+                try? SupportFiles.write(data, to: downloadDirectory.appendingPathComponent(Self.refusedFileName))
             }
             throw ClaudeUpdateError.integrityRefused(version: version, why: why)
         }
@@ -732,7 +726,7 @@ public struct ClaudeUpdater {
 
     /// `appPath` из `installed.json` — копия, которую Пимп пропатчил последней.
     public static func installedAppPath(supportDirectory: URL = Patcher.defaultSupportDirectory) -> String? {
-        guard let data = try? Data(contentsOf: supportDirectory.appendingPathComponent("installed.json")),
+        guard let data = try? Data(contentsOf: supportDirectory.appendingPathComponent(SupportFiles.installedFileName)),
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         return json["appPath"] as? String
     }
@@ -749,9 +743,9 @@ public struct ClaudeUpdater {
     public func restartClaude() throws {
         let current = patcher()
         do {
-            try current.quitClaude(progress: { _ in })
+            try current.quitClaude(userSeconds: 0, progress: { _ in })
         } catch PatchError.claudeWontQuit {
-            throw ClaudeUpdateError.restartFailed("Claude не закрылся за 30 секунд. Закрой его сам (⌘Q) и повтори.")
+            throw ClaudeUpdateError.restartFailed("Claude не закрылся и после принудительного выхода. Закрой его сам (⌘Q или «Мониторинг системы») и повтори.")
         }
         var said = ""
         current.relaunchClaude(progress: { said = $0 })
@@ -837,8 +831,10 @@ public struct ClaudeUpdater {
     /// Сорвалась подмена или патч — прежний бандл возвращается и (при `relaunch`) открывается.
     /// Удача — прочие наши `.previous` и распаковка убираются: прежняя копия всегда одна.
     /// `relaunch: false` — Claude не открывается ни при удаче, ни при откате: откроет вызывающий.
+    /// `closeRunning: false` — ставим при закрытом Claude (WF283): открыли его, пока шла проверка, — не закрываем,
+    /// а `claudeOpened`, бандл не тронут.
     @discardableResult
-    public func install(_ prepared: PreparedClaudeUpdate, relaunch: Bool = true,
+    public func install(_ prepared: PreparedClaudeUpdate, relaunch: Bool = true, closeRunning: Bool = true,
                         progress: (String) -> Void = { _ in }) throws -> ClaudeUpdateOutcome {
         let fm = FileManager.default
         let current = patcher()
@@ -853,12 +849,13 @@ public struct ClaudeUpdater {
         }
         // Ещё раз и целиком, пока Claude открыт: между prepare и install бандл лежал на диске.
         try verifyBundle(staged, release: prepared.release, progress: progress)
-        // Право на запись — ДО закрытия Claude (промпт «Управление приложениями» всплывает первым).
+        // Право на запись — ДО закрытия Claude (ждём «Управление приложениями», пока Claude ещё открыт).
         try current.waitForWritable(progress: progress)
+        if !closeRunning, !current.runningClaude().isEmpty { throw ClaudeUpdateError.claudeOpened }
         try current.quitClaude(progress: progress)
 
         let previous = parentDirectory.appendingPathComponent(Self.previousName(appName: appURL.lastPathComponent, version: installed), isDirectory: true)
-        progress("Меняю Claude \(installed) на \(prepared.release.version)…")
+        progress(PatchLog.replacesClaude + " \(installed) на \(prepared.release.version)…")
         do {
             if fm.fileExists(atPath: previous.path) { try fm.removeItem(at: previous) } // наша же копия той же версии
             try fm.moveItem(at: appURL, to: previous)
@@ -874,7 +871,7 @@ public struct ClaudeUpdater {
             throw ClaudeUpdateError.swapFailed(why: Self.describe(error), restored: restored, previous: previous.path)
         }
 
-        progress("Ставлю патч на новый Claude…")
+        progress(PatchLog.installsPatch + " на новый Claude…")
         let patch: InstallOutcome
         do {
             patch = try patcher().install(relaunch: relaunch, progress: progress)
@@ -907,7 +904,7 @@ public struct ClaudeUpdater {
     // -------------------------------------------------------------- сеть и файлы
 
     static func describe(_ error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        error.humanText
     }
 
     /// Причина без вводной «Не узнал, есть ли…» — для склейки нескольких источников.

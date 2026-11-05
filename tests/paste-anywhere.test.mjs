@@ -160,10 +160,11 @@ test("на чужой странице подписок нет вовсе", () =
   const alien = page({ href: "data:text/html,<p>артефакт</p>", title: "Артефакт" });
   assert.equal(alien.error, null, "чужая страница инжект не роняет");
 
-  // Две: отсрочка отправки (раздел 12у, WF105) — первой, за ней ⌘V.
-  assert.equal(listeners(mine, "keydown"), 2, "в окне Claude клавиша слушается");
+  // Три: Enter на строке фоновой задачи (раздел 12х⁴, #5548), отсрочка отправки (раздел 12у, WF105), за ней ⌘V.
+  assert.equal(listeners(mine, "keydown"), 3, "в окне Claude клавиша слушается");
   assert.equal(listeners(alien, "keydown"), 0, "на чужой странице клавишу слушать незачем");
-  assert.equal(listeners(alien, "paste"), listeners(mine, "paste") - 1,
+  // Минус две: пересылка ⌘V и прокрутка поля после вставки (#10333) — обе только в окне Claude.
+  assert.equal(listeners(alien, "paste"), listeners(mine, "paste") - 2,
     "на чужой странице осталась только прежняя подписка вложений");
 
   const seen = watchEditor(alien);

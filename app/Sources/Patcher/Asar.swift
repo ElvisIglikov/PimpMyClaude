@@ -49,7 +49,7 @@ public enum AsarError: LocalizedError {
 }
 
 enum Asar {
-    static let loaderVersion = 8
+    static let loaderVersion = 9
     static let markStart = "/* [MyClaude:v\(loaderVersion):start] */"
     static let markEnd = "/* [MyClaude:v\(loaderVersion):end] */"
 

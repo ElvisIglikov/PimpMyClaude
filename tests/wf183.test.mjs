@@ -81,14 +81,15 @@ test("WF183: «Стоп» на месте Enter — тоже над кружко
   assert.equal(loaded.parts.send.style.getPropertyValue("translate"), "", "dispose не снял сдвиг");
 });
 
-test("WF183: «Галерея» — сначала число, потом значок; квадраты контуром, без заливки; в строке значок тише числа", () => {
+test("WF183: «Галерея» — квадраты контуром, без заливки; в строке значок тише подписей; #9507 — числа у значка нет", () => {
   const loaded = page();
   loaded.dom.command({ id: `c-${seq += 1}`, action: "viewer-counts", at: "now", scope: "all", chats: { [CHAT]: [7, 0] } });
   settle(loaded);
   const node = loaded.dom.query("#myclaude-gallery");
   const kids = [...node.childNodes].filter(kid => kid.nodeType === 1).map(kid => kid.tagName.toLowerCase());
-  assert.deepEqual(kids, ["i", "svg"], "число не первым");
-  assert.equal(node.textContent.trim(), "7");
+  assert.deepEqual(kids, ["svg"], "#9507: рядом со значком узел числа");
+  assert.equal(node.textContent.trim(), "");
+  assert.match(node.title, /\(7\)$/, "число файлов — в подсказке");
   const svg = node.querySelector("svg");
   assert.equal(svg.getAttribute("fill"), "none", "значок залит");
   assert.equal(svg.getAttribute("stroke"), "currentColor");

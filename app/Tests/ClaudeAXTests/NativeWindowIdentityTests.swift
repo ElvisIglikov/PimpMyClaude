@@ -69,16 +69,13 @@ final class NativeWindowIdentityTests: XCTestCase {
         paint.windowIdentity = { title, frame in
             WindowIdentity.resolveNative(title: title, frame: frame, pages: pages, nativeWindows: native, at: self.now)
         }
-        let oldResolver = ClaudeActions.windowKeyForTitle
         let oldTitle = ClaudeActions.themeEditorTitle, oldKey = ClaudeActions.themeEditorKey
         defer {
-            ClaudeActions.windowKeyForTitle = oldResolver
             ClaudeActions.themeEditorTitle = oldTitle
             ClaudeActions.themeEditorKey = oldKey
         }
-        ClaudeActions.windowKeyForTitle = { title, frame in paint.windowKey(forTitle: title, frame: frame) }
         ClaudeActions.themeEditorTitle = "Same"
-        ClaudeActions.themeEditorKey = ClaudeActions.windowKeyForTitle?("Same", right)
+        ClaudeActions.themeEditorKey = paint.windowKey(forTitle: "Same", frame: right)
         XCTAssertEqual(ClaudeActions.themeEditorKey, ProjectPaint.mainKey)
         XCTAssertTrue(ProjectPaint.ownedByEditor(ProjectTarget(key: ProjectPaint.mainKey, match: "/epitaxy/local_a", chat: nil,
                                                               title: ProjectPaint.mainWindowTitle, folder: nil)))

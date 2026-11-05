@@ -182,7 +182,9 @@ test("подписи блоков: «Weekly · X» → «X», «all models» →
   assert.deepEqual({ ...inner.usageLabel("5-hour limit") }, { kind: "hour5", text: "5-часовой" });
   assert.deepEqual({ ...inner.usageLabel("Weekly · all models") }, { kind: "weekAll", text: "Недельный" });
   assert.deepEqual({ ...inner.usageLabel("Weekly · Fable") }, { kind: "week", text: "Fable" });
-  assert.equal(inner.usageLabel("Session limit"), null);
+  // С Claude 2.42304 (#9978) подписи короче: «Session limit», «Weekly».
+  assert.deepEqual({ ...inner.usageLabel("Session limit") }, { kind: "hour5", text: "5-часовой" });
+  assert.deepEqual({ ...inner.usageLabel("Weekly") }, { kind: "weekAll", text: "Недельный" });
 });
 
 test("шапка: имя из ключа плюс тариф без скобок; имени нет — один тариф", () => {
@@ -440,6 +442,9 @@ test("клик по кружку ставит временного наблюд�
 test("панель закрылась — наблюдатель снят, полоса не осталась сиротой", () => {
   const { loaded, parts } = open();
   beat(loaded);
+  // Отложенная раскладка (кадр) заводит свой наблюдатель вложений поля; без кадра её доводит
+  // сердце по настоящим часам (LAYOUT_MIN_GAP) — счёт плавал от скорости прогона (WF248). Доводим заранее.
+  loaded.dom.fireKind("raf");
   const held = loaded.counters.observers;
   assert.equal(loaded.api.status().usage.week, true);
   parts.panel.remove();
@@ -451,7 +456,7 @@ test("панель закрылась — наблюдатель снят, по�
 
 test("status().usage: открытия, подмены, нераспознанное и полоса", () => {
   const { loaded } = open({ account: "Alex" });
-  assert.deepEqual({ ...loaded.api.status().usage }, { opens: 0, swaps: 0, unknown: 0, week: false });
+  assert.deepEqual({ ...loaded.api.status().usage }, { opens: 0, swaps: 0, unknown: 0, week: false, context: null });
   beat(loaded);
   const usage = loaded.api.status().usage;
   assert.equal(usage.opens, 1);
@@ -472,4 +477,116 @@ test("dispose(): наблюдатель снят, полоса и атрибут
   // Текст назад НЕ откатываем осознанно: панель живёт секунды и пересоздаётся
   // при следующем открытии, а откат — лишняя запись в чужое дерево.
   assert.equal(textOf(parts.contextLabel), "Контекст");
+});
+
+// ---- Claude 2.42304 (#9978) -------------------------------------------------
+// Живая проба 16.10: шапка «Usage» с двумя значками (ссылка на статистику
+// осталась), полосы — role="meter" в обёртке, подпись двумя уровнями выше,
+// «3% used» справа от подписи, строка сброса ПОД полосой (aria-describedby).
+// Строк контекста и Fable в панели больше нет — Пимп рисует их сам.
+const CHAT = "local_aaaa-1111";
+const panel2Of = dom => {
+  const panel = dom.document.body.add("div", {
+    attrs: { role: "dialog", "data-cds": "Popover", "data-side": "top", "data-align": "end", id: "usage-panel" },
+    rect: { left: 700, top: 300, width: 312, height: 168 },
+  });
+  const column = panel.add("div", { class: "flex flex-col py-sm" }).add("div", { class: "flex flex-col gap-sm pt-0.5 pb-sm" });
+  const head = column.add("div", { class: "flex items-center justify-between gap-sm px-lg" });
+  const headNode = dom.leaf(head, "span", "Usage", { class: "text-heading-medium text-primary" });
+  head.add("span").add("a", { attrs: { href: "/settings/usage", "aria-label": "Usage settings" } });
+  const host = column.add("div", { attrs: { role: "group", "aria-label": "Usage limits" } }).add("div", { class: "flex flex-col gap-md px-lg" });
+  const rows = [];
+  const limit = (id, label, reset, percent) => {
+    const block = host.add("div", { class: "flex flex-col gap-xs" });
+    const row = block.add("div", { class: "flex items-baseline justify-between gap-sm text-body" });
+    const name = dom.leaf(row, "span", label, { id, class: "min-w-0 font-medium text-primary" });
+    const pct = dom.leaf(row, "span", `${percent}% used`, { class: "shrink-0 whitespace-nowrap text-footnote tabular-nums text-muted-as-secondary" });
+    const under = block.add("div", { class: "flex flex-col gap-1" });
+    const bar = under.add("div", { attrs: { "data-cds": "Meter" }, class: "w-full" }).add("div", {
+      class: "w-full overflow-hidden rounded-full h-2 bg-accent",
+      attrs: { role: "meter", "aria-labelledby": id, "aria-describedby": `${id}-d`, "aria-valuenow": String(percent) },
+    });
+    bar.add("div", { class: "h-full w-full rounded-full bg-fill-accent", attrs: { "data-usage-bar-fill": "" } });
+    const when = dom.leaf(under, "span", reset, { id: `${id}-d`, class: "text-footnote text-muted-as-secondary" });
+    rows.push({ block, row, name, pct, when, bar });
+  };
+  limit("lim-hour", "Session limit", "Resets in 4 hr 48 min", 3);
+  limit("lim-week", "Weekly", "Resets Fri 8:00 AM", 5);
+  return { panel, host, headNode, rows };
+};
+const open2 = ({ fable = 12 } = {}) => {
+  const friday = new Date();
+  friday.setHours(8, 0, 0, 0);
+  friday.setDate(friday.getDate() + (((5 - friday.getDay()) + 7) % 7 || 7));
+  const local = fable == null ? {} : {
+    "myclaude-limits-v1": JSON.stringify({ v: 1, at: Date.now(), plan: "Max 20x",
+      fiveHour: { used: 3, resetsAt: null }, weekly: { used: 5, resetsAt: friday.getTime() },
+      fable: { used: fable, resetsAt: friday.getTime() } }),
+  };
+  const loaded = loadInject({
+    href: `https://claude.ai/epitaxy/${CHAT}`,
+    storage: { local },
+    html: dom => ({ ...dom.composer(), ...panel2Of(dom), ring: ringOf(dom) }),
+  });
+  loaded.fetched = [];
+  loaded.win.fetch = url => { loaded.fetched.push(String(url)); return Promise.resolve({}); };
+  return loaded;
+};
+
+test("2.42304: панель опознана и по-русски, Fable и контекст дописаны своими строками", () => {
+  const loaded = open2();
+  const { parts } = loaded;
+  beat(loaded);
+  assert.equal(parts.panel.hasAttribute("data-myclaude-lim-panel"), true, "новая панель не опознана");
+  assert.equal(textOf(parts.headNode), "Расход");
+  assert.equal(textOf(parts.rows[0].name), "5-часовой");
+  assert.match(textOf(parts.rows[0].when), /^4 ч 48 мин — в \d\d:\d\d$/);
+  assert.equal(parts.rows[0].pct.hasAttribute(HIDE), true, "у 5-часового только полоса");
+  assert.equal(textOf(parts.rows[1].name), "Недельный");
+  // Процент справа от подписи, сброс под полосой — как в панели у часов (слово Элвиса 16.10).
+  assert.equal(textOf(parts.rows[1].when), "Пт 08:00");
+  assert.equal(textOf(parts.rows[1].pct), "5%");
+  assert.equal(parts.rows[1].pct.hasAttribute(HIDE), false, "процент недели спрятан");
+  assert.equal(loaded.api.status().usage.unknown, 0, "панель разобрана не полностью");
+  // Полоса дней недели — под недельным, Fable — под ней.
+  const week = loaded.dom.query(`[${WEEK}="block"]`);
+  assert.ok(week, "полосы недели нет");
+  assert.equal(week.previousSibling, parts.rows[1].block);
+  const fable = loaded.dom.query(`[${WEEK}="row-fable"]`);
+  assert.ok(fable, "строки Fable нет");
+  assert.equal(fable.previousSibling, week, "Fable не под полосой недели");
+  assert.equal(textOf(fable.querySelector(`[${WEEK}="title"]`)), "Fable");
+  assert.equal(textOf(fable.querySelector(`[${WEEK}="value"]`)), "12%");
+  assert.equal(textOf(fable.querySelector(`[${WEEK}="note"]`)), "Пт 08:00");
+  assert.equal(fable.querySelector(`[${WEEK}="note"]`).className, parts.rows[1].when.className, "одежда строки сброса не родная");
+  assert.equal(fable.querySelector(`[${WEEK}="fill"]`).style.getPropertyValue("width"), "12%");
+  assert.equal(fable.className, parts.rows[1].block.className, "одежда Fable не с родного блока");
+  // Контекст: спросили у приложения один раз, ответ своего чата — строка над лимитами.
+  assert.deepEqual(loaded.fetched, [`http://127.0.0.1:47615/context?chat=${CHAT}`]);
+  assert.equal(loaded.dom.query(`[${WEEK}="row-context"]`), null, "контекст нарисован без ответа");
+  loaded.dom.command({ id: "ctx-1", action: "chat-context", at: "now", chat: "local_bbbb-2222", tokens: 9000 });
+  assert.equal(loaded.dom.query(`[${WEEK}="row-context"]`), null, "принят контекст чужого чата");
+  loaded.dom.command({ id: "ctx-2", action: "chat-context", at: "now", chat: CHAT, tokens: 433039 });
+  beat(loaded);
+  const context = loaded.dom.query(`[${WEEK}="row-context"]`);
+  assert.ok(context, "строки контекста нет");
+  assert.equal(context.nextSibling, parts.rows[0].block, "контекст не над лимитами");
+  assert.equal(textOf(context.querySelector(`[${WEEK}="value"]`)), "43%");
+  assert.equal(textOf(context.querySelector(`[${WEEK}="note"]`)), "433k из 1M");
+  assert.equal(loaded.api.status().usage.context, 433039);
+  // Повторный проход ничего не двигает и не множит.
+  beat(loaded);
+  assert.equal(loaded.dom.queryAll(`[${WEEK}="row-context"]`).length, 1);
+  assert.equal(loaded.dom.queryAll(`[${WEEK}="row-fable"]`).length, 1);
+  assert.equal(loaded.dom.query(`[${WEEK}="row-fable"]`).previousSibling, week);
+});
+
+test("2.42304: лимитов Fable нет — своей строки нет; dispose() убирает свои строки", () => {
+  const loaded = open2({ fable: null });
+  beat(loaded);
+  assert.equal(loaded.dom.query(`[${WEEK}="row-fable"]`), null);
+  loaded.dom.command({ id: "ctx-1", action: "chat-context", at: "now", chat: CHAT, tokens: 120000 });
+  assert.ok(loaded.dom.query(`[${WEEK}="row-context"]`));
+  loaded.api.dispose();
+  assert.equal(loaded.dom.queryAll(`[${WEEK}]`).length, 0, "свои строки пережили dispose()");
 });

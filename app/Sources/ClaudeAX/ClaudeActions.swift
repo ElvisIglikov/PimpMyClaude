@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Patcher
 
 /// Слой команды «тема»: тема, шрифт, размер и рамка живут отдельно (контракт п. 5 плана WF6,
 /// п. 1 плана WF12).
@@ -38,8 +39,8 @@ extension Layer: Equatable where Value: Equatable {}
 /// главное окно Claude, и до WF37 «Обкэшить» в попапе сбивал чат Элвиса в главном окне (#5575).
 enum CashoutRoute: Equatable {
     case main
-    /// Попап: `chat` — id его чата, если страница сама назвала его в круге probe; nil —
-    /// адресуем заголовком, как до WF37.
+    /// Попап: `chat` — id его чата, страница сама назвала его в круге probe (`windowRoute` без
+    /// id попап не отдаёт; nil остался от адресации заголовком до WF116).
     case popout(chat: String?)
 }
 
@@ -84,18 +85,13 @@ final class ClaudeActions {
 
     private let app: ClaudeApp
     private let commands: CommandChannel
-    /// Каталоги тем и шрифтов и последний выбор — для подменю в меню кнопки «Свернуть».
+    /// Каталоги тем и шрифтов и последний выбор — для «Оформления» панели PMP.
     let themes: [Theme]
     let fonts: [Font]
     let themeStore: ThemeStore
+    /// Свои темы (`my-themes.json`) — только чтение: их держат окна и проекты (WF237: сохранять и править нечем).
     let myThemes: MyThemesStore
-    /// Последний набор автопокраски и его старт — из них «🔁 Ещё раз» (план WF10 п. 5).
-    let autoPaintStore: AutoPaintStore
-    /// Состояние живых цветов (план WF18): тумблер, режим, скорость, режим света и точка
-    /// отсчёта круга.
-    let liveColorsStore: LiveColorsStore
-    /// Стенные часы: `epoch` живых цветов считается в тех же миллисекундах, что `Date.now()`
-    /// страницы. Подставляются в тестах.
+    /// Часы. Подставляются в тестах.
     var clock: () -> Date = Date.init
     /// Темы окон на диске (план WF35): зеркало закрепляющих команд `theme`. Живьём вешает
     /// `ClaudeAXController`; nil — зеркала нет вовсе (в тестах и в сборке без него), и ни один
@@ -105,34 +101,16 @@ final class ClaudeActions {
     /// догонял бы правду только зеркалом. Вешает `ClaudeAXController` на `ChatProbe.noteMirror`.
     var onThemeRecorded: (() -> Void)?
 
-    /// Что это приложение применило последним — из этого делается «моя тема» (план п. 4).
-    /// Сброс слоя обнуляет: «Как у Claude» + «Сохранить как мою тему…» сохранять нечего.
-    private(set) var lastAppliedTheme: Theme?
-    /// Автотемы по заголовку окна (план WF10 п. 6): автопокраска красит все окна разом и
-    /// `lastAppliedTheme` не трогает — иначе «Сохранить как мою тему…» на одном окне предложило
-    /// бы цвет соседнего. Окно, покрашенное набором, отдаёт свой цвет.
-    private(set) var autoPaintedThemes: [String: Theme] = [:]
-    private(set) var lastAppliedFont: Font?
-    /// Размер копится по половинам: «Размер ответов ▸ 16», потом «Размер вопросов ▸ 14» —
-    /// в «мою тему» обязаны попасть обе (страница слой склеивает так же).
-    private(set) var lastAppliedSize: Size?
-
     init(app: ClaudeApp, commands: CommandChannel,
          themes: [Theme] = ThemeCatalog.bundled, fonts: [Font] = FontCatalog.available,
-         themeStore: ThemeStore = ThemeStore(), myThemes: MyThemesStore = MyThemesStore(),
-         autoPaintStore: AutoPaintStore = AutoPaintStore(),
-         liveColorsStore: LiveColorsStore = LiveColorsStore()) {
+         themeStore: ThemeStore = ThemeStore(), myThemes: MyThemesStore = MyThemesStore()) {
         self.app = app
         self.commands = commands
         self.themes = themes
         self.fonts = fonts
         self.themeStore = themeStore
         self.myThemes = myThemes
-        self.autoPaintStore = autoPaintStore
-        self.liveColorsStore = liveColorsStore
     }
-
-    var lastCommand: String { commands.lastCommand }
 
     /// Окно, на которое действует хоткей: окно Claude в фокусе (хоткеи живут, только пока
     /// Claude впереди).
@@ -179,12 +157,6 @@ final class ClaudeActions {
         commands.write(action: ClaudeCommand.mic.rawValue, fields: mode.fields)
     }
 
-    /// Команда `dictating {on}` (#8112): Диктатор пишет — окно с фокусом ярко светится (страница, раздел 12и).
-    @discardableResult
-    func sendDictating(_ on: Bool) -> Bool {
-        commands.write(action: "dictating", fields: [(key: "on", value: .bool(on))])
-    }
-
     /// Команда `mic-refused` `{reason:"recording", chat, match}` (контракт WF92 (а), #7704):
     /// нажали кружок, а Диктатор уже пишет — принимает только нажатая страница (свой чат, при
     /// chat=null — свой заголовок, и своё нажатие не старше 4 с): сбрасывает счёт и показывает подсказку.
@@ -205,22 +177,26 @@ final class ClaudeActions {
 
     // MARK: - страничные команды
 
-    /// «Автосвёртка» (#6666): память — UserDefaults приложения, странице уходит команда
-    /// `auto-collapse` всем окнам; свою копию флага страница держит в localStorage.
-    var autoCollapseEnabled: Bool { UserDefaults.standard.bool(forKey: MenuModel.autoCollapseKey) }
-
-    func setAutoCollapse(_ on: Bool) {
-        UserDefaults.standard.set(on, forKey: MenuModel.autoCollapseKey)
-        commands.write(action: "auto-collapse", extra: ["on": on ? "true" : "false"])
-    }
-
-    /// «🙈 Прятать инструменты» (WF120, #7976, К-B1) — как «Автосвёртка»: память в UserDefaults,
+    /// «Прятать инструменты» (WF120, #7976, К-B1; с WF237 — выключатель «Оформления» панели): память в UserDefaults,
     /// всем окнам команда `hide-tools` строкой мимо enum; свою копию флага страница держит в localStorage.
-    var hideToolsEnabled: Bool { UserDefaults.standard.bool(forKey: MenuModel.hideToolsKey) }
+    /// Ключа нет — включено (WF242): страница с page-63 прячет, пока в её localStorage нет «0», — выключатель совпадает.
+    static let hideToolsKey = "hideToolsEnabled"
+    var hideToolsEnabled: Bool { UserDefaults.standard.object(forKey: ClaudeActions.hideToolsKey) as? Bool ?? true }
 
     func setHideTools(_ on: Bool) {
-        UserDefaults.standard.set(on, forKey: MenuModel.hideToolsKey)
+        UserDefaults.standard.set(on, forKey: ClaudeActions.hideToolsKey)
         commands.write(action: "hide-tools", extra: ["on": on ? "true" : "false"])
+    }
+
+    /// «Прятать код и планы» (#7976, К-HC): как `hide-tools` — память в UserDefaults, всем окнам команда `hide-code`
+    /// строкой мимо enum, страница держит свою копию в localStorage. Ключа нет — выключено: команда копирует из
+    /// ответов код, и страница без команды тоже не прячет.
+    static let hideCodeKey = "hideCodeEnabled"
+    var hideCodeEnabled: Bool { UserDefaults.standard.object(forKey: ClaudeActions.hideCodeKey) as? Bool ?? false }
+
+    func setHideCode(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: ClaudeActions.hideCodeKey)
+        commands.write(action: "hide-code", extra: ["on": on ? "true" : "false"])
     }
 
     private func stage(_ action: String, _ window: AXUIElement?) {
@@ -247,7 +223,7 @@ final class ClaudeActions {
                     // «Claude» команду взял бы и безымянный попап (проверка WF37, находка 4).
                     self.commands.write(action: "cashout",
                                         fields: ClaudeActions.cashoutFields(
-                                            title: title, match: self.windowIdentity?(title, AX.frame(window)).page?.path
+                                            title: title, match: self.windowIdentity(title, AX.frame(window)).page?.path
                                                 ?? self.mainWindowMatch() ?? ChatProbe.homePath))
                     self.after(self.cashoutNewChatDelay) { self.newChat(window) }
                 case .popout(let chat):
@@ -259,15 +235,6 @@ final class ClaudeActions {
                 }
             }
         }
-    }
-
-    /// Развилка «Обкэшить» чистой функцией: окон и AX тут нет, поэтому её гоняют тесты
-    /// (критик, важно 3 плана WF37). Верим ТОЛЬКО резолверу главного окна: заглушка «Claude»
-    /// сама по себе главным окном не делает — её носит и безымянный попап (#5534), а у
-    /// главного окна с названным чатом заголовок и вовсе имя чата (критик, блокер 3).
-    static func cashoutRoute(title: String, isMainTitle: Bool, knownChat: String?) -> CashoutRoute {
-        guard !isMainTitle else { return .main }
-        return .popout(chat: knownChat)
     }
 
     /// «Обкэшить» из попапа: новое окно рядом тем же путём, что «🪟 Новое окно ▸ проект» —
@@ -295,8 +262,6 @@ final class ClaudeActions {
     /// Модель и эффорт чата из его файла сессии (`ProjectIndex`). Живьём вешает контроллер;
     /// nil — чат не знаем, и новый чат возьмёт то, что стоит в домашнем поле Claude.
     var chatModel: (String) -> SessionModel? = { _ in nil }
-    /// Чат главного окна (id сессии) — из индекса. Живьём вешает контроллер.
-    var mainChat: () -> String? = { nil }
 
     /// «💬 Новый чат» первым пунктом меню на кнопке боковой панели (⌘B): тот же проект, та же
     /// модель и эффорт, текст передачи из блока «ОТКРОЙ НОВЫЙ ЧАТ» последнего ответа уходит
@@ -326,10 +291,10 @@ final class ClaudeActions {
                 guard let route = self.windowRoute(title: title, frame: frame) else { return }
                 switch route {
                 case .main:
-                    let chat = self.windowIdentity.map { $0(title, frame).page?.chat } ?? self.mainChat()
+                    let chat = self.windowIdentity(title, frame).page?.chat
                     self.commands.write(action: ClaudeCommand.cashout.rawValue,
                                         fields: ClaudeActions.cashoutFields(
-                                            title: title, match: self.windowIdentity?(title, frame).page?.path
+                                            title: title, match: self.windowIdentity(title, frame).page?.path
                                                 ?? self.mainWindowMatch() ?? ChatProbe.homePath,
                                             handoff: true))
                     let project = chat.flatMap { self.projectForChat($0) }
@@ -407,7 +372,7 @@ final class ClaudeActions {
                          _ block: @escaping () -> Void) {
         if start == nil, let window = window {
             guard !cashoutClaimed(window) else {
-                onNotice?(MenuModel.cashoutRepeatNotice, MenuModel.repeatNoticeSeconds)
+                onNotice?(Notices.cashoutRepeatNotice, Notices.repeatNoticeSeconds)
                 return
             }
             cashoutWaiting.append(window)
@@ -434,7 +399,7 @@ final class ClaudeActions {
         }
         guard clock().timeIntervalSince(start) < ClaudeActions.cashoutWaitSeconds else {
             unclaim()
-            onWarning?(MenuModel.cashoutBusyNotice)
+            onWarning?(Notices.cashoutBusyNotice)
             return
         }
         after(BlankWindow.pollSeconds) { [weak self] in self?.whenCashoutIdle(since: start, for: window, block) }
@@ -511,7 +476,7 @@ final class ClaudeActions {
             guard let said = page.cashout, said.hasPrefix(cashoutRefusedPrefix) else { continue }
             let why = said.dropFirst(cashoutRefusedPrefix.count)
                 .trimmingCharacters(in: .whitespaces)
-            return .refused(why.isEmpty ? MenuModel.cashoutNoAnswerReason : why)
+            return .refused(why.isEmpty ? Notices.cashoutNoAnswerReason : why)
         }
         return .waiting
     }
@@ -625,7 +590,7 @@ final class ClaudeActions {
             // Приговор: доезда не будет. Молча выходить нельзя — это «кнопка не работает»
             // (урок ElvisOS, #5784).
             cashoutJob = nil
-            onWarning?(MenuModel.cashoutKeptNotice(why))
+            onWarning?(Notices.cashoutKeptNotice(why))
         case .landed(let title):
             let windows = cashoutWindows()
             // «Новый чат»: страница, сказавшая «вставлено», могла назваться чужим заголовком
@@ -690,8 +655,8 @@ final class ClaudeActions {
         cashoutJob = nil
         let live = windows ?? cashoutWindows()
         let born = live.contains { !job.before.contains($0.id) }
-        onWarning?(born ? MenuModel.cashoutKeptNotice(MenuModel.cashoutNoAnswerReason)
-                        : MenuModel.cashoutNoWindowNotice)
+        onWarning?(born ? Notices.cashoutKeptNotice(Notices.cashoutNoAnswerReason)
+                        : Notices.cashoutNoWindowNotice)
     }
 
     /// Текст доехал: новое окно занимает место донора, и только потом донор закрывается.
@@ -722,13 +687,13 @@ final class ClaudeActions {
             let title = facts?.title ?? AX.string(donor, kAXTitleAttribute) ?? ""
             let route = self.windowRoute(title: title, frame: facts?.frame ?? AX.frame(donor))
             guard case .popout? = route else {
-                self.onWarning?(MenuModel.cashoutDonorMainNotice)
+                self.onWarning?(Notices.cashoutDonorMainNotice)
                 return
             }
             // Кнопки закрытия у окна может не быть вовсе (Electron ещё не отдал дерево) —
             // тогда плашка обязана сказать правду, а не «старое закрыл» (#5779, задача 3).
-            self.onWarning?(self.closeWindow(donor) ? MenuModel.cashoutReplacedNotice
-                                                    : MenuModel.cashoutCloseFailedNotice)
+            self.onWarning?(self.closeWindow(donor) ? Notices.cashoutReplacedNotice
+                                                    : Notices.cashoutCloseFailedNotice)
         }
     }
 
@@ -747,7 +712,7 @@ final class ClaudeActions {
                               chat: String? = nil,
                               handoff: Bool = false) -> [(key: String, value: CommandValue)] {
         var fields: [(key: String, value: CommandValue)] = [
-            (key: "scope", value: .string(MenuModel.themeScopeWindow)),
+            (key: "scope", value: .string(Notices.themeScopeWindow)),
             (key: "title", value: .string(title)),
         ]
         if let match = match { fields.append((key: "match", value: .string(match))) }
@@ -762,7 +727,9 @@ final class ClaudeActions {
     /// по одному заголовку нельзя. Без контроллера остаётся правило до WF37 — заглушка
     /// и пустой заголовок значат главное окно.
     var isMainWindowTitle: (String) -> Bool = { ClaudeActions.isMainWindowTitle($0) }
-    var windowIdentity: ((String, CGRect?) -> WindowIdentity)?
+    /// Резолвер окна (WF116): страница по номеру окна от лоадера (`WindowIdentity.resolveNative`).
+    /// Живьём вешает контроллер; без него окно неизвестно — адресовать и ключевать нечем.
+    var windowIdentity: (String, CGRect?) -> WindowIdentity = { _, _ in .unknown }
     var uniqueLegacyTitle: (String) -> Bool = { _ in false }
 
     static func memoryKey(for page: ChatPage) -> String? {
@@ -771,22 +738,18 @@ final class ClaudeActions {
     }
 
     func memoryKey(title: String, frame: CGRect? = nil) -> String {
-        guard let resolve = windowIdentity else { return title }
-        guard let page = resolve(title, frame).page, let key = Self.memoryKey(for: page) else { return "" }
+        guard let page = windowIdentity(title, frame).page, let key = Self.memoryKey(for: page) else { return "" }
         if uniqueLegacyTitle(title) { themeStore.migrateWindow(title: title, to: key) }
         return key
     }
 
-    /// In production every action shares the frame-aware resolver. The fallback supports standalone callers.
+    /// Куда идёт действие окна: все действия делят один резолвер (`windowIdentity`).
+    /// Окно не опознано или у попапа нет id чата — nil, и действие ничего не делает.
     func windowRoute(title: String, frame: CGRect?) -> CashoutRoute? {
-        if let resolve = windowIdentity {
-            guard let page = resolve(title, frame).page else { return nil }
-            if page.kind == .main { return .main }
-            guard let chat = page.chat else { return nil }
-            return .popout(chat: chat)
-        }
-        return Self.cashoutRoute(title: title, isMainTitle: isMainWindowTitle(title) || isMainFrame(frame),
-                                 knownChat: chatForTitle(title, frame))
+        guard let page = windowIdentity(title, frame).page else { return nil }
+        if page.kind == .main { return .main }
+        guard let chat = page.chat else { return nil }
+        return .popout(chat: chat)
     }
 
     /// Спросить страницы прямо сейчас, мимо минутного тормоза опознания (`ChatProbe.demand`).
@@ -802,15 +765,15 @@ final class ClaudeActions {
     /// не ответит; не дождались — плашка, а не молчаливый выход.
     func whenIdentified(title: String, frame: CGRect?, waited: TimeInterval = 0,
                         _ run: @escaping () -> Void) {
-        guard let resolve = windowIdentity, resolve(title, frame).page == nil else { return run() }
+        guard windowIdentity(title, frame).page == nil else { return run() }
         // Старый лоадер — ждать нечего: ответы его страниц не проверить, и повтор их не исправит.
         guard !pagesNeedRepatch() else {
-            onNotice?(MenuModel.oldLoaderNotice, MenuModel.newWindowNoticeSeconds)
+            onNotice?(Notices.oldLoaderNotice, Notices.newWindowNoticeSeconds)
             return
         }
         if waited == 0 { demandPages() }
         guard waited < Self.identityWaitSeconds else {
-            onNotice?(MenuModel.windowUnknownNotice, MenuModel.newWindowNoticeSeconds)
+            onNotice?(Notices.windowUnknownNotice, Notices.newWindowNoticeSeconds)
             return
         }
         after(Self.identityRetryPause) { [weak self] in
@@ -818,31 +781,11 @@ final class ClaudeActions {
         }
     }
 
-    /// Стоит ли в этой рамке страница главного окна (карта probe, #7378). Живьём вешает
-    /// контроллер; без него — нет.
-    var isMainFrame: (CGRect?) -> Bool = { _ in false }
-
-    /// Рамка — окна главной страницы, и ни один попап в ней не стоит (попап ровно поверх
-    /// главного окна по рамке не различить — тогда решает заголовок). Чужие страницы (артефакт,
-    /// панель браузера) живут в окне главной и носят её рамку — они не в счёт.
-    static func isMainFrame(_ frame: CGRect?, pages: [ChatPage]) -> Bool {
-        guard let frame = frame else { return false }
-        let hits = pages.filter { page in
-            page.kind != .other && (page.frame.map { frameMatches($0, frame) } ?? false)
-        }
-        return !hits.isEmpty && hits.allSatisfy { $0.kind == .main }
-    }
-
     static func isMainWindowTitle(_ title: String) -> Bool {
         let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
         return clean.isEmpty || clean == ProjectPaint.mainWindowTitle
     }
 
-    /// Чат окна по AX-заголовку и РАМКЕ окна — карта probe (план WF29, рамка с WF77).
-    /// Живьём вешает контроллер; карта несвежая или тумблер «🗂 Цвет по проекту» выключен —
-    /// nil, и попап адресуется заголовком, как до WF37. Рамка решает, когда заголовок носят
-    /// два окна: без неё это ничья и nil (#6734).
-    var chatForTitle: (String, CGRect?) -> String? = { _, _ in nil }
     /// Проект чата: папка из индекса Claude Code. Живьём вешает контроллер; nil — папки
     /// не знаем, и новое окно откроется «Здесь же».
     var projectForChat: (String) -> Project? = { _ in nil }
@@ -859,7 +802,7 @@ final class ClaudeActions {
         WorkflowKit.install()
         guard let text = WorkflowKit.kickoff() else {
             // Комплекта нет вовсе (старый бандл) — говорим об этом, а не проглатываем клик.
-            onWarning?(MenuModel.workflowKitMissingAlert)
+            onWarning?(Notices.workflowKitMissingAlert)
             return
         }
         guard let window = window else {
@@ -876,9 +819,23 @@ final class ClaudeActions {
 
     /// Поля команды после id, action, at: scope, title, text (контракт п. 3 плана WF9).
     static func workflowFields(title: String, text: String) -> [(key: String, value: CommandValue)] {
-        [(key: "scope", value: .string(MenuModel.themeScopeWindow)),
+        [(key: "scope", value: .string(Notices.themeScopeWindow)),
          (key: "title", value: .string(title)),
          (key: "text", value: .string(text))]
+    }
+
+    /// Поля стартера чата (WF242): те же, что у «Workflow», плюс адрес окна — `match` (путь страницы) или `chat`;
+    /// без адреса страница берёт окно в фокусе (пустой `title`).
+    static func starterFields(text: String, match: String?, chat: String?) -> [(key: String, value: CommandValue)] {
+        var fields = workflowFields(title: "", text: text)
+        if let match = match, !match.isEmpty { fields.append((key: "match", value: .string(match))) }
+        else if let chat = chat, !chat.isEmpty { fields.append((key: "chat", value: .string(chat))) }
+        return fields
+    }
+
+    /// Стартер чата: текст в поле ввода адресованного окна, без отправки (ветка `workflow` страницы).
+    func insertStarter(text: String, match: String?, chat: String?) {
+        commands.write(action: "workflow", fields: ClaudeActions.starterFields(text: text, match: match, chat: chat))
     }
 
     // MARK: - новое окно (план WF13)
@@ -915,10 +872,10 @@ final class ClaudeActions {
         // Requested/donor settings are not evidence of the new chat's actual model.
         pendingNewWindowNotice = nil
         if handoff != nil {
-            onNotice?(MenuModel.newChatNotice(model: nil, effort: nil),
-                      MenuModel.newWindowNoticeSeconds)
+            onNotice?(Notices.newChatNotice(model: nil, effort: nil),
+                      Notices.newWindowNoticeSeconds)
         } else {
-            onNotice?(MenuModel.newWindowNotice, MenuModel.newWindowNoticeSeconds)
+            onNotice?(Notices.newWindowNotice, Notices.newWindowNoticeSeconds)
         }
         let stay = handoff?.stay == true
         // Папка и имя чата считаются здесь, а не на странице (критик В4 плана WF16): на диске
@@ -931,7 +888,7 @@ final class ClaudeActions {
         // во всём открытии окна. Текст прямо просит ничего не делать, а имя чату ставит
         // отдельный шаг переименования на странице (поле `name`), а не авто-заголовок по
         // первому сообщению.
-        let text = custom ?? MenuModel.newWindowText
+        let text = custom ?? Notices.newWindowText
         let send: (String) -> Void = { [weak self] title in
             guard let self = self else { return }
             let layers = stay ? ProjectSettings() : project.map {
@@ -995,41 +952,18 @@ final class ClaudeActions {
         }
     }
 
-    /// «🪟 Новое окно ▸ проект» из меню — через канал «Пимп», чтобы окно встало самым правым
-    /// (проверка гейта WF94). Живьём вешает контроллер; `false` — канал не взял, идём как раньше.
-    var menuNewWindow: (Project) -> Bool = { _ in false }
-
     /// «Bypass permissions в новых чатах» (К5, #9060): читается в момент записи `new-window`, так что
     /// ⌥⌘N, «▸ проект», «💬 Новый чат», «Обкэшить» и канал «Пимп» (`pimp.py open`) — все пути через
     /// одну точку `newWindow(_:…)` — получают `mode:"bypass"` одинаково. Тесты подменяют.
     var bypassNew: () -> Bool = { UserDefaults.standard.bool(forKey: BypassNew.key) }
 
-    func newWindowFromMenu(in project: Project, on window: AXUIElement?) {
-        guard !refuseNewWindowRepeat() else { return }
-        if menuNewWindow(project) { return }
-        newWindow(in: project, on: window)
-    }
-
-    /// Ставит ли канал «Пимп» пустое окно прямо сейчас (`BlankJob`). Живьём вешает контроллер.
-    var blankBusy: () -> Bool = { false }
-
-    /// Сколько цепочка «Нового окна» ждёт конца пустого окна: черновик ловится до 6 с и ещё
-    /// 1 с на пустой заголовок; дальше ждать нечего — идём как есть.
-    static let blankWaitSeconds: TimeInterval = BlankWindow.draftWaitSeconds + BlankWindow.untitledGraceSeconds + 1
-
-    /// Замок в обе стороны (проверка S): пока канал ловит черновик «Code», новая цепочка
-    /// (⌥⌘N, «🪟 Новое окно ▸», «💬 Новый чат» — кнопка, ссылка, отсчёт «сам», «Обкэшить») не
-    /// начинается — её попап до имени чата тоже «Code», и черновиком стал бы он. Ждём опросом
-    /// 0,25 с, не дольше `blankWaitSeconds`.
-    func whenBlankIdle(since start: Date? = nil, _ block: @escaping () -> Void) {
-        let start = start ?? clock()
-        guard blankBusy(), clock().timeIntervalSince(start) < ClaudeActions.blankWaitSeconds else {
-            // Метка прогрева — на выпуске, а не в `newWindow` через 0,1–1,3 с (проверка wf93-n2):
-            // `newWindowBusy` правдив с первой миллисекунды цепочки.
-            lastNewWindowAt = clock()
-            return block()
-        }
-        after(BlankWindow.pollSeconds) { [weak self] in self?.whenBlankIdle(since: start, block) }
+    /// Выпуск цепочки «Нового окна» (⌥⌘N, «🪟 Новое окно ▸», «💬 Новый чат», «Обкэшить»): ставит
+    /// метку прогрева и сразу идёт. Метка — здесь, а не в `newWindow` через 0,1–1,3 с (проверка
+    /// wf93-n2): `newWindowBusy` правдив с первой миллисекунды цепочки. Ждать пустое окно канала
+    /// больше нечего — его движок снят в WF248.
+    func whenBlankIdle(_ block: @escaping () -> Void) {
+        lastNewWindowAt = clock()
+        block()
     }
 
     /// Чем красить новое окно (вопрос 2 макета WF16, ответ Элвиса — «1»): вид проекта из
@@ -1091,7 +1025,7 @@ final class ClaudeActions {
         if let actual = run.confirmedActual(commandId: pending.id, since: pending.since, now: now) {
             pendingNewWindowNotice = nil
             let detail = [actual.model, actual.effort].compactMap { $0 }.joined(separator: " · ")
-            if !detail.isEmpty { onNotice?("💬 Новый чат открыт — " + detail, MenuModel.newWindowNoticeSeconds) }
+            if !detail.isEmpty { onNotice?("💬 Новый чат открыт — " + detail, Notices.newWindowNoticeSeconds) }
         } else if run.failure(since: pending.since) != nil { pendingNewWindowNotice = nil }
     }
 
@@ -1123,7 +1057,7 @@ final class ClaudeActions {
     /// без лишнего ⌘N в главное окно — только плашка «уже открываю». `true` — нажатие отклонено.
     func refuseNewWindowRepeat() -> Bool {
         guard newWindowStarting else { return false }
-        onNotice?(MenuModel.newWindowRepeatNotice, MenuModel.repeatNoticeSeconds)
+        onNotice?(Notices.newWindowRepeatNotice, Notices.repeatNoticeSeconds)
         return true
     }
 
@@ -1142,11 +1076,10 @@ final class ClaudeActions {
         return now.timeIntervalSince(since) < BlankWindow.newWindowQuietSeconds
     }
 
-    /// Вид окна, каким его помнит приложение: галки меню, а у окна после «Раскрасить по кругу» —
-    /// его сгенерированная тема. Нужен «🪟 Новому окну ▸» у проекта без своего вида (план WF16).
+    /// Вид окна, каким его помнит приложение. Нужен новому окну у проекта без своего вида (план WF16).
     func windowView(title: String, frame: CGRect? = nil) -> ProjectSettings {
         ProjectPaint.view(title: memoryKey(title: title, frame: frame), themeStore: themeStore, themes: themes, fonts: fonts,
-                          myThemes: myThemes.load(), autoPainted: autoPaintedTheme(title: title, frame: frame))
+                          myThemes: myThemes.load(), autoPainted: nil)
     }
 
     /// Уникальное имя чата для нового окна в папке проекта. Живьём ставит `ClaudeAXController`
@@ -1200,7 +1133,7 @@ final class ClaudeActions {
                                 frame: Layer<Bool> = .keep,
                                 bypass: Bool = false) -> [(key: String, value: CommandValue)] {
         var fields: [(key: String, value: CommandValue)] = [
-            (key: "scope", value: .string(MenuModel.themeScopeWindow)),
+            (key: "scope", value: .string(Notices.themeScopeWindow)),
             (key: "title", value: .string(title)),
         ]
         if let match = match { fields.append((key: "match", value: .string(match))) }
@@ -1230,7 +1163,7 @@ final class ClaudeActions {
                                    chat: String? = nil,
                                    name: String? = nil) -> [(key: String, value: CommandValue)] {
         var fields: [(key: String, value: CommandValue)] = [
-            (key: "scope", value: .string(MenuModel.themeScopeWindow)),
+            (key: "scope", value: .string(Notices.themeScopeWindow)),
             (key: "title", value: .string(title)),
         ]
         if let match = match { fields.append((key: "match", value: .string(match))) }
@@ -1350,7 +1283,7 @@ final class ClaudeActions {
             return true
         }
         // Окно этого клика пока не опознано (между кругами probe) — ждём ответа страниц.
-        if !themeAddress(scope: scope, title: title, frame: box).valid, windowIdentity != nil {
+        if !themeAddress(scope: scope, title: title, frame: box).valid {
             whenIdentified(title: title, frame: box) { _ = send() }
             return true
         }
@@ -1361,11 +1294,11 @@ final class ClaudeActions {
     /// (Claude ещё не пропатчен, читать команду некому). Выбор ложится в память галок и в `window-themes.json`:
     /// живая страница красится этой командой, первая после «Пропатчить Claude» — возвратом `themes-restore`.
     func applyNewInstallLook(theme: Theme, look: Look) {
-        let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeAll, title: "", theme: .set(theme),
+        let fields = ClaudeActions.themeFields(scope: Notices.themeScopeAll, title: "", theme: .set(theme),
                                                font: .keep, look: look.layer)
         _ = commands.write(action: "theme", fields: fields)
         recordTheme(fields: fields)
-        remember(scope: MenuModel.themeScopeAll, title: "", theme: .set(theme), font: .keep, size: .keep,
+        remember(scope: Notices.themeScopeAll, title: "", theme: .set(theme), font: .keep, size: .keep,
                  frame: .keep, look: look.layer)
     }
 
@@ -1382,21 +1315,13 @@ final class ClaudeActions {
     /// из него — иначе развилку не проверить.
     func themeAddress(scope: String, title: String,
                       frame: CGRect? = nil) -> (match: String?, chat: String?, valid: Bool) {
-        guard scope == MenuModel.themeScopeWindow else { return (nil, nil, true) }
-        if let resolve = windowIdentity {
-            guard let page = resolve(title, frame).page else { return (nil, nil, false) }
-            if page.kind == .main {
-                return (page.path.isEmpty ? mainWindowMatch() ?? ChatProbe.homePath : page.path, nil, true)
-            }
-            guard let chat = page.chat else { return (nil, nil, false) }
-            return (nil, chat, true)
+        guard scope == Notices.themeScopeWindow else { return (nil, nil, true) }
+        guard let page = windowIdentity(title, frame).page else { return (nil, nil, false) }
+        if page.kind == .main {
+            return (page.path.isEmpty ? mainWindowMatch() ?? ChatProbe.homePath : page.path, nil, true)
         }
-        guard !title.isEmpty else { return (nil, nil, true) }
-        switch ClaudeActions.cashoutRoute(title: title, isMainTitle: isMainWindowTitle(title),
-                                          knownChat: chatForTitle(title, frame)) {
-        case .main: return (mainWindowMatch(), nil, true)
-        case .popout(let chat): return (nil, chat, true)
-        }
+        guard let chat = page.chat else { return (nil, nil, false) }
+        return (nil, chat, true)
     }
 
     /// Поля команды после id, action, at: scope, title, match, preview, затем слои — тема,
@@ -1446,86 +1371,12 @@ final class ClaudeActions {
         return fields
     }
 
-    /// Своя тема ставит РОВНО палитру — один слой, как любой другой пункт списка цветов
-    /// (решение 2.1 плана WF31, задача #5453: «когда я цвета выбираю, не надо мне из темы
-    /// Пудра показывать шрифты»). Шрифт, кегль и рамка в `my-themes.json` по-прежнему
-    /// хранятся (`saveMyTheme` пишет их все), но выбираются своими списками — правило одно
-    /// и без исключений: список цветов меняет цвет. Так же с WF15 живёт цвет проекта
-    /// (`ProjectPaint.view`), и панель «Своя тема» теперь ставит ровно то, что крутила.
-    /// `toProject` — как у `applyTheme`: «Только этому окну» в проект не пишет (WF71).
-    @discardableResult
-    func apply(myTheme: MyTheme, scope: String, window: AXUIElement?, toProject: Bool = true) -> Bool {
-        applyTheme(scope: scope, theme: .set(myTheme.theme), window: window, toProject: toProject)
-    }
-
-    /// «💾 Сохранить тему»: набор из темы этого окна и последних шрифта и размера.
-    /// Тема ни разу не выбиралась — сохранять нечего (меню покажет алерт).
-    @discardableResult
-    func saveMyTheme(name: String, window: AXUIElement? = nil) -> [MyTheme]? {
-        guard let theme = themeToSave(window: window) else { return nil }
-        return myThemes.add(name: name, theme: theme, font: lastAppliedFont, size: lastAppliedSize)
-    }
-
-    /// Что запишет «💾 Сохранить тему» (и от чего считается имя): у автопокрашенного окна — его
-    /// собственную автотему (план WF10 п. 6), у остальных — последнюю применённую этим
-    /// приложением. Иначе на окне «Радуги» сохранялся бы цвет соседнего окна.
-    func themeToSave(window: AXUIElement?) -> Theme? {
-        let title = window.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
-        let key = memoryKey(title: title, frame: window.flatMap { AX.frame($0) })
-        if let id = themeStore.windowThemeID(title: key) ?? (autoPaintedThemes[key] == nil ? themeStore.allThemeID : nil) {
-            return themes.first { $0.id == id } ?? myThemes.load().first { $0.id == id }?.theme
-        }
-        return autoPaintedThemes[key] ?? (windowIdentity == nil ? lastAppliedTheme : nil)
-    }
-
-    /// Автотема окна, если его красила автопокраска. Меню спрашивает об этом ради галки
-    /// «Как у Claude»: окно цветное, а `ThemeStore` пуст — галка соврала бы (критик В1 плана WF14).
-    func autoPaintedTheme(title: String, frame: CGRect? = nil) -> Theme? { autoPaintedThemes[memoryKey(title: title, frame: frame)] }
-
-    /// Заголовок окна, которым сейчас владеет панель «Своя тема» (критик Б3 плана WF20).
-    /// Пока он занят, фоновая покраска по проекту это окно не трогает, а живые цвета
-    /// не запускаются вовсе: обычная команда `theme` гасит примерку на странице
-    /// (`endPreviewExcept`), и ползунок остался бы без цвета. Ставит и снимает `ThemeEditor`;
-    /// панель одна на приложение — отсюда и статик, как у `ThemeEditor.current`.
+    /// Окно, которым владела панель «Своя тема» (критик Б3 плана WF20): её сняли вместе с меню (WF237), и ставить
+    /// их больше некому — всегда nil. Читает `ProjectPaint`; уйдут вместе с его проверкой (диагноз WF237).
     static var themeEditorTitle: String?
-
-    /// То же окно, но КЛЮЧОМ покраски (`main` / `c:<id>` / `w:<заголовок>`, находка 5 проверки
-    /// WF20): заголовок для сверки не годится — у цели главного окна стоит заглушка «Claude»,
-    /// а панель видит настоящий заголовок чата, и тик гасил примерку. Ставит `ThemeEditor`
-    /// вместе с заголовком; nil — резолвер не повешен, сверка идёт по-старому.
     static var themeEditorKey: String?
 
-    /// Ключ окна по его заголовку — резолвер покраски (`ProjectPaint.windowKey(forTitle:)`).
-    /// Вешает `ClaudeAXController`; в сборке без покраски и в тестах его нет.
-    static var windowKeyForTitle: ((String, CGRect?) -> String)?
-
-    /// Панель закрылась: флаг снят, и отложенный крутёж живых цветов уезжает на страницу
-    /// (находка 4 проверки WF20). Пока панель была открыта, `sendLiveColors` его только
-    /// запоминал — приложение считало живые цвета включёнными, а страница ничего не крутила
-    /// до перезапуска. Зовёт `ThemeEditor.finish()`, и только он.
-    func finishThemeEditor() {
-        ClaudeActions.themeEditorTitle = nil
-        ClaudeActions.themeEditorKey = nil
-        _ = resendLiveColors()
-    }
-
-    /// Ручки, с которых открывается «🎚 Своя тема…»: у выбранной окном своей темы — записанные
-    /// в файл, у темы каталога и автотемы — подобранные по палитре (приблизительно, п. 4
-    /// «Что выяснено»). Ничего не выбрано — умолчание панели.
-    func editorKnobs(window: AXUIElement?) -> ThemeKnobs {
-        let title = window.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
-        let key = memoryKey(title: title, frame: window.flatMap { AX.frame($0) })
-        if let id = themeStore.windowThemeID(title: key) ?? (autoPaintedThemes[key] == nil ? themeStore.allThemeID : nil) {
-            if let my = myThemes.load().first(where: { $0.id == id }) { return ThemeKnobs.of(my) }
-            if let found = themes.first(where: { $0.id == id }) {
-                return ThemeKnobs.from(palette: found.palette, type: found.type)
-            }
-        }
-        guard let theme = autoPaintedThemes[key] ?? (windowIdentity == nil ? lastAppliedTheme : nil) else { return ThemeKnobs() }
-        return ThemeKnobs.from(palette: theme.palette, type: theme.type)
-    }
-
-    /// Галки в меню и «последнее применённое» — по слоям: слой `.keep` остаётся как был.
+    /// Память выбора — по слоям: слой `.keep` остаётся как был.
     /// Размер приходит половинами, поэтому кладётся поверх запомненного — как его склеивает
     /// страница; `.reset` («🧹 Всё как у Claude») снимает слой целиком, а снятая половина
     /// («Как у Claude» в одном из двух подменю) уходит из записи одна (решение 1 плана WF19).
@@ -1539,12 +1390,10 @@ final class ClaudeActions {
                           toProject: Bool = true) {
         // Размер окна ЦЕЛЫМ слоем — таким он и уйдёт в файл проекта (крючок в конце).
         var windowSize: Layer<Size> = .keep
-        if scope == MenuModel.themeScopeAll {
+        if scope == Notices.themeScopeAll {
             if !theme.isKeep {
                 themeStore.setAllTheme(theme.value?.id)
                 themeStore.clearWindowThemes()
-                // Автотем на окнах больше нет: тему всем окнам задали руками.
-                autoPaintedThemes.removeAll()
             }
             if !font.isKeep {
                 themeStore.setAllFont(font.value?.id)
@@ -1560,10 +1409,7 @@ final class ClaudeActions {
             }
         } else {
             let key = memoryKey(title: title, frame: windowFrame)
-            if !theme.isKeep {
-                themeStore.setWindowTheme(theme.value?.id, title: key)
-                autoPaintedThemes[key] = nil // цвет окна выбрали руками — автотема устарела
-            }
+            if !theme.isKeep { themeStore.setWindowTheme(theme.value?.id, title: key) }
             if !font.isKeep { themeStore.setWindowFont(font.value?.id, title: key) }
             if !size.isKeep {
                 let value = ClaudeActions.windowSize(after: size,
@@ -1576,17 +1422,11 @@ final class ClaudeActions {
             }
             if !look.isKeep { themeStore.setWindowLook(look.value, title: key) }
         }
-        if !theme.isKeep { lastAppliedTheme = theme.value }
-        if !font.isKeep { lastAppliedFont = font.value }
-        // Снятую половину убираем и отсюда (критик В5 плана WF19): иначе «💾 Сохранить как мою
-        // тему…» записала бы кегль, которого на экране уже нет.
-        if !size.isKeep { lastAppliedSize = size.applied(to: lastAppliedSize) }
         // Ручной выбор в окне проекта — это и есть вид проекта (решение 3.2 плана WF20).
-        // Только `scope:"window"`: «всем окнам» проект не перебивает вовсе, а примерка
-        // и «Раскрасить по кругу» сюда не доходят. Сверка именно «равно окну», а не «не равно
+        // Только `scope:"window"`: «всем окнам» проект не перебивает вовсе, а примерка сюда не доходит. Сверка именно «равно окну», а не «не равно
         // всем» (находка 6 проверки WF20): третий scope, который однажды появится, ушёл бы
         // в файл проекта молча.
-        guard scope == MenuModel.themeScopeWindow, toProject else { return }
+        guard scope == Notices.themeScopeWindow, toProject else { return }
         onWindowViewChanged?(title, windowFrame, theme, font, windowSize, frame, look)
     }
 
@@ -1618,28 +1458,6 @@ final class ClaudeActions {
         sendPreview(true, theme: theme.map { Layer.set($0) } ?? .reset, font: .keep, window: window)
     }
 
-    /// Своя тема примеряется тем же одним слоем, каким и ставится (решение 2.1 плана WF31):
-    /// примерка становится неотличима от примерки темы каталога с тем же id. Правило WF8
-    /// «примерка = то, что получишь» запрещает разводить наведение и клик.
-    @discardableResult
-    func preview(myTheme: MyTheme, window: AXUIElement?) -> Bool {
-        previewTheme(myTheme.theme, window: window)
-    }
-
-    /// То же для шрифта; `nil` — «Системный (как у Claude)».
-    @discardableResult
-    func previewFont(_ font: Font?, window: AXUIElement?) -> Bool {
-        sendPreview(true, theme: .keep, font: font.map { Layer.set($0) } ?? .reset, window: window)
-    }
-
-    /// То же для размера: в команде одна половина слоя, вторую страница доклеивает сама
-    /// из того, что сейчас на экране. «Как у Claude» примеряется тем же слоем со снятой
-    /// половиной (`{"answer":null}`, решение 2 плана WF19) — вторая на экране не дрогнет.
-    @discardableResult
-    func previewSize(_ size: SizeLayer, window: AXUIElement?) -> Bool {
-        sendPreview(true, theme: .keep, font: .keep, size: size, window: window)
-    }
-
     /// «🔡 Размер шрифта в поле» (WF107 #8126, К2): `composer-font` всем окнам очередью канала; nil — «Как у
     /// Claude». Им же приложение возвращает размер странице, потерявшей `localStorage`.
     @discardableResult
@@ -1647,56 +1465,32 @@ final class ClaudeActions {
         commands.write(action: ComposerFont.action, fields: ComposerFont.fields(px: px))
     }
 
-    /// Примерка размера поля в одном окне: адрес — как у `sendPreview` (заголовок и `match`/`chat` из
-    /// `themeAddress`), мимо очереди. Снимает её прежний `theme` с `preview:false` (`endPreview`).
-    @discardableResult
-    func previewComposerFont(_ px: Int?, window: AXUIElement?) -> Bool {
-        noteUserCommand()
-        let target = window ?? focusedWindow()
-        let title = target.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
-        guard !title.isEmpty else { return false }
-        let address = themeAddress(scope: MenuModel.themeScopeWindow, title: title,
-                                   frame: target.flatMap { AX.frame($0) })
-        guard address.valid else { return false }
-        return commands.write(action: ComposerFont.action,
-                              fields: ComposerFont.previewFields(title: title, match: address.match,
-                                                                 chat: address.chat, px: px),
-                              priority: .preview)
-    }
-
-    /// Наведение на пункт вида (план WF83) примеряет вид с ЭТИМ эффектом включённым, чем бы он
-    /// сейчас ни был. Остальные эффекты — как на окне сейчас: слой уходит объектом целиком.
-    @discardableResult
-    func previewLook(_ look: Look, window: AXUIElement?) -> Bool {
-        sendPreview(true, theme: .keep, font: .keep, look: .set(look), window: window)
-    }
-
     /// Конец предпросмотра: `preview: false` без слоёв — страница возвращает окну то, что
-    /// лежит у неё в хранилище. Шлётся, когда меню закрылось без выбора.
+    /// лежит у неё в хранилище. Шлётся, когда курсор ушёл с цветов панели.
     @discardableResult
     func endPreview(window: AXUIElement?) -> Bool {
         sendPreview(false, theme: .keep, font: .keep, window: window)
     }
 
     /// Предпросмотр всегда адресован одному окну (`scope: "window"`), фокуса не просит:
-    /// пока открыто меню, окно Claude всё равно не впереди, а `focus()` закрыл бы само меню —
-    /// страница узнаёт окно по заголовку, как в «Обкэшить».
+    /// пока открыта панель, окно Claude всё равно не впереди — страница узнаёт окно по заголовку,
+    /// как в «Обкэшить».
     private func sendPreview(_ preview: Bool, theme: Layer<Theme>, font: Layer<Font>,
                              size: SizeLayer = .keep,
                              look: Layer<Look> = .keep, window: AXUIElement?) -> Bool {
         noteUserCommand()
         let target = window ?? focusedWindow()
         let title = target.flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
-        // Без заголовка примерка не адресуется (фокуса у окна Claude нет, пока открыто меню),
+        // Без заголовка примерка не адресуется (фокуса у окна Claude нет, пока открыта панель),
         // а «конец примерки» мог бы снять живую тему у окна без ключа — не шлём ничего.
         guard !title.isEmpty else { return false }
         // Примерка адресуется так же, как закрепляющая команда (#5715): иначе цвет под
         // курсором ехал бы на все окна с этим именем чата, а «конец примерки» — тоже.
         // Рамка окна — часть адреса с WF77: по ней различаются окна-однофамильцы.
-        let address = themeAddress(scope: MenuModel.themeScopeWindow, title: title,
+        let address = themeAddress(scope: Notices.themeScopeWindow, title: title,
                                    frame: target.flatMap { AX.frame($0) })
         guard address.valid else { return false }
-        let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: title,
+        let fields = ClaudeActions.themeFields(scope: Notices.themeScopeWindow, title: title,
                                                match: address.match, chat: address.chat,
                                                preview: preview, theme: theme, font: font,
                                                size: size, look: look)
@@ -1704,89 +1498,44 @@ final class ClaudeActions {
         return commands.write(action: "theme", fields: fields, priority: .preview)
     }
 
-    // MARK: - автопокраска (план WF10)
+    // MARK: - «Оформление» панели (WF237, бывшее меню жёлтой кнопки)
 
-    /// «🌈 Автопокраска»: все окна Claude на экране красятся гармонично по цветовому кругу —
-    /// каждому окну своя тема обычной командой `theme` со `scope: "window"`, через очередь
-    /// канала (600 мс на окно). Возвращает, сколько окон покрашено.
-    /// Галки в подменю «Тема» автопокраска не ставит (план п. 4): выбранной темы у окна нет,
-    /// у него сгенерированная.
+    /// «Плотный текст» всем окнам: вид целиком с этим эффектом (`look`), остальные слои не трогаются.
     @discardableResult
-    func autoPaint(preset: AutoPaintPreset) -> Int {
-        paint(preset: preset, start: Double(Int.random(in: 0..<360)),
-              scheme: AutoPaint.schemeIndex(for: preset))
+    func setAllDense(_ on: Bool) -> Bool {
+        let look = themeStore.allLook
+        guard look.dense != on else { return false }
+        return applyTheme(scope: Notices.themeScopeAll, look: look.with(.dense, on).layer, window: nil)
     }
 
-    /// «🔁 Ещё раз»: тот же набор и тот же режим, старт на +37° (план WF10 п. 5). После
-    /// «🎲 Случайно» гармония берётся НОВАЯ — из трёх оставшихся, прежняя не выпадет
-    /// (решение 4 плана WF19): «та же схема, только повёрнутая» читалась как «ничего
-    /// не изменилось». У наборов со своей схемой менять нечего — там `schemeIndex` даёт nil.
-    /// Набора в памяти нет — берём первый.
+    /// Шрифт всем окнам (`font`); nil — «Как у Claude» (`"font":null`). Чужого id в каталоге нет — молчим.
     @discardableResult
-    func autoPaintAgain() -> Int {
-        let last = autoPaintStore.last
-        let preset = last.flatMap { AutoPaint.preset(id: $0.preset) } ?? AutoPaint.presets[0]
-        return paint(preset: preset, start: (last?.start ?? 0) + AutoPaint.againStep,
-                     scheme: AutoPaint.schemeIndex(for: preset, avoiding: last?.scheme ?? nil),
-                     light: last?.light ?? nil)
+    func setAllFont(id: String?) -> Bool {
+        guard id != themeStore.allFontID else { return false }
+        guard let id = id else { return applyTheme(scope: Notices.themeScopeAll, font: .reset, window: nil) }
+        guard let font = fonts.first(where: { $0.id == id }) else { return false }
+        return applyTheme(scope: Notices.themeScopeAll, font: .set(font), window: nil)
     }
 
-    /// «Как у Claude (все окна)»: сброс слоя темы всем окнам одной командой (`theme: null`,
-    /// `scope: "all"`). Шрифт не трогаем — слои независимы.
+    /// Размер ответов всем окнам — ровно половина `answer` (`{"answer":N}`, вопросы не трогаются); nil — снять её.
     @discardableResult
-    func autoPaintReset(window: AXUIElement? = nil) -> Bool {
-        applyTheme(scope: MenuModel.themeScopeAll, theme: .reset, font: .keep, window: window)
+    func setAllTextSize(_ px: Int?) -> Bool {
+        guard px != themeStore.allSize?.answer else { return false }
+        return applyTheme(scope: Notices.themeScopeAll, size: .one(.answer, px.map { Layer.set($0) } ?? .reset),
+                          window: nil)
     }
 
-    private func paint(preset: AutoPaintPreset, start: Double, scheme index: Int?,
-                       light repeated: Bool? = nil) -> Int {
-        noteUserCommand()
-        let windows = paintableWindows()
-        let targets = windows.named
-        guard !targets.isEmpty else {
-            onWarning?(MenuModel.autoPaintNoWindowsAlert)
-            return 0
-        }
-        // Окна красятся по одному раз в 600 мс — молча это выглядит как зависшее меню.
-        // В счёт «Крашу N» идут только окна, которым цвет достанется (без пропущенных).
-        onWarning?(MenuModel.autoPaintStart(windows: windows.onScreen - windows.skipped, shared: windows.shared,
-                                            skipped: windows.skipped))
-        // Режим у набора свой; у «🎲 Случайно» — наоборот к прошлой покраске, а прошлой нет —
-        // монетка (решение 3 плана WF19). «🔁 Ещё раз» режим не меняет — он приходит из памяти
-        // (`repeated`). Считать режим по галкам окон больше нельзя: покраска сама их снимает,
-        // и «Случайно» после неё всегда выпадало тёмным.
-        let light = preset.light ?? repeated ?? AutoPaint.nextLight(last: autoPaintStore.last?.light)
-        let themes = AutoPaint.themes(preset: preset,
-                                      scheme: AutoPaint.scheme(for: preset, index: index),
-                                      count: targets.count, start: start, light: light)
-        var painted = 0
-        for (target, theme) in zip(targets, themes) {
-            let title = target.title
-            let address = themeAddress(scope: MenuModel.themeScopeWindow, title: title, frame: target.frame)
-            guard address.valid else { continue }
-            let key = memoryKey(title: title, frame: target.frame)
-            guard !key.isEmpty else { continue }
-            let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow, title: title,
-                                                   match: address.match, chat: address.chat,
-                                                   theme: .set(theme), font: .keep)
-            // Вторая точка зеркала (решение 2 плана WF35): «Раскрасить по кругу» пишет команду
-            // напрямую, мимо applyTheme, — и без этой строки её цвета не пережили бы
-            // переустановку Claude.
-            guard commands.write(action: "theme", fields: fields) else { continue }
-            recordTheme(fields: fields)
-            painted += 1
-            // Галку в «Тема» снимаем: цвет у окна теперь сгенерированный, а старая отметка
-            // показывала бы тему каталога, которой на окне уже нет (план п. 4).
-            themeStore.setWindowTheme(nil, title: key)
-            // А «Сохранить как мою тему…» на этом окне должно предложить его цвет (план п. 6).
-            autoPaintedThemes[key] = theme
-        }
-        autoPaintStore.remember(preset: preset.id, start: start, scheme: index, light: light)
-        return painted
+    // MARK: - сброс цвета всем окнам
+
+    /// «Как у Claude» и «Свой цвет у каждого проекта» в «Оформлении» панели: сброс слоя темы всем окнам одной
+    /// командой (`theme: null`, `scope: "all"`). Шрифт не трогаем — слои независимы.
+    @discardableResult
+    func resetAllColor(window: AXUIElement? = nil) -> Bool {
+        applyTheme(scope: Notices.themeScopeAll, theme: .reset, font: .keep, window: window)
     }
 
-    /// Окна Claude на экране для покраски: заголовки слева направо, затем сверху вниз (порядок
-    /// тот же, что у «Расставить»), и счётчики для HUD. Окно без AX-заголовка пропускаем совсем:
+    /// Окна Claude на экране: заголовки слева направо, затем сверху вниз (порядок
+    /// тот же, что у «Расставить»), и счётчики. Окно без AX-заголовка пропускаем совсем:
     /// страница узнаёт окно только по нему, а пустой заголовок значит «окно в фокусе» —
     /// покрасились бы все в один цвет. Одинаковые заголовки схлопываются по той же причине:
     /// тема живёт на чате, и двум окнам одного чата достанется один цвет.
@@ -1797,14 +1546,25 @@ final class ClaudeActions {
         guard let pid = app.pid else { return ([], [], 0, 0, 0) }
         let windows = ClaudeApp.onScreenFrames(pid: pid)
         guard !windows.isEmpty else { return ([], [], 0, 0, 0) }
+        return ClaudeActions.paintable(windows, native: windowCensus().native)
+    }
+
+    /// Ядро `paintableWindows` (#7889), чистое — его гоняют тесты. Заголовок окна с экрана берётся у
+    /// ЕДИНСТВЕННОГО AX-окна с той же рамкой (допуск `frameTolerance`) — правило прежнего
+    /// `ClaudeApp.window(matching:)`. Рамки и заголовки AX-окон уже прочитала перепись (`windowCensus().native`,
+    /// на тике сторожа она одна на тик): прежний путь на каждое окно с экрана заново читал рамки ВСЕХ AX-окон —
+    /// 2N²+N обращений к Claude на тик. Пары переписи (`windows`) не годятся: там пара однозначна в обе стороны,
+    /// и окно, чья рамка совпала с окном Claude на другом рабочем столе, осталось бы без заголовка.
+    static func paintable(_ windows: [ClaudeWindowFrame], native: [WindowIdentity.Native])
+        -> (titles: [String], named: [(title: String, frame: CGRect?)], onScreen: Int, shared: Int, skipped: Int) {
         var seen = Set<String>()
         var titles: [String] = []
         var named: [(title: String, frame: CGRect?)] = []
         var skipped = 0
         for index in ArrangeLayout.order(of: windows.map { $0.frame }) {
             let frame = windows[index].frame
-            let title = app.window(matching: frame)
-                .flatMap { AX.string($0, kAXTitleAttribute) } ?? ""
+            let hits = native.filter { item in item.frame.map { frameMatches($0, frame) } ?? false }
+            let title = hits.count == 1 ? hits[0].title : ""
             guard !title.isEmpty else {
                 skipped += 1
                 continue
@@ -1814,97 +1574,6 @@ final class ClaudeActions {
             titles.append(title)
         }
         return (titles, named, windows.count, windows.count - titles.count - skipped, skipped)
-    }
-
-    // MARK: - живые цвета (план WF18)
-
-    /// Что крутится сейчас — из этого галки меню, гашение «🌈 Раскрасить по кругу ▸» и молчание
-    /// цвета проекта.
-    var liveColors: LiveColorsState { liveColorsStore.state }
-
-    /// «🔗 Все окна одним цветом» / «🎭 Каждое окно своим цветом»: одна команда на все окна.
-    /// Круг стартует от сейчас; смена режима на ходу точку отсчёта не сбивает — цвет едет дальше.
-    @discardableResult
-    func startLiveColors(mode: LiveColorsMode) -> Bool {
-        var state = liveColorsStore.state
-        let now = LiveColors.milliseconds(clock())
-        if !state.on { state.epoch = now }
-        state.on = true
-        state.mode = mode
-        // «Как окно сейчас» в режиме «все одним цветом» смысла не имеет (критик М2): в меню
-        // пункт погашен, а тут закрыт и путь «переключили режим, когда он уже был выбран».
-        state.tone = LiveColors.tone(state.tone, mode: mode)
-        return sendLiveColors(state)
-    }
-
-    /// «⏹ Выключить»: короткая команда `on:false` — страница сама возвращает окну тему чата
-    /// (`restoreTheme`), запоминать «что было» не нужно.
-    @discardableResult
-    func stopLiveColors() -> Bool {
-        var state = liveColorsStore.state
-        state.on = false
-        return sendLiveColors(state)
-    }
-
-    /// Ползунок скорости: новый период и пересчитанная точка отсчёта, чтобы цвет не прыгнул.
-    /// Живые цвета выключены — просто запоминаем скорость, команду не шлём.
-    ///
-    /// Идёт мимо очереди канала, как примерка темы: ползунок тащат мышью, и очередь по 0,6 с
-    /// на запись растянула бы смену темпа на секунды после того, как Элвис его отпустил.
-    /// Потерянная промежуточная скорость безвредна — на диске остаётся последняя.
-    @discardableResult
-    func setLiveColors(period: Int) -> Bool {
-        let state = LiveColors.state(liveColorsStore.state, period: period,
-                                     now: LiveColors.milliseconds(clock()))
-        guard state.on else {
-            liveColorsStore.save(state)
-            return false
-        }
-        return sendLiveColors(state, priority: .preview)
-    }
-
-    /// «🌑 Тёмные» / «☀️ Светлые» / «🪟 Как окно сейчас». Выключенные живые цвета так же только
-    /// запоминают выбор: галка в меню обязана стоять там, куда её поставили.
-    @discardableResult
-    func setLiveColors(tone: LiveColorsTone) -> Bool {
-        var state = liveColorsStore.state
-        state.tone = LiveColors.tone(tone, mode: state.mode)
-        guard state.on else {
-            liveColorsStore.save(state)
-            return false
-        }
-        return sendLiveColors(state)
-    }
-
-    /// Пересыл при старте приложения: окна могли открыться, пока приложение не работало, и
-    /// список `titles` в них устарел. Крутёж выключен — молчим (страница и так ничего не крутит).
-    @discardableResult
-    func resendLiveColors() -> Bool {
-        let state = liveColorsStore.state
-        guard state.on else { return false }
-        return sendLiveColors(state)
-    }
-
-    /// Одна команда на всё (`scope: "all"`) — ни в одном режиме N команд по окнам не пишем.
-    /// `ClaudeCommand.liveColors` не заводим: enum — это пункты верхнего уровня и слоты
-    /// хоткеев, а `theme` и `status` тоже пишутся строкой (критик В1).
-    @discardableResult
-    private func sendLiveColors(_ state: LiveColorsState,
-                                priority: CommandChannel.Priority = .normal) -> Bool {
-        noteUserCommand()
-        // Пока открыта панель «Своя тема», крутёж не запускаем и не пересылаем: живой слой
-        // перекрасил бы окно поверх примерки через четверть секунды (критик Б3 плана WF20).
-        // Выбор всё равно запоминаем — поедет, как только панель закроют. Выключение проходит
-        // всегда: оно примерке только помогает.
-        guard !state.on || ClaudeActions.themeEditorTitle == nil else {
-            liveColorsStore.save(state)
-            return false
-        }
-        let fields = LiveColors.fields(state: state, titles: paintableTitles())
-        guard commands.write(action: LiveColors.action, fields: fields,
-                             priority: priority) else { return false }
-        liveColorsStore.save(state)
-        return true
     }
 
     // MARK: - цвет проекта (план WF15)
@@ -1924,7 +1593,7 @@ final class ClaudeActions {
     @discardableResult
     func applyProject(_ command: ProjectPaintCommand) -> Bool {
         guard !command.isEmpty else { return false }
-        let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeWindow,
+        let fields = ClaudeActions.themeFields(scope: Notices.themeScopeWindow,
                                                title: command.title, match: command.match,
                                                chat: command.chat,
                                                theme: command.theme, font: command.font,
@@ -1959,7 +1628,7 @@ final class ClaudeActions {
     /// галок окон здесь не чистится.
     @discardableResult
     func retireEffects(frame: Bool, look: Layer<Look>) -> Bool {
-        let fields = ClaudeActions.themeFields(scope: MenuModel.themeScopeAll, title: "", theme: .keep,
+        let fields = ClaudeActions.themeFields(scope: Notices.themeScopeAll, title: "", theme: .keep,
                                                font: .keep, frame: frame ? .reset : .keep, look: look)
         guard commands.write(action: "theme", fields: fields) else { return false }
         recordTheme(fields: fields)
@@ -1987,23 +1656,14 @@ final class ClaudeActions {
         return (seen.titles, seen.named)
     }
 
-    /// Окно красила «Раскрасить по кругу» — цвет у него сгенерированный, и проект такое окно
-    /// не трогает (критик Б3 плана WF15). Ручной выбор из меню (`ThemeStore`) окно больше
-    /// НЕ занимает: с WF20 он и есть вид проекта (решение 3.2), а старая защита не дала бы
-    /// окну взять цвет нового проекта после смены чата (п. 16 «Что выяснено»).
-    func isWindowAutoPainted(title: String) -> Bool {
-        guard !title.isEmpty else { return false }
-        return autoPaintedThemes[title] != nil
-    }
-
     /// Задан вид «всем окнам» — его проект не перебивает вовсе (критик Б3 плана WF15).
     var hasAllWindowsView: Bool { themeStore.allThemeID != nil || themeStore.allFontID != nil }
 
     // MARK: - оконные команды
 
-    /// «💬 Новый чат» из меню жёлтой кнопки. ⌘N уходит в ПРОЦЕСС Claude, а исполняет его
+    /// «💬 Новый чат» (до WF237 — пункт меню жёлтой кнопки). ⌘N уходит в ПРОЦЕСС Claude, а исполняет его
     /// всегда главное окно, — из вынесенного окна пункт уводил главное окно Элвиса с его
-    /// разговора (#5734). Развилка та же, что у «Обкэшить» (`cashoutRoute`): главное окно —
+    /// разговора (#5734). Развилка та же, что у «Обкэшить» (`windowRoute`): главное окно —
     /// ⌘N, как было; попап — тот же путь, что кнопка и ссылка «ОТКРОЙ НОВЫЙ ЧАТ» в чате
     /// (`handoffNewChat`, #7378, #7671): новый чат того же проекта ЗАМЕНЯЕТ окно — встаёт в
     /// рамку донора, донор закрывается по слову «вставлено». Блока передачи нет — новый чат
@@ -2238,94 +1898,7 @@ final class ClaudeActions {
         return windowCensus().windows.filter { ids.contains($0.id) }
     }
 
-    // MARK: - пустое окно проекта (план WF88, К17)
-
-    /// Все окна выбранного Claude по AX — для приёма черновика (правка критика V-N п. 1): окно
-    /// на рамке служебного (335,164 800×600) `pimpWindows` отсеивает, а черновик туда встать
-    /// может. Окно с парой Quartz идёт под своим номером, без пары — под жетоном, который
-    /// держится, пока окно живо; по жетону его и ставят на место (`arrangeSmart`, `raise`).
-    func blankWindows() -> [(id: CGWindowID, title: String, frame: CGRect)] {
-        guard let root = app.element() else { return [] }
-        let listed = pimpWindows()
-        var tokens: [(id: CGWindowID, window: AXUIElement)] = []
-        var out: [(id: CGWindowID, title: String, frame: CGRect)] = []
-        for window in AX.elements(root, kAXWindowsAttribute) {
-            AX.timeout(window, BlankWindow.axTimeout)
-            let title = AX.string(window, kAXTitleAttribute) ?? ""
-            if let known = listed.first(where: { CFEqual($0.window, window) }) {
-                out.append((id: known.id, title: title, frame: known.frame))
-                continue
-            }
-            let id = blankTokens.first(where: { CFEqual($0.window, window) })?.id ?? nextBlankToken()
-            tokens.append((id: id, window: window))
-            out.append((id: id, title: title, frame: AX.frame(window) ?? .zero))
-        }
-        blankTokens = tokens
-        return out
-    }
-
-    /// Жетоны окон без пары Quartz (с прошлого `blankWindows`). Номера — из верхней половины,
-    /// с номерами окон Quartz не встречаются.
-    private var blankTokens: [(id: CGWindowID, window: AXUIElement)] = []
-    private var blankTokenSeed: CGWindowID = 0xF000_0000
-
-    private func nextBlankToken() -> CGWindowID {
-        blankTokenSeed += 1
-        return blankTokenSeed
-    }
-
-    /// Окна канала плюс названные жетоны пустого окна.
-    private func pimpWindows(with ids: [CGWindowID])
-        -> [(id: CGWindowID, window: AXUIElement, title: String, frame: CGRect)] {
-        var out = windowCensus().windows
-        for id in ids where !out.contains(where: { $0.id == id }) {
-            guard let token = blankTokens.first(where: { $0.id == id }),
-                  let frame = AX.frame(token.window) else { continue }
-            out.append((id: id, window: token.window,
-                        title: AX.string(token.window, kAXTitleAttribute) ?? "", frame: frame))
-        }
-        return out
-    }
-
-    /// Подписи пункта по бандлу выбранного Claude (кэш по пути и mtime `en-US.json`).
-    private let draftLabels = BlankWindow.LabelCache()
-
-    /// Нажать File ▸ «New Session in New Window» у ВЫБРАННОГО Claude (у Элвиса их два, #7096).
-    /// Пункт не кэшируем: Claude пересобирает меню при смене поверхности, и пункт есть только на
-    /// Code. Каждому элементу свои 0,25 с, весь поиск — не дольше 1 с по часам; сперва File.
-    /// Claude вперёд не поднимаем: AXPress жмёт пункт и у Claude позади (живая проверка S.0).
-    func pressDraftItem(project: Project) -> Bool {
-        noteUserCommand()
-        guard let running = app.running() else { return false }
-        let wanted = Set(draftLabels.labels(bundle: running.bundleURL))
-        let root = AXUIElementCreateApplication(running.processIdentifier)
-        AX.timeout(root, BlankWindow.axTimeout)
-        guard let bar = AX.element(root, kAXMenuBarAttribute) else { return false }
-        AX.timeout(bar, BlankWindow.axTimeout)
-        let tops = AX.elements(bar, kAXChildrenAttribute)
-        let deadline = Date().addingTimeInterval(BlankWindow.searchSeconds)
-        for index in BlankWindow.searchOrder(count: tops.count) where Date() < deadline {
-            AX.timeout(tops[index], BlankWindow.axTimeout)
-            for menu in AX.elements(tops[index], kAXChildrenAttribute) where Date() < deadline {
-                AX.timeout(menu, BlankWindow.axTimeout)
-                let items = AX.elements(menu, kAXChildrenAttribute)
-                // Срок — и внутри перебора пунктов: у зависшего меню каждый пункт ест свои 0,25 с.
-                var titles: [BlankWindow.MenuTitle] = []
-                for item in items where Date() < deadline {
-                    AX.timeout(item, BlankWindow.axTimeout)
-                    titles.append((title: AX.string(item, kAXTitleAttribute) ?? "",
-                                   enabled: AX.bool(item, kAXEnabledAttribute)))
-                }
-                if let hit = BlankWindow.match(titles, labels: wanted) {
-                    // Папка свежая, только когда пункт правда нажат.
-                    guard AX.perform(items[hit], kAXPressAction) else { return false }
-                    onProjectUsed?(project)
-                    return true
-                }
-            }
-        }
-        return false
-    }
+    // MARK: - меню Claude
 
     /// Пункт «Settings…» меню приложения Claude (WF126 §7.3, «Открыть настройки Claude»): AXPress и Claude вперёд.
     /// Ищем только в первом меню (меню приложения), не дольше `BlankWindow.searchSeconds`.
@@ -2355,6 +1928,33 @@ final class ClaudeActions {
         return false
     }
 
+    /// Пункт масштаба меню Claude (`ClaudeZoom`): ищем по клавише, подпись зависит от языка. Claude не поднимаем.
+    func pressClaudeZoom(_ step: ClaudeZoom) -> Bool {
+        noteUserCommand()
+        guard let running = app.running() else { return false }
+        let root = AXUIElementCreateApplication(running.processIdentifier)
+        AX.timeout(root, BlankWindow.axTimeout)
+        guard let bar = AX.element(root, kAXMenuBarAttribute) else { return false }
+        AX.timeout(bar, BlankWindow.axTimeout)
+        let deadline = Date().addingTimeInterval(BlankWindow.searchSeconds)
+        for top in AX.elements(bar, kAXChildrenAttribute) where Date() < deadline {
+            AX.timeout(top, BlankWindow.axTimeout)
+            for menu in AX.elements(top, kAXChildrenAttribute) where Date() < deadline {
+                AX.timeout(menu, BlankWindow.axTimeout)
+                for item in AX.elements(menu, kAXChildrenAttribute) where Date() < deadline {
+                    AX.timeout(item, BlankWindow.axTimeout)
+                    var char: AnyObject?
+                    var modifiers: AnyObject?
+                    AXUIElementCopyAttributeValue(item, kAXMenuItemCmdCharAttribute as CFString, &char)
+                    AXUIElementCopyAttributeValue(item, kAXMenuItemCmdModifiersAttribute as CFString, &modifiers)
+                    guard let key = char as? String, step.keys.contains(key), (modifiers as? Int) == 0 else { continue }
+                    return AX.perform(item, kAXPressAction)
+                }
+            }
+        }
+        return false
+    }
+
     /// «Settings…», «Settings...», «Preferences…» — без учёта регистра.
     static func isSettingsTitle(_ title: String) -> Bool {
         let word = title.trimmingCharacters(in: CharacterSet(charactersIn: " .…")).lowercased()
@@ -2368,28 +1968,6 @@ final class ClaudeActions {
                        fields: [(key: "chat", value: .string(chat)), (key: "text", value: .string(text))], id: id)
     }
 
-    /// Команда `draft-setup` черновику (К18): его только что подняли `raise`, и страница берёт
-    /// окно в фокусе — пишем после паузы на фокус, как у прочих команд окну.
-    func sendDraftSetup(_ fields: [(key: String, value: CommandValue)]) {
-        after(focusDelay) { [weak self] in
-            self?.commands.write(action: BlankWindow.draftSetupAction, fields: fields)
-        }
-    }
-
-    /// Какое AX-окно отвечает записи `CGWindowList` и с какой рамкой: сперва совпадение по
-    /// рамке, а нет его — пара, запомненная по номеру окна, и её ЖИВАЯ рамка из AX.
-    /// Зачем: сразу после переезда `CGWindowList` ещё отдаёт СТАРЫЕ координаты, совпадения
-    /// не находится, и окно пропадало из списка целиком — на «расставь» сразу после «расставь»
-    /// канал отвечал «окон нет» (#5684, гейт WF21). Номер окна живёт, пока живо само окно.
-    /// Запомненная пара без рамки — окно закрылось, её забываем.
-    /// Чистая: AX сюда подаёт `pimpWindows`, а тесты — свои замыкания.
-    static func pimpPair(byFrame: AXUIElement?, remembered: AXUIElement?, quartz: CGRect,
-                         liveFrame: (AXUIElement) -> CGRect? = { AX.frame($0) })
-        -> (window: AXUIElement, frame: CGRect)? {
-        if let window = byFrame { return (window, quartz) }
-        guard let known = remembered, let live = liveFrame(known) else { return nil }
-        return (known, live)
-    }
 
     /// Адрес показа выбираем только среди видимых опознанных окон, без догадок по заголовку.
     struct SendDelayPreviewTarget: Equatable {
@@ -2429,7 +2007,7 @@ final class ClaudeActions {
     /// окном — открывать нечего, окно надо только показать и поставить на место. Тот же
     /// порядок, что у фокуса перед командой: активировать Claude, поднять, сделать главным.
     func raise(id: CGWindowID) {
-        guard let entry = pimpWindows(with: [id]).first(where: { $0.id == id }) else { return }
+        guard let entry = windowCensus().windows.first(where: { $0.id == id }) else { return }
         app.focus(window: entry.window)
     }
 
@@ -2542,23 +2120,6 @@ final class ClaudeActions {
         return zip(ordered, cells).map { PimpMove(id: $0.0.id, frame: $0.1) }
     }
 
-    /// Место главного в порядке «главного по центру» по экранам окон (хвост WF107): в тесноте главный
-    /// на `n / 2`, иначе на `(n − 1) / 2` (`ArrangeLayout.centerHubIndex`). Место верное, когда экран его
-    /// окна даёт это же место; сперва — `n / 2`: у Элвиса главный на широком экране, а соседом бывает
-    /// окно MacBook, где на `n` окон не тесно, а не влезает вовсе, и там вышло бы `(n − 1) / 2`.
-    /// Ничто не сошлось — `(n − 1) / 2`, как было. `area` — рабочая область экрана окна с этим номером.
-    static func centerSlot(count: Int, minCellWidth: CGFloat, gap: CGFloat,
-                           area: (Int) -> CGRect?) -> Int {
-        let loose = max(0, (count - 1) / 2)
-        for slot in [count / 2, loose] where slot < count {
-            if let found = area(slot),
-               ArrangeLayout.centerHubIndex(count: count, in: found, minCellWidth: minCellWidth, gap: gap) == slot {
-                return slot
-            }
-        }
-        return loose
-    }
-
     /// Умная расстановка для канала «Пимп» (план WF77): окна названы номерами, экран у
     /// каждого свой. Отдаёт ВСЕ названные окна с итоговыми рамками — и сидящих тоже, им
     /// рамку не пишем вовсе («окна, которые уже стояли на месте, никуда не переводить»).
@@ -2570,7 +2131,7 @@ final class ClaudeActions {
     func arrangeSmart(ids: [CGWindowID], ordered: Bool, anchor: CGWindowID? = nil,
                       phantom: CGRect? = nil)
         -> [(id: CGWindowID, title: String, frame: CGRect)] {
-        let windows = pimpWindows(with: ids)
+        let windows = windowCensus().windows
         let listed = ids.compactMap { id -> (id: CGWindowID, window: AXUIElement?, title: String, frame: CGRect)? in
             if let phantom = phantom, id == PimpChannel.phantomID {
                 return (id: id, window: nil, title: "", frame: phantom)
@@ -2638,7 +2199,7 @@ final class ClaudeActions {
     @discardableResult
     func place(_ moves: [PimpMove], fresh: Bool = false) -> Int {
         guard !moves.isEmpty else { return 0 }
-        let windows = pimpWindows(with: moves.map { $0.id })
+        let windows = windowCensus().windows
         var moved = 0
         for move in moves {
             guard let entry = windows.first(where: { $0.id == move.id }) else { continue }
@@ -2703,12 +2264,8 @@ final class ClaudeActions {
     /// `minWindowWidth` из живого `claude.json` (его правит и сам Элвис, и лоадер берёт
     /// ширину оттуда же): уже этой ширины Electron окно всё равно не сделает, а константа
     /// 340 у `ArrangeLayout` про это не знает. Ключа нет или он битый — 360, как в патче.
-    static func minCellWidth(configURL: URL = CommandChannel.directory
-                                .appendingPathComponent(StatusFeed.configFileName)) -> CGFloat {
-        let data = try? Data(contentsOf: configURL)
-        let json = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
-        guard let value = (json?["minWindowWidth"] as? NSNumber)?.doubleValue,
-              value.isFinite, value > 0 else { return 360 }
+    static func minCellWidth(configURL: URL = LiveConfig.url) -> CGFloat {
+        guard let value = LiveConfig.number("minWindowWidth", at: configURL), value > 0 else { return 360 }
         return CGFloat(value)
     }
 
@@ -2718,20 +2275,15 @@ final class ClaudeActions {
     /// Зазор по умолчанию и его потолок (план WF77, слово Элвиса 20.09: «между окнами
     /// небольшие отступы — это специально… должна быть настройка, сколько пикселей; по
     /// умолчанию — как у меня сейчас»). Шире 40 pt не берём: ячейки начали бы съедаться
-    /// щелями, а потолок столбцов — проваливаться.
-    static let defaultWindowGap: CGFloat = 5
+    /// щелями, а потолок столбцов — проваливаться. Умолчание — одно с `Patcher.configDefaults` (5).
+    static let defaultWindowGap = CGFloat(Patcher.configDefaults["windowGap"] ?? 5)
     static let maxWindowGap: CGFloat = 40
 
     /// `windowGap` из живого `claude.json` — тем же способом, что `minCellWidth`: пункта
     /// меню у него нет, Элвис правит файл руками, и битое значение не должно разъезжать
     /// окна. Ключа нет или он не число — 5; за края зажимаем.
-    static func windowGap(configURL: URL = CommandChannel.directory
-                            .appendingPathComponent(StatusFeed.configFileName)) -> CGFloat {
-        let data = try? Data(contentsOf: configURL)
-        let json = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
-        guard let value = (json?["windowGap"] as? NSNumber)?.doubleValue, value.isFinite else {
-            return defaultWindowGap
-        }
+    static func windowGap(configURL: URL = LiveConfig.url) -> CGFloat {
+        guard let value = LiveConfig.number("windowGap", at: configURL) else { return defaultWindowGap }
         return min(max(CGFloat(value), 0), maxWindowGap)
     }
 
@@ -2749,7 +2301,7 @@ final class ClaudeActions {
         after(focusDelay) { [weak self] in self?.app.focus(window: window) }
     }
 
-    /// Окна переехали: кэш прямоугольников кнопки «Свернуть» протух.
+    /// Окна переехали: рамки в карте probe протухли.
     var onExplicitLayout: (([PimpMove]) -> Void)?
     var onWindowsMoved: (() -> Void)?
 

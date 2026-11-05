@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Patcher
 import Darwin
 
 /// Окно Claude глазами канала «Пимп» (план WF36): номер окна Quartz, заголовок, рамка и —
@@ -73,6 +74,8 @@ struct PimpRequest: Equatable {
         /// Притемнение окон, кроме главного (WF113, #8256), и вид ракеты отправки (WF114, #8226): меняют
         /// те же UserDefaults, что панель у часов, и отвечают итогом.
         case dim, look
+        /// Самопроверка Пимпа и сводка последней проверки окна (#10527, К-HEALTH): только чтение своего процесса.
+        case liveCheck = "live-check"
     }
 
     let id: String
@@ -246,28 +249,17 @@ struct PimpSeats {
     /// а не карта probe — она знает только чаты, открытые окнами (критик Б1 плана WF75).
     var lastChat: (URL) -> (chat: String, title: String)? = { _ in nil }
 
-    // Пустое окно проекта (план WF88, К17). Новые сиденья — в конце и с умолчаниями:
+    // Сиденья WF88 (движок пустого окна снят в WF248). Новые сиденья — в конце и с умолчаниями:
     // `PimpChannelTests` и контроллер собирают сиденья поимённо.
 
     /// Идёт чужая цепочка нового окна: перенос «Обкэшить» («💬 Новый чат», ссылка, отсчёт
-    /// «сам») или прогрев «Нового окна» моложе 40 с (правка критика V-N п. 3). Её попап до имени
-    /// чата тоже зовётся «Code», и пустое окно в это время не начинаем.
+    /// «сам») или прогрев «Нового окна» моложе 40 с — «Новое окно» из меню канал тогда не берёт.
     var newWindowBusy: () -> Bool = { false }
-    /// Все окна выбранного Claude по AX — и те, что `windows` отсеивает по рамке служебного
-    /// окна (правка критика V-N п. 1). Номер — Quartz, а у окна без пары — свой жетон.
-    var blankWindows: () -> [PimpWindow] = { [] }
-    /// Нажать File ▸ «New Session in New Window» у выбранного Claude; false — пункта нет,
-    /// он выключен или AX отказал.
-    var pressDraftItem: (Project) -> Bool = { _ in false }
-    /// Команда `draft-setup` черновику, которого только что подняли (`raise`).
-    var draftSetup: ([(key: String, value: CommandValue)]) -> Void = { _ in }
-    /// Модель чата из его файла сессии: пустое окно берёт её у последнего чата проекта.
+    /// Модель чата из его файла сессии: обновление чата (`renew`) сверяет по ней новую модель.
     var chatModel: (String) -> SessionModel? = { _ in nil }
-    /// Отложить шаг опроса черновика. Живьём — главная очередь; в тестах опрос шагает
-    /// `pollBlank(at:)` сам, без таймера.
+    /// Отложить шаг (перепроверка места, опрос рождения окна, фокус после «спрятать»). Живьём —
+    /// главная очередь; тесты шагают сами, без таймера.
     var schedule: (TimeInterval, @escaping () -> Void) -> Void = { _, _ in }
-    /// «Bypass permissions в новых чатах» (WF126 §7.3): черновику — `mode:"bypass"`.
-    var bypassNew: () -> Bool = { false }
 
     // Окна WF94. Новые сиденья — в конце и с умолчаниями, как у WF88.
 
@@ -398,6 +390,11 @@ struct PimpSeats {
     /// показать. `true` — шаг сделан, окно встанет через миг.
     var showMain: () -> Bool = { false }
 
+    /// `live-check` (#10527, К-HEALTH): раздел приложения (null — приложение его не собрало) и сводка последнего
+    /// отчёта `live-check.json` (null — его нет).
+    var liveCheck: () -> (app: CommandValue, last: CommandValue) = { (app: .null, last: .null) }
+    /// Секунды с последней клавиши (#11201, WF302): замена чата ждёт паузы в наборе. nil — не знаем, не ждём.
+    var keyIdle: () -> TimeInterval? = { nil }
 }
 
 /// Опрос рождения окна (WF98, #7841): пока ждём новое окно, раз в 0,1 с сверяем номера окон
@@ -467,6 +464,9 @@ final class PimpChannel {
     static let renewModelLimit = 80
     /// Ступени эффорта `renew-window` — слова ползунка Claude (страница сравнивает без регистра).
     static let renewEfforts: Set<String> = ["low", "medium", "high", "extra", "max"]
+    /// Сколько после того, как новый чат главного окна назван, ждём перенос черновика (#11201, WF302): страница
+    /// ждёт пустое поле до 6 с и плитки вложений до 4 с.
+    static let renewDraftSeconds: TimeInterval = 12
     /// Сколько ждём окно чата, вынесенного «Вернуть эти чаты» (план WF41): страница зовёт
     /// `openPopout` сразу, а запасной путь через строку сайдбара — секунды. Новые чаты
     /// (`fresh`) ждут своё прежнее время: там создаётся сессия и уходит первое сообщение.
@@ -505,9 +505,6 @@ final class PimpChannel {
     /// Ниже этой высоты столбец пополам не делится (`too-small`). С WF94 — настоящий минимум
     /// высоты окна Claude (`ArrangeLayout.splitMinHeight`, 357): при 360 Odyssey 720 не делился.
     static let minSplitHeight: CGFloat = ArrangeLayout.splitMinHeight
-    /// Права файлов канала: каталог общий, а в запросах лежат пути проектов.
-    static let filePermissions: NSNumber = 0o600
-    static let directoryPermissions: NSNumber = 0o700
     /// `send` (WF103): потолок текста и сколько ждём исход страницы.
     static let sendTextLimit = 8000
     static let sendWaitSeconds: TimeInterval = 20
@@ -523,8 +520,6 @@ final class PimpChannel {
     static let hudTextLimit = 200
     /// Единственное значение ключа `chat` у «нового окна» (контракт WF75).
     static let lastChatKey = "last"
-    /// Опрос пустого окна встал (таймер не пришёл) — тик снимает работу через столько сверх срока.
-    static let blankStallSeconds: TimeInterval = 3
     /// `restart-claude` (WF108): Claude снова запущен, а возврат окон по снимку К5 не кончился за
     /// столько — `restore-timeout`. Снимок сдаётся сам через 120 с (`WindowSnapshotKeeper.giveUpSeconds`).
     static let restartRestoreSeconds: TimeInterval = WindowSnapshotKeeper.giveUpSeconds + 10
@@ -554,9 +549,6 @@ final class PimpChannel {
         case ambiguous
         /// План WF75: закрыть просят главное окно Claude — его не закрываем никогда.
         case mainWindow = "main-window"
-        /// План WF88 (К10-N): пункта «New Session in New Window» нет, он выключен или главного
-        /// окна нет — пустое окно открыть нечем.
-        case noDraftItem = "no-draft-item"
         /// WF94 (K-N): свежая цепочка «Нового окна» кончилась отказом страницы — чата нет,
         /// окна не будет. Поле `state` ответа — исход страницы (`draft`, `no-folder`, …).
         case chatNotCreated = "chat-not-created"
@@ -634,6 +626,8 @@ final class PimpChannel {
         var main = false
         /// Модель из запроса; nil — не просили, и поля `model` в ответе нет.
         let model: String?
+        /// Эффорт из запроса (#10261); nil — не просили, и поля `effort` в ответе нет.
+        var effort: String? = nil
         /// Новое окно родилось: его номер и когда.
         var born: CGWindowID?
         var bornAt: Date?
@@ -654,25 +648,8 @@ final class PimpChannel {
         var chrome: (window: ChatGPTWindow, to: CGRect)? = nil
     }
 
-    /// Номер-призрак будущего окна в `makeRoom`: с номерами Quartz и жетонами пустого окна
-    /// (`0xF000_0000…`) не встречается.
+    /// Номер-призрак будущего окна в `makeRoom`: с номерами Quartz не встречается.
     static let phantomID: CGWindowID = 0xFFFF_FFFE
-
-    /// Пустое окно проекта (план WF88, К17, правка критика V-N п. 2): своя работа, не `Job` —
-    /// общий тик её не двигает (его `accepts(chat: nil)` взял бы любое новое окно), ведёт её
-    /// только опрос 0,25 с. Ждём от НАЖАТИЯ пункта.
-    private struct BlankJob {
-        /// id запроса; nil — пункт меню: файла ответа нет, отказ — плашкой.
-        let id: String?
-        let place: PimpPlace
-        let fromId: CGWindowID?
-        let fromTitle: String?
-        var fromResolved: Bool
-        /// Окна выбранного Claude по AX до нажатия.
-        let before: Set<CGWindowID>
-        let pressedAt: Date
-        let folder: URL
-    }
 
     /// Одно место раскладки в работе (план WF41): куда ставить окно и чьё оно.
     private struct RestoreStep {
@@ -761,8 +738,6 @@ final class PimpChannel {
     private var job: Job?
     /// Идущая «Вернуть раскладку» (план WF41): вторая работа канала, такая же одиночная.
     private var restore: RestoreJob?
-    /// Пустое окно (план WF88): третья работа канала, одна на канал вместе с первыми двумя.
-    private var blank: BlankJob?
     /// `send` (WF103): четвёртая работа канала, одна на канал вместе с прочими.
     private var sending: SendJob?
     /// `arrange --order` ждёт круг опознания чатов (WF105, #8071): запрос, id и когда спросили.
@@ -774,24 +749,22 @@ final class PimpChannel {
     /// Главный чат из настройки `mainChat` пора вернуть в главное окно — на следующем свободном тике
     /// (после «главного по центру» и возврата окон `restart-claude`: рамки к тому тику уже встали).
     private var mainChatDue = false
+    /// С какого мгновения замена чата ждёт паузы в наборе (#11201, `RenewTyping`); nil — не ждёт.
+    private var renewTypingSince: Date?
     private var cleanedAt: Date?
     private(set) var served = 0
     private(set) var failed = 0
 
-    /// Канал занят: работа всегда одна — «новое окно», возврат раскладки или пустое окно.
+    /// Канал занят: работа всегда одна — «новое окно», возврат раскладки, `send` и прочие.
     /// Открыт с WF94: окна при смене мониторов не возвращаются, пока канал занят (#7740).
     var isBusy: Bool { busyBesidesRestart || restart != nil }
 
     private var busyBesidesRestart: Bool {
-        job != nil || restore != nil || blank != nil || sending != nil || chatsWait != nil || mainJob != nil
+        job != nil || restore != nil || sending != nil || chatsWait != nil || mainJob != nil
     }
 
     /// Ждём ответ страницы кругом `cash` probe: ход «Нового окна» или исход `send` (WF103).
     var isWaitingPage: Bool { job != nil || sending != nil || mainJob != nil }
-
-    /// Ловим черновик «Code» (замок в обе стороны, проверка S): цепочки «Нового окна» мимо
-    /// канала ждут конца этой работы (`ClaudeActions.whenBlankIdle`).
-    var isBlankBusy: Bool { blank != nil }
 
     /// Запрос, который сейчас исполняется; nil — канал свободен или работу начали из меню.
     private var busyID: String? {
@@ -799,7 +772,6 @@ final class PimpChannel {
         if let restart = restart { return restart.id }
         if let job = job { return job.id }
         if let restore = restore { return restore.id }
-        if let blank = blank { return blank.id }
         if let sending = sending { return sending.id }
         if let wait = chatsWait { return wait.id }
         if let main = mainJob { return main.id }
@@ -815,14 +787,12 @@ final class PimpChannel {
         self.fileManager = fileManager
     }
 
-    /// Строка для `statusText`: сколько запросов исполнено и сколько из них отказом.
+    /// Сводка канала для тестов и отладки: сколько запросов исполнено и сколько из них отказом.
     var status: String { "\(served)/\(failed)" }
 
     /// Каталог заводится на старте: по нему CLI видит, что Пимп вообще есть.
     func start() {
-        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true,
-                                         attributes: [.posixPermissions:
-                                                        PimpChannel.directoryPermissions])
+        try? SupportFiles.ensureDirectory(directory, fileManager: fileManager)
         answerOrphans()
     }
 
@@ -865,14 +835,6 @@ final class PimpChannel {
             chatsWait = nil
             if wait.request.action == .send { runSend(wait.request, id: wait.id, at: at, retried: true) }
             else { runArrange(wait.request, id: wait.id, at: at, retried: true) }
-        }
-        // Пустое окно тик не двигает (правка критика V-N п. 2) — только снимает зависшую работу,
-        // если опрос почему-то встал: иначе канал был бы занят навсегда.
-        if let current = blank, at.timeIntervalSince(current.pressedAt)
-            > BlankWindow.draftWaitSeconds + BlankWindow.untitledGraceSeconds + PimpChannel.blankStallSeconds {
-            blank = nil
-            refuse(current.id, at: at, .windowMissing, fromResolved: current.fromResolved,
-                   notice: MenuModel.blankNoWindowNotice)
         }
         for incoming in pending() {
             if busyID == incoming.id { continue }
@@ -950,6 +912,14 @@ final class PimpChannel {
             runPageLook(request, id: incoming.id, at: at)
             return
         }
+        // Самопроверка (#10527) — чтение своего процесса, отвечает и при занятом канале, как `hud`.
+        if request.action == .liveCheck {
+            take(incoming.id)
+            let found = seats.liveCheck()
+            reply(PimpAnswer(id: incoming.id, at: at, ok: true,
+                             fields: [(key: "app", value: found.app), (key: "last", value: found.last)]), for: incoming.id)
+            return
+        }
         guard !isBusy else {
             reply(PimpAnswer(id: incoming.id, at: at, ok: false, error: Failure.busy.rawValue),
                   for: incoming.id)
@@ -975,7 +945,7 @@ final class PimpChannel {
         case .hide: runHide(show: false, id: incoming.id, at: at)
         case .show: runHide(show: true, id: incoming.id, at: at)
         // Плашка, притемнение и ракета ушли веткой выше — сюда попасть не могут.
-        case .hud, .dim, .look: break
+        case .hud, .dim, .look, .liveCheck: break
         }
     }
 
@@ -1000,7 +970,7 @@ final class PimpChannel {
     /// (WF94) — последней записью с `app:"chatgpt"`; нет его — ответ побайтно прежний.
     private func runWindows(id: String, at: Date) {
         guard seats.claudeRunning() else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            refuseNoWindows(id: id, at: at)
             return
         }
         let windows = seats.windows()
@@ -1062,7 +1032,7 @@ final class PimpChannel {
     private func runArrange(_ request: PimpRequest, id: String, at: Date, retried: Bool = false) {
         let windows = seats.windows()
         guard seats.claudeRunning(), !windows.isEmpty else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            refuseNoWindows(id: id, at: at)
             return
         }
         // Названное окно не нашлось, а у кого-то чат не опознан (карта probe пуста или занята,
@@ -1092,8 +1062,7 @@ final class PimpChannel {
             // сами, а стоящие на месте не двигаются вовсе.
             let placed = seats.arrangeSmart(ids, sorted != nil, nil)
             guard !placed.isEmpty else {
-                reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue),
-                      for: id)
+                refuseNoWindows(id: id, at: at)
                 return
             }
             seats.explicitLayout(placed.map { PimpMove(id: $0.id, frame: $0.frame) })
@@ -1113,7 +1082,7 @@ final class PimpChannel {
         // не нашлось): подставлять сюда ВСЕ окна и говорить «Расставил N окон» — неправда,
         // их никто не двигал (#5680).
         guard !placed.windows.isEmpty else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            refuseNoWindows(id: id, at: at)
             return
         }
         seats.explicitLayout(placed.windows.map { PimpMove(id: $0.id, frame: $0.frame) })
@@ -1153,7 +1122,7 @@ final class PimpChannel {
         let windows = seats.windows()
         if seats.claudeRunning(), waitingForMain(windows, id: id, at: at) { return }
         guard seats.claudeRunning(), !windows.isEmpty else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            refuseNoWindows(id: id, at: at)
             return
         }
         let known = seats.projects()
@@ -1330,34 +1299,17 @@ final class PimpChannel {
         scheduleBirthPoll(startedAt)
     }
 
-    /// «🪟 Новое окно ▸ проект» из меню жёлтой кнопки (проверка гейта WF94, #7749): тот же путь,
-    /// что `new-window` канала без запроса, — окно ставится самым правым, а не остаётся Claude-
-    /// размера рядом с источником. `false` — канал занят или окон нет: меню идёт прежним путём.
-    @discardableResult
-    func startNewWindow(project: Project) -> Bool {
-        let at = now()
-        let windows = seats.windows()
-        guard !isBusy, !seats.newWindowBusy(), seats.claudeRunning(), !windows.isEmpty else { return false }
-        let plan = makePlan(.right, from: nil, windows: windows)
-        begin(Job(id: nil, place: .right, fromId: nil, fromTitle: nil, fromResolved: false,
-                  before: Set(windows.map { $0.id }), startedAt: at, name: project.name, plan: plan))
-        seats.openNewWindow(project, plan.map { PimpChannel.corner($0.cell) })
-        return true
-    }
-
     /// `new-window` + `chat:"last"` (контракт WF75): последний чат папки берёт ИНДЕКС чатов
     /// Claude, а не карта probe — она знает только те чаты, что уже открыты окнами (критик Б1).
     /// Чат на экране — окно поднимается и встаёт на место, `opened:false`; закрыт — выносится
     /// тем же путём, что «↩︎ Вернуть эти чаты» (`openChat` → `popout-window` главному окну),
     /// и ждём окно ИМЕННО ЭТОГО чата 15 с.
-    /// `id` nil — «↩︎» из меню ⌘B (план WF88): ответа в файл нет, отказ — плашкой.
     @discardableResult
     private func runLastChat(project: Project, place: PimpPlace, from: PimpWindow?,
                              fromTitle: String?, resolved: Bool, windows: [PimpWindow],
                              id: String?, at: Date) -> Bool {
         guard let last = seats.lastChat(project.folder) else {
-            refuse(id, at: at, .chatMissing, fromResolved: resolved,
-                   notice: MenuModel.lastChatMissingNotice(project.name))
+            refuse(id, at: at, .chatMissing, fromResolved: resolved)
             return false
         }
         let name = last.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1371,8 +1323,7 @@ final class PimpChannel {
         }
         // Выносит чат отдельным окном только ГЛАВНОЕ окно Claude — без него открывать нечем.
         guard windows.contains(where: { $0.isMain(using: seats.isMainWindow) }) else {
-            refuse(id, at: at, .windowMissing, fromResolved: resolved,
-                   notice: MenuModel.lastChatNoWindowNotice(name))
+            refuse(id, at: at, .windowMissing, fromResolved: resolved)
             return false
         }
         begin(Job(id: id, place: place, fromId: from?.id, fromTitle: fromTitle,
@@ -1415,42 +1366,16 @@ final class PimpChannel {
         guard at.timeIntervalSince(current.startedAt) >= waitSeconds(current) else { return }
         job = nil
         undo(current.plan)
-        refuse(current.id, at: at, .windowMissing, fromResolved: current.fromResolved,
-               notice: current.chat == nil ? MenuModel.newChatNoWindowNotice(current.name)
-                                           : MenuModel.lastChatNoWindowNotice(current.name))
+        refuse(current.id, at: at, .windowMissing, fromResolved: current.fromResolved)
     }
 
     /// Отказ `chat-not-created`: запросу — файлом с полем `state` последним (эталон
-    /// `new-window-not-created.error.json`), работе из меню — плашкой.
+    /// `new-window-not-created.error.json`). Слова исхода — у CLI (`NOT_CREATED_WORDS` в `tools/pimp.py`).
     private func refuseNotCreated(_ current: Job, state: String, at: Date) {
-        guard let id = current.id else {
-            seats.notice(PimpChannel.notCreatedNotice(state: state, name: current.name))
-            return
-        }
+        guard let id = current.id else { return }
         reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.chatNotCreated.rawValue,
                          fromResolved: current.fromResolved,
                          fields: [(key: "state", value: .string(state))]), for: id)
-    }
-
-    /// Исход цепочки страницы словами — зеркало `NOT_CREATED_WORDS` в `tools/pimp.py` (z4-r03).
-    static let notCreatedWords: [String: String] = [
-        "draft": "в поле главного окна черновик",
-        "no-folder": "папка проекта не выбралась",
-        "no-send": "сообщение не ушло",
-        "no-home": "Claude не открыл новый чат",
-        "no-store": "страница Claude не готова",
-        "no-insert": "текст не вставился в поле",
-        "error": "ошибка на странице",
-    ]
-
-    /// Плашка отказа страницы для работы из меню (WF94): те же слова, что у CLI. Сырой код —
-    /// только у незнакомого исхода.
-    static func notCreatedNotice(state: String, name: String) -> String {
-        let who = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let head = who.isEmpty ? "" : "«\(who)»: "
-        if state == "popout-failed" { return head + "чат не вынесся в окно — вынеси его руками" }
-        guard let words = notCreatedWords[state] else { return head + "чат не создан (\(state))" }
-        return head + "чат не создан — " + words
     }
 
     private func finish(_ current: Job, window: PimpWindow, windows: [PimpWindow], at: Date) {
@@ -1469,12 +1394,12 @@ final class PimpChannel {
         // Точку поставила сама страница — двигать нечего.
         let settled = planned.map { (frame: $0.cell, skipped: 0, fromLost: false, failure: Failure?.none) }
             ?? settle(job.place, window: window, windows: windows,
-                      fromId: job.fromId, fromTitle: job.fromTitle, moveToPoint: false)
+                      fromId: job.fromId, fromTitle: job.fromTitle)
         if settled.fromLost { job.fromResolved = false }
         let frame = settled.frame
         let skipped = settled.skipped
         if let failure = settled.failure {
-            refuse(job.id, at: at, failure, fromResolved: job.fromResolved, notice: nil)
+            refuse(job.id, at: at, failure, fromResolved: job.fromResolved)
             return
         }
         guard let id = job.id else { return }
@@ -1501,12 +1426,10 @@ final class PimpChannel {
                          fields: fields), for: id)
     }
 
-    /// Куда встаёт окно по месту (общая часть `finish` и пустого окна): рамка, `skipped` (ячейки
-    /// не нашлось — окно где родилось), потерялось ли окно `from` и отказ `too-small`.
-    /// `moveToPoint` — окно само в точку не встало (черновик Claude `initialPosition` не берёт,
-    /// разведка S0 п. 9): ставим угол в точку, размер — окна-источника.
+    /// Куда встаёт окно по месту (`finish`): рамка, `skipped` (ячейки не нашлось — окно где
+    /// родилось), потерялось ли окно `from` и отказ `too-small`. Точку ставит сама страница.
     private func settle(_ place: PimpPlace, window: PimpWindow, windows: [PimpWindow],
-                        fromId: CGWindowID?, fromTitle: String?, moveToPoint: Bool)
+                        fromId: CGWindowID?, fromTitle: String?)
         -> (frame: CGRect, skipped: Int, fromLost: Bool, failure: Failure?) {
         // Новому окну не досталось ячейки (в последней раскладке их меньше, чем окон):
         // оно остаётся где родилось, и об этом честно говорит поле `skipped` (план WF21).
@@ -1517,13 +1440,8 @@ final class PimpChannel {
             return (placed, 0, false, nil)
         }
         switch place {
-        case .point(let x, let y):
-            guard moveToPoint else { return (window.frame, 0, false, nil) }
-            let size = PimpChannel.window(id: fromId, title: fromTitle, in: windows)?.frame.size
-                ?? window.frame.size
-            let frame = CGRect(origin: CGPoint(x: x, y: y), size: size)
-            seats.place([PimpMove(id: window.id, frame: frame)])
-            return (frame, 0, false, nil)
+        case .point:
+            return (window.frame, 0, false, nil)
         case .left, .middle, .right:
             return atRow(place)
         case .below, .above:
@@ -1544,143 +1462,11 @@ final class PimpChannel {
         }
     }
 
-    /// Отказ: запросу — код ошибки файлом, работе из меню (`id` nil) — плашкой. `notice` nil —
-    /// у работы из меню этот отказ недостижим, и молчим.
-    private func refuse(_ id: String?, at: Date, _ failure: Failure, fromResolved: Bool = false,
-                        notice: String?) {
-        guard let id = id else {
-            if let notice = notice { seats.notice(notice) }
-            return
-        }
+    /// Отказ запросу — код ошибки файлом. Работ без запроса (`id` nil — меню жёлтой кнопки) с WF237 нет.
+    private func refuse(_ id: String?, at: Date, _ failure: Failure, fromResolved: Bool = false) {
+        guard let id = id else { return }
         reply(PimpAnswer(id: id, at: at, ok: false, error: failure.rawValue,
                          fromResolved: fromResolved), for: id)
-    }
-
-    // MARK: - пустое окно проекта (план WF88, К17)
-
-    /// Пустое окно Claude Code проекта: File ▸ «New Session in New Window» у выбранного Claude,
-    /// потом ждём черновик «Code» и ставим его на место. `id` nil — пункт меню ⌘B: файла ответа
-    /// нет, отказ — плашкой. false — не начали (занято, Claude нет, пункта нет).
-    @discardableResult
-    func startBlank(project: Project, place: PimpPlace, from: String?, id: String?) -> Bool {
-        let at = now()
-        guard !isBusy, !seats.newWindowBusy() else {
-            refuse(id, at: at, .busy, notice: MenuModel.blankBusyNotice)
-            return false
-        }
-        let windows = seats.windows()
-        guard seats.claudeRunning(), !windows.isEmpty else {
-            refuse(id, at: at, .noWindows, notice: MenuModel.blankNoClaudeNotice)
-            return false
-        }
-        // Событие пункта Claude адресует главному окну (`B.webContents`, разведка S0): без
-        // него нажатие ушло бы в пустоту (правка критика V-N п. 5).
-        guard windows.contains(where: { $0.isMain(using: seats.isMainWindow) }) else {
-            refuse(id, at: at, .noDraftItem, notice: MenuModel.blankNoItemNotice)
-            return false
-        }
-        let chat = from ?? ""
-        let fromTitle = chat.isEmpty ? nil : seats.titleForChat(chat)
-        let fromWindow = PimpChannel.window(chat: chat, title: fromTitle, in: windows)
-        var place = place
-        if fromWindow == nil, place == .below || place == .above { place = .right }
-        let before = Set(seats.blankWindows().map { $0.id })
-        guard seats.pressDraftItem(project) else {
-            refuse(id, at: at, .noDraftItem, fromResolved: fromWindow != nil,
-                   notice: MenuModel.blankNoItemNotice)
-            return false
-        }
-        blank = BlankJob(id: id, place: place, fromId: fromWindow?.id, fromTitle: fromTitle,
-                         fromResolved: fromWindow != nil, before: before, pressedAt: now(),
-                         folder: project.folder)
-        scheduleBlankPoll()
-        return true
-    }
-
-    /// «↩︎» у проекта в меню ⌘B (план WF88, К14-N): путь `chat:"last"` канала (WF75) без
-    /// запроса. `id` nil — ответа в файл нет, отказ — плашкой.
-    @discardableResult
-    func startLast(project: Project, place: PimpPlace, from: String?, id: String?) -> Bool {
-        let at = now()
-        guard !isBusy, !seats.newWindowBusy() else {
-            refuse(id, at: at, .busy, notice: MenuModel.blankBusyNotice)
-            return false
-        }
-        let windows = seats.windows()
-        guard seats.claudeRunning(), !windows.isEmpty else {
-            refuse(id, at: at, .noWindows, notice: MenuModel.blankNoClaudeNotice)
-            return false
-        }
-        let chat = from ?? ""
-        let fromTitle = chat.isEmpty ? nil : seats.titleForChat(chat)
-        let fromWindow = PimpChannel.window(chat: chat, title: fromTitle, in: windows)
-        var place = place
-        if fromWindow == nil, place == .below || place == .above { place = .right }
-        return runLastChat(project: project, place: place, from: fromWindow, fromTitle: fromTitle,
-                           resolved: fromWindow != nil, windows: windows, id: id, at: at)
-    }
-
-    /// Шаг опроса пустого окна (0,25 с): черновик пришёл — ставим, срок вышел — отказ.
-    /// Открыт для тестов: они шагают опрос сами, без таймера.
-    func pollBlank(at: Date) {
-        guard let current = blank else { return }
-        let fresh = seats.blankWindows().filter { !current.before.contains($0.id) }
-        switch BlankWindow.poll(fresh: fresh, elapsed: at.timeIntervalSince(current.pressedAt)) {
-        case .take(let draft):
-            blank = nil
-            acceptBlank(current, draft: draft, at: at)
-        case .wait:
-            scheduleBlankPoll()
-        case .missing:
-            // Черновик, если он всё же родится, остаётся, где его поставил Claude.
-            blank = nil
-            refuse(current.id, at: at, .windowMissing, fromResolved: current.fromResolved,
-                   notice: MenuModel.blankNoWindowNotice)
-        }
-    }
-
-    private func scheduleBlankPoll() {
-        seats.schedule(BlankWindow.pollSeconds) { [weak self] in
-            guard let self = self else { return }
-            self.pollBlank(at: self.now())
-        }
-    }
-
-    /// Черновик пришёл: место (как у `finish`, только точку ставим сами), вперёд, настройка.
-    /// Черновик на рамке служебного окна `windows` не видит — тогда он берётся из AX-списка.
-    private func acceptBlank(_ current: BlankJob, draft: PimpWindow, at: Date) {
-        let windows = seats.windows()
-        let window = windows.first { $0.id == draft.id } ?? draft
-        let all = windows.filter { $0.id != draft.id } + [window]
-        var job = current
-        let settled = settle(job.place, window: window, windows: all,
-                             fromId: job.fromId, fromTitle: job.fromTitle, moveToPoint: true)
-        if settled.fromLost { job.fromResolved = false }
-        seats.raise(window.id)
-        // Путь папки «Ч» (S.0): папку ставит страница чипом черновика; модель и ступень — как у
-        // последнего чата проекта.
-        let last = seats.lastChat(job.folder)
-        let model = BlankWindow.model(of: last.flatMap { seats.chatModel($0.chat) })
-        seats.draftSetup(BlankWindow.draftSetupFields(folder: job.folder.standardizedFileURL.path,
-                                                      model: model.model, effort: model.effort,
-                                                      bypass: seats.bypassNew()))
-        if let failure = settled.failure {
-            refuse(job.id, at: at, failure, fromResolved: job.fromResolved, notice: nil)
-            return
-        }
-        guard let id = job.id else { return }
-        var fields: [(key: String, value: CommandValue)] = [
-            (key: "window", value: .object([
-                (key: "title", value: .string(window.title)),
-                (key: "chat", value: .string("")),
-                (key: "frame", value: PimpChannel.frameValue(settled.frame)),
-            ])),
-        ]
-        if settled.skipped > 0 { fields.append((key: "skipped", value: .number(settled.skipped))) }
-        // `blank` — ПОСЛЕДНИМ (контракт К10-N): `layers` у пустого окна нет.
-        fields.append((key: "blank", value: .bool(true)))
-        reply(PimpAnswer(id: id, at: at, ok: true, fromResolved: job.fromResolved, fields: fields),
-              for: id)
     }
 
     /// Сколько ждём окно «нового окна»: новый чат создаётся долго (сессия и первое сообщение),
@@ -1716,7 +1502,7 @@ final class PimpChannel {
     private func runCloseWindow(_ request: PimpRequest, id: String, at: Date) {
         let windows = seats.windows()
         guard seats.claudeRunning(), !windows.isEmpty else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            refuseNoWindows(id: id, at: at)
             return
         }
         let target: PimpWindow
@@ -1775,7 +1561,7 @@ final class PimpChannel {
     private func runPaste(_ request: PimpRequest, id: String, at: Date) {
         let windows = seats.windows()
         guard seats.claudeRunning(), !windows.isEmpty else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            refuseNoWindows(id: id, at: at)
             return
         }
         // Путь не абсолютный и число путей отсеял разбор; здесь — чего нет на диске и что
@@ -1791,8 +1577,7 @@ final class PimpChannel {
             // в том окне, где он стоит (слово Элвиса 19.09). Иначе не вставляем вовсе.
             guard let front = seats.frontWindow(),
                   let window = windows.first(where: { $0.id == front }) else {
-                reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue),
-                      for: id)
+                refuseNoWindows(id: id, at: at)
                 return
             }
             target = window
@@ -1899,7 +1684,7 @@ final class PimpChannel {
     /// ответ — только когда возврат кончен.
     private func runRestart(_ request: PimpRequest, id: String, at: Date) {
         guard seats.claudeRunning() else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            refuseNoWindows(id: id, at: at)
             return
         }
         let job = RestartJob(id: id, from: request.from, stage: .asking, since: at)
@@ -2039,7 +1824,7 @@ final class PimpChannel {
     private func runMain(_ request: PimpRequest, id: String, at: Date) {
         let windows = seats.windows()
         guard seats.claudeRunning(), !windows.isEmpty else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            refuseNoWindows(id: id, at: at)
             return
         }
         startMain(chat: request.chat, project: request.project, windows: windows, id: id, at: at)
@@ -2051,7 +1836,7 @@ final class PimpChannel {
         guard let entry = seats.mainChatSetting(), seats.claudeRunning() else { return }
         let windows = seats.windows()
         guard !windows.isEmpty else { return }
-        let isChat = PimpRequest.isChatID(entry)
+        let isChat = ChatID.isUUID(entry)
         startMain(chat: isChat ? entry : "", project: isChat ? "" : entry, windows: windows, id: nil, at: at)
     }
 
@@ -2226,7 +2011,7 @@ final class PimpChannel {
         let windows = seats.windows()
         if seats.claudeRunning(), waitingForMain(windows, id: id, at: at) { return }
         guard seats.claudeRunning(), !windows.isEmpty else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            refuseNoWindows(id: id, at: at)
             return
         }
         let fromTitle = request.from.isEmpty ? nil : seats.titleForChat(request.from)
@@ -2273,6 +2058,13 @@ final class PimpChannel {
         }
         // Чужая цепочка ещё идёт (z4-r01): её окно канал принял бы за своё.
         guard !seats.newWindowStarting() else { return refuse(.busy, []) }
+        // #11201 (WF302): Элвис печатает или диктует — смену откладываем до паузы, не дольше 60 с (`busy` с
+        // `typing`: CLI повторяет). Черновик всё равно переедет, пауза — чтобы кусок не упал посреди смены.
+        if let since = RenewTyping.hold(idle: seats.keyIdle(), since: renewTypingSince, at: at) {
+            renewTypingSince = since
+            return refuse(.busy, [(key: "typing", value: .bool(true))])
+        }
+        renewTypingSince = nil
         // Рождается со сдвигом от угла донора (гейт WF102): окна Quartz и AX сводятся по рамке,
         // и новое окно ровно на рамке донора (оба 900×700 в углу) путало `close` — живьём
         // закрывалось новое окно вместо донора.
@@ -2285,7 +2077,8 @@ final class PimpChannel {
                                      stay: main, transfer: false, pin: false)
         begin(Job(id: id, place: .point(x: origin.x, y: origin.y), fromId: fromWindow?.id,
                   fromTitle: fromTitle, fromResolved: resolved, before: Set(windows.map { $0.id }),
-                  startedAt: at, renew: Renew(donor: donor, main: main, model: handoff.model)))
+                  startedAt: at, renew: Renew(donor: donor, main: main, model: handoff.model,
+                                                                effort: handoff.effort)))
         seats.openRenewWindow(project, origin, request.text.isEmpty ? nil : request.text, handoff)
     }
 
@@ -2305,8 +2098,7 @@ final class PimpChannel {
                 }
                 guard at.timeIntervalSince(current.startedAt) >= waitSeconds(current) else { return }
                 job = nil
-                refuse(current.id, at: at, .windowMissing, fromResolved: current.fromResolved,
-                       notice: nil)
+                refuse(current.id, at: at, .windowMissing, fromResolved: current.fromResolved)
                 return
             }
             // В рамку донора новое окно встаёт только ПОСЛЕ закрытия донора (гейт WF102): окна
@@ -2338,13 +2130,9 @@ final class PimpChannel {
                              fromResolved: current.fromResolved, fields: [windowField("")]), for: id)
             return
         }
-        // Модель — из файла сессии нового чата; файла ещё нет — ждём в пределах того же срока.
-        var model: String?
-        if let want = renew.model {
-            let got = seats.chatModel(chat)?.menuModel
-            if got == nil, !waited { return }
-            model = PimpChannel.sameModel(got, want) ? "ok" : "missed"
-        }
+        // Модель и эффорт — из файла сессии нового чата; файла ещё нет — ждём в пределах того же срока.
+        let asked = PimpChannel.renewAsked(renew, seats.chatModel(chat))
+        if asked.wait, !waited { return }
         job = nil
         // Донор закрыт руками раньше нас — заменять уже нечего, это не отказ. Кнопки у окна нет —
         // «заменил» без закрытия не пишем (урок #5779), новое окно при этом называем.
@@ -2361,8 +2149,9 @@ final class PimpChannel {
             seats.place([move])
         }
         var fields = [windowField(chat), (key: "replaced", value: CommandValue.string(renew.donor.chat))]
-        // `model` — ПОСЛЕДНИМ и только когда модель просили (эталон `renew-window.result.json`).
-        if let model = model { fields.append((key: "model", value: .string(model))) }
+        // `model`, за ним `effort` — ПОСЛЕДНИМИ и только когда их просили (эталон `renew-window.result.json`).
+        if let model = asked.model { fields.append((key: "model", value: .string(model))) }
+        if let effort = asked.effort { fields.append((key: "effort", value: .string(effort))) }
         reply(PimpAnswer(id: id, at: at, ok: true, fromResolved: current.fromResolved, fields: fields),
               for: id)
     }
@@ -2412,20 +2201,21 @@ final class PimpChannel {
             updated.renew = renew
             job = updated
         }
-        var model: String?
-        if let want = renew.model {
-            let got = seats.chatModel(chat)?.menuModel
-            if got == nil, at.timeIntervalSince(named) < PimpChannel.renewChatSeconds { return }
-            model = PimpChannel.sameModel(got, want) ? "ok" : "missed"
-        }
+        let asked = PimpChannel.renewAsked(renew, seats.chatModel(chat))
+        if asked.wait, at.timeIntervalSince(named) < PimpChannel.renewChatSeconds { return }
+        // #11201 (WF302): страница ещё кладёт черновик прежнего чата в поле нового — ждём исход.
+        let carry = run.flatMap { $0.at > current.startedAt ? $0.carry : nil }
+        if carry?.state == "wait", at.timeIntervalSince(named) < PimpChannel.renewDraftSeconds { return }
         job = nil
         var fields: [(key: String, value: CommandValue)] = [
             windowField(chat),
             (key: "replaced", value: .string(renew.donor.chat)),
             (key: "main", value: .bool(true)),
         ]
-        // `model` — ПОСЛЕДНИМ и только когда модель просили (эталон `renew-window.result.json`).
-        if let model = model { fields.append((key: "model", value: .string(model))) }
+        if let carry = carry { fields.append((key: "draft", value: carry.field)) }
+        // `model`, за ним `effort` — ПОСЛЕДНИМИ и только когда их просили (эталон `renew-window.result.json`).
+        if let model = asked.model { fields.append((key: "model", value: .string(model))) }
+        if let effort = asked.effort { fields.append((key: "effort", value: .string(effort))) }
         reply(PimpAnswer(id: id, at: at, ok: true, fromResolved: current.fromResolved, fields: fields),
               for: id)
     }
@@ -2443,6 +2233,17 @@ final class PimpChannel {
 
     /// Встала ли модель: подпись из файла сессии («Opus 5.5») против просьбы запроса — без
     /// регистра и лишних пробелов; просьба может быть длиннее («Opus 5.5 (1M)»).
+    /// Встали ли модель и эффорт замены (#10261): «ok» | «missed», nil — не просили. `wait` — просили, а файла
+    /// сессии ещё нет. Эффорт сверяется словом меню: в файле `xhigh`, в запросе `extra`.
+    private static func renewAsked(_ renew: Renew, _ session: SessionModel?) -> (wait: Bool, model: String?, effort: String?) {
+        let wait = session == nil && (renew.model != nil || renew.effort != nil)
+        let model = renew.model.map { sameModel(session?.menuModel, $0) ? "ok" : "missed" }
+        let effort = renew.effort.map { want in
+            session?.menuEffort.map { $0.lowercased() == want.lowercased() } == true ? "ok" : "missed"
+        }
+        return (wait, model, effort)
+    }
+
     static func sameModel(_ got: String?, _ want: String) -> Bool {
         let clean: (String) -> String = {
             $0.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
@@ -2591,7 +2392,7 @@ final class PimpChannel {
             return
         }
         guard seats.claudeRunning(), !windows.isEmpty else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            refuseNoWindows(id: id, at: at)
             return
         }
         let tile = seats.arrangeMode()
@@ -2640,21 +2441,13 @@ final class PimpChannel {
         }
         // Окна рождает главное окно Claude: без единого окна на экране открывать нечем.
         guard seats.claudeRunning(), !(seats.restoreWindows?().windows ?? seats.windows()).isEmpty else {
-            reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+            refuseNoWindows(id: id, at: at)
             return
         }
         begin(layout, fresh: request.fresh, id: id, at: at)
     }
 
-    /// «↩︎ Вернуть эти чаты» из меню (план WF41, решение Р5): та же очередь, что у канала,
-    /// только отвечать некому — результат виден окнами на экране. Канал занят — не начинаем.
-    @discardableResult
-    func startRestore(_ layout: WindowLayout, fresh: Bool) -> Bool {
-        guard !isBusy, seats.claudeRunning(), !(seats.restoreWindows?().windows ?? seats.windows()).isEmpty else { return false }
-        return begin(layout, fresh: fresh, id: nil, at: now())
-    }
-
-    /// «Окна как были» (#7065, контракт К5): та же очередь, что у «↩︎ Вернуть эти чаты»,
+    /// «Окна как были» (#7065, контракт К5): та же очередь, что у возврата раскладки,
     /// только рамки абсолютные — из снимка `windows-snapshot.json`, а не из ячеек сетки.
     /// Главное окно встаёт на своё место, закрытые чаты выносятся окнами по одному; чат,
     /// которого больше нет, пропускается и назван на плашке — новых чатов не заводим,
@@ -2938,58 +2731,37 @@ final class PimpChannel {
         writeSecure(taken(for: id), "")
     }
 
+    /// Claude не запущен или окон нет — `no-windows`.
+    private func refuseNoWindows(id: String, at: Date) {
+        reply(PimpAnswer(id: id, at: at, ok: false, error: Failure.noWindows.rawValue), for: id)
+    }
+
     private func reply(_ answer: PimpAnswer, for id: String) {
         served += 1
         if !answer.ok { failed += 1 }
         writeSecure(result(for: id), answer.json + "\n")
     }
 
-    /// Файл канала пишется временным рядом и переезжает на место одним `rename`. Права 0600
-    /// ставятся ДО переименования (#5558): каталог общий для машины, а в ответах лежат пути
-    /// проектов — файла с правами 0644 не должно существовать ни миллисекунды.
-    /// Временный файл скрытый (`.<имя>.tmp`) — очередь его не видит, уборка сносит.
+    /// Файл канала пишется временным рядом и переезжает на место одним `rename` (`SupportFiles.writeAtomic`): права
+    /// 0600 стоят у файла с рождения (#5558) — каталог общий для машины, а в ответах лежат пути проектов. Каталога
+    /// нет (снесли руками) — заводится с 0700. Временный файл скрытый (`.<имя>.tmp`) — очередь его не видит, уборка сносит.
     @discardableResult
     private func writeSecure(_ url: URL, _ body: String) -> Bool {
         let tmp = directory
             .appendingPathComponent("." + url.lastPathComponent + PimpChannel.tmpSuffix)
-        let data = Data(body.utf8)
-        let attributes: [FileAttributeKey: Any] = [.posixPermissions: PimpChannel.filePermissions]
-        if !fileManager.createFile(atPath: tmp.path, contents: data, attributes: attributes) {
-            // Каталога нет (снесли руками) — заводим его с 0700 и пробуем ещё раз.
-            try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true,
-                                             attributes: [.posixPermissions:
-                                                            PimpChannel.directoryPermissions])
-            guard fileManager.createFile(atPath: tmp.path, contents: data,
-                                         attributes: attributes) else { return false }
-        }
-        let moved = tmp.withUnsafeFileSystemRepresentation { from -> Bool in
-            url.withUnsafeFileSystemRepresentation { to -> Bool in
-                guard let from = from, let to = to else { return false }
-                return rename(from, to) == 0
-            }
-        }
-        if !moved { try? fileManager.removeItem(at: tmp) }
-        return moved
+        return SupportFiles.writeAtomic(url, Data(body.utf8), tmp: tmp)
     }
 
     // MARK: - чистая часть (её же гоняют тесты)
 
-    private static let stamp: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(identifier: "UTC")
-        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        return f
-    }()
-
-    static func stampText(_ date: Date) -> String { stamp.string(from: date) }
+    static func stampText(_ date: Date) -> String { Stamp.utc.string(from: date) }
 
     /// `at` запроса. Свой формат — как у `command.json`; чужой ISO с долями секунды тоже
     /// читаем (пишет его кто угодно на машине, а отказывать из-за миллисекунд глупо).
     static func date(_ raw: String) -> Date? {
         let clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return nil }
-        if let date = stamp.date(from: clean) { return date }
+        if let date = Stamp.utc.date(from: clean) { return date }
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return iso.date(from: clean) ?? ISO8601DateFormatter().date(from: clean)
@@ -3105,19 +2877,11 @@ final class PimpChannel {
         .filter { !$0.isEmpty }
     }
 
-    /// Сводка проекта — `docs/status.md`, а нет его — `audit/status.md`; нет и его — "".
+    /// Сводка проекта — та же, что у панели и карточки (`PanelProjects.statusFile`: docs, audit, work); нет — "".
     static func state(of folder: URL, fileManager: FileManager = .default) -> String {
-        for name in statusFolders {
-            let url = folder.appendingPathComponent(name, isDirectory: true)
-                .appendingPathComponent(StatusFeed.statusFileName)
-            guard fileManager.fileExists(atPath: url.path) else { continue }
-            return state(try? String(contentsOf: url, encoding: .utf8))
-        }
-        return ""
+        guard let url = PanelProjects.statusFile(in: folder, fileManager: fileManager) else { return "" }
+        return state(try? String(contentsOf: url, encoding: .utf8))
     }
-
-    /// Где искать сводку проекта (порядок важен: docs сильнее audit).
-    static let statusFolders = ["docs", "audit"]
     static let statusCountWord = "воркфлоу"
     static let statusDoneWord = "готово"
     static let statusNowPrefix = "Сейчас:"
@@ -3447,13 +3211,8 @@ extension PimpRequest {
         var model = ""
         var effort = ""
         if action == .renewWindow {
-            let wanted = (root["chat"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard wanted.isEmpty != project.isEmpty else { return nil }
-            if !wanted.isEmpty {
-                guard PimpRequest.isChatID(wanted) else { return nil }
-                chat = wanted
-            }
+            guard let wanted = exclusiveChat(root, project: project) else { return nil }
+            if !wanted.isEmpty { chat = wanted }
             if let raw = root["text"] {
                 guard let body = raw as? String, body.count <= PimpChannel.renewTextLimit
                 else { return nil }
@@ -3473,13 +3232,8 @@ extension PimpRequest {
         // «Отправь текст в чат» (WF103): ровно одно из `chat` (`local_<uuid>`) или `project`;
         // текст 1…8000 знаков без `\0`, как есть — его отправят.
         if action == .send {
-            let wanted = (root["chat"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard wanted.isEmpty != project.isEmpty else { return nil }
-            if !wanted.isEmpty {
-                guard PimpRequest.isChatID(wanted) else { return nil }
-                chat = wanted
-            }
+            guard let wanted = exclusiveChat(root, project: project) else { return nil }
+            if !wanted.isEmpty { chat = wanted }
             guard let body = root["text"] as? String, !body.isEmpty,
                   body.unicodeScalars.count <= PimpChannel.sendTextLimit,
                   !body.unicodeScalars.contains("\u{0}") else { return nil }
@@ -3487,13 +3241,8 @@ extension PimpRequest {
         }
         // «Чат в главное окно» (WF108, #8148): ровно одно из `chat` (`local_<uuid>`) или `project`.
         if action == .main {
-            let wanted = (root["chat"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard wanted.isEmpty != project.isEmpty else { return nil }
-            if !wanted.isEmpty {
-                guard PimpRequest.isChatID(wanted) else { return nil }
-                chat = wanted
-            }
+            guard let wanted = exclusiveChat(root, project: project) else { return nil }
+            if !wanted.isEmpty { chat = wanted }
         }
         // Раскладка (WF21): `last` — nil, то есть умная расстановка (план WF77); туда же
         // идёт запрос БЕЗ поля `layout` — умолчание CLI и так `last`, а руками пишут
@@ -3578,16 +3327,20 @@ extension PimpRequest {
         return CFGetTypeID(number) == CFBooleanGetTypeID()
     }
 
-    /// `chat` у `renew-window`: `local_` и uuid строчными (36 знаков из 0-9a-f и «-»).
-    static func isChatID(_ raw: String) -> Bool {
-        let prefix = "local_"
-        guard raw.hasPrefix(prefix) else { return false }
-        let tail = raw.dropFirst(prefix.count)
-        return tail.count == 36 && tail.allSatisfy { "0123456789abcdef-".contains($0) }
+    /// `chat` у `renew-window`, `send` и `main`: ровно одно из `chat` (`local_<uuid>`, `ChatID.isUUID`) или
+    /// `project`. nil — `bad-request`, "" — адресуют проектом.
+    static func exclusiveChat(_ root: [String: Any], project: String) -> String? {
+        let wanted = (root["chat"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard wanted.isEmpty != project.isEmpty, wanted.isEmpty || ChatID.isUUID(wanted) else { return nil }
+        return wanted
     }
 
     /// `place` запроса; поля нет или оно пустое — «справа» (умолчание CLI). Чужое слово —
     /// nil, то есть `bad-request`: наугад окно не ставим.
+    /// Точка — не дальше `pointLimit` по каждой оси (экранов таких нет; CLI режет так же,
+    /// `POINT_LIMIT` в pimp.py). Без потолка `Int(1e300)` ронял Пимп на разборе (ревизия WF247).
+    static let pointLimit: Double = 100_000
+
     static func place(_ raw: String?) -> PimpPlace? {
         let clean = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch clean {
@@ -3600,7 +3353,8 @@ extension PimpRequest {
         }
         let parts = clean.split(separator: ",", omittingEmptySubsequences: false)
         guard parts.count == 2, let x = Double(parts[0]), let y = Double(parts[1]),
-              x.isFinite, y.isFinite else { return nil }
-        return .point(x: Int(x.rounded()), y: Int(y.rounded()))
+              abs(x) <= pointLimit, abs(y) <= pointLimit,
+              let px = Int(exactly: x.rounded()), let py = Int(exactly: y.rounded()) else { return nil }
+        return .point(x: px, y: py)
     }
 }

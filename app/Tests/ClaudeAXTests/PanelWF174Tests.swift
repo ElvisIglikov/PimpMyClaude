@@ -12,8 +12,7 @@ final class PanelWF174Tests: XCTestCase {
     }
 
     private var catalogChips: [WindowColorChip] {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("claude-patch")
+        let root = Repo.root.appendingPathComponent("claude-patch")
         let themes = ThemeCatalog.load(directory: root)
         return ClaudeAXController.panelThemeIDs.compactMap { id in themes.first { $0.id == id } }.map(WindowColorChip.init)
     }
@@ -25,10 +24,11 @@ final class PanelWF174Tests: XCTestCase {
         let chips = catalogChips
         XCTAssertEqual(chips.count, ClaudeAXController.panelThemeIDs.count, "все темы полос есть в каталоге")
         let strips = PanelColorTiles.strips(chips)
-        XCTAssertEqual(strips.count, 2, "две строки")
-        XCTAssertEqual(strips.map { $0.count }, [15, 15], "поровну — плитки одной ширины")
-        XCTAssertEqual(PanelColorTiles.perStrip(chips), 15)
-        XCTAssertEqual(strips.first?.first, .plain, "первым — «Как у Claude»")
+        // WF245 (слово Элвиса 11.10.2026): «Как у Claude» — не плитка. Слово 11.10 06:20: «ряд сверху тёмных тем,
+        // а снизу светлых тем» — две полосы: 10 тёмных (#9683: «Малиновая» и «Магма» → «Винная»), под ними 6 светлых.
+        XCTAssertEqual(strips.map { $0.count }, [10, 6], "ряд тёмных сверху, ряд светлых снизу")
+        XCTAssertEqual(PanelColorTiles.perStrip(chips), 16)
+        XCTAssertFalse(strips.flatMap { $0 }.contains(.plain), "«Как у Claude» в полосах нет")
         let light = Set(chips.filter { $0.light }.map { $0.id })
         func ids(_ strip: [PanelColorTiles.Tile]) -> [String] {
             strip.compactMap { if case .theme(let id) = $0 { return id } else { return nil } }
@@ -40,6 +40,8 @@ final class PanelWF174Tests: XCTestCase {
         XCTAssertTrue(all[firstLight...].allSatisfy { light.contains($0) }, "светлые — в конце")
         XCTAssertEqual(Set(all), Set(ClaudeAXController.panelThemeIDs), "ни одна тема не потерялась")
         XCTAssertEqual(all.count, ClaudeAXController.panelThemeIDs.count, "без повторов")
+        XCTAssertTrue(ids(strips[0]).allSatisfy { !light.contains($0) }, "верхний ряд — только тёмные")
+        XCTAssertTrue(ids(strips[1]).allSatisfy { light.contains($0) }, "нижний ряд — только светлые")
     }
 
     func testStripsFollowColorWheelGraysLast() {
@@ -69,9 +71,10 @@ final class PanelWF174Tests: XCTestCase {
 
     func testExactlyOneSwatchSelected() {
         let strips = PanelColorTiles.strips(catalogChips).flatMap { $0 }
-        for choice in [WindowColorChoice.plain, .theme("mint"), .theme("lemonade"), .theme("ultra"), .theme("blue")] {
+        for choice in [WindowColorChoice.theme("mint"), .theme("coral"), .theme("gray"), .theme("blue")] {
             XCTAssertEqual(strips.filter { PanelColorTiles.isSelected($0, choice) }.count, 1, "\(choice)")
         }
+        XCTAssertEqual(strips.filter { PanelColorTiles.isSelected($0, .plain) }.count, 0, "обычный вид — не плитка")
         XCTAssertEqual(strips.filter { PanelColorTiles.isSelected($0, .byProject) }.count, 0, "по проектам — ни один")
         XCTAssertEqual(strips.filter { PanelColorTiles.isSelected($0, .theme("cobalt")) }.count, 0, "тема из меню — ни один")
     }
@@ -79,10 +82,10 @@ final class PanelWF174Tests: XCTestCase {
     func testSwatchShowsWindowBackgroundNotAccent() {
         // #9182 п. 11: «лимонад… ярко-оранжевый», «мятный темнее, чем в жизни» — образец берёт фон темы.
         let chips = Dictionary(uniqueKeysWithValues: catalogChips.map { ($0.id, $0) })
-        XCTAssertEqual(chips["lemonade"]?.background.lowercased(), "#ffeb85")
+        XCTAssertEqual(chips["lemon"]?.background.lowercased(), "#fbfae4")
         XCTAssertEqual(chips["mint"]?.background.lowercased(), "#e9f8f1")
         XCTAssertEqual(chips["mint"]?.light, true)
-        XCTAssertEqual(chips["ultra"]?.light, false)
+        XCTAssertEqual(chips["violet"]?.light, false)
     }
 
     // MARK: виджеты
@@ -109,8 +112,9 @@ final class PanelWF174Tests: XCTestCase {
         XCTAssertFalse(layout.isStandard)
         let visible = Set(PanelWidget.allCases.map { $0.rawValue })
         XCTAssertFalse(layout.rows(visible: visible).flatMap { $0 }.contains { $0.id == "fable" }, "скрытый — не в рядах")
-        XCTAssertEqual(layout.hidden(visible: visible).map { $0.id }, ["fable"])
-        XCTAssertEqual(layout.hidden(visible: visible.subtracting(["fable"])).map { $0.id }, [], "нет данных — нет и строки")
+        // Workflow в умолчании скрыт с 03.11.2026.
+        XCTAssertEqual(layout.hidden(visible: visible).map { $0.id }, ["fable", "workflow"])
+        XCTAssertEqual(layout.hidden(visible: visible.subtracting(["fable", "workflow"])).map { $0.id }, [], "нет данных — нет и строки")
         layout.save(store)
         XCTAssertTrue(store.string(forKey: PanelWidgetLayout.key)?.contains(#""hidden":true"#) == true)
         XCTAssertEqual(PanelWidgetLayout.load(store), layout, "переживает перезапуск")

@@ -10,15 +10,8 @@ final class SendWF103Tests: XCTestCase {
     private static let root = "/Users/dev/Projects/"
     private static let title = "WF103 оркестровка просмотра файлов"
 
-    private static var fixtures: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("tests/fixtures/pimp", isDirectory: true)
-    }
-
     private func fixture(_ name: String) throws -> Data {
-        try Data(contentsOf: SendWF103Tests.fixtures.appendingPathComponent(name))
+        try Data(contentsOf: Repo.fixture("pimp/" + name))
     }
 
     private func fixtureText(_ name: String) throws -> String {

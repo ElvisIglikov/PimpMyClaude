@@ -14,7 +14,6 @@ final class PanelWF187SnapshotTests: XCTestCase {
         model.now = now
         model.phase = .open
         model.reduceMotion = true
-        model.colorsOpen = false
         model.appVersion = "1.10.11"
         model.patch = .installed(version: "2.26454.2", loader: 8)
         model.limits = ClaudeLimits(at: now, plan: "Max 20x",
@@ -36,7 +35,6 @@ final class PanelWF187SnapshotTests: XCTestCase {
     }
 
     func render(_ model: PanelModel, _ name: String) throws {
-        guard let dir = ProcessInfo.processInfo.environment["PMP_SNAPSHOT_DIR"] else { return }
         let view = NSHostingView(rootView: PanelRoot(model: model))
         view.frame = NSRect(x: 0, y: 0, width: PimpPanelController.width + 2 * PimpPanelController.margin, height: 760)
         view.appearance = NSAppearance(named: .darkAqua)
@@ -48,6 +46,7 @@ final class PanelWF187SnapshotTests: XCTestCase {
         view.layoutSubtreeIfNeeded()
         let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: rep)
+        guard let dir = ProcessInfo.processInfo.environment["PMP_SNAPSHOT_DIR"] else { return }
         try XCTUnwrap(rep.representation(using: .png, properties: [:]))
             .write(to: URL(fileURLWithPath: dir).appendingPathComponent(name + ".png"))
     }
@@ -78,12 +77,5 @@ final class PanelWF187SnapshotTests: XCTestCase {
         layout.setHidden(PanelWidget.reset.rawValue, true)
         lone.layout = layout
         try render(lone, "panel-lone-half")
-        // Значки управления на месте заголовка (как после 0,8 с наведения): половинка, широкий блок, «Оформление».
-        for id in [PanelWidget.limits, .tokens, .colors, .fable] {
-            let chrome = model(now: now, today: 944_000_000)
-            chrome.layout = .standard
-            chrome.widgetChrome = id.rawValue
-            try render(chrome, "panel-chrome-" + id.rawValue)
-        }
     }
 }

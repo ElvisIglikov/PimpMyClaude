@@ -31,7 +31,7 @@ const body = (text, selector) => {
 // остаются: по ним editorFrame находит коробку поля, #6890). Ленту от поля
 // делит одна линия var(--cds-border): в широком виде — вертикальная по левой
 // кромке колонки (дока и шапка колонки), в узком — горизонтальная по верху доки.
-const TITLE = ".epitaxy-chat-panel:not([data-myclaude-title=\"left\"]) & > .epitaxy-titlebar";
+const TITLE = ".epitaxy-chat-panel:not([data-myclaude-title=\"left\"]) & .epitaxy-titlebar";
 
 test("#8098: широкий вид — поле цветом ленты, рамка спрятана цветом, геометрия та же", () => {
   assert.ok(at > 0, "блока @container нет");
@@ -47,11 +47,11 @@ test("#8098: широкий вид — поле цветом ленты, рам�
   assert.match(body(inside, COLUMN) ?? "", /background:\s*transparent !important/, "колонка не цветом ленты");
 });
 
-test("#8098: широкий вид — вертикальная линия по левой кромке колонки (дока и шапка)", () => {
+test("#11216: широкий вид — линии по левой кромке колонки (дока и шапка) нет во всех видах", () => {
   const line = body(inside, "& .group\\/approval-dock,");
-  assert.ok(line, "правила линии нет");
-  // WF128 (#9053): цвет — через --myclaude-split-line, живой фон гасит линию (lookCss).
-  assert.match(line, /box-shadow:\s*inset 1px 0 0 0 var\(--myclaude-split-line, var\(--cds-border\)\) !important/);
+  assert.ok(line, "правила доки и шапки нет");
+  // Слово Элвиса 30.10 17:20: «разделяющая полоса… здесь вообще не нужна» — сменило #8098 и WF128 (гасил только живой фон).
+  assert.match(line, /box-shadow:\s*none !important/);
   assert.ok(inside.includes(`${"& .group\\/approval-dock,"}\n    ${TITLE} {`), "у шапки колонки линии нет");
 });
 

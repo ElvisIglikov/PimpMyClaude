@@ -339,15 +339,8 @@ final class ArrangeStackTests: XCTestCase {
                    folder: folder.isEmpty ? "" : ArrangeStackTests.root + folder)
     }
 
-    private static var fixtures: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("tests/fixtures/pimp", isDirectory: true)
-    }
-
     private static func fixture(_ name: String) throws -> Data {
-        try Data(contentsOf: fixtures.appendingPathComponent(name))
+        try Data(contentsOf: Repo.fixture("pimp/" + name))
     }
 
     private func fixture(_ name: String) throws -> Data { try ArrangeStackTests.fixture(name) }

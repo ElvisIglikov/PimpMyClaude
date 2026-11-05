@@ -6,7 +6,9 @@ import SwiftUI
 // Окно «Токены» (WF157, #9149; переделано WF170, #9179): открывается рядом с панелью у часов по плитке «Токены».
 // Сверху период («Сегодня · Вчера · 7 дней · Месяц», у Месяца — «Дни / Недели»), крупный итог и сравнение с прошлым
 // таким же периодом; ниже ОДИН ряд общего расхода по дням цветом PMP (без стопок по проектам, не накопительный) и
-// ранжир проектов за период полосами одной гаммы. Данные и решения — `TokenStats` (ClaudeAX), здесь вид и окно.
+// ранжир проектов за период полосами одной гаммы; под ним — Workflow за 7 дней полосами цены по API (#6282, `TokensFlows`).
+// Данные и решения — `TokenStats` и `WorkflowCost` (ClaudeAX), здесь вид и окно.
+// «По режимам» (#10225) снято вместе с режимами работы (слово Элвиса 22.10.2026: «выпиливай эту фишку»).
 
 final class TokensModel: ObservableObject {
     static let periodKey = "tokensPeriodWF157"
@@ -14,6 +16,8 @@ final class TokensModel: ObservableObject {
 
     @Published var data = TokensDaily.empty
     @Published var loaded = false
+    /// Workflow за 7 дней с ценой по API (#6282) — от панели (`WorkflowCostRunner`), дорогие первыми.
+    @Published var flows: [WorkflowWeekFlow] = []
     @Published var now = Date()
     @Published var period = TokenPeriod(rawValue: UserDefaults.standard.string(forKey: periodKey) ?? "") ?? .week {
         didSet { UserDefaults.standard.set(period.rawValue, forKey: Self.periodKey) }
@@ -141,6 +145,9 @@ struct TokensView: View {
     @ObservedObject var model: TokensModel
     @State private var hover: (id: String, point: CGPoint)?
     @State private var allProjects = false
+    /// Высота содержимого (x) и сколько пролистано (y), pt.
+    @State private var scroll = CGPoint.zero
+    static let zeroLabel = "0"
 
     private var accent: Color { PanelColor.hex(PMPAccent.current.hex) }
     /// Сколько проектов в ранжире до «ещё N».
@@ -191,10 +198,36 @@ struct TokensView: View {
                         }
                         ranking(summary)
                     }
+                    if !model.flows.isEmpty { TokensFlows(flows: model.flows, accent: accent, now: model.now) }
                 }
                 .padding(.bottom, 18)
+                .background(GeometryReader { proxy in
+                    // Предпочтение (PreferenceKey) из ScrollView здесь не доходит — рамку читаем прямо.
+                    let frame = proxy.frame(in: .named("tokensScroll"))
+                    Color.clear
+                        .onAppear { scroll = CGPoint(x: frame.height, y: -frame.minY) }
+                        .onChange(of: frame) { scroll = CGPoint(x: $0.height, y: -$0.minY) }
+                })
             }
+            .coordinateSpace(name: "tokensScroll")
+            .overlay(GeometryReader { proxy in
+                if TokensMoreBelow.shown(content: scroll.x, visible: proxy.size.height, scrolled: scroll.y) {
+                    moreBelow.frame(maxHeight: .infinity, alignment: .bottom)
+                }
+            })
         }
+    }
+
+    /// #11168 (WF297): ниже есть ещё (список проектов срезан краем окна) — затемнение и шеврон по низу, как у панели (#11164).
+    private var moreBelow: some View {
+        ZStack(alignment: .bottom) {
+            LinearGradient(colors: [PanelColor.panel.opacity(0), PanelColor.panel], startPoint: .top, endPoint: .bottom)
+                .frame(height: 44)
+            Image(systemName: "chevron.compact.down").font(.system(size: 22, weight: .medium))
+                .foregroundColor(PanelColor.sub).padding(.bottom, 4)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     // MARK: итог
@@ -309,6 +342,9 @@ struct TokensView: View {
     @ViewBuilder private func barLabel(_ point: TokenPoint, summary: TokenSummary, dense: Bool) -> some View {
         if point.pending {
             Text(dense ? "·" : "не собрано").font(.system(size: 10)).foregroundColor(PanelColor.sub)
+        } else if point.value == 0 && !dense {
+            // #11168 (WF297): день без токенов (у Рика в копилке его нет) — «0», а не пустое место, похожее на дыру.
+            Text(Self.zeroLabel).font(.system(size: 11)).monospacedDigit().foregroundColor(PanelColor.sub)
         } else if point.value > 0 && (!dense || point.id == summary.peak) {
             Text(TokenStats.human(point.value))
                 .font(.system(size: dense ? 10 : 11, weight: point.id == summary.peak ? .semibold : .regular))
@@ -377,12 +413,12 @@ struct TokensView: View {
     }
 
     static func ending(_ count: Int) -> String {
-        let tens = count % 100, ones = count % 10
-        if (11...14).contains(tens) { return "ов" }
-        if ones == 1 { return "" }
-        if (2...4).contains(ones) { return "а" }
-        return "ов"
+        Plural.ru(count, "", "а", "ов")
     }
+}
+
+enum TokensMoreBelow {
+    static func shown(content: CGFloat, visible: CGFloat, scrolled: CGFloat) -> Bool { content - visible - scrolled > 4 }
 }
 
 /// Переключатель сегментами, как в настройках панели.

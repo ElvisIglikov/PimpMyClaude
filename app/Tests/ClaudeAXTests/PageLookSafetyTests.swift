@@ -10,7 +10,7 @@ final class PageLookSafetyTests: XCTestCase {
         XCTAssertEqual(DimSetting.clamp(Int.min), 20)
         XCTAssertEqual(SendLook.clamp(Int.max), 200)
         XCTAssertEqual(SendLook.clamp(Int.min), 60)
-        let suite = "look-safety-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = PageLookSettings(defaults: defaults)

@@ -3,7 +3,7 @@ import Foundation
 
 // Окно доступа macOS — «окошко из воды» (WF98 Б5, #7766, макет `docs/12.html`, кадры 2.1 и 3.1).
 // Слово Элвиса 26.09 ~07:05: как живой кадр 2.1, пузырёк у мыши тянется с физикой, цвет фиолетовый;
-// перетекание между мониторами (3.1) — да; на одном мониторе маяк не нужен — окно запроса и так на виду.
+// перетекание между мониторами (3.1) — да. С 11.10.2026 (#9661) пузырёк со стрелкой — и на одном мониторе.
 //
 // Здесь только расчёт — без окон и без Metal, чтобы гонять тестами: физика (порт `upRec`/`upOther`
 // макета: пружины, «бульк», отрыв, капли через край монитора), раскладка окон-слоёв вокруг окна
@@ -264,6 +264,8 @@ struct WaterPlaque: Equatable {
     /// Размер окошка целиком от дали до окна запроса: 1…`ConsentWaterK.reachMax` (#8111, #8122).
     var reach: CGFloat = 1
     var line2 = ConsentWaterSim.lineClick
+    /// Заголовок окошка; свой — у входа на сайт (WF302, #11225).
+    var title = ConsentWaterSim.titleConsent
     /// Спокойный вид: своё тёмное стекло с фиолетовой каймой вместо воды.
     var solid = false
 
@@ -282,6 +284,9 @@ struct WaterPlaque: Equatable {
 struct ConsentWaterFrame: Equatable {
     /// Первая — у ближайшего окна запроса (с волнами «булька»).
     var rings: [WaterRing] = []
+    /// Сколько последних рамок — без дырки: вода рисуется и внутри них (вход на сайт, WF302: свечение вокруг окна
+    /// Chrome, а внутри него — рамка поля и окошко). У окон доступа — 0: внутри окна запроса пусто.
+    var openRings = 0
     /// Тело окошка из воды: прямоугольник (нет — пусто) и радиус углов.
     var box: CGRect?
     var boxR: CGFloat = 0
@@ -314,7 +319,7 @@ struct ConsentWaterFrame: Equatable {
         u[3] = SIMD4(f(wave[0]), f(wave[1]), f(wave[2]), f(wave[3]))
         let rings = Array(self.rings.prefix(ConsentWaterK.maxRings))
         let circles = Array(self.circles.prefix(ConsentWaterK.maxCircles))
-        u[4] = SIMD4(Float(rings.count), Float(circles.count), 0, 0)
+        u[4] = SIMD4(Float(rings.count), Float(circles.count), Float(min(openRings, rings.count)), 0)
         for (i, ring) in rings.enumerated() {
             u[5 + i] = SIMD4(f(ring.rect.midX), f(ring.rect.midY), f(ring.rect.width / 2), f(ring.rect.height / 2))
             u[9 + i] = SIMD4(f(ring.gap), f(ring.thick), f(ring.rin), f(ring.amp))
@@ -337,12 +342,17 @@ struct ConsentWaterInput {
     var visible: [CGRect]
     /// Запрос ещё висит; false — всё стекает.
     var alive = true
+    /// Цель стрелки задана явно (вход на сайт, WF302, #11225: поле входа): стрелка, язык и «бульк» — к ней, а не к
+    /// ближайшему из `targets`; `targets` — только рамки-свечение, и окошко может лечь на них (это не окна запроса
+    /// macOS, клики по ним не глушатся). nil — как было: ближайшее окно запроса.
+    var aim: CGRect? = nil
 }
 
 /// Порт физики макета 12 (`upRec` — тот же монитор, `upOther` — запрос на соседнем).
 struct ConsentWaterSim {
     static let lineClick = "клик — курсор к окну"
     static let lineOther = "на соседнем мониторе"
+    static let titleConsent = "macOS ждёт ответа"
 
     /// Спокойный вид («Уменьшить движение», вид 4.2): без пружин, волн и брызг.
     var calm = false
@@ -379,6 +389,8 @@ struct ConsentWaterSim {
     private var circles: [WaterCircle] = []
     private var blub = false
     private var random: WaterRandom
+    /// Проявленность окошка в спокойном виде, 0…1 (`HintPull.approach`).
+    private var calmShown: CGFloat = 0
 
     init(calm: Bool = false, seed: UInt64 = 1) {
         self.calm = calm
@@ -398,7 +410,7 @@ struct ConsentWaterSim {
         }.filter { $0.age < $0.life }
 
         let c = input.cursor
-        let target = input.targets.min { WaterGeo.distance(c, $0) < WaterGeo.distance(c, $1) } ?? lastTarget
+        let target = input.aim ?? input.targets.min { WaterGeo.distance(c, $0) < WaterGeo.distance(c, $1) } ?? lastTarget
         guard let rect = target, !input.screens.isEmpty else { return ConsentWaterFrame(calm: calm, finished: true) }
         lastTarget = rect
         let far = WaterGeo.smooth(ConsentWaterK.reachNear, ConsentWaterK.reachFar, WaterGeo.distance(c, rect))
@@ -433,12 +445,21 @@ struct ConsentWaterSim {
             frame.rings.append(ring)
         }
         // Окно-панель окошка не ложится ни на одно окно запроса с запасом (решение 12.5).
-        let holes = input.targets.map { WaterGeo.grow($0, ConsentWaterK.hole) } + [WaterGeo.grow(rect, ConsentWaterK.hole)]
+        let holes = (input.aim == nil ? input.targets.map { WaterGeo.grow($0, ConsentWaterK.hole) } : [])
+            + [WaterGeo.grow(rect, ConsentWaterK.hole)]
         if holes.contains(where: { WaterGeo.hit($0, frame.plaque.panelRect) }) { frame.plaque.opacity = 0 }
+        // Спокойный вид («Уменьшить движение»): окошко проявляется и уходит растворением, а не вспыхивает и не
+        // пропадает рывком — та же анимация пузырьков, что у плашек подсказок (`HintPull`, #9841).
+        if calm {
+            calmShown = HintPull.approach(calmShown, to: frame.plaque.opacity, dt: dt)
+            frame.plaque.opacity = CGFloat(HintPull.eased(Double(calmShown)))
+        }
+        if input.aim != nil { frame.openRings = frame.rings.count - 1 }
         frame.blub = blub
         frame.calm = calm
         frame.bounds = contentBounds(frame)
         frame.finished = !alive && amp.x < 0.02 && pz.x < 0.02 && drips.isEmpty && waves.isEmpty && stream.isEmpty
+            && (!calm || calmShown < 0.02)
         return frame
     }
 
@@ -523,6 +544,11 @@ struct ConsentWaterSim {
         let vx = abs(pl.vx) / 600, vy = abs(pl.vy) / 600
         wx.step(to: calm ? 1 : 1 + 0.1 * tanh(vx) - 0.05 * tanh(vy), w: 13, z: 0.3, dt: dt)
         wy.step(to: calm ? 1 : 1 + 0.1 * tanh(vy) - 0.05 * tanh(vx), w: 13, z: 0.3, dt: dt)
+        swellRing(dt: dt)
+    }
+
+    /// Сила рамки: вырастает пружиной, пока запрос висит, и стекает, когда ответили; «бульк» затихает.
+    private mutating func swellRing(dt: CGFloat) {
         amp.step(to: alive ? 1 : 0, w: calm ? 40 : 7, z: calm ? 1 : 0.45, dt: dt)
         bump.step(to: 0, w: 6, z: 0.3, dt: dt)
     }
@@ -753,14 +779,17 @@ enum ConsentWaterLayout {
     }
 
     /// Окна-слои: на мониторах с окнами запроса — куски вокруг дырок, на мониторе курсора — весь
-    /// монитор (там окна запроса нет); прочие мониторы — без окон.
-    static func windows(screens: [CGRect], targets: [CGRect], cursor: CGPoint) -> [CGRect] {
+    /// монитор (там окна запроса нет); прочие мониторы — без окон. `cut: false` (вход на сайт, WF302) — дырок нет:
+    /// рамка поля входа рисуется поверх окна Chrome, слои клики и так пропускают; монитор с целью — целиком.
+    static func windows(screens: [CGRect], targets: [CGRect], cursor: CGPoint, cut: Bool = true) -> [CGRect] {
         let holes = self.holes(targets)
         let cursorScreen = WaterGeo.index(of: cursor, in: screens)
         var out: [CGRect] = []
         for (i, screen) in screens.enumerated() {
             let mine = holes.filter { WaterGeo.hit($0, screen) }
-            if !mine.isEmpty {
+            if !mine.isEmpty && !cut {
+                out.append(screen)
+            } else if !mine.isEmpty {
                 out += pieces(of: screen, minus: mine)
             } else if i == cursorScreen {
                 out.append(screen)
@@ -774,17 +803,17 @@ enum ConsentWaterLayout {
 enum ConsentBeaconStyle: String {
     /// Запроса нет.
     case idle
-    /// Один монитор — окно запроса и так на виду, ничего не показываем (слово Элвиса 26.09 ~07:05).
-    case single
     /// Окошко из воды (макет 12).
     case water
-    /// Рамка и плашка WF91: выключатель `consentBeaconClassic` или Metal не завёлся.
-    case classic
+    /// Metal не завёлся — не рисуем ничего (запасная рамка WF91 снята по ревизии 16.10, вопрос 12).
+    case noMetal = "no-metal"
 
-    static func choose(hasTargets: Bool, screenCount: Int, classic: Bool, waterAvailable: Bool) -> ConsentBeaconStyle {
+    static func choose(hasTargets: Bool, waterAvailable: Bool) -> ConsentBeaconStyle {
         guard hasTargets else { return .idle }
-        guard screenCount >= 2 else { return .single }
-        return classic || !waterAvailable ? .classic : .water
+        // Один монитор — тоже вода (слово Элвиса 11.10.2026 02:25, #9661: «Была же… подсветка, такая как пузырёк…
+        // Там ещё стрелочка такая указывала»; «чтобы даже когда один монитор, чтоб это работало»). До этого на одном
+        // мониторе не показывали ничего (его же слово 26.09).
+        return waterAvailable ? .water : .noMetal
     }
 }
 

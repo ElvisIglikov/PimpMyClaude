@@ -1,8 +1,9 @@
 import XCTest
 @testable import ClaudeAX
 
-/// WF214 (#9404): «Идёт Workflow сейчас» кольцами 31.2 — что на плитке, кто в «Ждут тебя», и место нового блока в
-/// раскладке виджетов (первым, только во всю ширину, скрывается и переставляется, как прочие).
+/// WF214 (#9404): «Идёт Workflow сейчас» кольцами 31.2 — что на плитке и место нового блока в раскладке виджетов
+/// (первым, только во всю ширину, скрывается и переставляется, как прочие). «Ждут тебя» и точки в углу сняты словом
+/// Элвиса 10.10 (#9520, #9521).
 final class PanelWF214Tests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_790_000_000)
 
@@ -14,20 +15,19 @@ final class PanelWF214Tests: XCTestCase {
                          now text: String = "") -> PanelProject {
         PanelProject(folder: "/p/" + name, name: name, marker: "🟣", isMain: false, updated: now, now: text,
                      words: [], note: note, waits: waits,
-                     running: flows.filter { $0.state == .running || $0.state == .failed }, finished: [], planned: [],
+                     running: flows.filter { $0.state == .running || $0.state == .failed },
                      workflows: flows)
     }
 
     private func groups(_ projects: [PanelProject], terminals: Set<String> = []) -> [PanelTileGroup] {
         var snapshot = PanelSnapshot(waiting: projects.filter { $0.running.isEmpty && $0.waits },
                                      working: projects.filter { !$0.running.isEmpty },
-                                     others: projects.filter { $0.running.isEmpty && !$0.waits },
-                                     mainEntry: nil, mainName: nil)
+                                     others: projects.filter { $0.running.isEmpty && !$0.waits })
         snapshot.terminals = terminals
         return PanelTiles.groups(snapshot, now: now)
     }
 
-    func testRingWordsCornerAndCount() throws {
+    func testRunningCount() throws {
         let all = groups([
             project("Dictator", Array(repeating: flow(.done), count: 9) + Array(repeating: flow(.running), count: 3)),
             project("Pimp", [flow(.running)], waits: true, note: "файл 29"),
@@ -40,39 +40,18 @@ final class PanelWF214Tests: XCTestCase {
         let tile: (String) throws -> PanelTile = { name in try XCTUnwrap(running.first { $0.name == name }) }
         XCTAssertEqual(Set(running.map { $0.name }), ["Dictator", "Pimp", "Broken", "Shell"])
         XCTAssertEqual(PanelTiles.runningCount(all), 4, "идущие Workflow всех плиток")
-
-        XCTAssertEqual(PanelTiles.ring(try tile("Dictator")).text, "9/12")
-        XCTAssertEqual(PanelTiles.ring(try tile("Dictator")).fraction, 0.75, accuracy: 0.001)
-        XCTAssertEqual(PanelTiles.ringWords(try tile("Dictator")).text, "3 идут")
-        XCTAssertNil(PanelTiles.corner(try tile("Dictator")))
-
-        XCTAssertEqual(PanelTiles.ring(try tile("Pimp")).text, "0/1")
-        XCTAssertEqual(PanelTiles.ringWords(try tile("Pimp")).text, "1 идёт")
-        XCTAssertEqual(PanelTiles.corner(try tile("Pimp")), .waits)
-
-        XCTAssertEqual(PanelTiles.ringWords(try tile("Broken")).text, "упал")
-        XCTAssertTrue(PanelTiles.ringWords(try tile("Broken")).failed)
-        XCTAssertEqual(PanelTiles.corner(try tile("Broken")), .failed)
-
-        XCTAssertEqual(PanelTiles.ring(try tile("Shell")).text, "", "только чат в терминале — кольцо пустое")
-        XCTAssertEqual(PanelTiles.ring(try tile("Shell")).fraction, 0)
-        XCTAssertEqual(PanelTiles.ringWords(try tile("Shell")).text, "терминал")
-
-        // «Ждут тебя»: идущий, что ждёт, и тот, где ничего не идёт; текст — что именно ждёт.
-        let waiters = PanelTiles.waiters(all)
-        XCTAssertEqual(waiters.map { $0.name }, ["Pimp", "Hand"])
-        XCTAssertEqual(waiters.map { $0.wait }, ["файл 29", "макет"])
-        XCTAssertEqual(try tile("Dictator").wait, "")
-
+        XCTAssertTrue(try tile("Pimp").waits, "идёт и ждёт — пометка в подсказке")
         XCTAssertEqual([1, 2, 5, 11, 21, 22].map(PanelTiles.goes), ["идёт", "идут", "идут", "идут", "идёт", "идут"])
         XCTAssertEqual(PanelTiles.runningCount([]), 0)
-        XCTAssertTrue(PanelTiles.waiters([]).isEmpty)
     }
 
     func testWorkflowWidgetIsFirstWideOnlyHidableAndMovable() {
         let id = PanelWidget.workflow.rawValue
-        XCTAssertEqual(PanelWidget.workflow.title, "Идёт Workflow сейчас")
-        XCTAssertEqual(PanelWidgetLayout.standard.items.first, PanelWidgetLayout.Item(id: id, wide: true))
+        XCTAssertEqual(PanelWidget.workflow.title, "Workflow", "#10239: имя блока — как шапка на Windows")
+        // #10461: по умолчанию — свёрнутой полосой внизу, как у коллеги; под ней только «Терминалы» (#10464).
+        let standard = PanelWidgetLayout.standard.items
+        // С 03.11.2026 — скрыт (`docs/decisions/2026-11-03-oformlenie.md`), место то же.
+        XCTAssertEqual(standard.dropLast().last, PanelWidgetLayout.Item(id: id, wide: true, hidden: true, collapsed: true))
         XCTAssertFalse(PanelWidget.workflow.canNarrow)
 
         // Раскладка, сохранённая до WF214 (и со снятым в WF171 блоком `tiles`): новый блок встаёт сверху, широким.
@@ -82,10 +61,11 @@ final class PanelWF214Tests: XCTestCase {
         XCTAssertFalse(saved.items.contains { $0.id == "tiles" })
 
         var layout = PanelWidgetLayout.standard
+        layout.setHidden(id, false)
         layout.toggleWidth(id)
         XCTAssertEqual(layout.item(id)?.wide, true, "уже не становится")
         let visible = Set(PanelWidget.allCases.map { $0.rawValue })
-        XCTAssertEqual(layout.rows(visible: visible).first?.map { $0.id }, [id])
+        XCTAssertTrue(layout.rows(visible: visible).contains { $0.map { $0.id } == [id] }, "своим рядом")
 
         layout.setHidden(id, true)
         XCTAssertFalse(layout.rows(visible: visible).contains { $0.contains { $0.id == id } })
@@ -103,17 +83,17 @@ final class PanelWF214Tests: XCTestCase {
     func testHalvesSwapLeftAndRight() {
         let visible = Set(PanelWidget.allCases.map { $0.rawValue })
         let layout = PanelWidgetLayout.standard
-        XCTAssertEqual(layout.rows(visible: visible)[1].map { $0.id }, ["week", "reset"])
+        XCTAssertEqual(layout.rows(visible: visible)[0].map { $0.id }, ["week", "reset"])
 
         var right = PanelWidgetDrag(id: "week", before: layout)
         let toRight = right.step(over: "reset", in: layout)
-        XCTAssertEqual(toRight?.rows(visible: visible)[1].map { $0.id }, ["reset", "week"])
+        XCTAssertEqual(toRight?.rows(visible: visible)[0].map { $0.id }, ["reset", "week"])
         XCTAssertNil(right.step(over: "reset", in: toRight ?? layout), "над тем же соседом второй раз не меняемся")
 
         var left = PanelWidgetDrag(id: "reset", before: layout)
         let toLeft = left.step(over: "week", in: layout)
-        XCTAssertEqual(toLeft?.rows(visible: visible)[1].map { $0.id }, ["reset", "week"])
+        XCTAssertEqual(toLeft?.rows(visible: visible)[0].map { $0.id }, ["reset", "week"])
         // Остальные ряды на месте.
-        XCTAssertEqual(toLeft?.rows(visible: visible)[2].map { $0.id }, ["limits", "fable"])
+        XCTAssertEqual(toLeft?.rows(visible: visible)[1].map { $0.id }, ["limits", "fable"])
     }
 }

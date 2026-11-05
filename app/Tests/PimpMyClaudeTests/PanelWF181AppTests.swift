@@ -1,3 +1,4 @@
+@testable import ClaudeAX
 import XCTest
 @testable import PimpMyClaude
 
@@ -19,12 +20,19 @@ final class PanelWF181AppTests: XCTestCase {
         XCTAssertEqual(placed.height, 120 + 10 + 90 + 10 + 50)
     }
 
-    /// Раскрытый график (память) — ряд не выравнивается: температура рядом не тянется пустой коробкой.
-    func testOpenChartRowStaysLoose() {
-        let placed = WidgetGrid.frames([[("temperature", false, 36), ("memory", false, 210)], [("tokens", true, 36)]],
-                                       width: 316, gap: 8, spacing: 10, loose: ["memory"])
+    /// Раскрытый график (память) температуру рядом пустой коробкой не тянет: с WF242 он встаёт своим рядом во всю
+    /// ширину, температура — строкой над ним.
+    func testOpenChartTakesItsOwnRow() {
+        let all = Set(PanelWidget.allCases.map { $0.rawValue })
+        let rows = PanelWidgetLayout.unfolded.rows(visible: all, expanded: ["memory"])
+        let placed = WidgetGrid.frames(rows.map { row in
+            row.map { (id: $0.id, wide: $0.wide, height: CGFloat($0.id == "memory" ? 210 : 36)) }
+        }, width: 316, gap: 8, spacing: 10)
         XCTAssertEqual(placed.frames["temperature"]?.height, 36)
+        XCTAssertEqual(placed.frames["temperature"]?.width, 316, "осталась одна в ряду — во всю ширину")
         XCTAssertEqual(placed.frames["memory"]?.height, 210)
-        XCTAssertEqual(placed.frames["tokens"]?.minY, 220, "следующий ряд — под самым высоким")
+        XCTAssertEqual(placed.frames["memory"]?.width, 316)
+        XCTAssertEqual(placed.frames["memory"]?.minX, 0)
+        XCTAssertEqual(placed.frames["memory"]?.minY, (placed.frames["temperature"]?.maxY ?? 0) + 10)
     }
 }

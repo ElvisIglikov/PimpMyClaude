@@ -112,28 +112,28 @@ test("#7755: заголовок без «❗ Скажи — и сделаю ❗�
   assert.equal(field(loaded), "");
 });
 
-test("#7755: клик — слово в поле, подсвечено, отсчёт 5", () => {
+test("#7755: клик — слово в поле, подсвечено, отсчёт 2 (#10361; до 19.10 — 5)", () => {
   const { loaded, tick, click } = page();
   click(loaded.parts.clean);
   assert.equal(field(loaded), "чисти");
   assert.equal(loaded.parts.clean.getAttribute(SAY), "on");
-  assert.deepEqual(say(loaded), { armed: true, words: ["чисти"], left: 5, sends: 0 });
-  assert.equal(loaded.parts.head.getAttribute(LEFT), "5");
+  assert.deepEqual(say(loaded), { armed: true, words: ["чисти"], left: 2, sends: 0 });
+  assert.equal(loaded.parts.head.getAttribute(LEFT), "2");
   tick(1200);
-  assert.equal(say(loaded).left, 4);
-  assert.equal(loaded.parts.head.getAttribute(LEFT), "4");
+  assert.equal(say(loaded).left, 1);
+  assert.equal(loaded.parts.head.getAttribute(LEFT), "1");
 });
 
-test("#7755: второй клик — слово следом, отсчёт с 5 заново", () => {
+test("#7755: второй клик — слово следом, отсчёт с 2 заново", () => {
   const { loaded, tick, click } = page();
   click(loaded.parts.clean);
-  tick(3000);
-  assert.equal(say(loaded).left, 2);
+  tick(1200);
+  assert.equal(say(loaded).left, 1);
   click(loaded.parts.go);
   // #8687 (WF125): слова в поле — каждое с новой строки, не одной фразой через пробел.
   assert.equal(field(loaded), "чисти\nпоехали");
-  assert.deepEqual(say(loaded), { armed: true, words: ["чисти", "поехали"], left: 5, sends: 0 });
-  tick(3000);
+  assert.deepEqual(say(loaded), { armed: true, words: ["чисти", "поехали"], left: 2, sends: 0 });
+  tick(1200);
   assert.equal(loaded.parts.send.__presses, 0, "первый отсчёт сброшен вторым кликом");
 });
 
@@ -141,11 +141,11 @@ test("#7755: клик по выбранному — снято из поля и 
   const { loaded, tick, click } = page();
   click(loaded.parts.clean);
   click(loaded.parts.go);
-  tick(4000);
+  tick(1200);
   click(loaded.parts.clean);
   assert.equal(field(loaded), "поехали");
   assert.equal(loaded.parts.clean.getAttribute(SAY), "");
-  assert.deepEqual(say(loaded), { armed: true, words: ["поехали"], left: 5, sends: 0 });
+  assert.deepEqual(say(loaded), { armed: true, words: ["поехали"], left: 2, sends: 0 });
   click(loaded.parts.go);
   assert.equal(field(loaded), "");
   assert.deepEqual(say(loaded), { armed: false, words: [], left: 0, sends: 0 });
@@ -354,11 +354,11 @@ test("#7891: изменение поля в начальном счёте отм
 });
 
 for (const on of [true, false]) {
-  test(`WF119 фразы: первые 5 с прежние; второй этап ${on ? "3 с" : "off без эффектов"}`, () => {
+  test(`WF119 фразы: первые 2 с прежние; второй этап ${on ? "3 с" : "off без эффектов"}`, () => {
     const { loaded, tick, click } = page();
     loaded.dom.command({ id: "wf119-phrase", action: "send-delay", on, seconds: 3 });
     click(loaded.parts.go);
-    tick(4900);
+    tick(1900);
     assert.equal(loaded.api.status().sendDelay.started, 0);
     assert.equal(loaded.api.status().sendDelay.released, 0);
     tick(200);

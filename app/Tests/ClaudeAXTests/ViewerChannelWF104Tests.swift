@@ -132,8 +132,9 @@ final class ViewerChannelWF104Tests: XCTestCase {
 
     // MARK: - ViewerClient против своего слушателя
 
-    /// Слушатель на порту 0: записывает заголовки запросов, отвечает по сценарию (nil — молчит).
-    private final class FakeViewer {
+    /// Слушатель на порту 0: записывает заголовки запросов, отвечает по сценарию (nil — молчит). Им же пользуются
+    /// тесты #8302 (`ViewerOwnerWF259Tests`).
+    final class FakeViewer {
         let listener: NWListener
         private let queue = DispatchQueue(label: "test.fake-viewer")
         private let lock = NSLock()
@@ -188,6 +189,9 @@ final class ViewerChannelWF104Tests: XCTestCase {
 
     private func client(_ fake: FakeViewer, launches: Bool = false, installed: Bool = false) -> ViewerClient {
         let client = ViewerClient(port: fake.port, tokenURL: tokenURL, launches: launches)
+        // Процесс теста — не PimpViewer (#8302): определитель подменён путём галереи, иначе запросов нет.
+        let gallery = "/Applications/PimpViewer.app/Contents/MacOS/PimpViewer"
+        client.owners = { _, _ in [.init(pid: getpid(), path: gallery)] }
         client.installed = { installed }
         client.running = { false }
         client.launch = { XCTFail("запуск не ждали") }
@@ -220,6 +224,63 @@ final class ViewerChannelWF104Tests: XCTestCase {
         XCTAssertEqual(client.status, "up/1/1")
     }
 
+    /// Слово Элвиса 22.10.2026: файл из чата «открывается только со второго нажатия». Галерея ответила «взяла», а окна
+    /// не показала (чат ей ещё не известен, окно выгружено, проснулась поздно) — первое нажатие не пропадает: клиент
+    /// отвечает «не взяла», и сиденье показывает страницу просмотром в окне чата. Окно вышло — как было.
+    func testFirstClickNeverLostWhenGalleryShowsNoWindow() throws {
+        try writeToken(token)
+        let fake = try FakeViewer()
+        fake.answer = { _, _ in FakeViewer.json(#"{"focus":false,"taken":true}"#) }
+        let client = client(fake)
+        client.windowWait = 0.3
+        client.windowShown = { false }
+        XCTAssertEqual(accept(client), false, "взяла без окна — пусть покажет сиденье")
+        XCTAssertEqual(client.status, "up/1/0+1")
+        XCTAssertEqual(accept(client, mode: .view), true, "тихий view (просмотр уже в окне чата) — окна и не ждём")
+        XCTAssertEqual(accept(client, chat: nil), true, "клик без чата — галерея кладёт в ленту, как было")
+        var polls = 0
+        client.windowShown = { polls += 1; return polls >= 2 }
+        XCTAssertEqual(accept(client), true, "окно вышло со второго взгляда — галерея взяла")
+
+        // Всё сиденье: первое же нажатие по карточке — просмотр в окне чата, браузер не открывается.
+        client.windowShown = { false }
+        let opener = HtmlChromeOpener()
+        let shown = expectation(description: "первое нажатие показало файл")
+        var browser = 0
+        opener.onView = { request in
+            XCTAssertEqual(request.mode, .view)
+            shown.fulfill()
+        }
+        opener.isKnownChat = { _ in true }
+        opener.browserSeam = { _ in browser += 1 }
+        opener.toViewer = { request, done in
+            client.accept(path: request.path, mode: request.mode, chat: request.chat, done: done)
+        }
+        opener.route(HtmlChromeOpener.Request(path: "/p/2.html", mode: .click, chat: "local_a",
+                                              frame: CGRect(x: 0, y: 0, width: 10, height: 10)))
+        wait(for: [shown], timeout: 3)
+        XCTAssertEqual(browser, 0)
+    }
+
+    /// #10531: галерея сама отвечает `opened` — `false` у клика значит «окна не будет», и клиент не ждёт его 1,5 с.
+    func testOpenedFalseFallsBackWithoutWaiting() throws {
+        try writeToken(token)
+        let fake = try FakeViewer()
+        fake.answer = { _, _ in FakeViewer.json(#"{"focus":false,"opened":false,"taken":true}"#) }
+        let client = client(fake)
+        client.windowWait = 5
+        var polls = 0
+        client.windowShown = { polls += 1; return false }
+        let started = Date()
+        XCTAssertEqual(accept(client), false, "окна не будет — пусть покажет сиденье")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "без ожидания окна")
+        XCTAssertEqual(polls, 0)
+        XCTAssertEqual(client.status, "up/1/0+1")
+        fake.answer = { _, _ in FakeViewer.json(#"{"focus":false,"opened":true,"taken":true}"#) }
+        client.windowShown = { true }
+        XCTAssertEqual(accept(client), true)
+    }
+
     func testFocusRaisesGalleryWindowWithRetries() throws {
         try writeToken(token)
         let fake = try FakeViewer()
@@ -249,7 +310,8 @@ final class ViewerChannelWF104Tests: XCTestCase {
         XCTAssertEqual(fake.requests.count, 2)
         try writeToken(fresh)
         XCTAssertEqual(accept(client), true)
-        XCTAssertEqual(fake.requests.count, 4)
+        // После окна — ещё `/opened` (#10831), он здесь не в счёт.
+        XCTAssertEqual(fake.requests.filter { !$0.hasPrefix("GET /opened?") }.count, 4)
     }
 
     func testSilenceAndRedirectAreFailures() throws {
@@ -280,7 +342,7 @@ final class ViewerChannelWF104Tests: XCTestCase {
         client.launch = { launched += 1; try? Data((token + "\n").utf8).write(to: url) }
         XCTAssertEqual(accept(client, mode: .click), true)
         XCTAssertEqual(launched, 1)
-        XCTAssertEqual(fake.requests.map { String($0.prefix(11)) }, ["GET /ping H", "GET /accept"])
+        XCTAssertEqual(fake.requests.map { String($0.prefix(11)) }.filter { $0 != "GET /opened" }, ["GET /ping H", "GET /accept"])
     }
 
     func testMissingAppFallsBackAndReportsMissing() throws {

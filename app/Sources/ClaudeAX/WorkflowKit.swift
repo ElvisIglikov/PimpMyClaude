@@ -1,4 +1,5 @@
 import Foundation
+import Patcher
 
 /// Комплект воркфлоу (решение 3 плана WF9): `resources/workflow-kit/{WORKFLOW.md,KICKOFF.md}`
 /// лежит в бандле (`Contents/Resources/workflow-kit`, кладёт tools/bundle.sh) и копируется в
@@ -10,9 +11,9 @@ import Foundation
 /// «🚀 Workflow» — на случай, если патч ставили версией приложения без комплекта.
 enum WorkflowKit {
     /// Папка комплекта в ресурсах .app.
-    static let bundledFolderName = "workflow-kit"
+    static let bundledFolderName = Patcher.workflowKitDirName
     /// Папка комплекта в Application Support (её имя знает текст KICKOFF.md).
-    static let installedFolderName = "workflow"
+    static let installedFolderName = Patcher.workflowDirName
     static let rulesName = "WORKFLOW.md"
     static let kickoffName = "KICKOFF.md"
     /// Короткий режим ответов (WF89): KICKOFF велит его прочитать, поэтому копируется вместе с правилами.
@@ -37,19 +38,14 @@ enum WorkflowKit {
         return text
     }
 
-    /// Разложить комплект рядом с command.json. Возвращает false, если хоть один файл не лёг —
-    /// пункт меню всё равно шлёт команду: без правил чат хотя бы получит кикофф.
+    /// Разложить комплект рядом с command.json — той же копией, что у патчера (`Patcher.copyWorkflowKit`).
+    /// Возвращает false, если комплекта нет или хоть один файл не лёг — пункт меню всё равно шлёт команду:
+    /// без правил чат хотя бы получит кикофф.
     @discardableResult
     static func install(from source: URL? = bundledDirectory, to target: URL = installedDirectory) -> Bool {
         guard let source = source,
-              (try? FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)) != nil
+              files.allSatisfy({ FileManager.default.fileExists(atPath: source.appendingPathComponent($0).path) })
         else { return false }
-        var ok = true
-        for name in files {
-            guard let data = try? Data(contentsOf: source.appendingPathComponent(name)),
-                  (try? data.write(to: target.appendingPathComponent(name), options: .atomic)) != nil
-            else { ok = false; continue }
-        }
-        return ok
+        return (try? Patcher.copyWorkflowKit(from: source, to: target)) != nil
     }
 }

@@ -11,7 +11,8 @@ import Foundation
 //   • уровень — `kern.memorystatus_vm_pressure_level` (1 — норма, 2 — жёлтая, 4 — красная), его же слушает
 //     DISPATCH_SOURCE_TYPE_MEMORYPRESSURE;
 //   • занято — как «Использовано памяти» в Мониторинге: память приложений (внутренние страницы без очищаемых)
-//     + неперемещаемая + сжатая, `host_statistics64(HOST_VM_INFO64)`, против `physicalMemory`.
+//     + неперемещаемая + сжатая, `host_statistics64(HOST_VM_INFO64)`, против `physicalMemory`;
+//   • своп — `vm.swapusage` (`xsw_usage.xsu_used`, байт): сколько сейчас лежит в файле подкачки (WF242).
 // Опрос — раз в минуту на своей очереди, допуск 10 с; история — 180 точек (3 ч) только в памяти.
 
 /// Уровень давления памяти, как цвет графика в Мониторинге системы.
@@ -19,6 +20,15 @@ public enum MemoryPressureLevel: Int, Equatable {
     case normal = 1
     case warn = 2
     case critical = 4
+}
+
+/// Состояние Мака на графиках температуры и памяти (#9818, слово Элвиса 11.10.2026: «зелёным… всё хорошо. Человек
+/// заходит, и эта штука его должна успокаивать… зелёная, жёлтая и красная, когда всё плохо»): цвет линии и точки
+/// «сейчас». Пороги — смысл самой macOS: температура — `thermalState`, память — своп и давление памяти.
+public enum MacHealth: Int, Comparable {
+    case good, warn, bad
+
+    public static func < (left: MacHealth, right: MacHealth) -> Bool { left.rawValue < right.rawValue }
 }
 
 /// Одно чтение.
@@ -30,13 +40,17 @@ public struct MacMemorySample: Equatable {
     /// Занято и всего, байт.
     public let used: UInt64?
     public let total: UInt64
+    /// В файле подкачки, байт (`vm.swapusage`); nil — не прочитали.
+    public let swap: UInt64?
 
-    public init(at: Date, pressure: Double?, level: MemoryPressureLevel?, used: UInt64?, total: UInt64) {
+    public init(at: Date, pressure: Double?, level: MemoryPressureLevel?, used: UInt64?, total: UInt64,
+                swap: UInt64? = nil) {
         self.at = at
         self.pressure = pressure
         self.level = level
         self.used = used
         self.total = total
+        self.swap = swap
     }
 
     /// Что рисуем: нагрузка по macOS, без неё — доля занятого.
@@ -94,14 +108,15 @@ public enum MacMemory {
 
     public static func percent(_ value: Double) -> String { "\(Int(value.rounded())) %" }
 
-    /// Гигабайты по-русски: «6,3 ГБ» без «,0» («8 ГБ»).
+    /// Гигабайты: «6.3 ГБ» без «.0» («8 ГБ»). Дробная часть — через точку (WF267, слово Элвиса 17.10.2026 11:24:
+    /// «память с точкой»): у памяти везде — строка плитки, подсказка, подпись и ось графика.
     public static func gigabytes(_ bytes: UInt64) -> String { tenthsText(tenths(bytes)) }
 
     /// Десятые гигабайта — одно округление на строку, подпись и ось.
     static func tenths(_ bytes: UInt64) -> Int { Int((Double(bytes) / 1_073_741_824 * 10).rounded()) }
 
     static func tenthsText(_ tenths: Int) -> String {
-        tenths % 10 == 0 ? "\(tenths / 10)" : "\(tenths / 10),\(tenths % 10)"
+        tenths % 10 == 0 ? "\(tenths / 10)" : "\(tenths / 10).\(tenths % 10)"
     }
 
     // MARK: ось в гигабайтах (WF177, #9197)
@@ -142,21 +157,12 @@ public enum MacMemory {
     /// Число строки плитки — последняя точка; точек нет — «—».
     public static func nowText(_ history: [MacMemorySample]) -> String { history.last.flatMap(amount) ?? "—" }
 
-    /// Цвет графика словом, как в «Мониторинге системы»: зелёная / жёлтая / красная.
-    public static func color(_ level: MemoryPressureLevel?) -> String {
-        switch level {
-        case .normal: return "зелёная"
-        case .warn: return "жёлтая"
-        case .critical: return "красная"
-        case nil: return ""
-        }
-    }
-
-    /// Подсказка строки плитки: «Память: занято 6,3 из 8 ГБ — 79 % · жёлтая, под нагрузкой» — ГБ и процент одной
-    /// формулой (`usedPercent`). Занятого не знаем — честно «нагрузка по macOS 65 %» (это не доля занятого).
+    /// Подсказка строки плитки: «Память: занято 6,3 из 8 ГБ — 79 % · под нагрузкой · в свопе 1,2 ГБ» — ГБ и процент
+    /// одной формулой (`usedPercent`). Занятого не знаем — честно «нагрузка по macOS 65 %» (это не доля занятого).
+    /// Слова цвета («жёлтая») с WF242 нет: график серый, красным — только своп.
     public static func help(_ history: [MacMemorySample]) -> String {
         guard let last = history.last, let now = last.value else { return "Память" }
-        let level = last.level.map { " · \(color($0)), \(word($0))" } ?? ""
+        let level = (last.level.map { " · \(word($0))" } ?? "") + (swapText(last).map { " · " + $0 } ?? "")
         if let used = last.used, last.total > 0, let share = usedPercent(last) {
             return "Память: занято \(gigabytes(used)) из \(gigabytes(last.total)) ГБ — \(share) %\(level)"
         }
@@ -169,6 +175,8 @@ public enum MacMemory {
     /// поэтому «сейчас» всегда внутри. Уровня не знаем — первого куска нет.
     /// С WF177 (ось в ГБ) — «за 3 ч от 5,1 до 6,8 ГБ»: числа те же десятые, что «6,3 ГБ» строки, всё из всей памяти
     /// уже на оси; занятого не знаем — как раньше, проценты нагрузки.
+    /// С WF242 своп известен — первое слово про него («своп растёт» / «много в свопе», красным; спокойно — слова
+    /// нет), в конце «в свопе 1,2 ГБ»; свопа не знаем — слово уровня macOS, как раньше.
     public static func captionParts(_ history: [MacMemorySample]) -> (word: String, rest: String) {
         guard let last = history.last else { return ("", "") }
         var parts: [String] = []
@@ -186,7 +194,76 @@ public enum MacMemory {
                 parts.append(low == high ? "\(when) без изменений" : "\(when) от \(low) до \(high) %")
             }
         }
-        return (last.level.map(word) ?? "", parts.joined(separator: " · "))
+        guard last.swap != nil else { return (last.level.map(word) ?? "", parts.joined(separator: " · ")) }
+        if let swap = swapText(last) { parts.append(swap) }
+        return (swapWord(history), parts.joined(separator: " · "))
+    }
+
+    // MARK: своп — когда память нагружена (WF242)
+
+    // Слово Элвиса 11.10.2026: «Когда память-то считается нагружена? Когда своп начинает использоваться… он же
+    // в какой-то момент прямо значительный, сразу понятно становится, что он попёр». Одного «своп не ноль» мало:
+    // macOS не возвращает давно вытесненное с диска, пока его не спросят, — сотни мегабайт лежат в свопе сутками
+    // после былой тесноты, и график был бы красным всегда. Поэтому два признака:
+    //   • растёт — за минуту (одно чтение) в своп ушло от `swapGrowth` (64 МБ, это устойчиво больше 1 МБ/с): память
+    //     вытесняется на диск прямо сейчас; мелкая рябь в единицы мегабайт под порог не попадает;
+    //   • держится высоко — в свопе от `swapHighShare` (четверть) всей памяти Мака: 2 ГБ при 8, 4 ГБ при 16. Столько
+    //     на диске — уже не забытый хвост, а рабочие данные: переключение между программами читает с диска.
+
+    /// Прирост свопа за одно чтение, с которого он «растёт», байт.
+    public static let swapGrowth: UInt64 = 64 * 1_048_576
+    /// Доля всей памяти в свопе, с которой он «держится высоко».
+    public static let swapHighShare = 0.25
+
+    enum SwapLoad: Equatable { case calm, growing, high }
+
+    /// Нагрузка точки по свопу: растёт (против прошлого чтения без разрыва), держится высоко или спокойно.
+    static func swapLoad(_ history: [MacMemorySample], at index: Int) -> SwapLoad {
+        guard history.indices.contains(index), let swap = history[index].swap else { return .calm }
+        if index > 0, let before = history[index - 1].swap, swap > before, swap - before >= swapGrowth,
+           history[index].at.timeIntervalSince(history[index - 1].at) <= gap { return .growing }
+        let total = history[index].total
+        return total > 0 && Double(swap) >= Double(total) * swapHighShare ? .high : .calm
+    }
+
+    /// Точки, где память нагружена: своп растёт или держится высоко; свопа не знаем — уровень macOS не «в норме».
+    public static func loaded(_ history: [MacMemorySample]) -> [Bool] {
+        health(history).map { $0 != .good }
+    }
+
+    /// Цвет каждой точки (#9818), как «Давление памяти» в Мониторинге системы: красный — macOS прямо сейчас
+    /// вытесняет память на диск (своп растёт) или давление критическое; жёлтый — в свопе держится много (рабочие данные
+    /// на диске) или давление повышено; иначе зелёный. Своп известен — решает он (WF242: «нагружена — когда своп»).
+    public static func health(_ history: [MacMemorySample]) -> [MacHealth] {
+        history.indices.map { index in
+            guard history[index].swap != nil else {
+                switch history[index].level ?? .normal {
+                case .normal: return .good
+                case .warn: return .warn
+                case .critical: return .bad
+                }
+            }
+            switch swapLoad(history, at: index) {
+            case .growing: return .bad
+            case .high: return .warn
+            case .calm: return .good
+            }
+        }
+    }
+
+    /// Слово подписи про своп сейчас (цветом `health` последней точки); спокойно — пусто.
+    static func swapWord(_ history: [MacMemorySample]) -> String {
+        switch swapLoad(history, at: history.count - 1) {
+        case .growing: return "своп растёт"
+        case .high: return "много в свопе"
+        case .calm: return ""
+        }
+    }
+
+    /// «в свопе 1,2 ГБ»; свопа нет, не знаем или меньше 0,1 ГБ — nil.
+    public static func swapText(_ sample: MacMemorySample) -> String? {
+        guard let swap = sample.swap, tenths(swap) > 0 else { return nil }
+        return "в свопе \(gigabytes(swap)) ГБ"
     }
 
     /// Вся подпись одной строкой (озвучка, тесты).
@@ -208,30 +285,6 @@ public enum MacMemory {
         return result
     }
 
-    /// Заливка по цветам: каждый кусок без разрыва режется там, где сменился уровень; соседние полосы делят
-    /// точку смены (она — последняя у левой и первая у правой), чтобы заливка шла без щели.
-    /// Уровень полосы — уровень её точек (кроме общей последней); не знаем уровня — `.normal`.
-    public static func bands(_ history: [MacMemorySample]) -> [(level: MemoryPressureLevel, indices: [Int])] {
-        var result: [(level: MemoryPressureLevel, indices: [Int])] = []
-        for segment in segments(history) {
-            var current: (level: MemoryPressureLevel, indices: [Int])?
-            for index in segment {
-                let level = history[index].level ?? .normal
-                if var band = current, band.level != level {
-                    band.indices.append(index)
-                    result.append(band)
-                    current = (level, [index])
-                } else if current == nil {
-                    current = (level, [index])
-                } else {
-                    current?.indices.append(index)
-                }
-            }
-            if let band = current { result.append(band) }
-        }
-        return result
-    }
-
     /// Ближайшая по времени точка к доле 0…1 оси X (наведение на график).
     public static func nearest(_ history: [MacMemorySample], fraction: Double) -> Int? {
         guard let first = history.first, let last = history.last else { return nil }
@@ -242,8 +295,16 @@ public enum MacMemory {
     }
 }
 
-/// Чтение из ядра: два `sysctl` и `host_statistics64`.
+/// Чтение из ядра: `sysctl` и `host_statistics64`.
 enum MemoryReader {
+    /// `vm.swapusage` → занято в файле подкачки, байт.
+    static func swapUsedBytes() -> UInt64? {
+        var usage = xsw_usage()
+        var size = MemoryLayout<xsw_usage>.size
+        guard sysctlbyname("vm.swapusage", &usage, &size, nil, 0) == 0, size == MemoryLayout<xsw_usage>.size else { return nil }
+        return usage.xsu_used
+    }
+
     static func sysctlInt(_ name: String) -> Int? {
         var value: Int32 = 0
         var size = MemoryLayout<Int32>.size
@@ -273,19 +334,28 @@ public final class MacMemoryMonitor {
     private let queue = DispatchQueue(label: "pimp.memory", qos: .utility)
     private var timer: DispatchSourceTimer?
     private var history: [MacMemorySample] = []
+    /// Файл истории (#10215): после перезапуска Пимпа график продолжается.
+    private let file: ChartHistoryFile<MemoryRow>?
     /// Панель открыта — точки уходят в `onUpdate` (только на очереди монитора).
     private var delivering = false
-    /// Сколько миллисекунд заняло последнее чтение (для замера нагрузки и статуса).
-    public private(set) var lastReadMilliseconds: Double = 0
     public var onUpdate: (([MacMemorySample]) -> Void)?
+    /// Три главных пожирателя (#11620) — на главном потоке, как `onUpdate`, и тоже только пока панель открыта.
+    public var onEaters: (([MemoryEater]) -> Void)?
 
-    public init() {}
+    public init(file: URL? = nil) { self.file = file.map(ChartHistoryFile.init(url:)) }
 
     public var running: Bool { timer != nil }
 
     /// Первое чтение сразу, дальше — раз в минуту.
     public func start() {
         guard timer == nil else { return }
+        queue.async { [weak self] in
+            guard let self = self, let file = self.file, self.history.isEmpty else { return }
+            let now = Date()
+            self.history = file.load().map { $0.sample }
+                .filter { now.timeIntervalSince($0.at) < MacMemory.window && $0.at <= now && $0.value != nil }
+                .suffix(MacMemory.capacity).map { $0 }
+        }
         let source = DispatchSource.makeTimerSource(queue: queue)
         source.schedule(deadline: .now(), repeating: MacMemory.interval, leeway: .seconds(10))
         source.setEventHandler { [weak self] in self?.tick() }
@@ -299,6 +369,7 @@ public final class MacMemoryMonitor {
         timer = nil
         queue.async { [weak self] in
             self?.history = []
+            self?.file?.save([])
             DispatchQueue.main.async { self?.onUpdate?([]) }
         }
     }
@@ -306,18 +377,12 @@ public final class MacMemoryMonitor {
     /// Одно чтение (на очереди монитора).
     public func readNow() -> MacMemorySample {
         dispatchPrecondition(condition: .onQueue(queue))
-        let started = DispatchTime.now().uptimeNanoseconds
         let sample = MacMemorySample(at: Date(),
                                      pressure: MacMemory.pressure(available: MemoryReader.sysctlInt("kern.memorystatus_level")),
                                      level: MacMemory.level(raw: MemoryReader.sysctlInt("kern.memorystatus_vm_pressure_level")),
-                                     used: MemoryReader.usedBytes(), total: ProcessInfo.processInfo.physicalMemory)
-        lastReadMilliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+                                     used: MemoryReader.usedBytes(), total: ProcessInfo.processInfo.physicalMemory,
+                                     swap: MemoryReader.swapUsedBytes())
         return sample
-    }
-
-    /// Для замера: синхронное чтение с очереди монитора.
-    public func measureOnce() -> (sample: MacMemorySample, milliseconds: Double) {
-        queue.sync { (readNow(), lastReadMilliseconds) }
     }
 
     /// Панель открылась (true) или закрылась (false). Вернёт историю на сейчас — панель рисует её сразу,
@@ -326,7 +391,17 @@ public final class MacMemoryMonitor {
     public func watch(_ on: Bool) -> [MacMemorySample] {
         queue.sync {
             delivering = on
+            if on { deliverEaters() }
             return history
+        }
+    }
+
+    /// Кто съел память (#11620) — отдельно от точки, чтобы история не ждала обхода процессов.
+    private func deliverEaters() {
+        guard onEaters != nil else { return }
+        queue.async { [weak self] in
+            let eaters = MemoryEaters.read()
+            DispatchQueue.main.async { self?.onEaters?(eaters) }
         }
     }
 
@@ -335,8 +410,10 @@ public final class MacMemoryMonitor {
 
     private func tick() {
         history = MacMemory.append(readNow(), to: history)
+        file?.save(history.map(MemoryRow.init))
         guard delivering else { return }
         let snapshot = history
         DispatchQueue.main.async { [weak self] in self?.onUpdate?(snapshot) }
+        deliverEaters()
     }
 }

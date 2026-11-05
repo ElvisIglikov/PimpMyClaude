@@ -38,6 +38,19 @@ final class ConsentBeaconWF91Tests: XCTestCase {
         }
     }
 
+    /// #9844: лист и алерт Системных настроек («Закрыть и открыть снова», пароль к переключателю) — запрос; главное окно — нет.
+    func testSystemSettingsSheetIsPromptButMainWindowIsNot() {
+        let sheet = parse(record(owner: "Системные настро", layer: 0, bounds: CGRect(x: 500, y: 200, width: 260, height: 300)),
+                          process: "System Settings")
+        XCTAssertEqual(sheet?.process, "System Settings")
+        XCTAssertNil(parse(record(owner: "Системные настро", layer: 0, bounds: CGRect(x: 210, y: 30, width: 865, height: 705)),
+                           process: "System Settings"))
+        XCTAssertNil(parse(record(owner: "Системные настро", layer: 101, bounds: CGRect(x: 300, y: 300, width: 200, height: 300)), process: "System Settings"),
+                     "меню Настроек")
+        XCTAssertNil(parse(record(owner: "Системные настро", layer: 0, bounds: CGRect(x: 300, y: 300, width: 180, height: 60)), process: "System Settings"),
+                     "подсказка")
+    }
+
     func testFallsBackToOwnerNameWhenPathUnknown() {
         XCTAssertEqual(parse(record(owner: "SecurityAgent"), process: nil)?.process, "SecurityAgent")
     }

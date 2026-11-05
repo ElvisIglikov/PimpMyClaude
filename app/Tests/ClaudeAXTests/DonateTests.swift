@@ -2,7 +2,8 @@ import XCTest
 @testable import ClaudeAX
 
 /// WF108 (#8179), WF227 (#9406): «Поддержать автора» — разбор donate.json, живой сильнее бандла, входы,
-/// способы оплаты только по ссылкам, `{amount}`, «≈ $», Instagram, счёт людей, мусор в файле, возвратные ссылки.
+/// способы оплаты только по ссылкам, `{amount}`, «≈ $», Instagram, мусор в файле, возвратные ссылки. Счёт «Друзья
+/// Пимпа» снят ревизией 16.10 (вопрос 11, слово Элвиса 10.10 22:12): поле `people` в файле молча пропускается.
 final class DonateTests: XCTestCase {
     private let full = #"""
     {"version":1,"updated":"2026-10-10","people":187,"usdRate":510,"amounts":[1000,5000,10000],
@@ -26,7 +27,6 @@ final class DonateTests: XCTestCase {
 
     func testFullFileParses() throws {
         let config = try XCTUnwrap(parse(full))
-        XCTAssertEqual(config.people, 187)
         XCTAssertEqual(config.usdRate, 510)
         XCTAssertEqual(config.amounts, [1000, 5000, 10000])
         XCTAssertEqual(config.kaspi, "https://pay.kaspi.example/pimp")
@@ -39,37 +39,33 @@ final class DonateTests: XCTestCase {
     /// Старый файл без новых полей живёт: цель и «собрано» молча пропускаются, способы — те, что были.
     func testOldFileWithoutNewFieldsLives() throws {
         let config = try XCTUnwrap(parse(old))
-        XCTAssertEqual(config.people, 187)
+        XCTAssertEqual(config.usdRate, 510)
         XCTAssertNil(config.kaspi)
         XCTAssertNil(config.instagram)
         XCTAssertEqual(Donate.methods(config), [.applePay, .card, .crypto])
-        XCTAssertTrue(Donate.entriesVisible(config, hidden: false))
+        XCTAssertTrue(Donate.windowAvailable(config))
         XCTAssertTrue(Donate.showsAmounts(config))
     }
 
     /// В бандле способов оплаты нет — в окне нет ни одной кнопки оплаты; окно открывается ради автора и Instagram.
     func testBundledDefaultHasNoPayButtons() throws {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .appendingPathComponent("../../Resources/donate.json").standardizedFileURL
+        let url = Repo.root.appendingPathComponent("app/Resources/donate.json")
         let config = try XCTUnwrap(DonateConfig.parse(try Data(contentsOf: url)))
-        XCTAssertEqual(config.people, 0)
         XCTAssertEqual(Donate.methods(config), [])
         XCTAssertFalse(Donate.hasAddress(config))
         XCTAssertFalse(Donate.showsAmounts(config))
         XCTAssertEqual(config.instagram, "_elvis.kz_")
         // Способов оплаты в бандле нет — окна и входов нет ни у кого, хотя Instagram вписан (решение файла 37).
         XCTAssertFalse(Donate.windowAvailable(config))
-        XCTAssertFalse(Donate.entriesVisible(config, hidden: false))
-        XCTAssertFalse(Donate.entriesVisible(config, hidden: true))
     }
 
     func testLiveBeatsBundledAndBrokenLiveFallsBack() {
-        let live = Data(#"{"people":5,"crypto":[{"coin":"USDT","network":"TRC-20","address":"T1"}]}"#.utf8)
-        let bundled = Data(#"{"people":0}"#.utf8)
-        XCTAssertEqual(DonateStore.resolve(live: live, bundled: bundled)?.people, 5)
-        XCTAssertEqual(DonateStore.resolve(live: Data("{не json".utf8), bundled: bundled)?.people, 0)
-        XCTAssertEqual(DonateStore.resolve(live: Data("[1,2]".utf8), bundled: bundled)?.people, 0)
-        XCTAssertEqual(DonateStore.resolve(live: nil, bundled: bundled)?.people, 0)
+        let live = Data(#"{"usdRate":5,"crypto":[{"coin":"USDT","network":"TRC-20","address":"T1"}]}"#.utf8)
+        let bundled = Data(#"{"usdRate":1}"#.utf8)
+        XCTAssertEqual(DonateStore.resolve(live: live, bundled: bundled)?.usdRate, 5)
+        XCTAssertEqual(DonateStore.resolve(live: Data("{не json".utf8), bundled: bundled)?.usdRate, 1)
+        XCTAssertEqual(DonateStore.resolve(live: Data("[1,2]".utf8), bundled: bundled)?.usdRate, 1)
+        XCTAssertEqual(DonateStore.resolve(live: nil, bundled: bundled)?.usdRate, 1)
         XCTAssertNil(DonateStore.resolve(live: nil, bundled: nil))
     }
 
@@ -79,33 +75,32 @@ final class DonateTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let live = dir.appendingPathComponent("donate.json")
         let bundled = dir.appendingPathComponent("bundled.json")
-        try Data(#"{"people":1}"#.utf8).write(to: bundled)
+        try Data(#"{"usdRate":1}"#.utf8).write(to: bundled)
         let store = DonateStore(live: live, bundled: bundled)
-        XCTAssertEqual(store.current()?.people, 1)
-        try Data(#"{"people":7}"#.utf8).write(to: live)
-        XCTAssertEqual(store.current()?.people, 7)
-        try Data(#"{"people":9}"#.utf8).write(to: live)
+        XCTAssertEqual(store.current()?.usdRate, 1)
+        try Data(#"{"usdRate":7}"#.utf8).write(to: live)
+        XCTAssertEqual(store.current()?.usdRate, 7)
+        try Data(#"{"usdRate":9}"#.utf8).write(to: live)
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: live.path)
-        XCTAssertEqual(store.current()?.people, 9)
+        XCTAssertEqual(store.current()?.usdRate, 9)
         try FileManager.default.removeItem(at: live)
-        XCTAssertEqual(store.current()?.people, 1)
+        XCTAssertEqual(store.current()?.usdRate, 1)
     }
 
+    /// Строка «Поддержать автора» в настройках — только когда окну есть что показать (`donateHidden` снят, #10334).
     func testEntriesVisibility() throws {
         let config = try XCTUnwrap(parse(full))
-        XCTAssertTrue(Donate.entriesVisible(config, hidden: false))
-        XCTAssertFalse(Donate.entriesVisible(config, hidden: true))
-        XCTAssertFalse(Donate.entriesVisible(nil, hidden: false))
+        XCTAssertTrue(Donate.windowAvailable(config))
+        XCTAssertFalse(Donate.windowAvailable(nil))
         let cryptoOnly = try XCTUnwrap(parse(#"{"crypto":[{"coin":"BTC","network":"Bitcoin","address":"bc1"}]}"#))
-        XCTAssertTrue(Donate.entriesVisible(cryptoOnly, hidden: false))
+        XCTAssertTrue(Donate.windowAvailable(cryptoOnly))
         let cardOnly = try XCTUnwrap(parse(#"{"card":"https://pay.example/c"}"#))
-        XCTAssertTrue(Donate.entriesVisible(cardOnly, hidden: false))
+        XCTAssertTrue(Donate.windowAvailable(cardOnly))
         let none = try XCTUnwrap(parse(#"{"applePay":"","card":"  ","kaspi":"","crypto":[{"coin":"BTC"}]}"#))
         XCTAssertFalse(Donate.hasAddress(none))
         // Нет способа оплаты — окну нечего показать, входов нет.
         XCTAssertFalse(Donate.windowAvailable(none))
-        XCTAssertFalse(Donate.entriesVisible(none, hidden: false))
-        XCTAssertFalse(Donate.entriesVisible(try XCTUnwrap(parse("{}")), hidden: false))
+        XCTAssertFalse(Donate.windowAvailable(try XCTUnwrap(parse("{}"))))
     }
 
     /// Кнопка есть только у способа, чья ссылка есть в файле; порядок — Apple Pay, карта, Kaspi, крипта.
@@ -145,17 +140,6 @@ final class DonateTests: XCTestCase {
         XCTAssertEqual(parse(#"{"instagram":"@_elvis.kz_"}"#)?.instagram, "_elvis.kz_")
     }
 
-    /// Счёт людей вместо шкалы денег (кадр 37.5): ячейки до ближайшей ступени 10, 25, 50, 100.
-    func testFriendsSteps() {
-        XCTAssertEqual(Donate.friends(0), Donate.Friends(cells: 10, filled: 0, note: "Пока никто — стань первым."))
-        XCTAssertEqual(Donate.friends(7), Donate.Friends(cells: 10, filled: 7, note: "До ступени «10» — ещё 3."))
-        XCTAssertEqual(Donate.friends(10), Donate.Friends(cells: 25, filled: 10, note: "Ступень «10» пройдена. До «25» — ещё 15."))
-        XCTAssertEqual(Donate.friends(12), Donate.Friends(cells: 25, filled: 12, note: "Ступень «10» пройдена. До «25» — ещё 13."))
-        XCTAssertEqual(Donate.friends(99), Donate.Friends(cells: 100, filled: 99, note: "Ступень «50» пройдена. До «100» — ещё 1."))
-        XCTAssertEqual(Donate.friends(100), Donate.Friends(cells: 0, filled: 0, note: "Ступень «100» пройдена."))
-        XCTAssertEqual(Donate.friends(187).cells, 0)
-    }
-
     func testAmountTokenDecidesAmountsRowAndLink() throws {
         let config = try XCTUnwrap(parse(full))
         XCTAssertTrue(Donate.showsAmounts(config))
@@ -188,7 +172,6 @@ final class DonateTests: XCTestCase {
              "amounts":[0,-5,"1000",2000,3000,4000,5000,99999999],"applePay":"javascript:alert(1)",
              "card":"file:///etc/passwd","kaspi":"kaspi://pay","crypto":"адрес","instagram":"<script>"}
             """#))
-        XCTAssertEqual(config.people, 0)
         XCTAssertEqual(config.amounts, [2000, 3000, 4000])
         XCTAssertNil(config.applePay)
         XCTAssertNil(config.card)
@@ -196,7 +179,7 @@ final class DonateTests: XCTestCase {
         XCTAssertNil(config.instagram)
         XCTAssertTrue(config.crypto.isEmpty)
         XCTAssertFalse(Donate.hasAddress(config))
-        XCTAssertEqual(parse(#"{"people":true}"#)?.people, 0)
+        XCTAssertNil(parse(#"{"usdRate":true}"#)?.usdRate, "логическое — не курс")
         XCTAssertEqual(parse("{}")?.amounts, [1000, 5000, 10000])
     }
 
@@ -215,11 +198,4 @@ final class DonateTests: XCTestCase {
         XCTAssertNil(Donate.parseReturn(URL(string: "pimpmyclaude://panel/thanks")!))
     }
 
-    func testMenuHasDonateLastOnlyWhenGiven() {
-        var config = MinimizeMenu.MenuConfig()
-        XCTAssertFalse(MinimizeMenu.build(config: config).items.contains { $0.title == MenuModel.donateTitle })
-        config.donate = {}
-        let items = MinimizeMenu.build(config: config).items
-        XCTAssertEqual(items.last?.title, MenuModel.donateTitle)
-    }
 }

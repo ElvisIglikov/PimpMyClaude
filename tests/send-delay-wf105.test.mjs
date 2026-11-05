@@ -685,12 +685,12 @@ test("WF119 точные on/off JSON, повтор on сохраняет тек�
   p.api.dispose();
 });
 
-test("WF119: без явного выбора off и seconds не переписываются, чтение берёт on/3", async () => {
+test("WF119: без явного выбора off и seconds не переписываются, чтение берёт on/2 (#10361; до 19.10 — 3)", async () => {
   for (const local of [{}, { [OFF_KEY]: "1" }, { [OFF_KEY]: "other", [SECONDS_KEY]: "03" }, { [SECONDS_KEY]: "10" }]) {
     const p = page({ local, seeded: false });
     const before = [p.win.localStorage.getItem(OFF_KEY), p.win.localStorage.getItem(SECONDS_KEY)];
-    assert.equal(delay(p).seconds, local[SECONDS_KEY] === "10" ? 10 : 3);
-    assert.deepEqual(plain((await p.api.chats()).sendDelaySetting), { on: local[OFF_KEY] !== "1", seconds: local[SECONDS_KEY] === "10" ? 10 : 3 });
+    assert.equal(delay(p).seconds, local[SECONDS_KEY] === "10" ? 10 : 2);
+    assert.deepEqual(plain((await p.api.chats()).sendDelaySetting), { on: local[OFF_KEY] !== "1", seconds: local[SECONDS_KEY] === "10" ? 10 : 2 });
     assert.equal(p.reload().error, null);
     assert.deepEqual([p.win.localStorage.getItem(OFF_KEY), p.win.localStorage.getItem(SECONDS_KEY)], before);
     p.api.dispose();
@@ -737,15 +737,15 @@ test("WF119: themable без поля/фокуса принимает send-delay
   p.api.dispose(); q.api.dispose();
 });
 
-test("WF119: недоступное LS — безопасное on/3 без исключения", () => {
+test("WF119: недоступное LS — безопасное on/2 без исключения", () => {
   const p = page({ seeded: false });
   p.win.localStorage.getItem = () => { throw new Error("blocked"); };
   p.win.localStorage.setItem = () => { throw new Error("blocked"); };
   p.win.localStorage.removeItem = () => { throw new Error("blocked"); };
   assert.doesNotThrow(() => setting(p, false, 3));
   assert.equal(delay(p).off, false);
-  assert.equal(delay(p).seconds, 3);
-  enter(p); assert.equal(delay(p).left, 3); p.api.dispose();
+  assert.equal(delay(p).seconds, 2);
+  enter(p); assert.equal(delay(p).left, 2); p.api.dispose();
 });
 
 // WF126 §7.2 (поправка критика 2): ⇧Enter во время счёта — «отправить» или «новая строка» (умолчание с WF192).

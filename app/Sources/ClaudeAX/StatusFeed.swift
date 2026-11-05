@@ -26,7 +26,6 @@ final class StatusFeed {
     /// принимает страница (`STATUS_MAX_TOTAL`, WF201). Шлётся только при изменении (`sentDigest`)
     /// и уступает меню в очереди `CommandChannel`, так что размер на частоту не влияет.
     static let totalLimit = 128 * 1024
-    static let configFileName = "claude.json"
     static let configKey = "projectsRoot"
     /// Без ключа в claude.json (WF108): у Элвиса ключ `"~/Projects"` вписан явно.
     static let defaultProjectsRoot = "~/Projects"
@@ -74,7 +73,7 @@ final class StatusFeed {
               isDirectory.boolValue else { return }
         scanning = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let projects = StatusFeed.cap(StatusFeed.scan(root: root))
+            let projects = StatusFeed.cap(StatusFeed.scan(root: root, muted: MutedWaitsStore.shared.current()))
             DispatchQueue.main.async { self?.publish(projects) }
         }
     }
@@ -98,19 +97,18 @@ final class StatusFeed {
     // MARK: - чистая часть (её же гоняют тесты)
 
     /// `projectsRoot` из claude.json (`~` раскрывается); ключа нет — `~/Projects`.
-    static func projectsRoot(configURL: URL = CommandChannel.directory
-        .appendingPathComponent(configFileName)) -> URL {
-        let data = try? Data(contentsOf: configURL)
-        let json = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
-        let raw = (json?[configKey] as? String)?.trimmingCharacters(in: .whitespaces)
+    static func projectsRoot(configURL: URL = LiveConfig.url) -> URL {
+        let raw = LiveConfig.string(configKey, at: configURL)?.trimmingCharacters(in: .whitespaces)
         let path = (raw?.isEmpty == false ? raw! : defaultProjectsRoot)
         return URL(fileURLWithPath: NSString(string: path).expandingTildeInPath, isDirectory: true)
     }
 
     /// Проекты — свежими вперёд (по времени правки status.md; одинаковое время — по имени);
     /// у проекта берётся первая найденная сводка из docs/audit/work. Текст сжимается
-    /// (`compact`) и режется до 6 КБ с начала файла (`slice`) — решение E плана WF22.
-    static func scan(root: URL, fileManager: FileManager = .default) -> [StatusProject] {
+    /// (`compact`) и режется до 6 КБ с начала файла (`slice`) — решение E плана WF22. Заглушённая «Ждёт Элвиса:»
+    /// (#9820, `muted`) в сводку не едет — карточка полоски её не покажет.
+    static func scan(root: URL, fileManager: FileManager = .default, muted: MutedWaits? = nil,
+                     now: Date = Date()) -> [StatusProject] {
         guard let names = try? fileManager.contentsOfDirectory(atPath: root.path) else { return [] }
         var found: [(project: StatusProject, date: Date)] = []
         for name in names.sorted() where !name.hasPrefix(".") {
@@ -118,14 +116,12 @@ final class StatusFeed {
             // Рабочие копии (WF202, #9159): их status.md — тот же, что у основного проекта, а потолок
             // они съедали, вытесняя живые проекты.
             guard !isWorkingCopy(name: name, at: project, fileManager: fileManager) else { continue }
-            let candidates = statusFolders.map {
-                project.appendingPathComponent($0, isDirectory: true)
-                    .appendingPathComponent(statusFileName)
-            }
-            guard let url = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }),
+            guard let url = PanelProjects.statusFile(in: project, fileManager: fileManager),
                   let text = try? String(contentsOf: url, encoding: .utf8),
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            let compacted = compact(text)
+            let quiet = muted.map { !$0.items.isEmpty && $0.isMuted(folder: project, text: PanelProjects.parse(text).waitFor,
+                                                                    now: now) } ?? false
+            let compacted = compact(text, dropWait: quiet)
             guard !compacted.isEmpty else { continue }
             let date = (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
             found.append((StatusProject(name: name, text: slice(compacted)), date ?? .distantPast))
@@ -216,8 +212,9 @@ final class StatusFeed {
     /// Хвост «Сейчас:» и «Ждёт Элвиса:» (WF84, S-K, п. 6.3 ТЗ карточки) нужен карточке: из
     /// всего файла берётся последняя строка каждого вида, режется до 200 знаков и ставится
     /// в конец шапки, перед первым блоком, — шапку `slice()` сохраняет всегда. Порядок:
-    /// сначала «Сейчас:», потом «Ждёт Элвиса:». Сжатие идемпотентно.
-    static func compact(_ text: String) -> String {
+    /// сначала «Сейчас:», потом «Ждёт Элвиса:». Сжатие идемпотентно. `dropWait` (#9820) — строка «Ждёт Элвиса:»
+    /// заглушена: её нет совсем.
+    static func compact(_ text: String, dropWait: Bool = false) -> String {
         var head: [String] = []
         var blocks: [String] = []
         var inBlocks = false
@@ -238,7 +235,7 @@ final class StatusFeed {
                 blocks.append(line)
             }
         }
-        return (head + [now, waitFor].compactMap { $0 } + blocks).joined(separator: "\n")
+        return (head + [now, dropWait ? nil : waitFor].compactMap { $0 } + blocks).joined(separator: "\n")
     }
 
     enum TailKind { case now, waitFor }

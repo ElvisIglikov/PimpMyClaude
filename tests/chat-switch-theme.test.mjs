@@ -85,17 +85,17 @@ test("темы окна нет нигде — слой снимается, чу�
   const loaded = loadInject({
     href: `https://claude.ai/epitaxy/${A}`,
     title: "Claude",
-    storage: { local: { [MAP_KEY]: JSON.stringify({ [`id:${A}`]: { theme: theme("зелёная"), font: font("Menlo"), frame: true } }) } },
+    storage: { local: { [MAP_KEY]: JSON.stringify({ [`id:${A}`]: { theme: theme("зелёная"), font: font("Menlo"), look: { dense: true } } }) } },
   });
   const router = loaded.dom.router();
   assert.equal(loaded.api.status().font.family, "Menlo");
-  assert.equal(loaded.api.status().frame.on, true);
+  assert.equal(loaded.api.status().look.dense, true);
   router.navigate(`/epitaxy/${C}`);
   loaded.dom.fireKind("interval");
   const status = loaded.api.status();
   assert.equal(status.theme.id, null, "тема A не переехала в C");
   assert.equal(status.font.family, null, "шрифт A не переехал в C");
-  assert.equal(status.frame.on, false, "рамка A не переехала в C");
+  assert.equal(status.look.dense, false, "оформление A не переехало в C");
 });
 
 test("чат, родившийся с домашнего экрана, цвет окна не меняет (⌘N, «Обкэшить»)", () => {

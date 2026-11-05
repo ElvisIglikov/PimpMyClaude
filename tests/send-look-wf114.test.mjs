@@ -62,15 +62,15 @@ const moving = loaded => loaded.dom.running().filter(anim => {
 });
 
 test("умолчание — 1.8 на 100 %; мусор в v2 — умолчание; нет v2 — размер из v1", () => {
-  assert.deepEqual(status(page()), { style: "1.8", size: 100, preview: false });
-  assert.deepEqual(status(page({ stored: "{не json" })), { style: "1.8", size: 100, preview: false });
-  assert.deepEqual(status(page({ stored: JSON.stringify({ style: "1.3", size: 30 }) })), { style: "1.8", size: 100, preview: false });
+  assert.deepEqual(status(page()), { style: "1.8", size: 150, preview: false });
+  assert.deepEqual(status(page({ stored: "{не json" })), { style: "1.8", size: 150, preview: false });
+  assert.deepEqual(status(page({ stored: JSON.stringify({ style: "1.3", size: 30 }) })), { style: "1.8", size: 150, preview: false });
   assert.deepEqual(status(page({ stored: JSON.stringify({ style: "1.7", size: 140 }) })), { style: "1.8", size: 140, preview: false });
-  assert.deepEqual(status(page({ stored: JSON.stringify({ style: "1.10", size: 30 }) })), { style: "1.10", size: 100, preview: false });
+  assert.deepEqual(status(page({ stored: JSON.stringify({ style: "1.10", size: 30 }) })), { style: "1.10", size: 150, preview: false });
   assert.deepEqual(status(page({ stored: JSON.stringify({ style: "1.9", size: 140 }) })), { style: "1.9", size: 140, preview: false });
   // v1 у всех хранит 1.5 с WF119 — вид из него не берётся, размер берётся.
   assert.deepEqual(status(page({ local: { [V1]: JSON.stringify({ style: "1.5", size: 160 }) } })), { style: "1.8", size: 160, preview: false });
-  assert.deepEqual(status(page({ local: { [V1]: "мусор" } })), { style: "1.8", size: 100, preview: false });
+  assert.deepEqual(status(page({ local: { [V1]: "мусор" } })), { style: "1.8", size: 150, preview: false });
   // v2 есть — v1 молчит.
   assert.deepEqual(status(page({ stored: JSON.stringify({ style: "1.6", size: 90 }), local: { [V1]: JSON.stringify({ style: "1.5", size: 160 }) } })),
     { style: "1.6", size: 90, preview: false });
@@ -91,9 +91,9 @@ test("send-look: каждый вид набора принимается и пи
   }
   assert.equal(loaded.win.localStorage.getItem(V1), JSON.stringify({ style: "1.5", size: 150 }), "v1 не трогается");
   look(loaded, { style: "1.4", size: 201 });
-  assert.deepEqual(stored(loaded), { style: "1.4", size: 100 });
+  assert.deepEqual(stored(loaded), { style: "1.4", size: 150 });
   look(loaded, { style: "1.1", size: "120" });
-  assert.deepEqual(stored(loaded), { style: "1.1", size: 100 }, "строка — не число");
+  assert.deepEqual(stored(loaded), { style: "1.1", size: 150 }, "строка — не число");
   look(loaded, { size: 60 });
   assert.deepEqual(stored(loaded), { style: "1.1", size: 60 }, "без style вид прежний");
 });
@@ -177,7 +177,7 @@ test("«Уменьшить движение» и вид не выбран — с
   const loaded = page();
   loaded.win.__reducedMotion = true;
   enter(loaded);
-  assert.equal(digits(loaded).getAttribute("data-look"), "1.5/100");
+  assert.equal(digits(loaded).getAttribute("data-look"), "1.5/150");
   assert.equal(digits(loaded).children.length, 0);
   assert.equal(loaded.dom.running().length, 0);
   loaded.advance(5);

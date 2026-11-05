@@ -7,15 +7,6 @@ import XCTest
 /// окна `main`, переписанную домашним экраном чужого проекта. Теперь смена чата в главном окне —
 /// повод послать вид проекта заново: страница кладёт его в запись ЭТОГО чата.
 final class Fix7727Tests: XCTestCase {
-    private final class Defaults: ThemeDefaults {
-        private var values: [String: Any] = [:]
-        func string(forKey key: String) -> String? { values[key] as? String }
-        func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
-        func object(forKey key: String) -> Any? { values[key] }
-        func set(_ value: Any?, forKey key: String) { values[key] = value }
-        func removeObject(forKey key: String) { values.removeValue(forKey: key) }
-    }
-
     private static let laser = Theme(id: "laser", name: "Лазер", type: "dark",
                                      palette: ["accent": "#ff2d55", "background": "#0c0e1c",
                                                "foreground": "#fcdee4", "sidebar": "#080a13",
@@ -78,7 +69,7 @@ final class Fix7727Tests: XCTestCase {
                     to: root.appendingPathComponent("Risovalka"))
         let index = ProjectIndex(sessionsDirectory: sessions, statusURL: status, projectsRoot: root,
                                  home: box, now: { [unowned self] in self.now })
-        let paint = ProjectPaint(index: index, store: store, defaults: Defaults(),
+        let paint = ProjectPaint(index: index, store: store, defaults: MemoryThemeDefaults(),
                                  now: { [unowned self] in self.now })
         paint.send = { [unowned self] command in self.sent.append(command); return true }
         paint.chatPages = { [unowned self] in self.pages }

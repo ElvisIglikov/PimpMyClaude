@@ -164,7 +164,7 @@ final class OneShotLayoutGuardTests: XCTestCase {
             let layout = WindowLayout(name: "Saved", at: now, mode: .five, cells: [
                 LayoutCell(folder: "", chat: "main", title: "Main", cell: nil, frame: frame),
                 LayoutCell(folder: "", chat: "local_rick", title: "Rick", cell: nil, frame: frame.offsetBy(dx: 450, dy: 0))])
-            XCTAssertTrue(channel.startRestore(layout, fresh: false))
+            XCTAssertTrue(try channel.requestLayoutRestore(layout, in: box, at: clock))
             clock += PimpChannel.restoreWindowSeconds + 1
             channel.tick()
             XCTAssertFalse(channel.isRestoring)

@@ -7,6 +7,8 @@
 // [data-sidebar-group-label] > button[data-group-toggle] > span[data-group-name]
 // + svg[data-group-caret], справа кнопки группы. Метится только span имени,
 // плашку рисует CSS тенью — места в раскладке она не занимает.
+// С page-64 (слово Элвиса 11.10 01:40: «названия проектов не надо цветом выводить») цвет выключен,
+// в WF248 снят и код: заголовки групп — как у Claude, страница их не метит и не красит.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadInject } from "./load.mjs";
@@ -68,64 +70,21 @@ const pass = loaded => {
   loaded.dom.fireKind("raf");
 };
 
-test("#7244: имя группы-проекта получает плашку цвета проекта; «Today» — нет", () => {
-  const { got } = page();
-  assert.equal(got.china.label.getAttribute(ATTR), "ChinaAI");
-  assert.equal(got.dict.label.getAttribute(ATTR), "Dictator", "группа по имени папки, а не репозитория");
-  assert.equal(got.today.label.hasAttribute(ATTR), false, "группа по дате — не проект");
-  assert.equal(got.today.label.style.getPropertyValue(TINT), "");
-});
-
-test("#7244: цвет — тот же расчёт, что у Pinned: запись окна чата, иначе авто-тон папки", () => {
-  const palette = accent => ({ theme: { id: "x", name: "x", type: "dark",
-    palette: { accent, background: "#111111", foreground: "#eeeeee", sidebar: "#0a0a0a", panel: "#1a1a1a", muted: "#888888" } } });
-  const { loaded, got } = page({ map: { "id:local_c": palette("#ff8800") } });
-  assert.equal(got.china.label.style.getPropertyValue(TINT), "color-mix(in srgb, #ff8800 40%, transparent)");
-  assert.equal(got.dict.label.style.getPropertyValue(TINT),
-    `color-mix(in srgb, hsl(${loaded.inner.pinnedHue("Dictator")} 80% 62%) 40%, transparent)`);
-});
-
-test("#7244: стрелка ⌄ и кнопки группы не тронуты — ни метки, ни стиля", () => {
-  const { got } = page();
-  for (const node of [got.china.header, got.china.toggle, got.china.caret, got.china.plus]) {
-    assert.equal(node.hasAttribute(ATTR), false);
-    assert.equal(node.style.getPropertyValue(TINT), "");
-  }
-  assert.equal(got.china.label.textContent, "ChinaAI", "текст имени не меняется");
-});
-
-test("#7244: плашка — тенью, без полей и отступов: стрелка и кнопки не сдвигаются", () => {
-  const { loaded } = page();
-  const css = String(loaded.dom.query(STYLE)?.textContent ?? "");
-  const rule = css.split("\n").find(line => line.includes(`[data-group-name][${ATTR}]`));
-  assert.ok(rule, "правила плашки нет");
-  assert.ok(rule.startsWith("[data-sidebar-group-label] "), "только в заголовке группы");
-  assert.match(rule, new RegExp(`background-color:var\\(${TINT}\\)`));
-  assert.match(rule, /border-radius:6px/, "скругление как у чипа Pinned");
-  assert.match(rule, /box-shadow:-3px 0 0 0 var\(--myclaude-folder-tint\),3px 0 0 0 var\(--myclaude-folder-tint\)/);
-  assert.doesNotMatch(rule, /padding|margin|width|display|position/, "ничего, что двигает соседей");
-});
-
-test("#7244: React пересоздал заголовок — плашка встаёт заново; группа перестала быть проектом — снята; dispose снимает", () => {
-  const { loaded, got } = page();
-  let clock = loaded.win.performance.now();
-  loaded.win.performance.now = () => clock;
-  got.china.label.remove();
-  const fresh = got.china.toggle.add("span", { attrs: { "data-group-name": "" }, text: "ChinaAI" });
-  clock += 1500;
-  pass(loaded);
-  assert.equal(fresh.getAttribute(ATTR), "ChinaAI");
-  loaded.dom.retext(got.dict.label, "Yesterday");
-  clock += 1500;
-  pass(loaded);
-  assert.equal(got.dict.label.hasAttribute(ATTR), false);
-  assert.equal(got.dict.label.style.getPropertyValue(TINT), "");
-  loaded.api.dispose();
-  assert.equal(loaded.dom.queryAll(`[${ATTR}]`).length, 0);
-  assert.equal(fresh.style.getPropertyValue(TINT), "");
-});
-
 test("#7244: попап без своего списка — ничего не метит", () => {
   const { loaded } = page({ href: "about:blank" });
   assert.equal(loaded.dom.queryAll(`[${ATTR}]`).length, 0);
+});
+
+test("page-64: заголовки групп — как у Claude: ни метки, ни цвета, ни правила", () => {
+  const palette = accent => ({ theme: { id: "x", name: "x", type: "dark",
+    palette: { accent, background: "#111111", foreground: "#eeeeee", sidebar: "#0a0a0a", panel: "#1a1a1a", muted: "#888888" } } });
+  const { loaded, got } = page({ map: { "id:local_c": palette("#ff8800") } });
+  pass(loaded);
+  assert.equal(loaded.dom.queryAll(`[${ATTR}]`).length, 0, "меток проекта нет");
+  for (const group of [got.china, got.dict, got.today]) assert.equal(group.label.style.getPropertyValue(TINT), "");
+  assert.equal(got.china.label.textContent, "ChinaAI", "текст имени не меняется");
+  const css = String(loaded.dom.query(STYLE)?.textContent ?? "");
+  assert.ok(css.includes("data-myclaude-folder"), "таблица правил на месте");
+  assert.equal(css.includes(ATTR), false, "правила плашки группы нет (WF248)");
+  assert.equal(css.includes(TINT), false, "переменной цвета проекта нет");
 });

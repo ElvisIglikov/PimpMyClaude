@@ -46,8 +46,14 @@ const CHIP_NAME = "group-data-\\[pills-compact\\]\\/lead\\:hidden";
 const TRANSCRIPT = '[data-testid="epitaxy-virtual-transcript"]';
 const BODY_OLD = "> .contents > .epitaxy-chat-panel-body";
 const BODY_NEW = "> .contents > .contents > .epitaxy-chat-panel-body";
-const bodyForm = prefix => `:has(${prefix}${BODY_OLD} ${TRANSCRIPT}, ${prefix}${BODY_NEW} ${TRANSCRIPT})`;
-const FORM = [":has(> .epitaxy-titlebar)", bodyForm(""), ":has(.group\\/approval-dock)"];
+// 2.42304 (#10146): тело ленты — в двух настоящих обёртках (сцена и полоса под панель сессии Claude).
+const BODY_RAIL = "> div > div > .epitaxy-chat-panel-body";
+const BODIES = [BODY_OLD, BODY_NEW, BODY_RAIL];
+const bodyForm = prefix => `:has(${BODIES.map(body => `${prefix}${body} ${TRANSCRIPT}`).join(", ")})`;
+// 3.1623 (22.10.2026): шапка — ребёнок колонки или в обёртках «div.contents > div».
+const TITLES = ["> .epitaxy-titlebar", "> .contents > div > .epitaxy-titlebar"];
+const titleForm = prefix => `:has(${TITLES.map(title => `${prefix}${title}`).join(", ")})`;
+const FORM = [titleForm(""), bodyForm(""), ":has(.group\\/approval-dock)"];
 // WF125 (#8846): колонка с шапкой — ребёнок панели (попап, прежнее главное окно)
 // или внук через `div.contents` (главное окно 2.19675.0).
 const COLUMNS = ["> div", "> .contents > div"];
@@ -109,7 +115,7 @@ test("сетка и флаг --myclaude-wide живут ТОЛЬКО внутр�
   // селектору на каждую форму пути к колонке (`:has()` внутри `:has()` нельзя).
   // Тело ленты — с виртуальной лентой внутри: домашний экран без неё сетку не получает.
   assert.deepEqual(flag.selector.split(/,\s*(?=\.epitaxy-chat-panel:has)/), COLUMNS.map(column =>
-    `.epitaxy-chat-panel:has(${column} > .epitaxy-titlebar)${bodyForm(`${column} `)}${FORM[2]}`),
+    `.epitaxy-chat-panel${titleForm(`${column} `)}${bodyForm(`${column} `)}${FORM[2]}`),
     "флаг — по селектору на форму: колонка ребёнком панели и внуком через div.contents");
   assert.ok(!/:has\([^()]*:has\(/.test(css), "вложенный :has() — правило выпадет целиком");
   const grid = inside.find(item => /display:\s*grid/.test(item.body));
@@ -134,6 +140,11 @@ test("сетка и флаг --myclaude-wide живут ТОЛЬКО внутр�
   for (const item of outside) {
     assert.ok(!/display:\s*grid/.test(item.body), `сетка снаружи блока: «${item.selector}»`);
     assert.ok(!item.body.includes(WIDE_FLAG), `флаг снаружи блока: «${item.selector}»`);
+    // Единственное исключение — узкая плитка чата (WF301, #11203): там только размер плиток поля, без сетки и флага.
+    if (item.selector === `@container tile-slot (max-width: ${WIDE_PANEL_MIN - 1}px)`) {
+      assert.deepEqual(item.children.map(kid => kid.selector), ["[data-cds-composer-attachments] [data-cds-attachment]"]);
+      continue;
+    }
     assert.equal(item.children.length, 0, `вложенные правила снаружи блока: «${item.selector}»`);
   }
 });
@@ -153,19 +164,19 @@ test("дочерние правила сетки вложены в её усло
   for (const item of loose) {
     assert.ok(!/margin-left|padding-left|padding-top/.test(item.body), `«${item.selector}» меняет отступы вне сетки`);
   }
-  const titlebar = grid.children.find(item => item.selector === "& > .epitaxy-titlebar");
+  const titlebar = grid.children.find(item => item.selector === "& .epitaxy-titlebar");
   assert.ok(titlebar && /grid-column:\s*2/.test(titlebar.body) && /margin-left:\s*-\d+px !important/.test(titlebar.body),
     "шапка — правая колонка, без места под кнопки окна");
-  const body = grid.children.find(item => item.selector === `& ${BODY_OLD}, & ${BODY_NEW}`);
+  const body = grid.children.find(item => item.selector === BODIES.map(body => `& ${body}`).join(", "));
   assert.ok(body && /grid-row:\s*1 \/ 3/.test(body.body) && /min-height:\s*0/.test(body.body),
     "лента — левая колонка на обе строки, min-height:0, в обеих формах разметки");
   // Шапка слева (полоса под кнопками окна) — лента во второй строке, тоже в обеих формах.
   const left = '.epitaxy-chat-panel[data-myclaude-title="left"] & ';
-  const bodyLeft = grid.children.find(item => item.selector === `${left}${BODY_OLD}, ${left}${BODY_NEW}`);
+  const bodyLeft = grid.children.find(item => item.selector === BODIES.map(body => `${left}${body}`).join(", "));
   assert.ok(bodyLeft && /grid-row:\s*2 \/ 3/.test(bodyLeft.body), "шапка слева — лента во второй строке в обеих формах");
   // Шапка уезжает влево под кнопки окна по атрибуту, который ставит JS по положению
   // панели (примета data-top-left у шапки врёт при открытой боковой панели, гейт 16.09).
-  const titleLeft = grid.children.find(item => item.selector.includes('[data-myclaude-title="left"]') && item.selector.endsWith("> .epitaxy-titlebar"));
+  const titleLeft = grid.children.find(item => item.selector.includes('[data-myclaude-title="left"]') && item.selector.endsWith("& .epitaxy-titlebar"));
   assert.ok(titleLeft && /grid-column:\s*1/.test(titleLeft.body), "шапка влево — по атрибуту от JS");
   // Хвост виртуальной ленты Claude (`transcript-spacer`) не трогаем никогда: его
   // высоту пишет сам Claude, и правило на неё ломало прокрутку (17.09, #6176).
@@ -345,12 +356,28 @@ test("стенд 1200 без флага остаётся узким: status().la
   assert.equal(handle(narrow).dataset.collapsed, "true");
 });
 
+test("#10110: рейка — сразу правее полосы прокрутки ленты, полоса ей не отдана", () => {
+  const loaded = loadInject({
+    title: "Trelvis",
+    html: dom => {
+      const parts = panelStand()(dom);
+      parts.scroller = parts.panelBody.add("div", {
+        attrs: { "data-testid": "epitaxy-virtual-transcript" }, rect: { left: PANEL.left, top: 0, width: 568, height: PANEL.height },
+      });
+      return parts;
+    },
+  });
+  assert.equal(loaded.error, null);
+  assert.equal(rail(loaded).style.getPropertyValue("left"), `${PANEL.left + 568}px`, "рейка начинается у правой кромки прокрутки");
+});
+
 test("широкий вид: ступень обычная, замера natural нет, ручка спрятана, рейка на кромке колонки", () => {
   // Поле было свёрнуто (ступень 0 в хранилище): в широком виде оно обязано
   // открыться — ручки, которая вернула бы его, там нет.
   const loaded = open({ storage: { session: { [STAGE_KEY]: String(COLLAPSED) } } });
   assert.equal(loaded.error, null);
-  assert.deepEqual(plain(loaded.api.status().layout), { wide: true, panel: PANEL.width, side: DOCK.width, sideMin: CHIN_MIN, gaps: plain(inner.wideGapsFor({ column: DOCK.left - PANEL.left })), justify: true });
+  // #6214: side — ширина колонки (дока минус её выезд влево на 12), в тех же единицах, что sideMin.
+  assert.deepEqual(plain(loaded.api.status().layout), { wide: true, panel: PANEL.width, side: DOCK.width - 12, sideMin: CHIN_MIN, gaps: plain(inner.wideGapsFor({ column: DOCK.left - PANEL.left })), justify: true });
   assert.equal(loaded.api.status().stage, NORMAL, "в широком виде ступень одна — обычная");
   assert.equal(loaded.win.sessionStorage.getItem(STAGE_KEY), String(COLLAPSED), "хранилище ступени не переписано");
   assert.equal(loaded.api.status().natural, null, "обычная высота в широком виде не меряется");
@@ -358,7 +385,7 @@ test("широкий вид: ступень обычная, замера natural
   assert.equal(loaded.api.status().handleVisible, false, "ручки нет");
   const bar = rail(loaded);
   assert.equal(bar.style.getPropertyValue("display"), "block", "рейка видна");
-  assert.equal(bar.style.getPropertyValue("left"), `${DOCK.left - 6}px`, "рейка стоит на левой кромке доки (12 точек, как у Claude, по центру кромки)");
+  assert.equal(bar.style.getPropertyValue("left"), `${DOCK.left}px`, "рейка — от левой кромки доки, правее полосы ленты (#10110)");
   assert.equal(bar.style.getPropertyValue("top"), `${PANEL.top}px`);
   assert.equal(bar.style.getPropertyValue("height"), `${PANEL.height}px`, "во всю высоту панели");
   assert.equal(loaded.dom.queryAll(`#${RAIL_ID}`).length, 1, "узел один на окно");
@@ -500,7 +527,7 @@ test("нижняя граница колонки — по строке моде�
 // ---- #9135, #9133 (WF148): шапка колонки и тени у поля -----------------------
 test("#9135: шапка над полем — название чата заголовком, значок сдвигается правилом по атрибуту", () => {
   const grid = inside.find(item => /display:\s*grid/.test(item.body));
-  const right = '.epitaxy-chat-panel:not([data-myclaude-title="left"]) & > .epitaxy-titlebar';
+  const right = '.epitaxy-chat-panel:not([data-myclaude-title="left"]) & .epitaxy-titlebar';
   const title = grid.children.find(item => item.selector === `${right} [data-pane-title]`);
   assert.ok(title, "правила заголовка шапки колонки нет");
   const size = Number(/font-size:\s*(\d+)px !important/.exec(title.body)?.[1]);
@@ -616,17 +643,17 @@ test("#9148 (WF156): поля правой колонки — из «Поля» 
   const loaded = open();
   assert.equal(loaded.error, null);
   const panel = loaded.parts.panel;
-  // Поля ленты не нашлось — прежние 12.
-  assert.equal(panel.style.getPropertyValue(DOCK_INSET_VARIABLE), "12px");
+  // Поля ленты не нашлось — прежние 12; у правого края окна + 16 (#11676).
+  assert.equal(panel.style.getPropertyValue(DOCK_INSET_VARIABLE), "28px");
   const source = loaded.parts.panelBody.add("div", { class: "epitaxy-transcript-width", computed: { "padding-left": "40px" } });
   settle(loaded);
-  assert.equal(panel.style.getPropertyValue(DOCK_INSET_VARIABLE), "40px", "40 принимается");
+  assert.equal(panel.style.getPropertyValue(DOCK_INSET_VARIABLE), "56px", "40 принимается");
   source.computed = { "padding-left": "41px" };
   settle(loaded);
-  assert.equal(panel.style.getPropertyValue(DOCK_INSET_VARIABLE), "40px", "41 зажат до 40");
+  assert.equal(panel.style.getPropertyValue(DOCK_INSET_VARIABLE), "56px", "41 зажат до 40");
   source.computed = { "padding-left": "24px" };
   settle(loaded);
-  assert.equal(panel.style.getPropertyValue(DOCK_INSET_VARIABLE), "24px");
+  assert.equal(panel.style.getPropertyValue(DOCK_INSET_VARIABLE), "40px");
   // Узкий вид — переменная снята, поле ввода как в узком окне.
   panel.computed = {};
   settle(loaded);
@@ -637,27 +664,27 @@ test("#9148 (WF156): поля правой колонки — из «Поля» 
 // Геометрия считается по формуле wideGapsFor и проверяется краями колонок: текст
 // ленты = левая кромка тела + feedStart + p … правая кромка тела − 2 − feedEnd − p;
 // линия колонки = правая кромка тела − 12; коробка поля = линия + dockStart …
-// правая кромка окна − dockEnd.
+// правая кромка окна − dockEnd (#11676: p + 16, не p).
 const edges = ({ body, menuRight, windowRight, pad, gaps }) => {
   const textLeft = body.left + gaps.feedStart + pad;
-  const textRight = body.left + body.width - 2 - gaps.feedEnd - pad;
+  const textRight = body.left + body.width - 12 - gaps.feedEnd - pad;
   const line = body.left + body.width - 12;
   const boxLeft = line + gaps.dockStart;
   const boxRight = windowRight - gaps.dockEnd;
   return { menuToText: textLeft - menuRight, feed: textRight - textLeft, textToBox: boxLeft - textRight, edge: windowRight - boxRight, scroll: line - textRight };
 };
 
-test("#9148 (33.5): окно 1600 с меню — просветы меню→лента 80, лента→поле 80, край 24", () => {
+test("#9148 (33.5): окно 1600 с меню — просветы меню→лента 80, лента→поле 80, край 40 (#11676)", () => {
   const { wideGapsFor, FEED_MIN } = inner;
   assert.equal(FEED_MIN, 520);
   // Окно Рика: меню до 338 (пункты до 330), тело ленты 347…1180 (колонка поля 420), окно 1600.
   const body = { left: 347, width: 833 };
   const gaps = wideGapsFor({ pad: 24, column: body.width, menuGap: body.left - 330 });
-  assert.deepEqual(plain(gaps), { edge: 24, gap: 80, share: 1, feedStart: 39, feedEnd: 26, dockStart: 40, dockEnd: 24 });
+  assert.deepEqual(plain(gaps), { edge: 24, gap: 80, share: 1, feedStart: 39, feedEnd: 16, dockStart: 40, dockEnd: 40 });
   const e = edges({ body, menuRight: 330, windowRight: 1600, pad: 24, gaps });
   assert.equal(e.menuToText, 80, "от пунктов меню до текста ленты");
   assert.equal(e.textToBox, 80, "от текста ленты до поля ввода");
-  assert.equal(e.edge, 24, "у края окна — поле 24");
+  assert.equal(e.edge, 40, "у края окна — 40, как просвет колонки слева (#11676)");
   assert.equal(e.scroll, 40, "линия колонки — ровно посередине просвета");
   assert.ok(e.feed >= FEED_MIN, `лента ${e.feed} не уже 520`);
 });
@@ -671,15 +698,15 @@ test("#9148 (33.5): «Поля» двигают просвет (2p + 32), узк
   assert.equal(edges({ body: { left: 347, width: 900 }, menuRight: 330, windowRight: 1700, pad: 40, gaps: big }).textToBox, 112);
   // Поля 12 — просвет 56.
   assert.equal(wideGapsFor({ pad: 12, column: 900, menuGap: 17 }).gap, 56);
-  // Ужатие: тело 610 — лента без прибавки 560, прибавки 65 → доля 40/65.
+  // Ужатие: тело 610 — лента без прибавки 550 (кромка прокрутки 12, #10110), прибавки 55 → доля 30/55.
   const tight = wideGapsFor({ pad: 24, column: 610, menuGap: 17 });
-  assert.equal(tight.share, 0.62);
-  assert.deepEqual([tight.feedStart, tight.feedEnd, tight.dockStart, tight.dockEnd], [24, 16, 34, 24]);
+  assert.equal(tight.share, 0.55);
+  assert.deepEqual([tight.feedStart, tight.feedEnd, tight.dockStart, tight.dockEnd], [21, 9, 33, 40]);
   const e = edges({ body: { left: 347, width: 610 }, menuRight: 330, windowRight: 1300, pad: 24, gaps: tight });
   assert.equal(e.feed, 520, "лента ровно 520 — дальше просветы не растут");
   assert.ok(Math.abs(e.menuToText - e.textToBox) <= 8, `просветы ужаты одной долей: ${e.menuToText} и ${e.textToBox}`);
   // Совсем узко — всё как в WF156: прибавки нет, поле ввода с отступом p.
-  assert.deepEqual(plain(wideGapsFor({ pad: 24, column: 420, menuGap: 17 })), { edge: 24, gap: 80, share: 0, feedStart: 0, feedEnd: 0, dockStart: 24, dockEnd: 24 });
+  assert.deepEqual(plain(wideGapsFor({ pad: 24, column: 420, menuGap: 17 })), { edge: 24, gap: 80, share: 0, feedStart: 0, feedEnd: 0, dockStart: 24, dockEnd: 40 });
   // Меню нет (попап, панель свёрнута): слева край окна — поле p, без прибавки.
   assert.equal(wideGapsFor({ pad: 24, column: 900, menuGap: null }).feedStart, 0);
   // Ширины нет — как WF156.
@@ -702,7 +729,7 @@ test("#9148 (33.5): страница кладёт просветы на пане
   settle(loaded);
   // Тело 200…780 (580), пункты меню до 182: menuGap 18 → полная прибавка 38 + 26 = 64, запас 580−50−520 = 10.
   const gaps = wideGapsFor_({ pad: 24, column: 580, menuGap: 18 });
-  assert.equal(panel.style.getPropertyValue("--myclaude-dock-inset"), "24px", "правый край поля — p");
+  assert.equal(panel.style.getPropertyValue("--myclaude-dock-inset"), "40px", "правый край поля — p + 16 (#11676)");
   assert.equal(panel.style.getPropertyValue("--myclaude-dock-inset-start"), `${gaps.dockStart}px`);
   assert.equal(panel.style.getPropertyValue("--myclaude-feed-start"), `${gaps.feedStart}px`);
   assert.equal(panel.style.getPropertyValue("--myclaude-feed-end"), `${gaps.feedEnd}px`);
@@ -779,7 +806,7 @@ test("#9148 (33.5): lang=\"ru\" на панели у английской стр
 // краю, как по выравниванию, отступ от правого края как у всех».
 test("WF185 (#9206): название не влезло — затухание хвоста, влезло — без него; многоточия нет", () => {
   const grid = inside.find(item => /display:\s*grid/.test(item.body));
-  const right = '.epitaxy-chat-panel:not([data-myclaude-title="left"]) & > .epitaxy-titlebar';
+  const right = '.epitaxy-chat-panel:not([data-myclaude-title="left"]) & .epitaxy-titlebar';
   const clip = grid.children.find(item => item.selector === `${right} [data-pane-title]` && /text-overflow/.test(item.body));
   assert.ok(clip && /text-overflow:\s*clip !important/.test(clip.body), "многоточие Claude (truncate) не снято");
   const fade = grid.children.find(item => item.selector === `${right} [data-pane-title][data-myclaude-title-fade]`);
@@ -927,4 +954,13 @@ test("WF197: ширина из хранилища без доли (выбран�
   assert.equal(kept.parts.panel.style.getPropertyValue(SHARE_VARIABLE), "30%", "своя доля из хранилища");
   kept.api.dispose();
   assert.equal(kept.parts.panel.style.getPropertyValue(SHARE_VARIABLE), "", "dispose снимает долю");
+});
+
+// Перенесено из rick-cells-off-wf239 (WF248).
+test("#9145 (WF156): «+» у New — без серого кружка-заливки Claude, только значок", () => {
+  const { inner } = loadInner();
+  const { NEW_PLUS_SELECTOR } = inner;
+  assert.equal(NEW_PLUS_SELECTOR, 'button[aria-keyshortcuts="Meta+n"] .df-new-circle');
+  const rule = [...inner.RULES].find(item => item.startsWith(`${NEW_PLUS_SELECTOR}{`));
+  assert.equal(rule, `${NEW_PLUS_SELECTOR}{background:transparent!important;box-shadow:none!important}`);
 });

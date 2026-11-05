@@ -45,6 +45,9 @@ struct DigestProject: Codable, Equatable {
     var wait: String? = nil
     /// К-DG: жива ли сессия tmux `rick-<проект>`; nil (поля нет) — терминалы не спрашивали.
     var terminal: Bool? = nil
+    /// #10315 (`docs/contracts/510-10315-flow-live.md`): идёт ли Workflow проекта прямо сейчас — правило блока Workflow
+    /// панели (`PanelProjects.isLive`); поле есть там же, где `terminal` (живой ответ).
+    var live: Bool? = nil
 }
 
 /// Ответ `GET /digest`; `at` нет — сводку прочесть не вышло.
@@ -87,11 +90,15 @@ enum ProjectsDigest {
 
     /// Проект из разобранной сводки.
     static func project(folderName: String, status: PanelStatus, updated: Date?, now: Date,
-                        settings: ProjectSettings?, changed: Date? = nil, terminal: Bool? = nil) -> DigestProject {
+                        settings: ProjectSettings?, changed: Date? = nil, terminal: Bool? = nil,
+                        live: Bool? = nil) -> DigestProject {
         let flows = status.workflows
-        let fresh = updated.map { now.timeIntervalSince($0) <= staleSeconds } ?? false
-        let waits = (!status.waitFor.isEmpty && !PanelProjects.isNothing(status.waitFor))
-            || flows.contains { $0.state == .waiting }
+        let age = updated.map { now.timeIntervalSince($0) } ?? .infinity
+        let fresh = age <= staleSeconds
+        // «Сейчас:» и «Ждёт Элвиса:» — по правилу свежести панели (`PanelProjects.freshNow`/`freshWait`, #9846).
+        let doing = PanelProjects.freshNow(status, age: age)
+        let wait = PanelProjects.freshWait(status, age: age)
+        let waits = !wait.isEmpty || (age <= PanelProjects.waitFreshSeconds && flows.contains { $0.state == .waiting })
         let group = fresh && flows.contains { $0.state == .running } ? "идут" : (waits ? "ждут" : "тихо")
         let cells = flows.enumerated().map { index, flow -> DigestWorkflow in
             let current = flow.phases.first { $0.state == .current || $0.state == .failed }
@@ -100,12 +107,12 @@ enum ProjectsDigest {
                                   steps: steps, phase: current?.name ?? "",
                                   when: flow.time.isEmpty ? nil : flow.time, role: current.flatMap(role))
         }
-        let wait = status.waitFor.isEmpty || PanelProjects.isNothing(status.waitFor) ? nil : status.waitFor
         return DigestProject(name: folderName, title: status.name.isEmpty ? folderName : status.name,
                              marker: status.marker, color: color(folderName: folderName, settings: settings),
                              group: group, done: flows.filter { $0.state == .done }.count, total: flows.count,
                              workflows: cells, at: (changed ?? updated).map { ISO8601DateFormatter().string(from: $0) } ?? "",
-                             now: status.now.isEmpty ? nil : status.now, wait: wait, terminal: terminal)
+                             now: doing.isEmpty ? nil : doing, wait: wait.isEmpty ? nil : wait, terminal: terminal,
+                             live: live)
     }
 
     /// Роль фазы словами сводки: имя и «сколько агентов» из её строки (`help`), без модели и эффорта.
@@ -127,35 +134,56 @@ enum ProjectsDigest {
     /// Обход `root`: папки со сводкой, без скрытых и рабочих деревьев; порядок — идут → ждут → тихо, внутри свежие
     /// (`at`) наверх, при равенстве по имени (WF141: «новые — наверх»).
     /// Папку прочесть не вышло — nil. `terminals` (К-DG) — имена живых сессий `rick-<проект>`: проект с живым
-    /// терминалом попадает в ответ и без сводки (без Workflow); nil — терминалы не спрашивали, поля `terminal` нет.
+    /// терминалом попадает в ответ и без сводки (без Workflow); nil — терминалы не спрашивали, полей `terminal` и
+    /// `live` нет. Для `live` (#10315): `active` — сессии с движением (nil — все), `pages` — живые страницы, `seen` —
+    /// память времени содержимого (nil — по mtime). Сводка папки — с самым свежим изменением содержимого
+    /// (`PanelProjects.readStatus`); `group` и `at` — по-прежнему по mtime этого файла. `muted` (#9820) — заглушённая
+    /// «Ждёт Элвиса:»: поля `wait` нет, в «ждут» проект ставит только блок ✋.
     static func projects(root: URL, now: Date, settings: (URL) -> ProjectSettings?,
-                         fileManager: FileManager = .default, terminals: Set<String>? = nil) -> [DigestProject]? {
-        let sessions = terminals.map { Set($0.map { $0.lowercased() }) }
+                         fileManager: FileManager = .default, terminals: Set<String>? = nil,
+                         active: Set<String>? = nil, pages: [FlowPage] = [], seen: FlowSeen? = nil,
+                         muted: MutedWaits? = nil) -> [DigestProject]? {
         guard let names = try? fileManager.contentsOfDirectory(atPath: root.path) else { return nil }
-        var out: [DigestProject] = []
-        for name in names where !name.hasPrefix(".") {
+        var found: [(name: String, folder: URL, read: PanelProjects.StatusRead?, status: PanelStatus)] = []
+        for name in names.sorted() where !name.hasPrefix(".") {
             let folder = root.appendingPathComponent(name, isDirectory: true)
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue,
                   !PanelProjects.isWorkingCopy(folder, fileManager: fileManager) else { continue }
-            let file = PanelProjects.statusFile(in: folder, fileManager: fileManager)
-            let text = file.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
-            let status = PanelProjects.parse(text ?? "")
-            // Сессия зовётся по папке или по имени сводки — как `PanelTiles.hasTerminal`.
-            let terminal = sessions.map { $0.contains(name.lowercased())
-                || (!status.name.isEmpty && $0.contains(status.name.lowercased())) }
-            guard let file = file, text != nil else {
+            let read = PanelProjects.readStatus(in: folder, fileManager: fileManager, seen: seen, now: now)
+            var status = PanelProjects.parse(read?.text ?? "")
+            if muted?.isMuted(folder: folder, text: status.waitFor, now: now) == true { status.waitFor = "" }
+            found.append((name, folder, read, status))
+        }
+        seen?.flush(now: now)
+        // Сессия зовётся по папке или по имени сводки; одна сессия — одному проекту (`PanelTiles.terminalOwners`).
+        let named = found.map { (key: $0.name, folder: $0.name, name: $0.status.name, updated: $0.read?.mtime) }
+        let owners = terminals.map { PanelTiles.terminalOwners(named, sessions: $0) }
+        let busy = terminals.map { PanelTiles.terminalOwners(named, sessions: active ?? $0) }
+        let candidates: [PanelProjects.LiveCandidate] = found.map {
+            (key: $0.name, folder: $0.name, name: $0.status.name, updated: $0.read?.mtime, trees: $0.read?.trees ?? [])
+        }
+        let livePages = PanelProjects.pageOwners(pages, candidates: candidates)
+        var out: [DigestProject] = []
+        for item in found {
+            let terminal = owners.map { $0.contains(item.name) }
+            let live = busy.map { busy -> Bool in
+                let age = item.read?.changed.map { now.timeIntervalSince($0) } ?? .infinity
+                return item.status.workflows.contains { $0.state == .running }
+                    && PanelProjects.isLive(changedAge: age, terminal: busy.contains(item.name),
+                                            page: livePages.contains(item.name))
+            }
+            guard let read = item.read else {
                 if terminal == true {
-                    out.append(project(folderName: name, status: status, updated: nil, now: now,
-                                       settings: settings(folder), terminal: true))
+                    out.append(project(folderName: item.name, status: item.status, updated: nil, now: now,
+                                       settings: settings(item.folder), terminal: true, live: false))
                 }
                 continue
             }
-            let updated = (try? fileManager.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
-            out.append(project(folderName: name, status: status, updated: updated, now: now,
-                               settings: settings(folder),
-                               changed: changed(status: file, updated: updated, fileManager: fileManager),
-                               terminal: terminal))
+            out.append(project(folderName: item.name, status: item.status, updated: read.mtime, now: now,
+                               settings: settings(item.folder),
+                               changed: changed(status: read.url, updated: read.mtime, fileManager: fileManager),
+                               terminal: terminal, live: live))
         }
         return out.sorted {
             let left = groups.firstIndex(of: $0.group) ?? 0, right = groups.firstIndex(of: $1.group) ?? 0
@@ -178,11 +206,29 @@ enum ProjectsDigest {
         return (try? encoder.encode(body)) ?? Data("{\"projects\":[],\"v\":1}".utf8)
     }
 
-    /// Живой ответ: корень из claude.json, вид проекта — `ProjectSettingsStore` (своя на сборку: стор не потокобезопасен).
+    /// Работа вне страниц по готовой сводке (WF234, `WorkNow`). С #10460 (слово Элвиса 21.10.2026: «Запиши ошибку,
+    /// если реально никаких Workflow терминалов не идёт») — только то, что реально работает: Workflow — у проектов
+    /// с живым прогоном (`live`, правило блока Workflow панели, #10315; поля нет — по-старому, группа «идут»),
+    /// терминалы — `turning`, сессии, где сейчас идёт ход (`PanelTiles.turningTerminals`); стоящий терминал и
+    /// застывшее «идёт» в сводке — простой, обновлению не мешают. Сводку прочесть не вышло (`at` нет): папки
+    /// проектов нет вовсе — работы там и быть не может (ноль, это знание), иначе nil — не знаем.
+    static func work(_ body: DigestBody, rootExists: Bool, now: Date, turning: Int = 0) -> ProjectsWork? {
+        guard let stamp = body.at else { return rootExists ? nil : ProjectsWork(terminals: turning, at: now) }
+        guard let at = ISO8601DateFormatter().date(from: stamp) else { return nil }
+        let running = body.projects.filter { $0.live ?? ($0.group == "идут") }
+            .map { project in project.workflows.filter { $0.state == state(.running) }.count }.filter { $0 > 0 }
+        return ProjectsWork(workflows: running.reduce(0, +), projects: running.count, terminals: turning, at: at)
+    }
+
+    /// Живой ответ: корень из claude.json, вид проекта — `ProjectSettingsStore` (своя на сборку: стор не потокобезопасен);
+    /// терминалы с их движением, страницы и память содержимого — для `live` (#10315).
     static func live(now: Date = Date()) -> Data {
         let store = ProjectSettingsStore()
+        let activity = PanelTiles.terminalActivity()
         return json(body(projects(root: StatusFeed.projectsRoot(), now: now, settings: { store.settings(in: $0) },
-                                  terminals: PanelTiles.liveTerminals()),
+                                  terminals: Set(activity.keys), active: PanelTiles.activeTerminals(activity, now: now),
+                                  pages: FlowPagesBox.shared.pages(now: now), seen: .shared,
+                                  muted: MutedWaitsStore.shared.current()),
                          now: now))
     }
 }

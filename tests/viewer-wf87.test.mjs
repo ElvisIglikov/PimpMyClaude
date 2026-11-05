@@ -93,10 +93,11 @@ test("нажатие по фото открывает просмотр с это
   // pointerdown и mousedown глушатся, но не отменяются: отмена pointerdown в
   // Chromium отменяет и перетаскивание фото (раздел 12м², #7685).
   assert.deepEqual(prevented, [false, false, true]);
-  assert.deepEqual(view(loaded), { open: true, index: 1, total: 3, zoom: false, grown: false });
+  // #10230: листаются фото только этого сообщения — два фото первого ряда.
+  assert.deepEqual(view(loaded), { open: true, index: 1, total: 2, zoom: false, grown: false });
   assert.equal(layer(loaded).style.getPropertyValue("display"), "block");
   assert.equal(parts(loaded).img.src, "data:image/webp;base64,BBB");
-  assert.equal(parts(loaded).count.textContent, "2 / 3");
+  assert.equal(parts(loaded).count.textContent, "2 / 2");
   assert.equal(loaded.document.activeElement, layer(loaded), "фокус на слое — клавиши не уходят в поле ввода");
 });
 
@@ -111,29 +112,36 @@ test("значок, миниатюра Browser, правая кнопка и н�
   assert.equal(layer(loaded), null, "слой рождается только при первом открытии");
 });
 
-test("листание по кругу: стрелки, кнопки ‹ ›, свайп — один шаг на жест", () => {
+test("#10230: листание — фото этого сообщения, без круга: стрелки, кнопки ‹ ›, свайп — один шаг на жест", () => {
   const { loaded, nodes } = page();
-  press(loaded, nodes.c);
-  assert.equal(view(loaded).index, 2);
-  key(loaded, "ArrowRight");
-  assert.equal(view(loaded).index, 0, "после последнего — первое");
-  key(loaded, "ArrowLeft");
-  assert.equal(view(loaded).index, 2, "перед первым — последнее");
-  assert.equal(parts(loaded).count.textContent, "3 / 3");
-  layer(loaded).dispatchEvent({ type: "click", target: parts(loaded).next });
+  press(loaded, nodes.a);
+  assert.deepEqual(plain(loaded.inner.photoState.list.map(item => item.src)), ["data:image/png;base64,AAA", "data:image/webp;base64,BBB"],
+    "фото другого сообщения не листаются");
   assert.equal(view(loaded).index, 0);
+  assert.equal(parts(loaded).prev.style.getPropertyValue("display"), "none", "у первого «‹» нет");
+  key(loaded, "ArrowLeft");
+  assert.equal(view(loaded).index, 0, "перед первым — никуда, не последнее");
+  key(loaded, "ArrowRight");
+  assert.equal(view(loaded).index, 1);
+  assert.equal(parts(loaded).count.textContent, "2 / 2");
+  assert.equal(parts(loaded).next.style.getPropertyValue("display"), "none", "у последнего «›» нет");
+  key(loaded, "ArrowRight");
+  assert.equal(view(loaded).index, 1, "после последнего — никуда, не первое");
   layer(loaded).dispatchEvent({ type: "click", target: parts(loaded).prev });
-  assert.equal(view(loaded).index, 2);
-  assert.equal(parts(loaded).img.src, "data:image/png;base64,CCC");
-  // Пальцы влево — deltaX растёт: следующее; инерция того же жеста не листает.
-  for (const deltaX of [30, 40, 80, 120]) layer(loaded).dispatchEvent({ type: "wheel", deltaX, deltaY: 2 });
+  assert.equal(view(loaded).index, 0);
+  layer(loaded).dispatchEvent({ type: "click", target: parts(loaded).next });
+  assert.equal(view(loaded).index, 1);
+  assert.equal(parts(loaded).img.src, "data:image/webp;base64,BBB");
+  // Пальцы вправо — deltaX падает: предыдущее; инерция того же жеста не листает.
+  loaded.inner.photoState.swipeAt = -Infinity;
+  for (const deltaX of [-30, -40, -80, -120]) layer(loaded).dispatchEvent({ type: "wheel", deltaX, deltaY: 2 });
   assert.equal(view(loaded).index, 0, "один свайп — один шаг");
   loaded.inner.photoState.swipeAt = -Infinity;
-  for (const deltaX of [-50, -50]) layer(loaded).dispatchEvent({ type: "wheel", deltaX, deltaY: 0 });
-  assert.equal(view(loaded).index, 2, "новый жест вправо — назад");
+  for (const deltaX of [50, 50]) layer(loaded).dispatchEvent({ type: "wheel", deltaX, deltaY: 0 });
+  assert.equal(view(loaded).index, 1, "новый жест влево — вперёд");
   loaded.inner.photoState.swipeAt = -Infinity;
   layer(loaded).dispatchEvent({ type: "wheel", deltaX: 5, deltaY: 90 });
-  assert.equal(view(loaded).index, 2, "прокрутка вниз не листает");
+  assert.equal(view(loaded).index, 1, "прокрутка вниз не листает");
 });
 
 test("Esc закрывает просмотр и не доходит до Claude — ни keydown, ни keyup", () => {
@@ -162,33 +170,98 @@ test("Esc закрывает просмотр и не доходит до Claude
   assert.deepEqual(claude, claudeBefore);
 });
 
-test("✕ и клик по фону закрывают; клик по фото — 100 % и обратно; перетаскивание не закрывает", () => {
+test("✕ и клик по фону закрывают; двойной клик по фото — 100 % и обратно (#9469); перетаскивание не закрывает", () => {
   const { loaded, nodes } = page();
   press(loaded, nodes.a);
+  loaded.inner.photoState.openedAt = -Infinity;
   const { img, stage, close } = parts(loaded);
+  const dbl = (clientX = 5, clientY = 5) => layer(loaded).dispatchEvent({ type: "dblclick", target: img, clientX, clientY });
+  // Одиночный клик по фото масштаб не трогает: иначе двойной увеличивал бы и тут же возвращал.
   layer(loaded).dispatchEvent({ type: "click", target: img, clientX: 5, clientY: 5 });
+  assert.equal(view(loaded).zoom, false);
+  assert.equal(view(loaded).open, true, "клик по фото не закрывает");
+  // Стаб раскладку не считает: фото 640×1440 в окне 1000×720 целиком — 320×720.
+  img.naturalWidth = 640;
+  img.naturalHeight = 1440;
+  stage.rect = { left: 0, top: 0, width: 1000, height: 720 };
+  img.rect = { left: 340, top: 0, width: 320, height: 720 };
+  dbl();
   assert.equal(view(loaded).zoom, true);
   assert.equal(img.style.getPropertyValue("max-width"), "none");
   assert.equal(stage.style.getPropertyValue("overflow"), "auto");
-  layer(loaded).dispatchEvent({ type: "click", target: img });
+  dbl();
   assert.equal(img.style.getPropertyValue("max-height"), "100vh", "обратно — целиком в окне");
-  layer(loaded).dispatchEvent({ type: "click", target: img, clientX: 5, clientY: 5 });
+  dbl();
   assert.equal(stage.style.getPropertyValue("overflow"), "auto");
+  const from = { left: stage.scrollLeft, top: stage.scrollTop };
   layer(loaded).dispatchEvent({ type: "pointerdown", target: img, clientX: 100, clientY: 100 });
   layer(loaded).dispatchEvent({ type: "pointermove", target: img, clientX: 60, clientY: 70 });
-  assert.equal(stage.scrollLeft, 40);
-  assert.equal(stage.scrollTop, 30);
+  assert.equal(stage.scrollLeft, from.left + 40);
+  assert.equal(stage.scrollTop, from.top + 30);
   layer(loaded).dispatchEvent({ type: "pointerup", target: img });
   layer(loaded).dispatchEvent({ type: "click", target: stage });
   assert.equal(view(loaded).open, true, "клик в конце перетаскивания — не клик по фону");
   assert.equal(view(loaded).zoom, true);
-  layer(loaded).dispatchEvent({ type: "click", target: img });
+  dbl();
   assert.equal(view(loaded).zoom, false);
   layer(loaded).dispatchEvent({ type: "click", target: stage });
   assert.equal(view(loaded).open, false);
   loaded.api.viewer.open(1);
   layer(loaded).dispatchEvent({ type: "click", target: close });
   assert.equal(view(loaded).open, false);
+});
+
+test("двойной клик по плитке, открывший просмотр, фото не увеличивает", () => {
+  const { loaded, nodes } = page();
+  press(loaded, nodes.a);
+  layer(loaded).dispatchEvent({ type: "click", target: parts(loaded).img, detail: 2 });
+  layer(loaded).dispatchEvent({ type: "dblclick", target: parts(loaded).img, clientX: 5, clientY: 5 });
+  assert.deepEqual(view(loaded), { open: true, index: 0, total: 2, zoom: false, grown: false });
+});
+
+// Щипок трекпада (слово Элвиса 10.10 22:50): колесо с ctrlKey. Фото 640×1440 в окне 1000×720 целиком —
+// 320×720; стаб раскладку не считает, поэтому рамку фото после каждого шага ставит сам тест.
+test("щипок: фото растёт от точки под пальцами, потолок — 4 натуральных, меньше «целиком» — снова «целиком»", () => {
+  const { loaded, nodes } = page();
+  press(loaded, nodes.a);
+  const { img, stage } = parts(loaded);
+  img.naturalWidth = 640;
+  img.naturalHeight = 1440;
+  stage.rect = { left: 0, top: 0, width: 1000, height: 720 };
+  img.rect = { left: 340, top: 0, width: 320, height: 720 };
+  const pinch = (deltaY, clientX = 500, clientY = 360) => !layer(loaded).dispatchEvent({ type: "wheel", ctrlKey: true, deltaX: 0, deltaY, clientX, clientY });
+  // Щипок «от себя» в покое (уменьшить целое) — ничего не меняет, но страницу не масштабирует.
+  assert.equal(pinch(30), true, "щипок глотается всегда");
+  assert.equal(view(loaded).zoom, false);
+  // Разведение пальцев: e^(0,6931) = 2 — ширина вдвое.
+  assert.equal(pinch(-69.31), true);
+  assert.equal(view(loaded).zoom, true);
+  assert.equal(img.style.getPropertyValue("width"), "640px");
+  assert.equal(img.style.getPropertyValue("max-width"), "none");
+  assert.equal(stage.style.getPropertyValue("overflow"), "auto");
+  // Потолок: 640 × 4.
+  img.rect = { left: 180, top: 0, width: 640, height: 1440 };
+  pinch(-1000);
+  assert.equal(img.style.getPropertyValue("width"), "2560px");
+  // Увеличенное: обычное колесо листать фото не должно, оно двигает само фото.
+  const before = view(loaded).index;
+  for (const deltaX of [80, 120]) layer(loaded).dispatchEvent({ type: "wheel", deltaX, deltaY: 0 });
+  assert.equal(view(loaded).index, before);
+  // Сведение пальцев ниже вида «целиком» — снова «целиком», ширина снята.
+  img.rect = { left: 0, top: 0, width: 2560, height: 5760 };
+  pinch(1000);
+  assert.equal(view(loaded).zoom, false);
+  assert.equal(img.style.getPropertyValue("width"), "auto");
+  assert.equal(img.style.getPropertyValue("max-height"), "100vh");
+  assert.equal(stage.style.getPropertyValue("overflow"), "hidden");
+  // Двойной клик по увеличенному щипком — «целиком».
+  img.rect = { left: 340, top: 0, width: 320, height: 720 };
+  pinch(-40);
+  assert.equal(view(loaded).zoom, true);
+  loaded.inner.photoState.openedAt = -Infinity;
+  layer(loaded).dispatchEvent({ type: "dblclick", target: img, clientX: 5, clientY: 5 });
+  assert.equal(view(loaded).zoom, false);
+  assert.equal(img.style.getPropertyValue("width"), "auto");
 });
 
 test("окно сразу растягивается на монитор без полноэкранного режима и при закрытии встаёт на место", () => {

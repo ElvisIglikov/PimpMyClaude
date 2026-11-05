@@ -149,7 +149,7 @@ test("Пимп не запущен (отказ) — «⚠️ Пимп не от�
   await settle();
   assert.equal(isOpen(loaded), true);
   assert.equal(busy(loaded), false);
-  assert.equal(all(loaded).textContent, "⚠️ Пимп не ответил");
+  assert.equal(all(loaded).textContent, "⚠️ PMP не ответил");
   loaded.dom.fireKind("timeout");
   assert.equal(all(loaded).textContent, "▦ Галерея");
   press(loaded);
@@ -161,7 +161,7 @@ test("нет ответа 3 с — отказ; поздний ответ про�
   open(loaded);
   press(loaded);
   loaded.dom.fireKind("timeout");
-  assert.equal(all(loaded).textContent, "⚠️ Пимп не ответил");
+  assert.equal(all(loaded).textContent, "⚠️ PMP не ответил");
   assert.equal(busy(loaded), false);
   loaded.replies[0].resolve({ ok: true });
   await settle();
@@ -215,7 +215,7 @@ test("dispose во время ожидания и при надписи отка
   const failed = page({ fetchMode: "fail" });
   open(failed.loaded);
   const fail = await newTimers(failed.loaded, async () => { press(failed.loaded); await settle(); });
-  assert.equal(all(failed.loaded).textContent, "⚠️ Пимп не ответил");
+  assert.equal(all(failed.loaded).textContent, "⚠️ PMP не ответил");
   assert.equal(fail.length, 1, "срок ожидания снят, остался срок надписи");
   failed.loaded.api.dispose();
   assert.ok(!failed.loaded.dom.ids("timeout").includes(fail[0]), "срок надписи пережил dispose");
@@ -228,6 +228,6 @@ for (const status of [404, 500]) test(`HTTP ${status}: видимый отказ
   loaded.replies[0].resolve({ ok: false, status });
   await settle();
   assert.equal(isOpen(loaded), true);
-  assert.equal(all(loaded).textContent, "⚠️ Пимп не ответил");
+  assert.equal(all(loaded).textContent, "⚠️ PMP не ответил");
   assert.equal(busy(loaded), false);
 });

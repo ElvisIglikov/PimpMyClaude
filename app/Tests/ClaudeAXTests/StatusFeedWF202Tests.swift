@@ -120,29 +120,4 @@ final class StatusFeedWF202Tests: XCTestCase {
         pending.forEach { $0() }
     }
 
-    // MARK: меню окна
-
-    func testLiveBackgroundAndSchemeOnlyInAllWindowsLab() throws {
-        var config = MinimizeMenu.MenuConfig()
-        config.windowLook = Look(aurora: true)
-        XCTAssertEqual(MinimizeMenu.lookItems(config, scope: MenuModel.themeScopeWindow).map { $0.title },
-                       [MenuModel.lookDenseTitle], "у окна «Опытов» нет — с WF220 они опустели")
-        let all = try XCTUnwrap(MinimizeMenu.lookItems(config, scope: MenuModel.themeScopeAll)
-            .first { $0.title == MenuModel.lookLabTitle }?.submenu)
-        XCTAssertEqual(all.items.map { $0.title },
-                       [MenuModel.lookAuroraTitle, MenuModel.lookSchemeTitle])
-
-        // То же в собранном меню: верхний уровень — окно, «⋯ Ещё ▸ › 🖥 Всем окнам ▸» — все окна.
-        let menu = MinimizeMenu.build(config: config)
-        func titles(_ menu: NSMenu) -> [String] {
-            menu.items.flatMap { [$0.title] + ($0.submenu.map(titles) ?? []) }
-        }
-        XCTAssertFalse(menu.items.contains { $0.title == MenuModel.lookLabTitle })
-        XCTAssertFalse(menu.items.contains { $0.title == MenuModel.lookAuroraTitle })
-        let more = try XCTUnwrap(menu.items.last?.submenu)
-        let allWindows = try XCTUnwrap(more.items.last { $0.title == MenuModel.allWindowsTitle }?.submenu)
-        let allLab = try XCTUnwrap(allWindows.items.first { $0.title == MenuModel.lookLabTitle }?.submenu)
-        XCTAssertTrue(titles(allLab).contains(MenuModel.lookAuroraTitle))
-        XCTAssertTrue(titles(allLab).contains(MenuModel.lookSchemeTitle))
-    }
 }

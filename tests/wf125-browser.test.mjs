@@ -16,6 +16,8 @@ import { pathToFileURL } from "node:url";
 import { injectSource, loadInner } from "./load.mjs";
 
 const enabled = Boolean(process.env.PIMP_WF120_PLAYWRIGHT && process.env.PIMP_WF120_CHROMIUM);
+// Метка страницы — из самого файла (WF248): стенд не краснеет на каждом подъёме VERSION.
+const VERSION = /const VERSION = "([^"]+)"/.exec(injectSource())[1];
 const { inner } = loadInner({ title: "Trelvis" });
 const theme = {
   id: "рик", name: "Рик", type: "dark",
@@ -160,7 +162,7 @@ test("WF125 Chromium: слова «Скажи — и сделаю» — с но�
     const page = context.pages()[0];
     await page.goto("https://claude.ai/epitaxy/local_wf125_say");
     await page.evaluate(() => { window.__myclaudeTest = inner => { window.testInner = inner; }; });
-    assert.equal(await page.evaluate(injectSource()), "wf125-page-5");
+    assert.equal(await page.evaluate(injectSource()), VERSION);
     // Кнопки размечает проход страницы; стенд зовёт его сам, не дожидаясь правки ленты.
     await page.evaluate(() => window.testInner.sayTick(Date.now()));
     // Строки поля: пустые (между блоками innerText даёт лишний перенос) не в счёт.

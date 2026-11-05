@@ -9,7 +9,7 @@ final class PageLookWF113Tests: XCTestCase {
     private typealias Sent = (action: String, json: String, priority: CommandChannel.Priority)
 
     private func makeSettings(running: Bool = true) -> (PageLookSettings, UserDefaults, () -> [Sent]) {
-        let suite = "wf113-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
         let settings = PageLookSettings(defaults: defaults)
@@ -27,7 +27,7 @@ final class PageLookWF113Tests: XCTestCase {
 
     func testDefaultsWhenNothingStored() {
         let (settings, _, _) = makeSettings()
-        XCTAssertEqual(settings.current, PageLook(dimOn: false, dimPercent: 50, style: "1.8", size: 100))
+        XCTAssertEqual(settings.current, PageLook(dimOn: false, dimPercent: 50, style: "1.8", size: 150))
     }
 
     func testDimSwitchWritesAndSendsAtOnce() {
@@ -66,7 +66,7 @@ final class PageLookWF113Tests: XCTestCase {
         XCTAssertEqual(sent().count, 1)
         XCTAssertEqual(sent()[0].action, "send-look")
         XCTAssertEqual(sent()[0].json,
-                       "{\"style\":\"1.4\",\"size\":100,\"preview\":true,\"match\":\"/epitaxy/local_main\"}")
+                       "{\"style\":\"1.4\",\"size\":150,\"preview\":true,\"match\":\"/epitaxy/local_main\"}")
         XCTAssertEqual(settings.setLook(style: "1.3").look.style, "1.4", "1.3 (К1 v3) не принимается")
     }
 
@@ -99,10 +99,12 @@ final class PageLookWF113Tests: XCTestCase {
         XCTAssertEqual(sent().count, before, "окон нет — слать некому")
         settings.tick(titles: ["Claude"], at: t0)
         let fresh = sent().dropFirst(before).map { "\($0.action) \($0.json)" }
-        XCTAssertEqual(fresh, ["dim {\"on\":true,\"level\":0.4,\"keep\":[]}",
+        // Bypass без выбора с 03.11.2026 включён и тоже уходит новому поколению (`WF161Tests`).
+        XCTAssertEqual(fresh, ["bypass-chats {\"on\":\"true\"}",
+                               "dim {\"on\":true,\"level\":0.4,\"keep\":[]}",
                                "send-look {\"style\":\"1.2\",\"size\":80,\"preview\":false}"])
         settings.tick(titles: ["Claude"], at: t0.addingTimeInterval(10))
-        XCTAssertEqual(sent().count, before + 2, "состав окон тот же — повтора нет")
+        XCTAssertEqual(sent().count, before + 3, "состав окон тот же — повтора нет")
     }
 
     func testSendDelayWireMatchesContract() {
@@ -164,19 +166,20 @@ final class PageLookWF113Tests: XCTestCase {
     /// «Закреплённые» (#8743): без выбора — показывать и молчать; выбор уходит сразу и повторяется поколением.
     func testPinnedLookDefaultsShowAndExplicitChoiceRepeats() {
         let (settings, defaults, sent) = makeSettings()
-        XCTAssertEqual(settings.pinned, PinnedLook(folder: true, clock: true))
+        XCTAssertEqual(settings.pinned, PinnedLook(folder: true))
         settings.tick(titles: ["А"], at: Self.at)
         XCTAssertTrue(sent().filter { $0.action == "pinned-look" }.isEmpty, "выбора нет — страницам ничего не шлём")
         XCTAssertNil(defaults.object(forKey: PinnedLook.folderKey))
-        settings.setPinned(PinnedLook(folder: false, clock: true))
+        settings.setPinned(PinnedLook(folder: false))
         XCTAssertEqual(sent().last?.action, "pinned-look")
-        XCTAssertEqual(sent().last?.json, "{\"folder\":false,\"clock\":true}")
-        XCTAssertEqual(PageLookSettings(defaults: defaults).pinned, PinnedLook(folder: false, clock: true))
+        // WF237: поля `clock` нет — часиков у закреплённых нет с page-64, страница его не читала.
+        XCTAssertEqual(sent().last?.json, "{\"folder\":false}")
+        XCTAssertEqual(PageLookSettings(defaults: defaults).pinned, PinnedLook(folder: false))
         settings.tick(titles: ["А"], at: Self.at)
         XCTAssertEqual(sent().filter { $0.action == "pinned-look" }.count, 2, "новое поколение страниц узнаёт выбор")
-        settings.setPinned(PinnedLook(folder: false, clock: false))
-        XCTAssertEqual(sent().last?.json, "{\"folder\":false,\"clock\":false}")
-        XCTAssertEqual(settings.pinned, PinnedLook(folder: false, clock: false))
+        settings.setPinned(PinnedLook(folder: true))
+        XCTAssertEqual(sent().last?.json, "{\"folder\":true}")
+        XCTAssertEqual(settings.pinned, PinnedLook(folder: true))
     }
 
     func testDimResetPreservesSnapshotLevelAndOtherChoices() {
@@ -202,8 +205,8 @@ final class PageLookWF113Tests: XCTestCase {
         XCTAssertTrue(settings.previewSendDelay(seconds: 3, match: "/epitaxy/local_main", chat: nil))
         XCTAssertTrue(settings.previewSendDelay(seconds: 10, match: nil, chat: "local_aaaa-1111"))
         XCTAssertEqual(sent().map { $0.json }, [
-            "{\"style\":\"1.8\",\"size\":100,\"preview\":true,\"seconds\":3,\"match\":\"/epitaxy/local_main\"}",
-            "{\"style\":\"1.8\",\"size\":100,\"preview\":true,\"seconds\":10,\"chat\":\"local_aaaa-1111\"}"])
+            "{\"style\":\"1.8\",\"size\":150,\"preview\":true,\"seconds\":3,\"match\":\"/epitaxy/local_main\"}",
+            "{\"style\":\"1.8\",\"size\":150,\"preview\":true,\"seconds\":10,\"chat\":\"local_aaaa-1111\"}"])
         for (id, stamp, seconds, match, chat) in [
             ("wf119-preview-main", "2026-10-03T00:00:02Z", 3, "/epitaxy/local_main" as String?, nil as String?),
             ("wf119-preview-popout", "2026-10-03T00:00:03Z", 10, nil, "local_aaaa-1111")
@@ -223,7 +226,7 @@ final class PageLookWF113Tests: XCTestCase {
         XCTAssertEqual(sent().count, 2)
         settings.mainMatch = { nil }
         settings.setLook(show: true)
-        XCTAssertEqual(sent().last?.json, "{\"style\":\"1.8\",\"size\":100,\"preview\":true}")
+        XCTAssertEqual(sent().last?.json, "{\"style\":\"1.8\",\"size\":150,\"preview\":true}")
         XCTAssertEqual(CommandChannel.payload(action: SendLook.action,
             fields: SendLook.fields(style: "1.3", size: 100, preview: false, match: "/epitaxy", seconds: 3, chat: "local_a"),
             id: "wf119-look-broadcast", at: PimpChannel.date("2026-10-03T00:00:04Z")!),
@@ -309,15 +312,8 @@ final class PageLookWF113Tests: XCTestCase {
 
     // MARK: - 2. канал по эталонам
 
-    private static var fixtures: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("tests/fixtures/pimp", isDirectory: true)
-    }
-
     private func fixture(_ name: String) throws -> String {
-        try String(contentsOf: PageLookWF113Tests.fixtures.appendingPathComponent(name), encoding: .utf8)
+        try String(contentsOf: Repo.fixture("pimp/" + name), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -397,28 +393,46 @@ final class PageLookWF113Tests: XCTestCase {
 
     private static let at = Date(timeIntervalSince1970: 1_790_200_000)
 
-    private func page(_ title: String, waiting: Bool?, frame: CGRect? = nil) -> ChatPage {
-        var page = ChatPage(kind: .popout, chat: nil, title: title, store: "ok", frame: frame, at: Self.at)
+    private func page(_ title: String, waiting: Bool?, frame: CGRect? = nil, id: CGWindowID? = nil) -> ChatPage {
+        var page = ChatPage(kind: .popout, chat: "local_\(id ?? 0)", title: title, store: "ok", frame: frame,
+                            windowId: id, at: Self.at)
         page.waiting = waiting
         return page
     }
 
-    func testWaitingWindowPickedFirstOnly() {
-        let pages = [page("Дубли задач", waiting: false), page("Бот: голос", waiting: true),
-                     page("Кино", waiting: true)]
-        let hidden: [(title: String, frame: CGRect?)] = [("Дубли задач", nil), ("Кино", nil), ("Бот: голос", nil)]
-        XCTAssertEqual(WindowHide.waiting(hidden, pages: pages), 1, "первое по порядку, одно")
-        XCTAssertNil(WindowHide.waiting([("Дубли задач", nil)], pages: pages))
-        XCTAssertNil(WindowHide.waiting(hidden, pages: pages.map { page($0.title, waiting: nil) }),
-                     "круг без status() — никто не ждёт")
+    /// Окно по номеру от лоадера — тот же резолвер, что в бою (`WindowIdentity.resolveNative`).
+    private func resolver(_ pages: [ChatPage], _ windows: [(title: String, frame: CGRect, id: CGWindowID)])
+        -> (String, CGRect?) -> WindowIdentity {
+        let native = windows.map { WindowIdentity.Native(title: $0.title, frame: $0.frame, id: $0.id) }
+        return { title, frame in
+            WindowIdentity.resolveNative(title: title, frame: frame, pages: pages, nativeWindows: native, at: Self.at)
+        }
     }
 
-    func testWaitingTwinsResolvedByFrame() {
+    private static func slot(_ n: Int) -> CGRect { CGRect(x: n * 500, y: 30, width: 400, height: 600) }
+
+    func testWaitingWindowPickedFirstOnly() {
+        let windows: [(title: String, frame: CGRect, id: CGWindowID)] =
+            [("Дубли задач", Self.slot(0), 1), ("Бот: голос", Self.slot(1), 2), ("Кино", Self.slot(2), 3)]
+        let pages = [page("Дубли задач", waiting: false, id: 1), page("Бот: голос", waiting: true, id: 2),
+                     page("Кино", waiting: true, id: 3)]
+        let hidden: [(title: String, frame: CGRect?)] = [("Дубли задач", Self.slot(0)), ("Кино", Self.slot(2)),
+                                                         ("Бот: голос", Self.slot(1))]
+        XCTAssertEqual(WindowHide.waiting(hidden, resolve: resolver(pages, windows)), 1, "первое по порядку, одно")
+        XCTAssertNil(WindowHide.waiting([("Дубли задач", Self.slot(0))], resolve: resolver(pages, windows)))
+        let silent = pages.map { page($0.title, waiting: nil, id: $0.windowId) }
+        XCTAssertNil(WindowHide.waiting(hidden, resolve: resolver(silent, windows)), "круг без status() — никто не ждёт")
+    }
+
+    func testWaitingTwinsResolvedByWindowID() {
         let left = CGRect(x: 0, y: 30, width: 400, height: 600)
         let right = CGRect(x: 800, y: 30, width: 400, height: 600)
-        let pages = [page("Claude", waiting: false, frame: left), page("Claude", waiting: true, frame: right)]
-        XCTAssertEqual(WindowHide.waiting([("Claude", left), ("Claude", right)], pages: pages), 1)
-        XCTAssertNil(WindowHide.waiting([("Claude", nil)], pages: pages), "однофамильцы без рамки — не гадаем")
+        let windows: [(title: String, frame: CGRect, id: CGWindowID)] = [("Claude", left, 7), ("Claude", right, 8)]
+        let pages = [page("Claude", waiting: false, frame: right, id: 7), page("Claude", waiting: true, frame: left, id: 8)]
+        let resolve = resolver(pages, windows)
+        XCTAssertEqual(WindowHide.waiting([("Claude", left), ("Claude", right)], resolve: resolve), 1,
+                       "решает номер окна, а не рамка из ответа страницы")
+        XCTAssertNil(WindowHide.waiting([("Claude", nil)], resolve: resolve), "однофамильцы без рамки — не гадаем")
     }
 
     func testHiddenWindowsCurrentAndRemove() {

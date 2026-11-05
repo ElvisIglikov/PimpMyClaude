@@ -330,3 +330,29 @@ test("уборка молчит, когда поля ввода нет на ме
   main.inner.cashoutSweep();
   assert.equal(shelf(main).length, 1, "поля нет — полку не трогаем");
 });
+
+test("две вставки скриншотов и сразу «Обкэшить» — уезжают «Скриншот 1» и «Скриншот 2», а не оригинал (ревизия WF247)", async () => {
+  // Полка ловит вставку раньше нумерации скриншотов (12 · номера): без уборки исходников в первые 10 с
+  // с конца полки уезжали оригинал последнего снимка и его копия с номером, а «Скриншот 1» терялся.
+  const main = page();
+  const box = main.parts.shell.add("div", { attrs: { "data-cds-composer-attachments": "" } });
+  const line = main.parts.editor.add("p", { text: "" });
+  // Claude: принятое вставкой ложится плиткой в поле.
+  main.parts.editor.addEventListener("paste", event => {
+    for (const file of event.clipboardData?.files ?? []) {
+      const node = box.add("div", { attrs: { "data-cds-attachment": "", "data-cds": "MessageAttachmentsImage" } });
+      node.add("img", { attrs: { src: `blob:claude/${file.name}` } });
+      node.add("button", { attrs: { "aria-label": `Remove ${file.name}` } });
+    }
+  });
+  for (const name of ["Screen A.png", "Screen B.png"]) {
+    main.dom.document.dispatchEvent({ type: "paste", target: line, isTrusted: true, cancelable: true,
+      clipboardData: { files: [main.dom.image(name)], getData: () => "" } });
+    await main.inner.shotState.chain;
+  }
+  for (let at = 0; at < 5; at += 1) await drain();
+  assert.deepEqual(plain(shelf(main).map(item => item.name)), ["Скриншот 1.png", "Скриншот 2.png"], "исходников на полке нет");
+  main.dom.command(cashout({ title: "PimpMyClaude" }));
+  assert.deepEqual(plain(main.api.status().cashout.files), { want: 2, sent: 2, done: 0 });
+  assert.deepEqual(plain(main.win.__myclaudeFiles.carry.files.map(file => file.name)), ["Скриншот 1.png", "Скриншот 2.png"]);
+});

@@ -141,6 +141,34 @@ test("выключение возвращает прежнюю тему и сн�
     "карта тем цела");
 });
 
+// WF248 П2 (лист 48 · 2.1): «Живые цвета» ушли из меню вместе с ним — приложение один раз шлёт всем окнам
+// {scope:"all", on:false} (LiveColors.swift). Память живых у окон общая: её обязано стереть и окно, где крутёж
+// сейчас не шёл (память записало другое окно позже), иначе следующее открытое окно подняло бы крутёж из неё снова.
+test("WF248 П2: разовое выключение чистит память живых и там, где крутёж не шёл; темы не трогает", () => {
+  const stored = JSON.stringify({ "chat:Trelvis": { theme: { id: "sea", name: "Море", type: "dark", palette: { accent: "#2299ff", background: "#001122", foreground: "#eeffff", sidebar: "#000811", panel: "#00223a", muted: "#88aabb" } } } });
+  const loaded = open({ storage: { local: { "myclaude-themes-v1": stored } } });
+  assert.equal(loaded.api.status().live.on, false);
+  // Память записало другое окно уже после загрузки этого: здесь крутёж не идёт, а ключ лежит.
+  loaded.win.localStorage.setItem("myclaude-live-v1", savedRing());
+  const before = loaded.dom.count("interval");
+  loaded.dom.command({ id: "retire", action: "live-colors", at: "now", scope: "all", on: false });
+  assert.equal(loaded.win.localStorage.getItem("myclaude-live-v1"), null, "память живых осталась — новое окно закрутится снова");
+  assert.equal(loaded.dom.count("interval"), before, "тика не было — снимать нечего");
+  assert.equal(loaded.api.status().theme.id, "sea", "тема чата на месте");
+  assert.equal(JSON.parse(loaded.win.localStorage.getItem("myclaude-themes-v1"))["chat:Trelvis"].theme.id, "sea", "карта тем цела");
+  // Новое окно после выключения из памяти не крутит.
+  const later = open({ title: "Позднее окно", storage: { local: { "myclaude-themes-v1": stored } } });
+  assert.equal(later.api.status().live.on, false);
+  // on — не true (строка «true», мусор): тоже выключение, память стирается.
+  for (const on of ["true", 1, null]) {
+    const page = open({ storage: { local: { "myclaude-live-v1": savedRing() } } });
+    assert.equal(page.api.status().live.on, true, "поднялся из памяти");
+    page.dom.command({ id: `junk-${String(on)}`, action: "live-colors", at: "now", scope: "all", on });
+    assert.equal(page.api.status().live.on, false, String(on));
+    assert.equal(page.win.localStorage.getItem("myclaude-live-v1"), null, String(on));
+  }
+});
+
 test("окно, открытое во время крутёжа, поднимает его из памяти", () => {
   const loaded = open({ title: "Позднее окно", storage: { local: { "myclaude-live-v1": savedRing({ period: 120, light: true }) } } });
   const status = loaded.api.status();

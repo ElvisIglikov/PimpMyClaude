@@ -9,7 +9,7 @@ final class SoundWF151Tests: XCTestCase {
 
     private func makeSettings(config: String? = "{\n  \"minWindowWidth\" : 280,\n  \"projectsRoot\" : \"~/Projects\"\n}\n")
         -> (PageLookSettings, UserDefaults, URL, () -> [Sent]) {
-        let suite = "wf151-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = UserDefaults(suiteName: suite)!
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -32,12 +32,10 @@ final class SoundWF151Tests: XCTestCase {
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]) ?? [:]
     }
 
-    func testMenuHasFiveItemsWithCheckOnCurrent() {
-        let items = CountdownSound.menuItems(selected: .drop)
-        XCTAssertEqual(items.map(\.title), ["🔔 Мягкий колокольчик", "🕰 Тик", "💧 Капля", "👾 Ретро-бип", "🔇 Без звука"])
-        XCTAssertEqual(items.map(\.sound.rawValue), ["bell", "tick", "drop", "retro", "off"])
-        XCTAssertEqual(items.filter(\.checked).map(\.sound), [.drop])
-        XCTAssertEqual(CountdownSound.menuItems(selected: .bell).filter(\.checked).map(\.sound), [.bell])
+    /// Пять звуков по порядку, имена без значков (WF180: «эмодзи меня бесят»; подменю жёлтой кнопки снято).
+    func testFiveSoundsInOrderWithPlainNames() {
+        XCTAssertEqual(CountdownSound.allCases.map(\.name), ["Мягкий колокольчик", "Тик", "Капля", "Ретро-бип", "Без звука"])
+        XCTAssertEqual(CountdownSound.allCases.map(\.rawValue), ["bell", "tick", "drop", "retro", "off"])
     }
 
     func testPickWritesConfigKeyAndSendsSoundOnly() throws {
@@ -51,7 +49,6 @@ final class SoundWF151Tests: XCTestCase {
         XCTAssertEqual(sent().map(\.action), ["send-delay"])
         XCTAssertEqual(sent()[0].json, "{\"sound\":\"retro\"}")
         XCTAssertEqual(settings.countdownSound, .retro)
-        XCTAssertEqual(CountdownSound.menuItems(selected: settings.countdownSound).filter(\.checked).map(\.sound), [.retro])
     }
 
     func testWireMatchesContract() {

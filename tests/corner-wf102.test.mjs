@@ -36,7 +36,7 @@ const stand = ({ storage, href = "about:blank", width = 282, origin = "PimpMyCla
       if (sidebar) {
         // Как живьём (замер WF155): aside.dframe-sidebar → строка окна .df-titlebar (светофор,
         // панель, назад, вперёд, переключатель Claude/Code) и список чатов с New.
-        const host = sidebar.root ? dom.document.body.add("div", { class: "dframe-root" }) : dom.document.body;
+        const host = sidebar.root ? dom.document.body.add("div", { class: "dframe-root", ...(sidebar.collapsed ? { attrs: { "data-collapsed": "true" } } : {}) }) : dom.document.body;
         const aside = sidebar.aside ? host.add("aside", { class: "dframe-sidebar", rect: sidebar.aside }) : host;
         if (sidebar.titlebar) {
           const bar = aside.add("div", { class: "df-titlebar draggable", rect: sidebar.titlebar });
@@ -71,9 +71,11 @@ const pass = loaded => {
   loaded.dom.fireKind("raf");
 };
 const corner = loaded => loaded.dom.query(CORNER);
+// #11676: вид угла справа вверху (corner, row, head) не показывается — его наборы ждут, пока место не вернут.
+const SKIP_11676 = "#11676: угол справа вверху не показывается";
 const parts = node => ({ project: node.children[0], chat: node.children[1], clock: node.children[2], text: node.children[1].children[1] });
 
-test("#7911: попап 282 — угол виден, имя проекта целиком, чат рядом", () => {
+test("#7911: попап 282 — угол виден, имя проекта целиком, чат рядом", { skip: SKIP_11676 }, () => {
   const loaded = stand();
   assert.equal(loaded.error, null, String(loaded.error?.stack ?? loaded.error));
   pass(loaded);
@@ -87,18 +89,19 @@ test("#7911: попап 282 — угол виден, имя проекта це�
   assert.equal(chat.style.getPropertyValue("flex"), "0 1 auto");
   assert.equal(chat.style.getPropertyValue("min-width"), "0");
   assert.equal(chat.style.getPropertyValue("overflow"), "hidden");
-  assert.equal(node.style.getPropertyValue("max-width"), "calc(100vw - 84px)");
+  // #9272 (WF261): ещё и минус отступ справа (панель кончается на 281 из 282) — угол целиком в окне.
+  assert.equal(node.style.getPropertyValue("max-width"), "calc(100vw - 85px)");
   // Мышь и перетаскивание окна угол не трогает.
   assert.equal(node.style.getPropertyValue("pointer-events"), "none");
   assert.equal(node.style.getPropertyValue("-webkit-app-region"), "");
   // WF103, решение 12: прижат к самому верху окна; правый край — по панели (281 из 282, как живьём).
   assert.equal(node.style.getPropertyValue("top"), "0px");
   assert.equal(node.style.getPropertyValue("right"), "1px");
-  assert.deepEqual(plain(loaded.api.status().corner), { on: true, project: "PimpMyClaude", chat: LONG_CHAT, fade: false, cover: false, clock: null, late: false, stage: null, mode: "corner", line: null, switch: null, tail: { project: false, chat: false }, lines: null, menu: null, originMenu: null });
+  assert.deepEqual(plain(loaded.api.status().corner), { on: true, project: "PimpMyClaude", chat: LONG_CHAT, cover: false, clock: null, late: false, stage: null, mode: "corner", line: null, switch: null, tail: { project: false, chat: false }, lines: null, menu: null, originMenu: null });
   assert.equal(loaded.document.documentElement.getAttribute("data-myclaude-corner"), "on");
 });
 
-test("#9104 (WF139): живой фон — плашка угла без сплошной заливки, только размытие", () => {
+test("#9104 (WF139): живой фон — плашка угла без сплошной заливки, только размытие", { skip: SKIP_11676 }, () => {
   const loaded = stand();
   loaded.document.body.computed = { backgroundColor: "rgb(5, 58, 43)" };
   loaded.dom.command({ id: "wf139-corner", action: "theme", at: "now", scope: "all", look: { aurora: true } });
@@ -113,7 +116,7 @@ test("#9104 (WF139): живой фон — плашка угла без спло
 // WF185 (слово Элвиса 09.10 03:35: «должно быть так же, как в Today — затемняется, фейд уходит»)
 // отменяет многоточие решения 12 WF103: хвост чата, который не влез, затухает маской, как строки
 // списка слева у Claude; влез — без маски. Фон плашки угла (затухание под ней) — по-прежнему без фейда.
-test("WF185: чат не влез — хвост затухает, как в Today; влез — без маски", () => {
+test("WF185: чат не влез — хвост затухает, как в Today; влез — без маски", { skip: SKIP_11676 }, () => {
   const loaded = stand();
   pass(loaded);
   const { chat } = parts(corner(loaded));
@@ -121,7 +124,7 @@ test("WF185: чат не влез — хвост затухает, как в Tod
   chat.scrollWidth = 320;
   chat.clientWidth = 90;
   pass(loaded);
-  assert.equal(loaded.api.status().corner.fade, false, "fade плашки — всегда false");
+  assert.equal("fade" in plain(loaded.api.status().corner), false, "поля fade у угла нет (WF103: без затухания; снято в WF248)");
   assert.equal(chat.style.getPropertyValue("mask-image"), FADE);
   assert.equal(chat.style.getPropertyValue("-webkit-mask-image"), FADE);
   assert.equal(chat.style.getPropertyValue("text-overflow"), "clip", "без многоточия");
@@ -133,7 +136,7 @@ test("WF185: чат не влез — хвост затухает, как в Tod
   assert.equal(loaded.api.status().corner.tail.chat, false);
 });
 
-test("WF103 решение 12: фон угла — сплошной цвет фона окна, без градиента", () => {
+test("WF103 решение 12: фон угла — сплошной цвет фона окна, без градиента", { skip: SKIP_11676 }, () => {
   const loaded = stand();
   loaded.document.body.computed = { backgroundColor: "rgb(5, 58, 43)" };
   pass(loaded);
@@ -144,7 +147,7 @@ test("WF103 решение 12: фон угла — сплошной цвет ф�
   // Текст у самого верхнего края: плашка 20 px от top 0, кнопки окна не перекрыты.
   assert.equal(node.style.getPropertyValue("top"), "0px");
   assert.equal(node.style.getPropertyValue("height"), "20px");
-  assert.equal(node.style.getPropertyValue("max-width"), "calc(100vw - 84px)");
+  assert.equal(node.style.getPropertyValue("max-width"), "calc(100vw - 85px)");
 });
 
 test("#7911: главное окно — имя проекта как у чипа закреплённых (репозиторий строки)", () => {
@@ -165,7 +168,7 @@ test("#7911: проекта нет (домашний экран) — угла н
   assert.equal(loaded.document.documentElement.hasAttribute("data-myclaude-corner"), false);
 });
 
-test("#7911: угол наехал на название чата в шапке — оно прячется (cover)", () => {
+test("#7911: угол наехал на название чата в шапке — оно прячется (cover)", { skip: SKIP_11676 }, () => {
   const loaded = stand();
   const node = corner(loaded);
   node.rect = { left: 84, top: 9, width: 198, height: 32 };
@@ -348,6 +351,14 @@ test("#7943: тикают сами раз в секунду; dispose уноси�
 // свёрнута… там, где Remote Control».
 const SIDEBAR = { list: { left: 0, top: 46, width: 190, height: 674 }, next: { left: 8, top: 96, width: 174, height: 26 } };
 
+test("#10644: список свёрнут, ленту сдвинула панель материалов — угол не у списка (не под светофором)", () => {
+  const loaded = stand({ href: "https://claude.ai/epitaxy/local_abc", width: 852, chat: "🧪 Рик", panelLeft: 331,
+    sidebar: { ...SIDEBAR, root: true, collapsed: true }, gutter: { left: 552, top: 12, width: 24, height: 24 } });
+  pass(loaded);
+  assert.notEqual(loaded.api.status().corner.mode, "side");
+  assert.notEqual(loaded.document.documentElement.getAttribute("data-myclaude-corner"), "side");
+});
+
 test("#9054/#9147: главное окно, список открыт — заголовок над New, две строки, угла справа нет", () => {
   const loaded = stand({ href: "https://claude.ai/epitaxy/local_abc", width: 852, chat: "🧪 Рик", panelLeft: 199, sidebar: SIDEBAR,
     gutter: { left: 552, top: 12, width: 24, height: 24 } });
@@ -394,9 +405,7 @@ test("#9054/#9147: главное окно, список открыт — заг
   loaded.parts.titlebar.rect = { left: 548, top: 8, width: 301, height: 32 };
   pass(loaded);
   assert.equal(loaded.api.status().corner.mode, "row");
-  assert.deepEqual(["left", "width"].map(name => node.style.getPropertyValue(name)), ["580px", "261px"]);
-  assert.equal(node.style.getPropertyValue("display"), "grid");
-  assert.equal(clock.style.getPropertyValue("font-size"), "10px");
+  assert.equal(node.style.getPropertyValue("display"), "none", "#11676: справа вверху угла нет");
   assert.equal(loaded.document.documentElement.style.getPropertyValue("--myclaude-side-space"), "", "не над New — переменных нет");
 });
 
@@ -549,7 +558,7 @@ test("WF166: пол узкой панели — правый край перек
   assert.equal(loaded.win.localStorage.getItem("myclaude-left-side-v1"), "216");
 });
 
-test("#9054: список свёрнут или попап — строка шапки правее Remote Control, название под ней прозрачно", () => {
+test("#9054: список свёрнут или попап — строка шапки правее Remote Control, название под ней прозрачно", { skip: SKIP_11676 }, () => {
   const loaded = stand({ width: 400, gutter: { left: 77, top: 9, width: 24, height: 24 } });
   loaded.parts.titlebar.rect = { left: 77, top: 9, width: 320, height: 32 };
   pass(loaded);
@@ -723,10 +732,7 @@ test("WF190: имя чата над New переносится по словам
   chat.scrollHeight = 0; chat.clientHeight = 0;
   pass(loaded);
   assert.equal(loaded.api.status().corner.mode, "row");
-  assert.equal(chat.style.getPropertyValue("white-space"), "nowrap");
-  assert.equal(chat.style.getPropertyValue("max-height"), "");
-  assert.equal(chat.style.getPropertyValue("pointer-events"), "");
-  assert.equal(chat.style.getPropertyValue("mask-size"), "");
+  assert.equal(node.style.getPropertyValue("display"), "none", "#11676: справа вверху угла нет");
   assert.equal(loaded.api.status().corner.lines, null);
   assert.equal(loaded.document.documentElement.style.getPropertyValue("--myclaude-side-space"), "");
 });
@@ -867,7 +873,7 @@ test("WF197: клик по имени проекта над New — родная
 // WF204 (followup WF197): в широком виде имя проекта стоит в строке шапки, и меню ⋮ проекта (Terminal /
 // Changes / Browser, правый клик — Show in Finder) было только у невидимой плашки у края. Теперь имя в
 // углу открывает его везде, где показано, — тем же путём, что над New.
-test("WF204: строка шапки — клик по имени проекта открывает ⋮ проекта, правый — меню плашки; строка не прыгает", () => {
+test("WF204: строка шапки — клик по имени проекта открывает ⋮ проекта, правый — меню плашки; строка не прыгает", { skip: SKIP_11676 }, () => {
   const loaded = stand({ width: 400, gutter: { left: 77, top: 9, width: 24, height: 24 } });
   loaded.parts.titlebar.rect = { left: 77, top: 9, width: 320, height: 32 };
   const pill = loaded.parts.label.parentElement;
@@ -956,7 +962,7 @@ const headStand = (options = {}) => {
   return loaded;
 };
 
-test("WF209: широкий вид, список свёрнут, значок у правого края — название колонки видно, угол над ним: проект и часики", () => {
+test("WF209: широкий вид, список свёрнут, значок у правого края — название колонки видно, угол над ним: проект и часики", { skip: SKIP_11676 }, () => {
   const loaded = headStand();
   pass(loaded);
   const node = corner(loaded);
@@ -985,12 +991,13 @@ test("WF209: широкий вид, список свёрнут, значок у
   assert.equal(node.style.getPropertyValue("background"), "transparent", "без плашки");
   // Слово Элвиса 10.10 03:55: шапка не растёт — отступа нет, проект и часики стоят в строке названия,
   // правее его текста и левее значка Remote Control.
-  assert.equal(root.style.getPropertyValue("--myclaude-head-space"), "0px");
+  assert.equal(loaded.api.status().corner.mode, "head");
   assert.ok(px(node, "left") >= HEAD.title.left + HEAD.title.width, "проект и часики не наезжают на название");
   assert.ok(px(node, "left") + px(node, "width") <= HEAD.gutter.left, "и не наезжают на значок");
   assert.equal(root.style.getPropertyValue("--myclaude-side-space"), "", "отступ списка — только над New");
   assert.ok(px(node, "left") >= 120, "и стоит правее кнопок окна");
-  assert.match(css, /\.epitaxy-chat-panel:not\(\[data-myclaude-title="left"\]\) & > \.epitaxy-titlebar \{\s*box-sizing: content-box !important;\s*padding-top: var\(--myclaude-head-space, 0px\) !important;/);
+  assert.match(css, /\.epitaxy-chat-panel:not\(\[data-myclaude-title="left"\]\) & \.epitaxy-titlebar \{\s*box-sizing: content-box !important;\s*\}/);
+  assert.doesNotMatch(css, /myclaude-head-space/, "отступа шапки сверху нет — переменной тоже (WF248)");
   // Мышь: угол прозрачен, имя проекта — кнопка.
   assert.equal(node.style.getPropertyValue("pointer-events"), "none");
   assert.equal(project.style.getPropertyValue("pointer-events"), "auto");
@@ -1038,7 +1045,6 @@ test("WF209: остальные места — как были: список о�
   const side = headStand({ panelLeft: 199, sidebar: SIDEBAR });
   pass(side);
   assert.equal(side.api.status().corner.mode, "side");
-  assert.equal(side.document.documentElement.style.getPropertyValue("--myclaude-head-space"), "");
   assert.equal(parts(corner(side)).chat.style.getPropertyValue("display"), "block", "над New имя чата — второй строкой");
   assert.equal(parts(corner(side)).project.style.getPropertyValue("opacity"), "0.92");
   // Список свернулся — head; открылся снова — side, отступ шапки снят.
@@ -1046,33 +1052,61 @@ test("WF209: остальные места — как были: список о�
   pass(side);
   assert.equal(side.api.status().corner.mode, "head");
   assert.equal(side.document.documentElement.style.getPropertyValue("--myclaude-side-space"), "");
-  assert.equal(side.document.documentElement.style.getPropertyValue("--myclaude-head-space"), "0px");
   side.parts.panel.rect = { ...side.parts.panel.rect, left: 199 };
   pass(side);
   assert.equal(side.api.status().corner.mode, "side");
-  assert.equal(side.document.documentElement.style.getPropertyValue("--myclaude-head-space"), "");
   // Попап в широком виде: шапка слева, под кнопками окна (значок там слева) — строка шапки, как была.
   const popup = stand({ width: 889, wide: true, gutter: { left: 77, top: 9, width: 24, height: 24 } });
   popup.parts.titlebar.rect = { left: 77, top: 9, width: 320, height: 32 };
   pass(popup);
   assert.equal(popup.api.status().corner.mode, "row", "с первого же прохода, без кадра в head");
-  assert.equal(popup.document.documentElement.style.getPropertyValue("--myclaude-head-space"), "");
   // Узкий вид с той же шапкой (значок справа) — прежний угол: head только у шапки колонки широкого вида.
   const narrow = headStand({ wide: false });
   pass(narrow);
   assert.equal(narrow.api.status().corner.mode, "corner");
-  assert.equal(parts(corner(narrow)).chat.style.getPropertyValue("display"), "block");
+  assert.equal(corner(narrow).style.getPropertyValue("display"), "none", "#11676: справа вверху угла нет");
   // Широкий вид без названия чата (черновик) — надзаголовку не над чем стоять: тоже прежний угол.
   const draft = headStand({ chat: null });
   pass(draft);
   assert.notEqual(draft.api.status().corner.mode, "head");
 });
 
-test("WF209: dispose снимает отступ шапки и метку места", () => {
+test("WF209: dispose снимает метку места", () => {
   const loaded = headStand();
   pass(loaded);
-  assert.equal(loaded.document.documentElement.style.getPropertyValue("--myclaude-head-space"), "0px");
+  assert.equal(loaded.api.status().corner.mode, "head");
+  assert.equal(loaded.document.documentElement.getAttribute("data-myclaude-corner"), "off");
   loaded.api.dispose();
-  assert.equal(loaded.document.documentElement.style.getPropertyValue("--myclaude-head-space"), "");
   assert.equal(loaded.document.documentElement.hasAttribute("data-myclaude-corner"), false);
+});
+
+// #11676 (#11637, слово Элвиса 05.11: «справа в углу Рик написано… убери»): справа вверху — row, head, corner —
+// строки «Проект 59:06 · чат» нет; угол знает проект и часики (status, «здоровье»), метка корня "off".
+test("#11676: справа вверху угла нет — row, head и прежний угол скрыты, метка off, проект известен", () => {
+  const popup = stand();
+  assert.equal(popup.error, null, String(popup.error?.stack ?? popup.error));
+  pass(popup);
+  assert.equal(corner(popup).style.getPropertyValue("display"), "none");
+  assert.equal(popup.api.status().corner.mode, "corner");
+  assert.equal(popup.api.status().corner.on, true);
+  assert.equal(popup.api.status().corner.project, "PimpMyClaude");
+  assert.equal(popup.api.status().corner.cover, false);
+  assert.equal(popup.document.documentElement.getAttribute("data-myclaude-corner"), "off");
+  const row = stand({ width: 400, gutter: { left: 77, top: 9, width: 24, height: 24 } });
+  row.parts.titlebar.rect = { left: 77, top: 9, width: 320, height: 32 };
+  pass(row);
+  assert.equal(row.api.status().corner.mode, "row");
+  assert.equal(corner(row).style.getPropertyValue("display"), "none");
+  assert.equal(row.document.documentElement.getAttribute("data-myclaude-corner"), "off", "название чата Claude не гасится (правило row)");
+  const head = headStand();
+  pass(head);
+  assert.equal(head.api.status().corner.mode, "head");
+  assert.equal(corner(head).style.getPropertyValue("display"), "none");
+  assert.equal(head.document.documentElement.getAttribute("data-myclaude-corner"), "off");
+  // Над New (side) — как был.
+  const side = headStand({ panelLeft: 199, sidebar: SIDEBAR });
+  pass(side);
+  assert.equal(side.api.status().corner.mode, "side");
+  assert.equal(corner(side).style.getPropertyValue("display"), "grid");
+  assert.equal(side.document.documentElement.getAttribute("data-myclaude-corner"), "side");
 });

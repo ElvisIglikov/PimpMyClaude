@@ -2,7 +2,8 @@
 // inject.js, план WF35, задача #5473). Переустановка Claude стирает localStorage
 // страниц, и пять окон Элвиса становятся серыми. Копию карты приложение держит
 // на диске (window-themes.json) и присылает одной командой на все окна:
-//   {id, action:"themes-restore", at, scope:"all", entries:{<ключ>:{theme?,font?,size?,frame?}}}
+//   {id, action:"themes-restore", at, scope:"all", entries:{<ключ>:{theme?,font?,size?,look?}}}
+//   (frame — снятая неоновая рамка, #9471: его везут старые записи приложения, страница молча пропускает).
 //
 // Главное правило — страница НЕ заменяет свою память присланной, а доливает
 // недостающие СЛОИ. Отсюда идемпотентность: память цела — команда не меняет ни
@@ -160,4 +161,48 @@ test("запись по id тоже принимается и красит ок�
   loaded.dom.command(restore({ [ID_KEY]: { theme: theme("по id") }, "chat:Trelvis": { theme: theme("по имени") } }));
   assert.equal(loaded.api.status().theme.id, "по id", "id сильнее имени и после возврата");
   assert.deepEqual(Object.keys(readMap(loaded.win)).sort(), [ID_KEY, "chat:Trelvis"].sort());
+});
+
+// WF245 (слово Элвиса 11.10.2026): из набора themes.json ушли двенадцать тем. Страница каталога не знает вовсе —
+// тема живёт в записи окна целиком, с палитрой; у кого убранная тема стоит, окно показывает её дальше.
+test("WF245: тема, которой больше нет в themes.json, остаётся на окне — и из памяти страницы, и после themes-restore", async () => {
+  const { readFileSync } = await import("node:fs");
+  const catalog = JSON.parse(readFileSync(new URL("../claude-patch/themes.json", import.meta.url), "utf8")).themes;
+  const red = { id: "red", name: "Красная", type: "dark", palette: { accent: "#ff5c5c", background: "#3b1414", foreground: "#ffe4e4", sidebar: "#2a0e0e", panel: "#4e1d1d", muted: "#d69a9a" } };
+  for (const id of ["red", "orange", "yellow", "brown", "pink", "peach", "mango", "honey", "lemonade", "orangeade", "lime", "ultra"]) {
+    assert.equal(catalog.some(item => item.id === id), false, `${id} ушла из набора`);
+  }
+  // Спорные и ждущие варианта — на месте.
+  for (const id of ["green", "crimson", "magma", "lilac", "violet"]) assert.ok(catalog.some(item => item.id === id), id);
+  // Память страницы цела: тема всем окнам — «Красная».
+  const kept = loadInject({ title: "Trelvis", storage: { local: map({ "*": { theme: red } }) } });
+  assert.equal(kept.api.status().theme.id, "red");
+  assert.equal(readMap(kept.win)["*"].theme.palette.background, "#3b1414", "запись не тронута");
+  // Память стёрта переустановкой Claude: приложение возвращает карту — та же тема, без каталога.
+  const back = loadInject({ title: "Trelvis" });
+  back.dom.command(restore({ "*": { theme: red } }));
+  assert.equal(back.api.status().theme.id, "red");
+  assert.equal(readMap(back.win)["*"].theme.name, "Красная");
+});
+
+// WF248 (#9471, ловушка критика): рамки окна нет, а `frame` ещё шлёт гашение приложения (theme «всем окнам»,
+// frame сбросом) и везут записи window-themes.json ("frame":true). Любое значение принимается молча:
+// ни ошибки, ни узла, ни поля в карте и в status(); соседние слои команды и записи работают как раньше.
+test("WF248: frame (true/false/null) в theme и themes-restore — молча, без узла и без записи", () => {
+  const loaded = loadInject({ title: "Trelvis" });
+  for (const frame of [true, false, null, "none"]) {
+    loaded.dom.command({ id: `w${frame}`, action: "theme", at: "now", scope: "window", title: "Trelvis", frame });
+    loaded.dom.command({ id: `a${frame}`, action: "theme", at: "now", scope: "all", title: "", frame });
+  }
+  assert.equal(rawMap(loaded.win), null, "команда с одним frame — мимо: карта не тронута");
+  loaded.dom.command({ id: "f1", action: "theme", at: "now", scope: "window", title: "Trelvis", frame: true, font: font("Menlo") });
+  loaded.dom.command(restore({ "chat:Trelvis": { frame: true, theme: theme("присланная") }, "*": { frame: true }, main: { frame: null } }));
+  const stored = readMap(loaded.win);
+  assert.equal(stored["chat:Trelvis"].font.family, "Menlo", "соседний слой команды записан");
+  assert.equal(stored["chat:Trelvis"].theme.id, "присланная", "соседний слой записи долит");
+  for (const entry of Object.values(stored)) assert.equal("frame" in entry, false, JSON.stringify(entry));
+  assert.equal(loaded.api.status().theme.id, "присланная");
+  assert.equal("frame" in loaded.api.status(), false, "status().frame снят");
+  assert.equal(loaded.dom.queryAll("#myclaude-window-frame").length, 0, "узла рамки нет");
+  assert.equal(loaded.error, null);
 });

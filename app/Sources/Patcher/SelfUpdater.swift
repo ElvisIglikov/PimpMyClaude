@@ -27,7 +27,7 @@ public struct SelfUpdateProduct: Equatable {
     public let repo: String
     public let bundleID: String
 
-    public static let pimp = SelfUpdateProduct(key: "pimp", title: "Пимп", name: "PimpMyClaude",
+    public static let pimp = SelfUpdateProduct(key: "pimp", title: "PMP", name: "PimpMyClaude",
                                                repo: "ElvisIglikov/PimpMyClaude", bundleID: "com.elvis.pimpmyclaude")
     public static let viewer = SelfUpdateProduct(key: "viewer", title: "Viewer", name: "PimpViewer",
                                                  repo: "ElvisIglikov/PimpViewer", bundleID: "com.elvis.pimpviewer")
@@ -152,15 +152,20 @@ public struct SelfUpdateMoment: Equatable {
     /// не подменяет: его выход оборвал бы возврат, а запрос канала получил бы `stale` (находка R2 проверки
     /// 10.10.2026). Viewer это не держит: его подмена Пимп не перезапускает.
     public var windows = false
+    /// Идёт работа — на страницах Claude, в Workflow или в терминальных чатах — или про неё не знаем (WF234, общий
+    /// ответ `WorkNow` приложения): Пимп себя не подменяет — его перезапуск рвёт сводку и каналы тем, кто работает.
+    /// Viewer это не держит: он ставится, только пока не запущен, и ничего не перезапускает.
+    public var working = false
 
     public init(enabled: Bool = true, panelOpen: Bool = false, busy: Bool = false, recording: Bool = false,
-                viewerRunning: Bool = false, windows: Bool = false) {
+                viewerRunning: Bool = false, windows: Bool = false, working: Bool = false) {
         self.enabled = enabled
         self.panelOpen = panelOpen
         self.busy = busy
         self.recording = recording
         self.viewerRunning = viewerRunning
         self.windows = windows
+        self.working = working
     }
 }
 
@@ -286,10 +291,10 @@ public struct SelfUpdater {
 
     /// Можно ли подменять приложение сейчас: никогда посреди открытой панели, записи, патча или обновления
     /// Claude; PimpViewer — ещё и только когда он не запущен; Пимп — ещё и не посреди работы канала «Пимп» и
-    /// возврата окон. Выключено — никогда.
+    /// возврата окон и не пока идёт работа (`working`, WF234). Выключено — никогда.
     public static func mayInstall(_ product: SelfUpdateProduct, _ moment: SelfUpdateMoment) -> Bool {
         guard moment.enabled, !moment.panelOpen, !moment.busy, !moment.recording else { return false }
-        return product == .viewer ? !moment.viewerRunning : !moment.windows
+        return product == .viewer ? !moment.viewerRunning : !moment.windows && !moment.working
     }
 
     /// Адреса, куда может ходить загрузка: только GitHub по HTTPS, без учёток и чужих портов.
@@ -383,6 +388,23 @@ public struct SelfUpdater {
         return "\(stands) · проверено \(whenText(checked, now: now, calendar: calendar))"
     }
 
+    /// Что сказать о продукте в «Обновлениях» и всё ли хорошо (`good` — зелёным): слово 03.11.2026 «всё зелёненькое,
+    /// чтобы было видно человеку, что всё хорошо».
+    public static func status(installed: String, state: SelfUpdateState.Product?, enabled: Bool,
+                              place: String?) -> (text: String, good: Bool) {
+        guard enabled else { return ("обновление выключено", false) }
+        if let place = place { return ("\(place) — сам не обновится", false) }
+        if let ready = state?.ready, isNewer(ready, than: installed) { return ("скачана \(ready), встанет при запуске", false) }
+        if let refused = state?.refused, isNewer(refused, than: installed) { return ("\(refused) не прошла проверку", false) }
+        switch state?.problem {
+        case .offline?: return ("нет связи с GitHub", false)
+        case .missing?: return ("выпусков на GitHub не видно", false)
+        case nil: break
+        }
+        guard let latest = state?.latest else { return ("ещё не проверял", false) }
+        return isNewer(latest, than: installed) ? ("вышла \(latest)", false) : ("последняя версия", true)
+    }
+
     /// Хвост про Viewer к строке Пимпа — только когда его обновление ждёт закрытия.
     public static func viewerLine(installed: String?, state: SelfUpdateState.Product?) -> String? {
         guard let installed = installed, let ready = state?.ready, isNewer(ready, than: installed) else { return nil }
@@ -427,14 +449,13 @@ public struct SelfUpdater {
     /// Своя папка 0700, файлы 0600 — другим учёткам этого Мака туда хода нет.
     private func prepareDirectory(_ url: URL? = nil) throws {
         let target = url ?? directory
-        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true,
-                                                attributes: [.posixPermissions: 0o700])
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: target.path)
+        try SupportFiles.ensureDirectory(target)
+        try FileManager.default.setAttributes([.posixPermissions: SupportFiles.directoryPermissions], ofItemAtPath: target.path)
     }
 
     private func write(_ data: Data, to url: URL) {
-        guard (try? prepareDirectory()) != nil, (try? data.write(to: url, options: .atomic)) != nil else { return }
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        guard (try? prepareDirectory()) != nil else { return }
+        SupportFiles.writeAtomic(url, data)
     }
 
     /// Строка в `journal.log`; файл держим коротким — хвост в 64 КБ.
@@ -547,7 +568,7 @@ public struct SelfUpdater {
     }
 
     static func describe(_ error: Error) -> String {
-        (error as? SelfUpdateError)?.text ?? (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        (error as? SelfUpdateError)?.text ?? error.humanText
     }
 
     // -------------------------------------------------------------- проверка скачанного
@@ -748,6 +769,11 @@ public struct SelfUpdater {
         return (try? process.run()) != nil
     }
 
+    /// Перезапуск себя: помощником после выхода, а не вышло его запустить — сразу `open -n` (новая копия рядом).
+    public static func relaunchOrOpen(_ app: URL) {
+        if !relaunch(app) { _ = try? Process.run(URL(fileURLWithPath: "/usr/bin/open"), arguments: ["-n", app.path]) }
+    }
+
     // -------------------------------------------------------------- системные утилиты и сеть
 
     /// Утилита со сроком: вывод (stdout, при `merge` и stderr) до 4 МБ. nil — не запустилась или не уложилась
@@ -822,8 +848,9 @@ public struct SelfUpdater {
         }
     }
 
-    /// Строгая проверка подписи с требованием средствами Security (то же, что `codesign --verify --deep
-    /// --strict -R=…`): все архитектуры, вложенный код, строгий режим. nil — подпись прошла.
+    /// Строгая проверка подписи с требованием средствами Security: все архитектуры, вложенный код, строгий режим.
+    /// Это НЕ полный `codesign --verify --deep --strict -R=…`: флагов `kSecCSRestrictSymlinks` и
+    /// `kSecCSRestrictSidebandData` здесь нет (review-wf217: на 13 опытах разницы не было). nil — подпись прошла.
     static func signatureProblem(_ app: URL, requirement: String) -> String? {
         var code: SecStaticCode?
         var status = SecStaticCodeCreateWithPath(app as CFURL, SecCSFlags(), &code)

@@ -28,9 +28,8 @@ enum TrustRoot {
     }
 
     /// Корень из живого claude.json.
-    static func current(configURL: URL = CommandChannel.directory
-        .appendingPathComponent(StatusFeed.configFileName)) -> String? {
-        root(config: try? Data(contentsOf: configURL))
+    static func current(configURL: URL = LiveConfig.url) -> String? {
+        root(config: LiveConfig.data(at: configURL))
     }
 
     /// Поля команды после id, action, at: `root` строкой или `null`.

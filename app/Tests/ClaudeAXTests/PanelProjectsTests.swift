@@ -56,14 +56,11 @@ final class PanelProjectsTests: XCTestCase {
         // Прошлые «кодинг — …» → «кодинг»; две роли «проверка» — один отрезок; текущий — роль с 💭.
         XCTAssertEqual(running.phases.map { $0.name }, ["кодинг", "проверка"])
         XCTAssertEqual(running.phases.map { $0.state }, [.done, .current])
-        XCTAssertEqual(running.phases[1].effort, "EXTRA", "xhigh → EXTRA")
-        XCTAssertEqual(running.phases[1].who, "судья на 2 зоны · Opus 5.5")
-        XCTAssertFalse(running.phases[1].hot)
         XCTAssertEqual(running.phases[1].help, "проверка · судья на 2 зоны · Opus 5.5 xhigh 💭")
-        XCTAssertEqual(running.phases[0].who, "", "у прошлых модель не показываем")
+        XCTAssertEqual(running.phases[0].help, "кодинг", "у прошлых подсказка — имя")
     }
 
-    func testPhasesWithoutRunningMarkTakeLastRoleAndHotModels() {
+    func testPhasesWithoutRunningMarkTakeLastRole() {
         let text = """
         1️⃣ Workflow 💭 идёт
         - о чём: панель
@@ -74,19 +71,14 @@ final class PanelProjectsTests: XCTestCase {
         """
         let phases = PanelProjects.parse(text).workflows[0].phases
         XCTAssertEqual(phases.map { $0.state }, [.done, .done, .done, .current], "без 💭 текущая — последняя роль")
-        XCTAssertEqual(phases[3].who, "1 × Opus 5.5")
-        XCTAssertEqual(phases[3].effort, "HIGH")
+        XCTAssertEqual(phases[3].help, "проверка · 1 агент · Opus 5.5 high")
         XCTAssertEqual(phases[0].name, "план")
-        XCTAssertEqual(phases[0].who, "я · Opus 5.5")
-        XCTAssertEqual(phases[1].who, "1 × Fable")
-        XCTAssertEqual(phases[1].effort, "MAX")
-        XCTAssertTrue(phases[1].hot, "Fable и max — красным")
-        XCTAssertEqual(phases[2].who, "2 × Opus 5.5")
+        XCTAssertEqual(phases[1].help, "критика · 1 агент · 🔴 **Fable max**")
 
         let marked = PanelProjects.parse(text.replacingOccurrences(of: "Opus 5.5 medium", with: "Opus 5.5 medium 💭"))
             .workflows[0].phases
         XCTAssertEqual(marked.map { $0.state }, [.done, .done, .current, .future])
-        XCTAssertEqual(marked[3].who, "1 × Opus 5.5", "будущая — с моделью")
+        XCTAssertEqual(marked[3].help, "проверка · 1 агент · Opus 5.5 high", "будущая — со строкой роли")
 
         let failed = PanelProjects.parse(text.replacingOccurrences(of: "💭 идёт", with: "🛑 упал")).workflows[0]
         XCTAssertEqual(failed.phases.last?.state, .failed)
@@ -101,8 +93,8 @@ final class PanelProjectsTests: XCTestCase {
     func testUnparsedRoleKeepsWholeLine() {
         let phases = PanelProjects.parse("1️⃣ Workflow 💭\n- о чём: x\n- проверка · Kimi K3 и GLM читают 💭\n")
             .workflows[0].phases
-        XCTAssertEqual(phases.first?.who, "Kimi K3 и GLM читают")
-        XCTAssertEqual(phases.first?.effort, "")
+        XCTAssertEqual(phases.first?.help, "проверка · Kimi K3 и GLM читают 💭")
+        XCTAssertEqual(phases.first?.state, .current)
     }
 
     func testReadyWords() {
@@ -152,7 +144,7 @@ final class PanelProjectsTests: XCTestCase {
         write(root, "Waiter", "# 🟢Waiter\nЖдёт Элвиса: «да»\n", age: 3600)
         write(root, "OldWaiter", "# OldWaiter\nЖдёт Элвиса: «да»\n", age: 8 * 86_400)
         write(root, "Runner", "# Runner\n1️⃣ Workflow 💭 идёт\n- о чём: x\n- кодинг · 1 агент · Opus 5.5 high\n"
-              + "Ждёт Элвиса: ничего\n", sub: "audit", age: 3 * 3600)
+              + "Ждёт Элвиса: ничего\n", sub: "audit", age: 20 * 60)
         write(root, "StaleRunner", "# StaleRunner\n1️⃣ Workflow 💭 идёт\n- о чём: x\n", age: 13 * 3600)
         write(root, "Hand", "# Hand\n1️⃣ Workflow ✋ жду\n- о чём: макет\n", age: 60)
         // Рабочее дерево: `.git` — файл.
@@ -170,7 +162,8 @@ final class PanelProjectsTests: XCTestCase {
         XCTAssertEqual(snapshot.waiting.first?.note, "Workflow «макет» ждёт тебя")
         XCTAssertEqual(snapshot.waiting.last?.words, ["да"])
         XCTAssertEqual(snapshot.waiting.last?.marker, "🟢")
-        XCTAssertEqual(snapshot.working.map { $0.name }, ["Runner"], "старше 12 ч и рабочее дерево — нет; «ничего» — не ждёт")
+        XCTAssertEqual(snapshot.working.map { $0.name }, ["Runner"],
+                       "содержимое старше 45 мин без терминала и чата (#10315) и рабочее дерево — нет; «ничего» — не ждёт")
         XCTAssertEqual(snapshot.working.first?.running.first?.phases.first?.state, .current)
         XCTAssertEqual(snapshot.others.map { $0.name }.first, "Rick", "главный — первым")
         XCTAssertTrue(snapshot.others.contains { $0.name == "Empty" }, "недавний без сводки — в «Остальных»")
@@ -179,7 +172,6 @@ final class PanelProjectsTests: XCTestCase {
         XCTAssertTrue(snapshot.others.contains { $0.name == "StaleRunner" }, "сводка младше 7 суток — в «Остальных»")
         XCTAssertFalse(snapshot.others.contains { $0.name == "OldWaiter" })
         XCTAssertFalse((snapshot.waiting + snapshot.working + snapshot.others).contains { $0.folder.hasSuffix("Runner-wt") })
-        XCTAssertEqual(snapshot.mainName, "Rick")
         XCTAssertTrue(snapshot.others.first?.isMain ?? false)
     }
 }

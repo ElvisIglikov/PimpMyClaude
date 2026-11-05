@@ -9,6 +9,8 @@ import { pathToFileURL } from "node:url";
 import { injectSource } from "./load.mjs";
 
 const enabled = Boolean(process.env.PIMP_WF120_PLAYWRIGHT && process.env.PIMP_WF120_CHROMIUM);
+// Метка страницы — из самого файла (WF248): стенд не краснеет на каждом подъёме VERSION.
+const VERSION = /const VERSION = "([^"]+)"/.exec(injectSource())[1];
 test("WF120 Chromium: реальные PNG-байты, pending/off, CSS :has и обновление ленты", { skip: !enabled, timeout: 30000 }, async () => {
   const { chromium } = await import(pathToFileURL(process.env.PIMP_WF120_PLAYWRIGHT));
   const scratch = mkdtempSync(resolve("audit/wf120-browser-"));
@@ -56,7 +58,7 @@ test("WF120 Chromium: реальные PNG-байты, pending/off, CSS :has и 
         if (event.key === "Enter") { event.preventDefault(); window.sent.push([...window.files]); }
       });
     });
-    assert.equal(await page.evaluate(injectSource()), "wf125-page-5");
+    assert.equal(await page.evaluate(injectSource()), VERSION);
     const command = async detail => page.evaluate(detail => window.dispatchEvent(new CustomEvent("myclaude-command", { detail })), detail);
     await command({ action: "hide-tools", on: "true" });
     const visibility = () => page.evaluate(() => ["done", "edited"].map(id => getComputedStyle(document.getElementById(id)).display));

@@ -1,0 +1,25 @@
+{
+  "about": "#10310, контракт К-SIGN: один эталон выбора личности подписи для SignIdentity.choose (Swift) и chooseSignIdentity (patch-claude.mjs). list — вывод `security find-identity -p codesigning` без -v; count — сколько разных личностей в нём; expect — null значит временная (ad-hoc) подпись.",
+  "cases": [
+    {"name": "Developer ID на Маке Элвиса", "list": "devid-and-local.txt", "count": 3, "saved": null,
+     "expect": {"sha1": "1111111111111111111111111111111111111111", "kind": "developer-id"}},
+    {"name": "сохранённая своя держится и рядом с Developer ID", "list": "devid-and-local.txt", "count": 3,
+     "saved": {"sha1": "E6282567E9AC9930B040F0368D3AB8FF783032A6", "kind": "local"},
+     "expect": {"sha1": "E6282567E9AC9930B040F0368D3AB8FF783032A6", "kind": "local"}},
+    {"name": "сохранённая пропала — по правилу", "list": "devid-and-local.txt", "count": 3,
+     "saved": {"sha1": "9999999999999999999999999999999999999999", "kind": "local"},
+     "expect": {"sha1": "1111111111111111111111111111111111111111", "kind": "developer-id"}},
+    {"name": "только своя, без доверия", "list": "local-only.txt", "count": 1, "saved": null,
+     "expect": {"sha1": "E6282567E9AC9930B040F0368D3AB8FF783032A6", "kind": "local"}},
+    {"name": "просроченная, отозванная и чужие — временная", "list": "unusable.txt", "count": 4, "saved": null,
+     "expect": null},
+    {"name": "сохранённая отозвана — временная", "list": "unusable.txt", "count": 4,
+     "saved": {"sha1": "4444444444444444444444444444444444444444", "kind": "local"}, "expect": null},
+    {"name": "ничего нет — временная", "list": "empty.txt", "count": 0, "saved": null, "expect": null},
+    {"name": "Developer ID просрочен — своя", "list": "expired-devid.txt", "count": 2, "saved": null,
+     "expect": {"sha1": "E6282567E9AC9930B040F0368D3AB8FF783032A6", "kind": "local"}},
+    {"name": "сохранённая строчными буквами", "list": "expired-devid.txt", "count": 2,
+     "saved": {"sha1": "e6282567e9ac9930b040f0368d3ab8ff783032a6", "kind": "local"},
+     "expect": {"sha1": "E6282567E9AC9930B040F0368D3AB8FF783032A6", "kind": "local"}}
+  ]
+}

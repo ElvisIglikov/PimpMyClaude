@@ -1,5 +1,5 @@
-// WF88 (V-N), страница: правый клик по кнопке боковой панели (К19), ссылка на
-// заголовках «ОТКРОЙ НОВЫЙ ЧАТ» (К15) и заглушка «Code» (К19).
+// WF88 (V-N), страница: правый клик по кнопке боковой панели (К19 снят в WF248 — меню Claude
+// как было), ссылка на заголовках «ОТКРОЙ НОВЫЙ ЧАТ» (К15) и заглушка «Code» (К19).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -8,7 +8,7 @@ import { loadInject, plain } from "./load.mjs";
 const fixture = name => JSON.parse(readFileSync(new URL(`./fixtures/cashout/${name}.json`, import.meta.url), "utf8"));
 const HANDOFF = fixture("record-handoff").text;
 const LINK = "[data-myclaude-continue-link]";
-const PREFIX = "Пимп: продолжить в новом чате · ";
+const PREFIX = "PMP: продолжить в новом чате · ";
 
 // Ответ по правилу ELVIS.md: заголовок, блок передачи, хвостовой повтор заголовка.
 const answerWith = (dom, top, { head = "🆕 ОТКРОЙ НОВЫЙ ЧАТ", tail = true, code = HANDOFF } = {}) => {
@@ -55,7 +55,7 @@ const linkStatus = loaded => plain(loaded.api.status().continue.link);
 
 // ---- К19: правый клик по кнопке панели --------------------------------------
 
-test("WF88 К19: contextmenu на кнопке панели (и значке в ней) погашен, на других — нет", () => {
+test("WF248 (К19 снят): contextmenu на кнопке панели не гасим — меню Claude как было", () => {
   const nodes = {};
   const { loaded } = page({
     answers: [],
@@ -67,11 +67,11 @@ test("WF88 К19: contextmenu на кнопке панели (и значке в 
     },
   });
   const menu = target => loaded.document.dispatchEvent({ type: "contextmenu", target, bubbles: true, cancelable: true });
-  assert.equal(menu(nodes.show), false, "Show sidebar — погашено");
-  assert.equal(menu(nodes.icon), false, "значок внутри кнопки — погашено");
-  assert.equal(menu(nodes.hide), false, "Hide sidebar — погашено");
+  assert.equal(menu(nodes.show), true, "Show sidebar — меню Claude");
+  assert.equal(menu(nodes.icon), true, "значок внутри кнопки — меню Claude");
+  assert.equal(menu(nodes.hide), true, "Hide sidebar — меню Claude");
   assert.equal(menu(nodes.other), true, "другая кнопка — меню Claude как было");
-  assert.equal(loaded.api.status().sidebarContext, 3);
+  assert.equal("sidebarContext" in plain(loaded.api.status()), false, "счётчика погашенных кликов нет");
 });
 
 // ---- К19: заглушка «Code» ----------------------------------------------------
@@ -91,7 +91,7 @@ test("WF88 К15: ссылка на обоих заголовках послед�
   assert.equal(links.length, 2, "верхний и хвостовой — у последнего ответа");
   assert.deepEqual(links, got[1].heads);
   for (const head of got[1].heads) {
-    assert.equal(head.getAttribute("title"), "Открыть новый чат с этим текстом (Пимп)");
+    assert.equal(head.getAttribute("title"), "Открыть новый чат с этим текстом (PMP)");
     assert.equal(head.textContent, "🆕 ОТКРОЙ НОВЫЙ ЧАТ");
   }
   for (const head of got[0].heads) assert.equal(head.hasAttribute("data-myclaude-continue-link"), false);
@@ -156,7 +156,7 @@ test("WF88 К15: молчание приложения — плашка без �
   click(loaded, got[0].heads[0]);
   tick(9000);
   for (let index = 0; index < 200 && loaded.dom.ids("timeout").length; index += 1) loaded.dom.fireKind("timeout");
-  assert.ok(loaded.document.body.textContent.includes("Пимп пока не взялся — проверь, что он запущен и у него есть доступ, и нажми ещё раз"));
+  assert.ok(loaded.document.body.textContent.includes("PMP пока не взялся — проверь, что он запущен и у него есть доступ, и нажми ещё раз"));
   assert.equal(loaded.document.body.textContent.includes("⌘B"), false);
   for (const head of got[0].heads) assert.equal(head.hasAttribute("data-myclaude-continue-state"), false);
 });

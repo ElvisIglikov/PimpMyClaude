@@ -1,0 +1,398 @@
+[
+ {
+  "type": "system",
+  "uuid": "s-01",
+  "parentUuid": null,
+  "timestamp": "2026-10-20T10:00:00.000Z",
+  "subtype": "init",
+  "isMeta": false,
+  "isSidechain": false
+ },
+ {
+  "type": "user",
+  "uuid": "u-01",
+  "parentUuid": "s-01",
+  "timestamp": "2026-10-20T10:01:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "user",
+   "content": "Сверь остатки на складе за неделю и дай итог."
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "a-01",
+  "parentUuid": "u-01",
+  "timestamp": "2026-10-20T10:02:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "assistant",
+   "id": "msg_01",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "план"
+    }
+   ],
+   "stop_reason": null
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "a-02",
+  "parentUuid": "a-01",
+  "timestamp": "2026-10-20T10:02:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "assistant",
+   "id": "msg_01",
+   "content": [
+    {
+     "type": "text",
+     "text": "Смотрю таблицу остатков."
+    }
+   ],
+   "stop_reason": null
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "a-03",
+  "parentUuid": "a-02",
+  "timestamp": "2026-10-20T10:02:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "assistant",
+   "id": "msg_01",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "tu_01",
+     "name": "Read",
+     "input": {}
+    }
+   ],
+   "stop_reason": "tool_use"
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "a-03",
+  "parentUuid": "a-02",
+  "timestamp": "2026-10-20T10:02:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "assistant",
+   "id": "msg_01",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "tu_01",
+     "name": "Read",
+     "input": {}
+    }
+   ],
+   "stop_reason": "tool_use"
+  }
+ },
+ {
+  "type": "user",
+  "uuid": "u-02",
+  "parentUuid": "a-03",
+  "timestamp": "2026-10-20T10:03:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "tu_01",
+     "content": "строки таблицы"
+    }
+   ]
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "a-04",
+  "parentUuid": "u-02",
+  "timestamp": "2026-10-20T10:04:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "assistant",
+   "id": "msg_02",
+   "content": [
+    {
+     "type": "text",
+     "text": "## Итог\n\nВсё сходится, кроме **двух** позиций:\n\n- яблоки — минус 3\n- груши — плюс 1\n\n| позиция | было | стало |\n|---|---:|---:|\n| яблоки | 10 | 7 |\n| груши | 4 | 5 |\n\nПодробности — [в справке](https://example.com/help)."
+    }
+   ],
+   "stop_reason": "end_turn"
+  }
+ },
+ {
+  "type": "user",
+  "uuid": "u-03",
+  "parentUuid": "a-04",
+  "timestamp": "2026-10-20T10:05:00.000Z",
+  "isMeta": true,
+  "isSidechain": false,
+  "message": {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "[Image: source: picture-01.png]"
+    }
+   ]
+  }
+ },
+ {
+  "type": "result",
+  "uuid": "x-01",
+  "parentUuid": "a-04",
+  "timestamp": "2026-10-20T10:05:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "subtype": "success"
+ },
+ {
+  "type": "rate_limit_event",
+  "uuid": "x-02",
+  "parentUuid": "a-04",
+  "timestamp": "2026-10-20T10:05:00.000Z",
+  "isMeta": false,
+  "isSidechain": false
+ },
+ {
+  "type": "user",
+  "uuid": "u-04",
+  "parentUuid": "a-04",
+  "timestamp": "2026-10-20T10:06:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "user",
+   "content": "<task-notification>\n<summary>Фоновая проверка закончилась</summary>\n<status>completed</status>\n</task-notification>"
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "a-05",
+  "parentUuid": "u-04",
+  "timestamp": "2026-10-20T10:07:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "assistant",
+   "id": "msg_03",
+   "content": [
+    {
+     "type": "text",
+     "text": "Фоновая проверка подтвердила итог."
+    }
+   ],
+   "stop_reason": "end_turn"
+  }
+ },
+ {
+  "type": "user",
+  "uuid": "u-05",
+  "parentUuid": "a-05",
+  "timestamp": "2026-10-20T10:08:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "<system-reminder>служебная вставка</system-reminder>\nПосмотри вставку:\n<pasted_content id=\"ab12\">строка из вставки</pasted_content id=\"ab12\">"
+    },
+    {
+     "type": "image",
+     "source": {
+      "type": "base64",
+      "media_type": "image/png",
+      "data": "AAAA"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "a-06",
+  "parentUuid": "u-05",
+  "timestamp": "2026-10-20T10:09:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "assistant",
+   "id": "msg_04",
+   "content": [
+    {
+     "type": "text",
+     "text": "Вижу вставку, проверяю."
+    }
+   ],
+   "stop_reason": null
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "a-07",
+  "parentUuid": "a-06",
+  "timestamp": "2026-10-20T10:09:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "assistant",
+   "id": "msg_04",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "tu_02",
+     "name": "Grep",
+     "input": {}
+    }
+   ],
+   "stop_reason": "tool_use"
+  }
+ },
+ {
+  "type": "user",
+  "uuid": "u-06",
+  "parentUuid": "a-07",
+  "timestamp": "2026-10-20T10:10:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "tu_02",
+     "content": "совпадений нет"
+    }
+   ]
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "a-08",
+  "parentUuid": "u-06",
+  "timestamp": "2026-10-20T10:10:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "assistant",
+   "id": "msg_05",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "tu_03",
+     "name": "Bash",
+     "input": {}
+    }
+   ],
+   "stop_reason": "tool_use"
+  }
+ },
+ {
+  "type": "user",
+  "uuid": "z-01",
+  "parentUuid": "a-08",
+  "timestamp": "2026-10-20T10:11:00.000Z",
+  "isMeta": false,
+  "isSidechain": true,
+  "message": {
+   "role": "user",
+   "content": "задача субагенту"
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "z-02",
+  "parentUuid": "z-01",
+  "timestamp": "2026-10-20T10:11:00.000Z",
+  "isMeta": false,
+  "isSidechain": true,
+  "message": {
+   "role": "assistant",
+   "id": "msg_z1",
+   "content": [
+    {
+     "type": "text",
+     "text": "ответ субагента"
+    }
+   ],
+   "stop_reason": "end_turn"
+  }
+ },
+ {
+  "type": "user",
+  "uuid": "u-07",
+  "parentUuid": "a-08",
+  "timestamp": "2026-10-20T10:12:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "user",
+   "content": "<command-name>/compact</command-name>\n<command-args></command-args>"
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "a-09",
+  "parentUuid": "u-07",
+  "timestamp": "2026-10-20T10:13:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "assistant",
+   "id": "msg_06",
+   "content": [
+    {
+     "type": "text",
+     "text": "Сжато, продолжаю с того же места.\n\n### Ждёт тебя\n\nЖдёт тебя: проверить груши руками."
+    }
+   ],
+   "stop_reason": "end_turn"
+  }
+ },
+ {
+  "type": "user",
+  "uuid": "u-08",
+  "parentUuid": "a-09",
+  "timestamp": "2026-10-20T10:14:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "message": {
+   "role": "user",
+   "content": "А что с грушами?"
+  }
+ },
+ {
+  "type": "assistant",
+  "uuid": "a-10",
+  "parentUuid": "u-08",
+  "timestamp": "2026-10-20T10:15:00.000Z",
+  "isMeta": false,
+  "isSidechain": false,
+  "role": "assistant",
+  "content": [
+   {
+    "type": "text",
+    "text": "Груши: одна лишняя, пересчитаю завтра."
+   }
+  ]
+ }
+]

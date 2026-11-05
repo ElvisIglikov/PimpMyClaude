@@ -185,7 +185,7 @@ final class LookSchemeWF145Tests: XCTestCase {
     }
 
     func testSchemeSurvivesDefaultsProjectFileAndThemeMap() throws {
-        let suite = "wf145-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = ThemeStore(defaults: defaults)
@@ -205,39 +205,13 @@ final class LookSchemeWF145Tests: XCTestCase {
                        "{\"aurora\":true,\"neon\":false,\"dense\":false,\"scheme\":\"sea\"}")
     }
 
-    func testMenuSchemeItemsCheckCurrentAndApplyLiveBackground() throws {
-        var config = MinimizeMenu.MenuConfig()
-        config.windowLook = Look(aurora: true, scheme: "sea")
-        var applied: [Look] = []
-        config.apply = { _, _, _, _, _, look in if case .set(let value) = look { applied.append(value) } }
-        let item = MinimizeMenu.schemeItem(config, scope: "window")
-        let items = try XCTUnwrap(item.submenu?.items)
-        XCTAssertEqual(items.map { $0.title }, LookScheme.all.map { $0.name })
-        XCTAssertEqual(items.filter { $0.state == .on }.map { $0.title }, ["Глубокое море"])
-        let forest = try XCTUnwrap(items.first { $0.title == "Лес" })
-        _ = (forest.target as? NSObject)?.perform(forest.action, with: forest)
-        XCTAssertEqual(applied, [Look(aurora: true, scheme: "forest")])
-
-        var off = MinimizeMenu.MenuConfig()
-        off.windowLook = Look(dense: true)
-        let none = try XCTUnwrap(MinimizeMenu.schemeItem(off, scope: "window").submenu?.items)
-        XCTAssertTrue(none.allSatisfy { $0.state == .off }, "живой фон выключен — галки нет")
-    }
-
-    func testLookItemsCarrySchemeSubmenuUnderLiveBackground() throws {
-        let items = MinimizeMenu.lookItems(MinimizeMenu.MenuConfig(), scope: MenuModel.themeScopeAll)
-        let lab = try XCTUnwrap(items.last?.submenu?.items.map { $0.title })
-        let live = try XCTUnwrap(lab.firstIndex(of: MenuModel.lookAuroraTitle))
-        XCTAssertEqual(lab[live + 1], MenuModel.lookSchemeTitle)
-    }
-
     /// Сверка с `LOOK_SCHEMES` страницы (по образцу `testCommandContractMatchesInjectJS`): ids, имена, тона, порядок.
     func testSchemesMatchInjectJS() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
+        let root = Repo.root
         let inject = try String(contentsOf: root.appendingPathComponent("claude-patch/inject.js"), encoding: .utf8)
         guard let start = inject.range(of: "const LOOK_SCHEMES = [") else {
-            throw XCTSkip("в этой ветке страница ещё без схем (WF146) — сверка оживёт после слияния")
+            // Схемы на странице с WF146: пропажа списка — поломка, а не «ещё не слили» (ревизия WF247).
+            return XCTFail("в inject.js нет `const LOOK_SCHEMES = [` — сверять схемы не с чем")
         }
         let tail = inject[start.upperBound...]
         let body = String(tail[..<(tail.range(of: "];")?.lowerBound ?? tail.endIndex)])

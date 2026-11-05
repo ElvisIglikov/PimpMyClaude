@@ -161,6 +161,20 @@ test("ambiguous composers, duplicate boxes, foreign pages and unidentified popou
   }
 });
 
+test("#11187: cards inside Claude's column and scroll-row wrappers are counted; a non-card leaf is unknown", () => {
+  // С 30.10: коробка → столбец «flex flex-col gap-2» → ряд MessageAttachments → плитки.
+  const wrapped = parts => parts.box.add("div", { attrs: { class: "flex flex-col gap-2" }, rect })
+    .add("div", { attrs: { "data-cds": "MessageAttachments", "data-cds-composer-attachments-row": "" }, rect });
+  const loaded = page({}, (_, p) => { const row = wrapped(p); card(row); card(row, "MessageAttachmentsFile"); });
+  assert.equal(snapshot(loaded).count, 2);
+  for (const extra of [
+    row => row.add("div", { attrs: { "aria-hidden": "true", "data-testid": "attachment-placeholder-tile" }, rect }),
+    row => row.add("div", { attrs: { class: "flex self-center" }, rect }).add("button", { rect }),
+  ]) {
+    assert.equal(snapshot(page({}, (_, p) => { const row = wrapped(p); card(row); extra(row); })), null);
+  }
+});
+
 test("removing or replacing prior cards invalidates generation even at the same count", () => {
   const loaded = page({}, (_, p) => card(p.box));
   const before = snapshot(loaded);

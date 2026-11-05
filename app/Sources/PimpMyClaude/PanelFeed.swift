@@ -32,16 +32,60 @@ final class PanelFeed {
     func opened() {
         refresh()
         refreshColors()
+        refreshTerminals(retitle: true)
+        model.showTerminal = { terminal in
+            DispatchQueue.global(qos: .userInitiated).async { _ = PanelTerminals.show(terminal) }
+        }
+        model.askTerminalAccess = { [weak self] in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let access = PanelTerminals.requestAccess()
+                DispatchQueue.main.async { self?.model.terminalAccess = access }
+            }
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let access = PanelTerminals.access(ask: false)
+            DispatchQueue.main.async { if self?.model.terminalAccess != access { self?.model.terminalAccess = access } }
+        }
         refreshTimer?.invalidate()
         let timer = Timer(timeInterval: Self.refreshSeconds, repeats: true) { [weak self] _ in self?.refresh() }
         RunLoop.main.add(timer, forMode: .common)
         refreshTimer = timer
+        terminalsTimer?.invalidate()
+        let terminals = Timer(timeInterval: Self.terminalsSeconds, repeats: true) { [weak self] _ in
+            self?.refreshTerminals(retitle: false)
+        }
+        RunLoop.main.add(terminals, forMode: .common)
+        terminalsTimer = terminals
+    }
+
+    /// Терминалы (#10464): ход меняется быстро — свой шаг. Заголовки окон — раз на открытие панели.
+    static let terminalsSeconds: TimeInterval = 5
+    private var terminalsTimer: Timer?
+    private var terminalsBusy = false
+
+    private func refreshTerminals(retitle: Bool) {
+        guard !terminalsBusy else { return }
+        terminalsBusy = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let list = PanelTerminals.live()
+            let alarm = ITermHub.panelAlarm()
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if self.model.terminals != list { self.panel.change { self.model.terminals = list } }
+                if self.model.terminalsAlarm != alarm { self.panel.change { self.model.terminalsAlarm = alarm } }
+            }
+            // Заголовки вкладок — после списка: AppleEvents могут ждать разрешения человека.
+            if retitle { PanelTerminals.retitle(list) }
+            DispatchQueue.main.async { self?.terminalsBusy = false }
+        }
     }
 
     /// Закрылась — примерки снимаются.
     func closed() {
         refreshTimer?.invalidate()
         refreshTimer = nil
+        terminalsTimer?.invalidate()
+        terminalsTimer = nil
         model.accentPreview = nil
         previewWindowColor(nil)
     }
@@ -49,6 +93,14 @@ final class PanelFeed {
     func refresh() {
         ax.panelProjects { [weak self] snapshot in
             guard let self = self else { return }
+            // Цена Workflow (#6282): в фоне, не чаще раза в минуту на те же строки.
+            WorkflowCostRunner.shared.request(snapshot) { [weak self] costs in
+                guard let self = self else { return }
+                // Окно «Токены» — Workflow за 7 дней столбиками цены.
+                if self.panel.tokens.model.flows != costs.flows { self.panel.tokens.model.flows = costs.flows }
+                guard self.model.flowCosts != costs else { return }
+                self.panel.change { self.model.flowCosts = costs }
+            }
             guard self.model.projects != snapshot else { return }
             self.panel.change { self.model.projects = snapshot }
         }
@@ -63,13 +115,10 @@ final class PanelFeed {
         model.windowColor = choice
         let live = ax.liveBackground
         if model.liveBackground != live { model.liveBackground = live }
+        let motion = ax.liveMotion
+        if model.liveMotion != motion { model.liveMotion = motion }
         let scheme = ax.liveScheme
         if model.liveScheme != scheme { model.liveScheme = scheme }
-        if case .theme(let id) = choice, !all.contains(where: { $0.id == id }) {
-            model.foreignTheme = ax.themeName(id)
-        } else {
-            model.foreignTheme = nil
-        }
     }
 
     // MARK: Esc (§1.6)
@@ -81,10 +130,13 @@ final class PanelFeed {
             panel.change { model.accentOpen = false }
             return true
         }
-        // «Цвет Claude» (WF141): раскрытый блок — в строку.
-        if model.colorsOpen {
-            panel.change { model.colorsOpen = false }
-            PanelColorTiles.setOpen(false)
+        // «Оформление»: сперва убираются настройки отсчёта, потом дополнительное оформление (WF242).
+        if model.countdownSettingsOpen {
+            panel.change { model.countdownSettingsOpen = false }
+            return true
+        }
+        if model.colorsExtraOpen {
+            panel.change { model.colorsExtraOpen = false }
             return true
         }
         if model.sheet == .settings {
@@ -104,7 +156,6 @@ final class PanelFeed {
         previewWanted = nil
         ax.chooseWindowColor(choice)
         model.windowColor = choice
-        model.foreignTheme = nil
         // WF180: «Живой» не снимается — живой фон переходит на тона нажатого цвета (схема «Как у темы»).
         if PanelColorTiles.colorNeedsLiveScheme(live: model.liveBackground, scheme: model.liveScheme) {
             setLive(true)
@@ -117,6 +168,14 @@ final class PanelFeed {
         ax.setLive(on)
         model.liveBackground = on
         if on { model.liveScheme = PanelColorTiles.liveScheme }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.refreshColors() }
+    }
+
+    /// Строка «Живой фон» (#9994): nil — без живого фона, иначе — живой фон с этим движением.
+    func setLiveMotion(_ motion: LookMotion?) {
+        ax.setLiveMotion(motion)
+        model.liveBackground = motion != nil
+        if let motion = motion { model.liveMotion = motion }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.refreshColors() }
     }
 

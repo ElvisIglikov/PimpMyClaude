@@ -80,32 +80,33 @@ const collapse = loaded => { loaded.api.setStage(loaded.api.stages.COLLAPSED); s
 const press = loaded => node(loaded).dispatchEvent({ type: "click" });
 const viewer = (loaded, chat) => loaded.dom.command({ id: `v-${seq += 1}`, action: "viewer-chat", at: "now", scope: "all", chat });
 
-test("#7724: открытое поле — «Галерея 3» сразу правее «+ Auto», группе дано место справа", () => {
+test("#7724: открытое поле — «Галерея» сразу правее «+ Auto», группе дано место справа", () => {
   const loaded = page();
   const item = node(loaded);
   assert.equal(item.style.getPropertyValue("display"), "flex");
   assert.equal(px(item, "left"), LEFT.left + LEFT.width + 6, "не сразу правее левой группы «+ Auto»");
   assert.equal(px(item, "top") + 10, LEFT.top + LEFT.height / 2, "не по середине строки");
-  assert.equal(px(item, "width"), 20 + 6, "ширина — значок и одна цифра (WF103, #7965: без слова)");
+  assert.equal(item.style.getPropertyValue("width"), "", "#9507: ширина одна, 20 из листа стилей, — от числа не растёт");
   assert.deepEqual([gallery(loaded).visible, gallery(loaded).spot, gallery(loaded).compact], [true, "field", false]);
-  // С WF213 кнопка PMP — в каждом чате главного окна: место — на «Галерею» и на неё (6 + 26 + 6 + 24 + 6).
-  assert.equal(loaded.parts.left.getAttribute(ROOM), "68px", "левой группе не дали места под кнопки");
-  assert.equal(loaded.parts.left.style.getPropertyValue("--myclaude-gallery-room"), "68px");
+  // С WF213 кнопка PMP — в каждом чате главного окна: место — на «Галерею» и на неё (6 + 20 + 6 + 24 + 6).
+  assert.equal(loaded.parts.left.getAttribute(ROOM), "62px", "левой группе не дали места под кнопки");
+  assert.equal(loaded.parts.left.style.getPropertyValue("--myclaude-gallery-room"), "62px");
   assert.equal(loaded.parts.chin.hasAttribute(ROOM), false, "у правого края места больше не берём");
-  assert.equal(item.textContent.trim(), "3", "WF103 (#7965): только значок и число");
+  assert.equal(item.textContent.trim(), "", "#9507 (слово Элвиса 10.10: счётчики у кнопок убрать): только значок");
+  assert.equal(item.title, "Галерея — Pimp Viewer: только файлы этого чата (3)", "число файлов — в подсказке");
   const css = loaded.dom.queryAll("style").map(style => style.textContent).join("\n");
   assert.match(css, /\[data-cds="ChatComposerChin"\] \[data-myclaude-gallery-room\]\{margin-inline-end:var\(--myclaude-gallery-room,0px\) !important;/);
 });
 
-test("#7724: узкое окно — «▦ N», места у группы меньше", () => {
+test("#7724: узкое окно — «▦», место у группы то же", () => {
   const loaded = page({ viewport: { width: 340, height: 800 } });
   assert.deepEqual([gallery(loaded).visible, gallery(loaded).compact], [true, true]);
   assert.equal(node(loaded).dataset.compact, "true");
-  assert.equal(px(node(loaded), "width"), 20 + 6);
-  assert.equal(loaded.parts.left.getAttribute(ROOM), "68px");
+  assert.equal(node(loaded).style.getPropertyValue("width"), "");
+  assert.equal(loaded.parts.left.getAttribute(ROOM), "62px");
 });
 
-test("#7724: viewer-counts — нет файлов у чата, кнопки нет; есть — видна с числом", () => {
+test("#7724: viewer-counts — нет файлов у чата, кнопки нет; есть — видна, число в подсказке", () => {
   const loaded = page({ files: null });
   assert.equal(gallery(loaded).visible, false, "чисел ещё нет — кнопки нет");
   assert.equal(loaded.parts.left.getAttribute(ROOM), "36px", "без «Галереи» место — только под кнопку PMP (WF213)");
@@ -113,8 +114,10 @@ test("#7724: viewer-counts — нет файлов у чата, кнопки н�
   assert.equal(gallery(loaded).visible, false, "файлы есть у чужого чата");
   counts(loaded, { [CHAT]: [12, 0] });
   assert.deepEqual([gallery(loaded).visible, gallery(loaded).files, gallery(loaded).counted], [true, 12, 2]);
-  assert.equal(node(loaded).textContent.trim(), "12");
-  assert.equal(px(node(loaded), "width"), 20 + 12, "две цифры — шире");
+  assert.equal(node(loaded).textContent.trim(), "", "#9507: числа на кнопке нет");
+  assert.match(node(loaded).title, /\(12\)$/, "две цифры — в подсказке");
+  assert.equal(node(loaded).style.getPropertyValue("width"), "", "кнопка не шире от числа");
+  assert.equal(loaded.parts.left.getAttribute(ROOM), "62px");
   counts(loaded, {});
   assert.equal(gallery(loaded).visible, false, "файлов не стало — кнопка ушла");
   assert.equal(loaded.parts.left.getAttribute(ROOM), "36px");
@@ -146,13 +149,13 @@ test("#7724: строка без кнопки модели — места не �
   assert.equal(loaded.parts.left.hasAttribute(ROOM), false);
 });
 
-test("#7724: свёрнутое поле — «▦ N» левее кружка; место в строке снято", () => {
+test("#7724: свёрнутое поле — «▦» левее кружка; место в строке снято", () => {
   const loaded = page();
   collapse(loaded);
   const item = node(loaded);
   assert.deepEqual([gallery(loaded).spot, gallery(loaded).compact], ["ring", true]);
   assert.equal(loaded.dom.query(MIC).style.getPropertyValue("display"), "none", "стенд: микрофона нет");
-  assert.equal(px(item, "left"), RING.left - 6 - 24 - 6 - 26, "не левее кружка и кнопки PMP (WF213)");
+  assert.equal(px(item, "left"), RING.left - 6 - 24 - 6 - 20, "не левее кружка и кнопки PMP (WF213)");
   assert.equal(px(item, "top") + 10, RING.top + RING.height / 2, "не по середине кружка");
   assert.equal(loaded.parts.left.hasAttribute(ROOM), false);
 });
@@ -162,7 +165,7 @@ test("#7724: свёрнутое поле с микрофоном — «Гале�
   collapse(loaded);
   const mic = loaded.dom.query(MIC);
   assert.equal(mic.dataset.spot, "ring");
-  assert.equal(px(node(loaded), "left"), px(mic, "left") - 6 - 24 - 6 - 26, "не левее микрофона и кнопки PMP (WF213)");
+  assert.equal(px(node(loaded), "left"), px(mic, "left") - 6 - 24 - 6 - 20, "не левее микрофона и кнопки PMP (WF213)");
 });
 
 test("#7724: id чата неизвестен — кнопки нет", () => {

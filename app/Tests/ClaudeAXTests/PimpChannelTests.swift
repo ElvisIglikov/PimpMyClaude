@@ -180,17 +180,8 @@ final class PimpChannelTests: XCTestCase {
         return channel
     }
 
-    /// Эталоны лежат в репозитории: `tests/fixtures/pimp/` от корня, путь считается от #filePath
-    /// (app/Tests/ClaudeAXTests/…), чтобы тест не зависел от рабочего каталога.
-    private static var fixtures: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("tests/fixtures/pimp", isDirectory: true)
-    }
-
     private func fixture(_ name: String) throws -> Data {
-        try Data(contentsOf: PimpChannelTests.fixtures.appendingPathComponent(name))
+        try Data(contentsOf: Repo.fixture("pimp/" + name))
     }
 
     private func fixtureText(_ name: String) throws -> String {
@@ -306,6 +297,16 @@ final class PimpChannelTests: XCTestCase {
         XCTAssertEqual(PimpRequest.place("120.6,-80.2"), .point(x: 121, y: -80))
         XCTAssertNil(PimpRequest.place("под этим"))
         XCTAssertNil(PimpRequest.place("120,80,40"))
+        // Точка вне экранов — bad-request, а не падение Пимпа (ревизия WF247): потолок 100 000,
+        // как POINT_LIMIT у CLI; NaN, бесконечность и 1e300 Int(exactly:) не пропускает.
+        XCTAssertEqual(PimpRequest.place("100000,-100000"), .point(x: 100_000, y: -100_000))
+        XCTAssertNil(PimpRequest.place("100001,0"))
+        XCTAssertNil(PimpRequest.place("0,-100000.6"))
+        XCTAssertNil(PimpRequest.place("1e300,0"))
+        XCTAssertNil(PimpRequest.place("99999999999999999999,0"))
+        XCTAssertNil(PimpRequest.place("nan,0"))
+        XCTAssertNil(PimpRequest.place("0,inf"))
+        XCTAssertNil(PimpRequest.parse(Data("{\"id\":\"1-1\",\"at\":\"2026-09-08T03:20:30Z\",\"action\":\"new-window\",\"project\":\"X\",\"place\":\"1e300,0\"}".utf8)))
     }
 
     // MARK: - 2. эталоны контракта: ответ
@@ -1266,37 +1267,6 @@ final class PimpChannelTests: XCTestCase {
         write(request("945-0002", action: "windows", at: rig.now), id: "945-0002", in: box)
         channel.tick()
         XCTAssertEqual(result("945-0002", in: box)?["ok"] as? Bool, true)
-    }
-
-    /// «↩︎ Вернуть эти чаты» из МЕНЮ: запроса нет, ответить некому — итог уходит плашкой,
-    /// теми же словами, что говорит CLI (#5689: раньше пункт молчал до конца дней).
-    func testPimpChannelTellsMenuWhenRestoreIsDone() throws {
-        let box = makeTemp()
-        let rig = PimpRig()
-        rig.mode = .five
-        let layout = WindowLayout(name: "Утро", at: rig.now, mode: .five, cells: [
-            LayoutCell(folder: "/tmp/Pimp", chat: "main", title: "Claude", cell: 0),
-            LayoutCell(folder: "/tmp/Vkus", chat: "local_v", title: "Вкуснофф", cell: 1),
-        ])
-        rig.saved = [layout]
-        rig.windows = [PimpWindow(id: 1, title: "Claude", chat: "local_main", folder: "/tmp/Pimp",
-                                  frame: CGRect(x: 300, y: 300, width: 900, height: 700))]
-        let channel = makeChannel(rig, in: box)
-
-        XCTAssertTrue(channel.startRestore(layout, fresh: false))
-        XCTAssertEqual(rig.popouts.map { $0.chat }, ["local_v"])
-        XCTAssertTrue(rig.notices.isEmpty, "пока работа идёт, говорить нечего")
-
-        // Окно так и не появилось: очередь кончилась — плашка называет итог.
-        rig.advance(PimpChannel.restoreWindowSeconds + 1)
-        channel.tick()
-        XCTAssertEqual(rig.notices,
-                       ["Вернул «Утро»: 1 стояло, 0 открыл; не нашёл чат: Вкуснофф"])
-        // Канал снова свободен: запрос из чата больше не получает «занят».
-        rig.advance(1)
-        write(request("946-0001", action: "windows", at: rig.now), id: "946-0001", in: box)
-        channel.tick()
-        XCTAssertEqual(result("946-0001", in: box)?["ok"] as? Bool, true)
     }
 
     /// Возврат ЛЕНТЫ считает места по записи, а не по числу занятых ячеек: у ленты ширина
@@ -2669,7 +2639,7 @@ final class PimpChannelTests: XCTestCase {
             block()
         })
         let actions = ClaudeActions(app: app, commands: commands, themes: [], fonts: [],
-                                    themeStore: ThemeStore(defaults: WF102Defaults()),
+                                    themeStore: ThemeStore(defaults: MemoryThemeDefaults()),
                                     myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")))
         actions.clock = { now }
         actions.schedule = { _, _ in }
@@ -2728,11 +2698,7 @@ final class LayoutsStoreTests: XCTestCase {
 
     /// Эталон контракта лежит в репозитории: его читают оба конца канала.
     private func fixtureText() throws -> String {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("tests/fixtures/pimp/layouts.json")
-        return try String(contentsOf: url, encoding: .utf8)
+        try String(contentsOf: Repo.fixture("pimp/layouts.json"), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -2850,43 +2816,6 @@ final class LayoutsStoreTests: XCTestCase {
     }
 }
 
-/// Полоса раскладок (`LayoutPicker.swift`, план WF21): подсказки серых плиток после того,
-/// как AppKit растянул вьюху пункта по ширине меню (#5681).
-final class LayoutPickerHintsTests: XCTestCase {
-    private func picker(fits: @escaping (ArrangeLayout.Mode) -> Bool) -> LayoutPickerView {
-        var config = MinimizeMenu.MenuConfig()
-        config.arrangeMode = .ribbon
-        config.arrangeFits = fits
-        // Десять окон: полоса собирается по их числу (#5800), и без них в ней осталась бы
-        // одна плитка «как сейчас» — серой, про которую подсказка, не было бы вовсе.
-        config.windowArea = CGRect(x: 0, y: 0, width: 1000, height: 500)
-        config.windowFrames = (0..<10).map {
-            CGRect(x: CGFloat($0) * 100, y: 0, width: 100, height: 500)
-        }
-        return LayoutPickerView(config: config)
-    }
-
-    func testLayoutPickerMovesHintsWithWidth() {
-        let view = picker { $0 != .tenGrid }
-        // Подсказка одна — у серой плитки «5 × 2» (третья по порядку макета).
-        XCTAssertEqual(view.hintRects, [view.cell(of: 2)])
-
-        // Меню шире полосы: клетки уезжают вправо — вместе с ними обязана уехать подсказка,
-        // иначе она висит над соседней плиткой.
-        let wide = NSSize(width: LayoutPickerView.width + 120, height: LayoutPickerView.height)
-        view.setFrameSize(wide)
-        XCTAssertEqual(view.hintRects, [view.cell(of: 2)])
-        XCTAssertEqual(view.hintRects.first?.minX, view.cell(of: 2).minX)
-        XCTAssertGreaterThan(view.cell(of: 2).minX, LayoutPickerView.tileSize.width)
-
-        // Все плитки влезают — подсказывать нечего.
-        let all = picker { _ in true }
-        XCTAssertTrue(all.hintRects.isEmpty)
-        all.setFrameSize(wide)
-        XCTAssertTrue(all.hintRects.isEmpty)
-    }
-}
-
 /// Свой список недавних проектов (`projects.json`, план WF36 и WF30 ч. 2, задача #5451).
 final class ProjectsStoreTests: XCTestCase {
     private func makeTemp() -> URL {
@@ -2993,14 +2922,4 @@ final class ProjectsStoreTests: XCTestCase {
         XCTAssertEqual(merged.first?.name, "p\(ProjectsStore.limit + 4)")
         XCTAssertEqual(merged.last?.name, "p5")
     }
-}
-
-/// Настройки в памяти для `ClaudeActions` в тесте замены окна (WF102).
-private final class WF102Defaults: ThemeDefaults {
-    var values: [String: Any] = [:]
-    func string(forKey key: String) -> String? { values[key] as? String }
-    func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
-    func object(forKey key: String) -> Any? { values[key] }
-    func set(_ value: Any?, forKey key: String) { values[key] = value }
-    func removeObject(forKey key: String) { values.removeValue(forKey: key) }
 }

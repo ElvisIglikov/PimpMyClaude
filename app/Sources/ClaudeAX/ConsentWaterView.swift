@@ -8,14 +8,14 @@ import QuartzCore
 // Слой — не одно окно на экран, а куски мониторов вокруг окон запроса (`ConsentWaterLayout`): над
 // окном запроса и 3 pt вокруг него нашего нет ничего (решение 12.5). Все окна-слои рисуют одну
 // картинку в общих координатах CG, поэтому шва между ними не видно. Клики сквозь слои проходят,
-// ловит их только окошко-панель. 60 кадров в секунду — только пока висит запрос. Слой Metal в окне —
+// ловит их только окошко-панель. 20 кадров в секунду — только пока висит запрос (#11684). Слой Metal в окне —
 // не во весь кусок монитора, а на рамку содержимого с запасом (`ConsentWaterLayerWindow.layerRect`,
 // #7766): drawable и очистка — на эту рамку, перестановка слоя — в одной транзакции с кадром.
 
 /// Шейдер — порт WebGL-шейдера макета 12. Параметры — 25 × float4 (`ConsentWaterFrame.uniforms`):
 /// [0] угол окна-слоя (CG), пикселей на pt, запас дырки; [1] мягкость слияния, радиус углов окошка,
 /// светлый стол, плотность заливки; [2] окошко (центр, полуразмеры); [3] две волны «булька»;
-/// [4] число рамок и капель; [5…8] окна запроса (центр, полуразмеры); [9…12] их рамки (зазор,
+/// [4] число рамок, капель и последних рамок без дырки; [5…8] окна запроса (центр, полуразмеры); [9…12] их рамки (зазор,
 /// толщина, радиус, сила); [13…24] капли (x, y, r).
 enum ConsentWaterShader {
     static let source = """
@@ -65,7 +65,7 @@ enum ConsentWaterShader {
         float2 p = u[0].xy + pos.xy / scale;
         int nr = int(u[4].x);
         float m = 1.0;
-        for (int i = 0; i < nr; i++) {
+        for (int i = 0; i < nr - int(u[4].z); i++) {
             float4 w = u[5 + i];
             // Дырка прямоугольная, как окна-слои вокруг неё: углы тоже пустые.
             float2 hq = abs(p - w.xy) - w.zw;
@@ -326,6 +326,7 @@ final class ConsentWaterPlaqueView: NSView {
     private let title = CATextLayer()
     private let subtitle = CATextLayer()
     private var line2 = ""
+    private var titleText = ""
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -373,7 +374,28 @@ final class ConsentWaterPlaqueView: NSView {
             layer.truncationMode = .end
             body.addSublayer(layer)
         }
-        title.string = "macOS ждёт ответа"
+        setText(title, ConsentWaterSim.titleConsent, size: 15, weight: .bold)
+        titleText = ConsentWaterSim.titleConsent
+    }
+
+    /// Подпись целиком: не влезает в ширину — шрифт мельче, до `minFont` (вход на сайт, WF302: «Войди: App Store
+    /// Connect» длиннее «macOS ждёт ответа»); дальше — многоточие.
+    static let minFont: CGFloat = 10.5
+    static func fittedFontSize(_ text: String, size: CGFloat, weight: NSFont.Weight, width: CGFloat) -> CGFloat {
+        // Ширина текста от кегля не строго линейна (оптические размеры шрифта) — шагом по полпункта.
+        var font = size
+        while font > minFont,
+              (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: font, weight: weight)]).width > width {
+            font -= 0.5
+        }
+        return max(font, minFont)
+    }
+
+    private func setText(_ layer: CATextLayer, _ text: String, size: CGFloat, weight: NSFont.Weight) {
+        let fitted = Self.fittedFontSize(text, size: size, weight: weight, width: layer.bounds.width - 2)
+        layer.font = NSFont.systemFont(ofSize: fitted, weight: weight)
+        layer.fontSize = fitted
+        layer.string = text
     }
 
     required init?(coder: NSCoder) { nil }
@@ -386,7 +408,11 @@ final class ConsentWaterPlaqueView: NSView {
         for layer in [title, subtitle] where layer.contentsScale != sharp { layer.contentsScale = sharp }
         if plaque.line2 != line2 {
             line2 = plaque.line2
-            subtitle.string = line2
+            setText(subtitle, line2, size: 11.5, weight: .medium)
+        }
+        if plaque.title != titleText {
+            titleText = plaque.title
+            setText(title, titleText, size: 15, weight: .bold)
         }
         body.setAffineTransform(CGAffineTransform(scaleX: plaque.zoom * plaque.reach, y: plaque.zoom * plaque.reach))
         // Угол в CG (y вниз), слой — y вверх: поворот обратный.
@@ -409,14 +435,22 @@ final class ConsentWaterPlaqueView: NSView {
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }
 
-/// Живой маяк «из воды»: 60 кадров, пока висит запрос; ответили — стекает за полсекунды и гаснет.
+/// Живой маяк «из воды»: 20 кадров, пока висит запрос; ответили — стекает за полсекунды и гаснет.
 final class ConsentWaterOverlay {
-    static let frameInterval: TimeInterval = 1.0 / 60
+    /// #11684 (фризы у коллеги, замер 31.10 на MacBook Air: при 60 к/с PMP 12,5 %, WindowServer 41 %): 20 к/с — ровно
+    /// шаг, которым и так считает вода (`ConsentWaterSim.step` зажимает dt в 0,05 с); волны и пружины идут как прежде.
+    static let frameInterval: TimeInterval = 1.0 / 20
     /// «Бульк» не чаще этого.
     static let soundGap: CFTimeInterval = 2
+    /// Мышь и клавиши молчат столько — у Мака никого: кадр стоит (#7889).
+    static let idleFreeze: TimeInterval = 60
 
     var onClick: () -> Void = {}
     var soundEnabled: () -> Bool = { true }
+    /// Свои подписи окошка (вход на сайт, WF302): заголовок и вторая строка; nil — как у окон доступа macOS.
+    /// Вторая строка своя только на мониторе цели — на соседнем остаётся «на соседнем мониторе».
+    var title: String?
+    var line2: String?
 
     private let renderer: ConsentWaterRenderer
     private var sim = ConsentWaterSim(seed: UInt64(Date().timeIntervalSince1970))
@@ -425,8 +459,12 @@ final class ConsentWaterOverlay {
     private let plaque = ConsentWaterPlaquePanel()
     private var timer: Timer?
     private var targets: [ConsentWindow] = []
+    /// Явная цель стрелки (`ConsentWaterInput.aim`): с ней слои без дырок.
+    private var aim: CGRect?
     private var alive = false
     private var lastTick: CFTimeInterval = 0
+    /// С этой минуты вода на экране (таймер завёлся).
+    private var shownAt: CFTimeInterval = 0
     private var ticks = 0
     private var lastSound: CFTimeInterval = -1e9
     private var sound: NSSound?
@@ -446,14 +484,17 @@ final class ConsentWaterOverlay {
         plaque.onClick = { [weak self] in self?.onClick() }
     }
 
-    /// Запрос висит: окна `windows`, спокойный вид — `calm`.
-    func show(_ windows: [ConsentWindow], calm: Bool) {
+    /// Запрос висит: окна `windows`, спокойный вид — `calm`. `aim` — явная цель стрелки (вход на сайт, WF302):
+    /// `windows` тогда только рамки-свечение, номер окна у них может быть 0 (рамку тогда двигает зовущий).
+    func show(_ windows: [ConsentWindow], calm: Bool, aim: CGRect? = nil) {
         if !alive || timer == nil { sim = ConsentWaterSim(calm: calm, seed: UInt64(Date().timeIntervalSince1970)) }
         sim.calm = calm
         targets = windows
+        self.aim = aim
         alive = true
         guard timer == nil else { return }
         lastTick = CACurrentMediaTime()
+        shownAt = lastTick
         let timer = Timer(timeInterval: ConsentWaterOverlay.frameInterval, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -484,11 +525,32 @@ final class ConsentWaterOverlay {
 
     private var primaryHeight: CGFloat { NSScreen.screens.first?.frame.height ?? 0 }
 
+    /// Кадр стоит: запрос висит, вода на экране и ввода нет уже `idleFreeze`. Ответили — стекает, как всегда.
+    static func frozen(alive: Bool, idle: TimeInterval, shown: TimeInterval) -> Bool {
+        alive && min(idle, shown) >= idleFreeze
+    }
+    /// Секунд без живых мыши и клавиш (HID): нажатия агентов не в счёт, системные события (`~0`) — тоже.
+    private static func userIdle() -> TimeInterval {
+        let kinds: [CGEventType] = [.mouseMoved, .leftMouseDragged, .leftMouseDown, .rightMouseDown, .scrollWheel, .keyDown]
+        return kinds.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }.min() ?? 0
+    }
+
     private func tick() {
         let now = CACurrentMediaTime()
         let dt = CGFloat(now - lastTick)
         lastTick = now
         ticks += 1
+        // Экран спит или заблокирован — ни один слой не виден: воду не считаем и не рисуем (#7889: запрос, провисевший
+        // ночь, держал PMP на 15 % ядра). Экран проснулся — продолжаем с того же места. Слой вне всех экранов (монитор
+        // отключили) — не повод ждать: дальше раскладка переставит слои на оставшийся экран.
+        if alive, !layout.isEmpty,
+           layers.prefix(layout.count).allSatisfy({ $0.screen != nil && !$0.occlusionState.contains(.visible) }) {
+            return
+        }
+        // Экран не спит (агенты держат его `caffeinate`), а у Мака никого — после минуты на экране последний кадр стоит,
+        // воду не считаем и не рисуем (#7889, замер 31.10: запрос провисел ночь — PMP 14 % ядра, WindowServer 44 %).
+        // Тронул мышь или клавишу — вода едет дальше с того же места.
+        if Self.frozen(alive: alive, idle: Self.userIdle(), shown: now - shownAt) { return }
         if ticks % 6 == 0 { refreshBounds() }
         let screens = NSScreen.screens
         guard !screens.isEmpty else { return stop() }
@@ -500,16 +562,20 @@ final class ConsentWaterOverlay {
         let cursor = CGPoint(x: mouse.x, y: primary - mouse.y)
         let rects = targets.map { $0.bounds }
         let frame = sim.step(dt: dt, ConsentWaterInput(cursor: cursor, targets: alive ? rects : [], screens: frames,
-                                                       visible: visible, alive: alive))
+                                                       visible: visible, alive: alive, aim: alive ? aim : nil))
         if frame.finished { return stop() }
         if !alive, let fadeAt = fadeAt, now - fadeAt > Self.fadeMax { return stop() }
-        let wanted = ConsentWaterLayout.windows(screens: frames, targets: rects, cursor: cursor)
+        let wanted = ConsentWaterLayout.windows(screens: frames, targets: rects + (aim.map { [$0] } ?? []),
+                                                cursor: cursor, cut: aim == nil)
         let relaid = wanted != layout
         if relaid { place(wanted, screens: screens, screenRects: frames) }
         let drawn = relaid || frame != lastFrame ? render(frame) : true
         lastFrame = drawn ? frame : nil
         let cursorScreen = WaterGeo.index(of: cursor, in: frames).map { screens[$0].backingScaleFactor } ?? 2
-        plaque.apply(frame.plaque, primaryHeight: primary, scale: cursorScreen)
+        var shown = frame.plaque
+        if let title = title { shown.title = title }
+        if let line2 = line2, !frame.otherScreen { shown.line2 = line2 }
+        plaque.apply(shown, primaryHeight: primary, scale: cursorScreen)
         if frame.blub && soundEnabled() && now - lastSound > ConsentWaterOverlay.soundGap {
             lastSound = now
             if sound == nil { sound = NSSound(data: ConsentWaterSound.wav()) }
@@ -588,8 +654,9 @@ final class ConsentWaterOverlay {
 
     /// Окно запроса могли сдвинуть: его рамка — 10 раз в секунду, только по известным номерам окон.
     private func refreshBounds() {
-        guard alive, !targets.isEmpty else { return }
-        var ids: [UnsafeRawPointer?] = targets.map { UnsafeRawPointer(bitPattern: UInt($0.number)) }
+        // Номер 0 — рамка без окна CG (вход на сайт): её двигает зовущий.
+        guard alive, targets.contains(where: { $0.number > 0 }) else { return }
+        var ids: [UnsafeRawPointer?] = targets.filter { $0.number > 0 }.map { UnsafeRawPointer(bitPattern: UInt($0.number)) }
         guard let array = CFArrayCreate(kCFAllocatorDefault, &ids, ids.count, nil),
               let list = CGWindowListCreateDescriptionFromArray(array) as? [[String: Any]] else { return }
         var bounds: [Int: CGRect] = [:]

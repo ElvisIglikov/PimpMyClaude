@@ -43,11 +43,12 @@ Anthropic's original signing protections. Only install page scripts and configur
 
 ### Switches that click for you
 
-- **Auto-Allow** is **off by default**. Switched on (menu-bar panel → Settings → «Сам нажимать „Allow once“»), it
-  presses the one-time **"Allow once"** in Claude's permission dialogs and never "Always allow", so no permanent rule
-  appears. It leaves to you: deletion, publishing and merging (`git push`, deploys), payments, passwords and keys,
-  sending data out, file edits, and any request it cannot read with certainty. It does not switch between chats by
-  itself. Turn it off with the same toggle.
+- **Auto-Allow** presses the one-time **"Allow once"** in Claude's permission dialogs and never "Always allow", so no
+  permanent rule appears. In chats running with **Bypass permissions** it always does this, with no switch: the chat
+  already asked for no prompts. For all other chats it is **off by default**; switch it on in menu-bar panel →
+  Settings → «Сам нажимать „Allow once“». It leaves to you: deletion, publishing and merging (`git push`, deploys),
+  payments, passwords and keys, sending data out, file edits, and any request it cannot read with certainty. It does not switch between chats by
+  itself. Turn it off with the same toggle (Bypass chats keep it).
 - **Auto-Trust** presses "Trust this workspace" only for folders inside the projects root you set yourself
   (`"projectsRoot"` in `~/Library/Application Support/MyClaude/claude.json`). With no root set it is **off**.
   This includes newly cloned repositories under that root and their Claude configuration; keep untrusted repositories outside it.
@@ -86,15 +87,12 @@ own. Every host listed below sees your IP address.
   **If the repository is private** (for example, your private fork), GitHub answers such a request with a refusal, and the program then runs the
   GitHub CLI installed on your Mac (`gh api …`, `gh release download …`) — that is, **it uses your GitHub account**. No
   `gh` or no access — it quietly does nothing. Switch off — nothing is checked, downloaded or installed.
-- **«Запросы команды»** (panel → «Настройки») — when you open this section, the program runs your GitHub CLI (`gh`) and
-  reads the open pull requests of your account and its organizations (`api.github.com`, under your GitHub account,
-  read-only). You do not open the section — no request. `tools/pimp.py prs` does the same from the terminal.
+- **`tools/pimp.py prs`** — only when you run it: it calls your GitHub CLI (`gh`) and reads the open pull requests of
+  your account and its organizations (`api.github.com`, under your GitHub account, read-only). The panel no longer
+  has a «Запросы команды» section.
 - **Usage limits inside Claude** — the page script the patch adds asks `claude.ai` (the site Claude itself talks to,
   with your Claude session) for your usage numbers, from the main window, at most once a minute. The answer stays on
   this Mac: it is shown in the window and in the menu-bar panel. There is no separate switch; removing the patch stops it.
-- **Voice entry** — only if you run `tools/pimp.py say` and have put a key in place: the dictated phrase and project
-  names go to DeepSeek (`api.deepseek.com`, or the HTTPS endpoint you configure). The key travels in a request header;
-  HTTP endpoints and server redirects are refused. The app itself never calls it.
 - **Links** — «claude.ai/download» and the payment page in «Поддержать автора» open in your browser, only on your click.
 
 Not the Internet: the local port `127.0.0.1:47615` and the channel to PimpViewer work only inside this Mac.
@@ -102,7 +100,9 @@ Not the Internet: the local port `127.0.0.1:47615` and the channel to PimpViewer
 ## Features
 
 - Narrow Claude windows (down to 280 pt) with a drag handle above the input field.
-- A menu on the window's yellow button: themes, fonts, text size and window frame — per window and per chat.
+- «Оформление» in the menu-bar panel: window colour and live background, dense text, font and text size for all
+  windows, a colour per project, hiding finished tool calls. The menu on the window's yellow button was removed on
+  17.10.2026; its shortcuts stay («Клавиши PMP в Claude» in Settings).
 - 44 built-in themes plus your own; automatic colouring of windows by project.
 - Window layouts: arrange all Claude windows in a row, a grid or a saved layout; restore windows after Claude restarts.
 - A workflow progress strip and card at the top of the chat.
@@ -189,11 +189,13 @@ Claude приносит Pimp My Claude и патчит новую версию �
 
 ### Выключатели, которые жмут за вас
 
-- **Авто-Allow** по умолчанию **выключен**. Включённый (панель у часов → Настройки → «Сам нажимать „Allow once“»), он
-  жмёт разовое **«Allow once»** в диалогах разрешений Claude и никогда «Always allow» — постоянных правил не появляется.
+- **Авто-Allow** жмёт разовое **«Allow once»** в диалогах разрешений Claude и никогда «Always allow» — постоянных
+  правил не появляется. В чатах с **Bypass permissions** жмёт всегда, без выключателя: такой чат и так просил не
+  спрашивать. Для остальных чатов по умолчанию **выключен**, включается в панели у часов → Настройки → «Сам нажимать
+  „Allow once“».
   Вам остаются: удаление, выкладка и слияние (`git push`, деплой), платежи, пароли и ключи, отправка данных наружу,
   правка файлов и любой запрос, который он не смог прочитать наверняка. Сам по чатам он не ходит. Выключается тем же
-  тумблером.
+  тумблером (в чатах с Bypass остаётся).
 - **Авто-Trust** жмёт «Trust this workspace» только для папок внутри корня проектов, который вы задали сами
   (`"projectsRoot"` в `~/Library/Application Support/MyClaude/claude.json`). Корня нет — **выключен**.
   Это относится и к новым скачанным репозиториям с их настройками Claude; недоверенные репозитории храните вне этого корня.
@@ -232,15 +234,12 @@ Claude приносит Pimp My Claude и патчит новую версию �
   **Если репозиторий закрыт** (например, ваш закрытый форк), GitHub на такой запрос отвечает отказом, и тогда программа запускает GitHub CLI с вашего
   Мака (`gh api …`, `gh release download …`) — то есть **ходит под вашей учётной записью GitHub**. Нет `gh` или нет
   доступа — тихо ничего не делает. Переключатель выключен — ничего не проверяется, не скачивается и не ставится.
-- **«Запросы команды»** (панель → «Настройки») — когда вы открываете этот раздел, программа запускает ваш GitHub CLI
-  (`gh`) и читает открытые запросы на изменения вашей учётной записи и её организаций (`api.github.com`, под вашей
-  учётной записью GitHub, только чтение). Раздел не открывали — запроса нет. То же делает `tools/pimp.py prs` из терминала.
+- **`tools/pimp.py prs`** — только когда вы его запускаете: зовёт ваш GitHub CLI (`gh`) и читает открытые запросы на
+  изменения вашей учётной записи и её организаций (`api.github.com`, под вашей учётной записью GitHub, только чтение).
+  Раздела «Запросы команды» в панели больше нет.
 - **Лимиты внутри Claude** — код страницы, который добавляет патч, спрашивает у `claude.ai` (сайт, с которым работает
   сам Claude, с вашей сессией Claude) цифры вашего расхода: из главного окна, не чаще раза в минуту. Ответ остаётся на
   этом Маке: его показывают окно и панель у часов. Отдельного выключателя нет; снятый патч это прекращает.
-- **Голосовой вход** — только если вы сами запускаете `tools/pimp.py say` и положили ключ: продиктованная фраза и имена
-  проектов уходят в DeepSeek (`api.deepseek.com` либо указанный вами HTTPS-адрес). Ключ передаётся заголовком; HTTP и
-  перенаправления сервера запрещены. Само приложение его не вызывает.
 - **Ссылки** — «claude.ai/download» и страница оплаты в окне «Поддержать автора» открываются в вашем браузере, только
   по вашему клику.
 
@@ -249,7 +248,9 @@ Claude приносит Pimp My Claude и патчит новую версию �
 ## Возможности
 
 - Узкие окна Claude (до 280 pt) и ручка над полем ввода.
-- Меню на жёлтой кнопке окна: темы, шрифты, размер текста и рамка — на каждое окно и чат.
+- «Оформление» в панели у часов: цвет окон и живой фон, «Плотный текст», шрифт и размер текста всем окнам, свой цвет
+  у каждого проекта, «Прятать инструменты». Меню на жёлтой кнопке окна снято 17.10.2026; его клавиши остались
+  («Клавиши PMP в Claude» в настройках).
 - 44 темы и свои; автопокраска окон по проекту.
 - Раскладки: расставить окна лентой, сеткой или по сохранённой раскладке; вернуть окна после перезапуска Claude.
 - Полоска и карточка прогресса воркфлоу вверху чата.

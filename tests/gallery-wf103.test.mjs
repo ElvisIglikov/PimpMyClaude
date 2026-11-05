@@ -50,14 +50,15 @@ test("#7965: слова «Галерея» не видно — ни в широ�
   for (const viewport of [undefined, { width: 340, height: 800 }]) {
     const loaded = page({ viewport });
     assert.equal(loaded.api.status().gallery.visible, true);
-    assert.equal(node(loaded).textContent.trim(), "3", "видны только значок и число");
+    assert.equal(node(loaded).textContent.trim(), "", "#9507: виден только значок — числа нет");
     assert.ok(!node(loaded).textContent.includes("Галерея"));
     assert.match(node(loaded).title, /Галерея/);
     assert.match(node(loaded).getAttribute("aria-label"), /Галерея/);
     loaded.api.setStage(loaded.api.stages.COLLAPSED);
     settle(loaded);
     assert.equal(loaded.api.status().gallery.spot, "ring");
-    assert.equal(node(loaded).textContent.trim(), "3", "у кружка — тоже без слова");
+    assert.equal(node(loaded).textContent.trim(), "", "у кружка — тоже без слова и числа");
+    assert.match(node(loaded).title, /\(3\)/, "число файлов — в подсказке");
   }
 });
 
@@ -68,11 +69,11 @@ test("#7965: значок — 2×2 крупных квадрата, одна ш�
   assert.ok(svg, "значка SVG нет");
   assert.equal(svg.querySelectorAll("rect").length, 4, "квадратов не четыре");
   assert.equal(node(wide).style.getPropertyValue("width"), node(narrow).style.getPropertyValue("width"));
-  // WF106 (#8099, «чуть-чуть поменьше»): значок 12 px (было 15), ширина 20 + 6 на
-  // цифру (было 25 + 7), шрифт 10 px (было 12) — на ~20 % меньше.
+  // WF106 (#8099, «чуть-чуть поменьше»): значок 12 px (было 15). #9507: числа нет — ширина одна,
+  // 20 px из листа стилей, своей ширины у узла нет.
   assert.match(css(wide), /#myclaude-gallery>svg\{[^}]*width:12px;height:12px/, "значок не 12 px");
-  assert.match(css(wide), /#myclaude-gallery\{[^}]*font:600 10px\/16px/, "шрифт числа не уменьшен");
-  assert.equal(node(wide).style.getPropertyValue("width"), "26px", "место под кнопку осталось прежним");
+  assert.match(css(wide), /#myclaude-gallery\{[^}]*width:20px;height:20px/);
+  assert.equal(node(wide).style.getPropertyValue("width"), "", "ширина не растёт от числа");
 });
 
 test("#7965: без рамки, заливки, фиолетового и свечения; WF106 (#8099): новое и нажатое — не жёлтым", () => {
@@ -89,8 +90,8 @@ test("#7965: без рамки, заливки, фиолетового и све
   assert.equal(node(loaded).dataset.fresh, "true");
 });
 
-test("#7965: status().gallery — прежние поля", () => {
+test("#7965: status().gallery — прежние поля (+ answer, #9631)", () => {
   const loaded = page();
   assert.deepEqual(Object.keys(plain(loaded.api.status().gallery)).sort(),
-    ["clicks", "compact", "counted", "files", "fresh", "heard", "last", "on", "repeats", "spot", "unseen", "visible"]);
+    ["answer", "clicks", "compact", "counted", "files", "fresh", "heard", "last", "on", "repeats", "spot", "unseen", "visible"]);
 });

@@ -24,7 +24,13 @@ final class SetupWindow: NSObject, NSWindowDelegate {
     private let accessRow: StepRow
     private let manageRow: StepRow
     private let notifyRow: StepRow
+    private let kontekstRow: StepRow
+    private let kontekst: () -> KontekstInstall
+    private let onKontekst: () -> Void
+    private let staleHint = SetupWindow.paragraph(AccessWizard.staleRowHint)
     private let stateLabel = NSTextField(wrappingLabelWithString: "")
+    private let installButton = NSButton(title: "Пропатчить Claude", target: nil, action: nil)
+    private let closeButton = NSButton(title: "Закрыть", target: nil, action: nil)
     private var timer: Timer?
     private var retained: SetupWindow?
     private var notificationsAllowed: Bool?
@@ -45,10 +51,14 @@ final class SetupWindow: NSObject, NSWindowDelegate {
     }
 
     init(rickFolder: URL? = nil,
+         kontekst: @escaping () -> KontekstInstall = { .ok },
+         onKontekst: @escaping () -> Void = {},
          stateText: @escaping () -> String,
          patchInstalled: @escaping () -> Bool,
          onInstall: @escaping () -> Void,
          onClose: @escaping () -> Void) {
+        self.kontekst = kontekst
+        self.onKontekst = onKontekst
         self.stateText = stateText
         self.patchInstalled = patchInstalled
         self.onInstall = onInstall
@@ -63,6 +73,7 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         accessRow = StepRow(number: hasMove ? "2" : "1", title: "Универсальный доступ (Accessibility)")
         manageRow = StepRow(number: hasMove ? "3" : "2", title: "Управление приложениями")
         notifyRow = StepRow(number: hasMove ? "4" : "3", title: "Уведомления")
+        kontekstRow = StepRow(number: hasMove ? "5" : "4", title: "Сторож контекста")
         super.init()
 
         window.title = "Настройка PimpMyClaude"
@@ -79,8 +90,8 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         root.addArrangedSubview(title)
 
         let subtitle = SetupWindow.paragraph(
-            "PimpMyClaude меняет окна Claude: узкие окна и поля, ручка над полем ввода, меню на "
-            + "кнопке «Свернуть» с горячими клавишами, обратный отсчёт, Авто-Allow и блокировка ⌘Q. "
+            "PimpMyClaude меняет окна Claude: узкие окна и поля, ручка над полем ввода, цвета и шрифт окон, "
+            + "горячие клавиши, обратный отсчёт, Авто-Allow и блокировка ⌘Q. "
             + "Для этого macOS должна пустить его к Claude.")
         root.addArrangedSubview(subtitle)
 
@@ -94,23 +105,28 @@ final class SetupWindow: NSObject, NSWindowDelegate {
             root.addArrangedSubview(row.view)
         }
 
-        accessRow.setText("Нужен для меню на кнопке «Свернуть» и его горячих клавиш. "
+        accessRow.setText("Нужен для горячих клавиш PMP в Claude (⌥⌘N, ⌥⌘A, ⌥⌘S…). "
                           + "Обратный отсчёт, Авто-Allow и блокировка ⌘Q работают и без него. macOS сейчас спросит сама; если окно не появилось — "
                           + "Системные настройки → Конфиденциальность и безопасность → Универсальный доступ → включи PimpMyClaude.")
         accessRow.setPrimary(title: "Открыть настройки", target: self, action: #selector(openAccessibility))
         root.addArrangedSubview(accessRow.view)
+        root.addArrangedSubview(staleHint)
 
-        manageRow.setText("Отдельного окна тут нажимать не надо: macOS спросит сама, когда нажмёшь «Пропатчить Claude» — "
-                          + "PimpMyClaude меняет файлы внутри Claude.app. Ответь «Разрешить» — установка продолжится сама. "
-                          + "Если промпт закрыли — включи PimpMyClaude в настройках руками.")
+        manageRow.setText("PimpMyClaude меняет файлы внутри Claude.app. Окна «Разрешить» у этого права нет: когда нажмёшь "
+                          + "«Пропатчить Claude», PimpMyClaude сам откроет эту страницу настроек и покажет рядом, что нажать, — "
+                          + "включи там PimpMyClaude, установка продолжится сама. Можно включить и заранее.")
         manageRow.setPrimary(title: "Открыть настройки", target: self, action: #selector(openAppManagement))
         root.addArrangedSubview(manageRow.view)
 
-        notifyRow.setText("Два уведомления: «патч слетел» — с кнопкой «Вернуть патч», и «скачалось обновление Claude» — "
-                          + "с кнопкой «Обновить». Больше ничего не шлём. Откажешься — ничего не сломается, "
+        notifyRow.setText("Уведомления редкие: слетел патч, скачалось обновление Claude, что-то не так с окном Claude, "
+                          + "значок PMP не виден или Мак перегрелся. Откажешься — ничего не сломается, "
                           + "статус всё равно виден в строке меню.")
         notifyRow.setPrimary(title: "Разрешить", target: self, action: #selector(askNotifications))
         root.addArrangedSubview(notifyRow.view)
+
+        kontekstRow.setText(KontekstInstall.why)
+        kontekstRow.setPrimary(title: "Поставить сторож", target: self, action: #selector(runKontekst))
+        root.addArrangedSubview(kontekstRow.view)
 
         if let rickFolder = rickFolder {
             root.addArrangedSubview(SetupWindow.paragraph(SetupWindow.rickLine(rickFolder)))
@@ -129,13 +145,17 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         stateLabel.widthAnchor.constraint(equalToConstant: SetupWindow.windowWidth - 48).isActive = true
         root.addArrangedSubview(stateLabel)
 
-        // То же предупреждение, что в панели у кнопок патча и обновления (WF210, #9382): окно связки ключей — норма.
-        root.addArrangedSubview(SetupWindow.paragraph(PimpPanelText.keychainNote))
+        // Предупреждение про окно связки ключей (WF210, #9382) и «код открыт» со ссылкой (WF234: код открыт 10.10.2026).
+        root.addArrangedSubview(SetupWindow.keychainParagraph())
 
-        let install = NSButton(title: "Пропатчить Claude", target: self, action: #selector(runInstall))
+        let install = installButton
+        install.target = self
+        install.action = #selector(runInstall)
         install.bezelStyle = .rounded
         install.keyEquivalent = "\r"
-        let close = NSButton(title: "Закрыть", target: self, action: #selector(closeWindow))
+        let close = closeButton
+        close.target = self
+        close.action = #selector(closeWindow)
         close.bezelStyle = .rounded
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -190,21 +210,36 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         }
         let trusted = AXIsProcessTrusted()
         accessRow.setDone(trusted)
-        if trusted { accessRow.setText("Доступ выдан — меню на кнопке и горячие клавиши работают.") }
+        staleHint.isHidden = trusted
+        if trusted { accessRow.setText("Доступ выдан — горячие клавиши работают.") }
 
         // У «Управления приложениями» API статуса нет: считаем шаг закрытым, когда патч встал —
         // значит, запись внутрь Claude.app прошла.
         let installed = patchInstalled()
         manageRow.setDone(installed)
         if installed { manageRow.setText("Уже сработало: патч стоит, значит записывать в Claude.app macOS даёт.") }
+        // #10287 (слово Элвиса 19.10: зелёная «Пропатчить» при «Патч стоит» путает): патч стоит — главная «Закрыть»,
+        // перепатч — обычной кнопкой «Пропатчить заново»; патча нет — главная снова «Пропатчить Claude».
+        installButton.title = installed ? "Пропатчить заново" : "Пропатчить Claude"
+        installButton.keyEquivalent = installed ? "" : "\r"
+        closeButton.keyEquivalent = installed ? "\r" : ""
 
         notifyRow.setDone(notificationsAllowed == true)
         if notificationsAllowed == true {
-            notifyRow.setText("Разрешено. Пришлём только «патч слетел» и «скачалось обновление Claude».")
+            notifyRow.setText("Разрешено. Пишем только о важном: патч, обновление Claude, окно Claude, значок PMP, нагрев Мака.")
         } else if notificationsAllowed == false {
             notifyRow.setText("Уведомления запрещены — это нормально, ничего не сломается. "
                               + "Передумаешь: Системные настройки → Уведомления → PimpMyClaude.")
             notifyRow.setPrimary(title: "Открыть настройки", target: self, action: #selector(openNotifications))
+        }
+        let guardState = kontekst()
+        kontekstRow.setDone(guardState == .ok)
+        switch guardState {
+        case .ok: kontekstRow.setText("Стоит. Работай в чате проекта в терминале, помощников зови для коротких дел. "
+                                      + "Проект закончили — закрой терминал.")
+        case .missing: kontekstRow.setText(KontekstInstall.why)
+        case .running: kontekstRow.setText("Ставлю сторож…")
+        case .failed(let why): kontekstRow.setText("Сторож не встал: \(why)")
         }
         stateLabel.stringValue = stateText()
         fitWindow()
@@ -254,6 +289,7 @@ final class SetupWindow: NSObject, NSWindowDelegate {
     }
 
     @objc private func runInstall() { onInstall() }
+    @objc private func runKontekst() { onKontekst() }
 
     // ---------------------------------------------------------------- шаг 0: переезд в «Программы»
 
@@ -268,7 +304,7 @@ final class SetupWindow: NSObject, NSWindowDelegate {
                 .appendingPathComponent("Applications", isDirectory: true)
             let alert = NSAlert()
             alert.messageText = "Не пускает в «Программы»"
-            alert.informativeText = SetupWindow.message(error)
+            alert.informativeText = error.humanText
                 + "\n\nОбычно так бывает, когда ты не администратор этого Мака. "
                 + "Можно положить приложение в свою папку \(mine.path) — там прав хватит."
             alert.addButton(withTitle: "Положить в мою папку")
@@ -314,18 +350,23 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         }
     }
 
-    private func report(_ error: Error) {
-        let alert = NSAlert()
-        alert.messageText = "Не вышло"
-        alert.informativeText = SetupWindow.message(error)
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Понятно")
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
-    }
+    private func report(_ error: Error) { Alerts.failure(error) }
 
-    private static func message(_ error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    /// Абзац про связку ключей и в конце — «Код открыт.» ссылкой на исходники (нажимается: поле выделяемое).
+    private static func keychainParagraph() -> NSTextField {
+        let label = paragraph(PimpPanelText.keychainNote)
+        let font = NSFont.systemFont(ofSize: 12)
+        let word = PimpPanelText.openSourceWord
+        let text = NSMutableAttributedString(string: PimpPanelText.keychainNote + " ",
+                                             attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])
+        var link: [NSAttributedString.Key: Any] = [.font: font, .underlineStyle: NSUnderlineStyle.single.rawValue]
+        if let url = URL(string: PimpPanelText.openSourceURL) { link[.link] = url }
+        text.append(NSAttributedString(string: word.prefix(1).uppercased() + word.dropFirst(), attributes: link))
+        text.append(NSAttributedString(string: ".", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
+        label.attributedStringValue = text
+        label.allowsEditingTextAttributes = true
+        label.isSelectable = true
+        return label
     }
 
     private static func paragraph(_ text: String) -> NSTextField {

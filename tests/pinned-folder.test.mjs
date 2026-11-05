@@ -23,11 +23,13 @@ const addRow = (list, id, title, data, extra = {}) => {
   return { row, button, label };
 };
 
-const page = ({ href = "https://claude.ai/epitaxy/local_home", pinned = [], recents = [] } = {}) => {
+const page = ({ href = "https://claude.ai/epitaxy/local_home", pinned = [], recents = [], hatch = {}, local = {} } = {}) => {
   const rows = {};
   const loaded = loadInject({
     href,
     title: "Claude",
+    hatch,
+    storage: { local },
     html: dom => {
       const parts = dom.composer();
       const bar = dom.document.body.add("div", { attrs: { "data-testid": "sidebar" } });
@@ -120,153 +122,92 @@ test("чип рисует CSS из атрибута — только в Pinned, 
   assert.match(rule, /max-width:\d+%/, "чип не съедает имя чата целиком");
 });
 
-// ---- цвет плашки — цвет проекта (#7213, проба, отключается PINNED_TINT) -------
+// Переменная цвета плашки проекта (#7213, снята в WF248 вместе с цветом — слово Элвиса 11.10 01:40).
 const TINT = "--myclaude-folder-tint";
 const MAP_KEY = "myclaude-themes-v1";
 
-test("#7213: тон авто-цвета папки — побайтно как AutoPaint.hue(forName:) приложения", () => {
-  const { loaded } = page();
-  // Эталоны — из ProjectTests.swift (testProjectHue…).
-  assert.equal(loaded.inner.pinnedHue("Trelvis"), 20);
-  assert.equal(loaded.inner.pinnedHue("PimpMyClaude"), 199);
-});
-
-test("#7213: плашка красится цветом проекта: запись чата, чат той же папки, иначе авто-тон", () => {
-  const palette = accent => ({ theme: { id: "x", name: "x", type: "dark",
-    palette: { accent, background: "#111111", foreground: "#eeeeee", sidebar: "#0a0a0a", panel: "#1a1a1a", muted: "#888888" } } });
-  const map = { "id:local_a": palette("#ff8800") };
-  const { loaded, rows } = (() => {
-    const made = page({
-      pinned: [
-        ["local_a", "Ночь кода", repo("VkusnoffKz")],
-        ["local_b", "Ещё Вкуснофф", repo("VkusnoffKz")],
-        ["local_c", "Пимп", repo("PimpMyClaude")],
-      ],
-    });
-    made.loaded.win.localStorage.setItem(MAP_KEY, JSON.stringify(map));
-    pass(made.loaded);
-    return made;
-  })();
-  assert.equal(rows.local_a.label.style.getPropertyValue(TINT), "color-mix(in srgb, #ff8800 40%, transparent)",
-    "окно чата красили — его акцент");
-  assert.equal(rows.local_b.label.style.getPropertyValue(TINT), "color-mix(in srgb, #ff8800 40%, transparent)",
-    "чат той же папки — тот же цвет");
-  assert.equal(rows.local_c.label.style.getPropertyValue(TINT), "color-mix(in srgb, hsl(199 80% 62%) 40%, transparent)",
-    "записи нет — авто-тон папки, как у окна проекта без .pimpmyclaude.json");
-  const css = String(loaded.dom.query(STYLE)?.textContent ?? "");
-  assert.ok(css.includes(`background-color:var(${TINT},var(--cds-alpha-2))`), "без цвета — прежний серый");
-  loaded.api.dispose();
-  assert.equal(rows.local_a.label.style.getPropertyValue(TINT), "", "dispose снимает цвет");
-});
-
-// ---- часики кеша левее чипа (#7912, WF102) -----------------------------------
-// Время — session.updatedAtMs строки; атрибут на [data-row-label], рисует CSS.
+// ---- page-64: имя папки без цвета и мелко, часиков нет (слово Элвиса 11.10 01:40) ----
+// «названия проектов не надо цветом выводить… сделай маленькими… А таймеры убери, это уже
+// неактуальная тема».
 const CLOCK = "data-myclaude-clock";
 const LATE = "data-myclaude-clock-late";
 const T0 = 1_790_000_000_000;
-const MIN = 60_000;
 const rowLabel = row => row.row.querySelector("[data-row-label]");
 
-test("#7912: часики — обратный отсчёт часа «60:00 → 0:00», красные меньше 10 минут и после нуля", () => {
-  const { loaded, rows } = page({ pinned: [["local_a", "Ночь кода", repo("VkusnoffKz"), { updatedAtMs: T0 }]] });
-  const label = rowLabel(rows.local_a);
-  const at = t => { loaded.inner.markPinnedClocks(t); return [label.getAttribute(CLOCK), label.hasAttribute(LATE)]; };
-  assert.deepEqual(at(T0), ["60:00", false], "только что ответил — полный час");
-  assert.deepEqual(at(T0 + 1000), ["59:59", false]);
-  assert.deepEqual(at(T0 + 25 * MIN + 7000), ["34:53", false], "минуты не дополняются нулём, секунды — двумя знаками");
-  assert.deepEqual(at(T0 + 50 * MIN), ["10:00", false], "ровно 10 минут — ещё серые");
-  assert.deepEqual(at(T0 + 50 * MIN + 1000), ["9:59", true], "меньше 10 минут — красные");
-  assert.deepEqual(at(T0 + 60 * MIN), ["0:00", true]);
-  assert.deepEqual(at(T0 + 3 * 60 * MIN), ["0:00", true], "кеш остыл — «0:00» красным, в минус не уходит");
-  assert.equal(rows.local_a.row.textContent, "Ночь кода", "текст строки не меняется");
-});
-
-test("#7912: в DOM пишется только смена значения", () => {
-  const { loaded, rows } = page({ pinned: [["local_a", "Ночь кода", repo("VkusnoffKz"), { updatedAtMs: T0 }]] });
-  const label = rowLabel(rows.local_a);
-  const writes = [];
-  for (const name of ["setAttribute", "removeAttribute"]) {
-    const original = label[name].bind(label);
-    label[name] = (...args) => { writes.push([name, ...args]); return original(...args); };
-  }
-  loaded.inner.markPinnedClocks(T0 + 1000);
-  assert.deepEqual(writes, [["setAttribute", CLOCK, "59:59"]]);
-  loaded.inner.markPinnedClocks(T0 + 1000);
-  loaded.inner.markPinnedClocks(T0 + 1400);
-  assert.equal(writes.length, 1, "та же секунда — ни одной записи");
-  loaded.inner.markPinnedClocks(T0 + 50 * MIN + 1000);
-  assert.deepEqual(writes.slice(1), [["setAttribute", CLOCK, "9:59"], ["setAttribute", LATE, ""]]);
-  loaded.inner.markPinnedClocks(T0 + 50 * MIN + 1500);
-  assert.equal(writes.length, 3, "красный стоит — второй раз не ставится");
-});
-
-test("#7912: только закреплённые главного окна; нет времени — часиков нет", () => {
+test("page-64: имя папки — без цвета проекта: переменной цвета на подписи нет, правило — мелко и без заливки", () => {
+  const palette = accent => ({ theme: { id: "x", name: "x", type: "dark",
+    palette: { accent, background: "#111111", foreground: "#eeeeee", sidebar: "#0a0a0a", panel: "#1a1a1a", muted: "#888888" } } });
   const { loaded, rows } = page({
-    pinned: [["local_a", "Закреплённый", repo("VkusnoffKz"), { updatedAtMs: T0 }], ["local_b", "Без времени", repo("Rick")]],
-    recents: [["local_r", "Недавний", repo("Dictator"), { updatedAtMs: T0 }]],
+    local: { [MAP_KEY]: JSON.stringify({ "id:local_a": palette("#ff8800") }) },
+    pinned: [["local_a", "Ночь кода", repo("VkusnoffKz")], ["local_c", "Пимп", repo("PimpMyClaude")]],
   });
-  loaded.inner.markPinnedClocks(T0);
-  assert.equal(rowLabel(rows.local_a).getAttribute(CLOCK), "60:00");
-  assert.equal(rowLabel(rows.local_b).hasAttribute(CLOCK), false, "updatedAtMs нет — не рисуем");
-  assert.equal(rowLabel(rows.local_r).hasAttribute(CLOCK), false, "недавние не трогаются");
-  const popout = loadInject({
-    href: "about:blank",
-    title: "Попап",
+  pass(loaded);
+  assert.equal(rows.local_a.label.getAttribute(ATTR), "VkusnoffKz", "имя папки на месте");
+  assert.equal(rows.local_a.label.style.getPropertyValue(TINT), "", "цвета проекта нет и у окрашенного чата");
+  assert.equal(rows.local_c.label.style.getPropertyValue(TINT), "", "авто-тона папки нет");
+  const rule = String(loaded.dom.query(STYLE).textContent ?? "").split("\n").find(line => line.includes(`[${ATTR}]::before`));
+  assert.match(rule, /font-size:10px/, "мелко");
+  assert.match(rule, /color:var\(--cds-text-secondary\)/, "приглушённый тон текста темы");
+  assert.doesNotMatch(rule, /padding|border-radius|alpha-2/, "плашки нет");
+  assert.doesNotMatch(rule, /background-color|folder-tint/, "и подложки цветом проекта нет");
+});
+
+test("page-64: часиков у закреплённых нет — ни меток, ни правил; секундный тик их не ставит", () => {
+  const { loaded, rows } = page({
+    pinned: [["local_a", "Ночь кода", repo("VkusnoffKz"), { updatedAtMs: Date.now() - 5 * 60_000 }],
+      ["local_b", "Давний", repo("Rick"), { updatedAtMs: T0 }]],
+  });
+  pass(loaded);
+  loaded.dom.fireKind("interval");
+  assert.equal(loaded.dom.queryAll(`[data-row-label][${CLOCK}],[${LATE}]`).length, 0, "меток часиков нет");
+  assert.equal(rows.local_a.row.textContent, "Ночь кода");
+  const css = String(loaded.dom.query(STYLE).textContent ?? "");
+  assert.ok(!css.includes(`[data-row-label][${CLOCK}`), "правил часиков строк в таблице нет");
+  assert.equal(loaded.inner.markPinnedClocks, undefined, "прохода часиков в странице нет");
+});
+
+test("page-64: метки часиков и ключ «таймер выключен» прошлой страницы убираются при установке", () => {
+  let label = null;
+  const loaded = loadInject({
+    href: "https://claude.ai/epitaxy/local_home",
+    title: "Claude",
+    storage: { local: { "myclaude.pinnedClockOff": "1", "myclaude.pinnedFolderOff": "1" } },
     html: dom => {
-      const pin = dom.document.body.add("div", { attrs: { "data-testid": "sidebar-pinned" } });
-      rows.popout = addRow(pin, "local_p", "Попап", repo("Geyboard"), { updatedAtMs: T0 });
+      const parts = dom.composer();
+      const pin = dom.document.body.add("div", { attrs: { "data-testid": "sidebar" } }).add("div", { attrs: { "data-testid": "sidebar-pinned" } });
+      label = rowLabel(addRow(pin, "local_a", "Ночь кода", repo("VkusnoffKz"), { updatedAtMs: T0 }));
+      // Сирота прошлой страницы: её метки остались на подписи (страница упала, не сняв своё).
+      label.setAttribute(CLOCK, "0:00");
+      label.setAttribute(LATE, "");
+      return parts;
     },
   });
-  assert.equal(popout.error, null);
-  popout.inner.markPinnedClocks(T0);
-  popout.dom.fireKind("interval");
-  assert.equal(rowLabel(rows.popout).hasAttribute(CLOCK), false, "вынесенное окно — без часиков");
-});
-
-test("#7912: тикают раз в секунду сами; dispose снимает и таймер, и метки", () => {
-  const { loaded, rows } = page({ pinned: [["local_a", "Ночь кода", repo("VkusnoffKz"), { updatedAtMs: Date.now() - 5 * MIN }]] });
-  const label = rowLabel(rows.local_a);
-  const ticks = [...loaded.dom.timers.entries()].filter(([, item]) => item.kind === "interval" && item.ms === 1000);
-  assert.ok(ticks.length >= 1, "секундный тик стоит");
-  loaded.dom.fireKind("interval");
-  assert.match(label.getAttribute(CLOCK), /^5[45]:\d\d$/);
-  loaded.api.dispose();
-  assert.equal(loaded.dom.queryAll(`[${CLOCK}],[${LATE}]`).length, 0, "dispose оставил часики");
-  assert.equal(loaded.dom.count("interval"), 0, "dispose оставил тик");
-});
-
-test("#7912: часики рисует CSS — моноширинные, серые, красные по метке, только в Pinned", () => {
-  const { loaded } = page();
-  const css = String(loaded.dom.query(STYLE).textContent ?? "").split("\n");
-  const clock = css.find(line => line.includes(`[${CLOCK}]::before`));
-  const late = css.find(line => line.includes(`[${LATE}]::before`));
-  assert.ok(clock && late, "правил часиков нет");
-  assert.ok(clock.startsWith('[data-testid="sidebar-pinned"] '));
-  assert.match(clock, new RegExp(`content:attr\\(${CLOCK}\\)`));
-  assert.match(clock, /monospace/);
-  assert.match(late, /color:#e5484d/);
+  assert.equal(loaded.error, null, String(loaded.error?.stack ?? loaded.error));
+  assert.equal(label.hasAttribute(CLOCK), false, "метка часиков снята");
+  assert.equal(label.hasAttribute(LATE), false);
+  assert.equal(loaded.win.localStorage.getItem("myclaude.pinnedClockOff"), null, "ключ таймера убран");
+  assert.equal(loaded.win.localStorage.getItem("myclaude.pinnedFolderOff"), "1", "настройка имени папки цела");
 });
 
 // ---- настройка «Закреплённые» (#8743) -----------------------------------------
 // Слово Элвиса 04.10: «настройку, чтобы эти штучки можно было отключить… показывать
-// или нет название проекта и таймер». Команда `pinned-look` {folder, clock:
-// "true"|"false"}; в localStorage — только «выключено».
+// или нет название проекта и таймер». Команда `pinned-look` {folder: "true"|"false"};
+// в localStorage — только «выключено». Таймера с page-64 нет: поле clock принимается
+// и ничего не меняет; в status().pinnedLook только folder (поле clock снято в WF248).
 const look = loaded => ({ ...loaded.api.status().pinnedLook });
 
-test("#8743: без настройки показывается всё, как раньше", () => {
+test("#8743: без настройки имя папки показывается; таймера нет", () => {
   const { loaded, rows } = page({ pinned: [["local_a", "Ночь кода", repo("VkusnoffKz"), { updatedAtMs: T0 }]] });
-  loaded.inner.markPinnedClocks(T0);
-  assert.deepEqual(look(loaded), { folder: true, clock: true });
+  assert.deepEqual(look(loaded), { folder: true });
   assert.equal(rows.local_a.label.getAttribute(ATTR), "VkusnoffKz");
-  assert.equal(rowLabel(rows.local_a).getAttribute(CLOCK), "60:00");
+  assert.equal(rowLabel(rows.local_a).hasAttribute(CLOCK), false);
 });
 
-test("#8743: название проекта выключается и включается сразу, таймер при этом не трогается", () => {
+test("#8743: название проекта выключается и включается сразу", () => {
   const { loaded, rows } = page({ pinned: [["local_a", "Ночь кода", repo("VkusnoffKz"), { updatedAtMs: Date.now() }]] });
   loaded.dom.command({ action: "pinned-look", folder: "false", clock: "true" });
-  assert.deepEqual(look(loaded), { folder: false, clock: true });
+  assert.deepEqual(look(loaded), { folder: false });
   assert.equal(rows.local_a.label.hasAttribute(ATTR), false, "чип снят без ожидания прохода");
-  assert.equal(rowLabel(rows.local_a).hasAttribute(CLOCK), true, "таймер остался");
   pass(loaded);
   assert.equal(rows.local_a.label.hasAttribute(ATTR), false, "проход раскладки чип не возвращает");
   assert.equal(rows.local_a.row.textContent, "Ночь кода", "текст строки не меняется");
@@ -274,27 +215,27 @@ test("#8743: название проекта выключается и вклю�
   assert.equal(rows.local_a.label.getAttribute(ATTR), "VkusnoffKz", "включили — чип на месте");
 });
 
-test("#8743: таймер выключается и включается сразу, название при этом не трогается", () => {
+test("#8743: поле clock команды ничего не включает и в хранилище не пишет", () => {
   const { loaded, rows } = page({ pinned: [["local_a", "Ночь кода", repo("VkusnoffKz"), { updatedAtMs: Date.now() }]] });
   const label = rowLabel(rows.local_a);
-  loaded.dom.command({ action: "pinned-look", folder: "true", clock: "false" });
-  assert.deepEqual(look(loaded), { folder: true, clock: false });
-  assert.equal(label.hasAttribute(CLOCK), false, "часики сняты");
-  assert.equal(label.hasAttribute(LATE), false);
+  for (const clock of ["true", "false"]) {
+    loaded.dom.command({ action: "pinned-look", folder: "true", clock });
+    loaded.dom.fireKind("interval");
+    assert.deepEqual(look(loaded), { folder: true });
+    assert.equal(label.hasAttribute(CLOCK), false, "часиков нет при любом значении");
+    assert.equal(loaded.win.localStorage.getItem("myclaude.pinnedClockOff"), null);
+  }
   assert.equal(rows.local_a.label.getAttribute(ATTR), "VkusnoffKz", "название осталось");
-  loaded.dom.fireKind("interval");
-  assert.equal(label.hasAttribute(CLOCK), false, "тик часики не возвращает");
-  loaded.dom.command({ action: "pinned-look", folder: "true", clock: "true" });
-  assert.equal(label.hasAttribute(CLOCK), true, "включили — часики на месте");
 });
 
-test("#8743: поле без «true»/«false» свою половину не меняет; в хранилище — только «выключено»", () => {
+test("#8743: поле без «true»/«false» ничего не меняет; в хранилище — только «выключено»", () => {
   const { loaded, rows } = page({ pinned: [["local_a", "Ночь кода", repo("VkusnoffKz"), { updatedAtMs: Date.now() }]] });
-  loaded.dom.command({ action: "pinned-look", folder: "false" });
-  assert.deepEqual(look(loaded), { folder: false, clock: true }, "поля clock нет — таймер как был");
   loaded.dom.command({ action: "pinned-look", folder: 1, clock: "нет" });
-  assert.deepEqual(look(loaded), { folder: false, clock: true }, "мусор ничего не меняет");
+  assert.deepEqual(look(loaded), { folder: true }, "мусор ничего не меняет");
+  loaded.dom.command({ action: "pinned-look", folder: "false" });
+  assert.deepEqual(look(loaded), { folder: false });
   assert.equal(loaded.win.localStorage.getItem("myclaude.pinnedFolderOff"), "1");
-  assert.equal(loaded.win.localStorage.getItem("myclaude.pinnedClockOff"), null, "«показывать» ключа не держит");
   assert.equal(rows.local_a.label.hasAttribute(ATTR), false);
+  loaded.dom.command({ action: "pinned-look", folder: "true" });
+  assert.equal(loaded.win.localStorage.getItem("myclaude.pinnedFolderOff"), null, "«показывать» ключа не держит");
 });

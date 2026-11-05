@@ -25,9 +25,10 @@ import Darwin
 //
 // WF98 (#7766, макет 12, кадры 2.1 и 3.1): вместо мигающей рамки и плашки — «окошко из воды» у курсора
 // и жидкая фиолетовая рамка вокруг окна запроса, тянутся друг к другу, свёл — «бульк»
-// (`ConsentWater.swift`, `ConsentWaterView.swift`). На ОДНОМ мониторе не показываем ничего — окно
-// запроса и так на виду (слово Элвиса 26.09 ~07:05). Рамка WF91 осталась запасной: выключатель
-// `consentBeaconClassic` или Metal не завёлся. Звук «бульк» — `consentBeaconSound` (нет ключа — включён).
+// (`ConsentWater.swift`, `ConsentWaterView.swift`). На ОДНОМ мониторе до 11.10.2026 не показывали ничего
+// (слово Элвиса 26.09 ~07:05); с его слова 11.10 02:25 (#9661) пузырёк со стрелкой — и на одном мониторе.
+// Запасная оранжевая рамка WF91 (включалась скрытым ключом без ручки) снята по ревизии 16.10 (вопрос 12): Metal не
+// завёлся — маяк ничего не рисует. Звук «бульк» — `consentBeaconSound` (нет ключа — включён).
 
 /// Окно системного запроса из записи `CGWindowListCopyWindowInfo`.
 struct ConsentWindow: Equatable {
@@ -44,6 +45,13 @@ struct ConsentWindow: Equatable {
                                          "securityagent", "coreautha", "tccd"]
     /// Меньше — служебные окошки владельца (у AccessibilityUIServer, например, окно 0×0).
     static let minSide: CGFloat = 40
+    /// Системные настройки (#9844, слово Элвиса 12.10.2026 ~01:25: «стрелочка не слипается вот этого разрешение на
+    /// управление… системного окна»): вопросы права — «Закрыть и открыть снова» после «Управления приложениями»,
+    /// пароль к переключателю — macOS ставит листом самих Настроек, их владелец не из `processes`, и стрелка тянулась к
+    /// другому окну. Берём только маленькие окна Настроек — лист и алерт; главное окно (от ~700 pt) — не запрос.
+    static let settingsProcess = "system settings"
+    static let settingsMaxSide: CGFloat = 560
+    static let settingsMinSide: CGFloat = 120
 
     /// Запись окна → окно запроса или nil. `processName` — исполняемый файл по pid (живьём
     /// `proc_pidpath`); не вышло — пробуем имя владельца из записи. `extra` — ещё одно имя
@@ -61,9 +69,19 @@ struct ConsentWindow: Equatable {
               bounds.width >= minSide, bounds.height >= minSide else { return nil }
         var wanted = processes
         if let extra = extra?.trimmingCharacters(in: .whitespaces).lowercased(), !extra.isEmpty { wanted.insert(extra) }
+        // Меню, подсказки и всплывашки Настроек (слои выше 8, мелкие) — не запрос.
+        if [0, 8].contains(layer), bounds.width >= settingsMinSide, bounds.height >= settingsMinSide,
+           bounds.width <= settingsMaxSide, bounds.height <= settingsMaxSide { wanted.insert(settingsProcess) }
         let candidates = [processName(pid), info[kCGWindowOwnerName as String] as? String].compactMap { $0 }
         guard let process = candidates.first(where: { wanted.contains($0.lowercased()) }) else { return nil }
         return ConsentWindow(number: number, pid: pid, process: process, layer: layer, bounds: bounds)
+    }
+
+    /// Исполняемый файл процесса по pid; не узнали — nil.
+    static func executableName(_ pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return (String(cString: buffer) as NSString).lastPathComponent
     }
 }
 
@@ -176,7 +194,7 @@ enum ConsentBeaconGeometry {
     }
 }
 
-/// Маяк окон доступа: опрос, рамки, плашка.
+/// Маяк окон доступа: опрос и «окошко из воды».
 public final class ConsentBeacon {
     /// Выключатель (UserDefaults). Нет ключа — включено.
     public static let enabledKey = "consentBeaconEnabled"
@@ -184,28 +202,21 @@ public final class ConsentBeacon {
     public static let testOwnerKey = "consentBeaconTestOwner"
     /// Звук «бульк» (UserDefaults). Нет ключа — включён.
     public static let soundKey = "consentBeaconSound"
-    /// Вернуть рамку и плашку WF91 вместо воды. Нет ключа — вода.
-    public static let classicKey = "consentBeaconClassic"
     static let pollInterval: TimeInterval = 1
-    static let followInterval: TimeInterval = 1.0 / 18
 
     private let defaults: UserDefaults
     private var pollTimer: Timer?
-    private var followTimer: Timer?
     private var windows: [ConsentWindow] = []
-    private var rings: [Int: [NSWindow]] = [:]
-    private var plaque: ConsentPlaquePanel?
-    private var plaqueText = ""
     private var names: [pid_t: String] = [:]
     private var water: ConsentWaterOverlay?
-    /// Metal не завёлся — до перезапуска рамка WF91.
+    /// Metal не завёлся — до перезапуска маяк ничего не рисует.
     private var waterFailed = false
     private var style = ConsentBeaconStyle.idle
 
     /// Сколько раз появлялось окно запроса и сколько раз переводили курсор — для диагностики.
     public private(set) var appearances = 0
     public private(set) var warps = 0
-    /// `<появлений>/<on|off>/<окон сейчас>[:процесс@слой][/<single|water|classic>]` — вид, пока висит запрос.
+    /// `<появлений>/<on|off>/<окон сейчас>[:процесс@слой][/<water|no-metal>]` — вид, пока висит запрос.
     public var status: String {
         let first = windows.first.map { ":\($0.process)@\($0.layer)" } ?? ""
         let shown = style == .idle ? "" : "/\(style.rawValue)"
@@ -213,6 +224,9 @@ public final class ConsentBeacon {
     }
 
     public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+
+    /// Висит окно запроса macOS — маяк входа на сайт (WF302) на это время уступает.
+    public var isShowing: Bool { !windows.isEmpty }
 
     var isEnabled: Bool { ConsentBeacon.isEnabled(in: defaults) }
 
@@ -264,9 +278,7 @@ public final class ConsentBeacon {
     /// Исполняемый файл процесса по pid; кэш живёт, пока процесс в списке окон.
     private func processName(_ pid: pid_t) -> String? {
         if let name = names[pid] { return name }
-        var buffer = [CChar](repeating: 0, count: 4096)
-        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
-        let name = (String(cString: buffer) as NSString).lastPathComponent
+        guard let name = ConsentWindow.executableName(pid) else { return nil }
         names[pid] = name
         return name
     }
@@ -276,18 +288,11 @@ public final class ConsentBeacon {
         // Пока окно запроса висит, спрашиваем чаще: ответил — маяк гаснет почти сразу (#8122).
         retime(fast: !found.isEmpty)
         windows = found
-        style = ConsentBeaconStyle.choose(hasTargets: !found.isEmpty, screenCount: NSScreen.screens.count,
-                                          classic: defaults.bool(forKey: ConsentBeacon.classicKey),
-                                          waterAvailable: !waterFailed)
+        style = ConsentBeaconStyle.choose(hasTargets: !found.isEmpty, waterAvailable: !waterFailed)
         switch style {
         case .idle:
-            hideClassic()
             water?.fade()
-        case .single:
-            hideClassic()
-            water?.stop()
         case .water:
-            hideClassic()
             if water == nil {
                 guard let overlay = ConsentWaterOverlay() else {
                     waterFailed = true
@@ -300,97 +305,19 @@ public final class ConsentBeacon {
                 water = overlay
             }
             water?.show(found, calm: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        case .classic:
-            water?.stop()
-            updateClassic(found)
+        case .noMetal:
+            break
         }
-    }
-
-    /// Рамка и плашка WF91 — убрать.
-    private func hideClassic() {
-        rings.values.forEach { $0.forEach { $0.orderOut(nil) } }
-        rings = [:]
-        followTimer?.invalidate()
-        followTimer = nil
-        plaque?.orderOut(nil)
-        plaque = nil
-        plaqueText = ""
-    }
-
-    /// Рамка и плашка WF91 (запасной вид).
-    private func updateClassic(_ found: [ConsentWindow]) {
-        let numbers = Set(found.map { $0.number })
-        for (number, strips) in rings where !numbers.contains(number) {
-            strips.forEach { $0.orderOut(nil) }
-            rings[number] = nil
-        }
-        guard !found.isEmpty else {
-            followTimer?.invalidate()
-            followTimer = nil
-            plaque?.orderOut(nil)
-            plaque = nil
-            plaqueText = ""
-            return
-        }
-        let primary = primaryHeight
-        for window in found {
-            let frames = ConsentBeaconGeometry.ringStrips(
-                around: ConsentBeaconGeometry.cocoaRect(fromCG: window.bounds, primaryHeight: primary))
-            let strips = rings[window.number] ?? frames.map { _ in makeStrip() }
-            rings[window.number] = strips
-            for (strip, frame) in zip(strips, frames) {
-                if strip.frame != frame { strip.setFrame(frame, display: true) }
-                strip.orderFrontRegardless()
-            }
-        }
-        if followTimer == nil {
-            let timer = Timer(timeInterval: ConsentBeacon.followInterval, repeats: true) { [weak self] _ in self?.follow() }
-            RunLoop.main.add(timer, forMode: .common)
-            followTimer = timer
-        }
-        follow()
     }
 
     private var primaryHeight: CGFloat { NSScreen.screens.first?.frame.height ?? 0 }
 
-    // MARK: - плашка у курсора
+    // MARK: - окна запроса
 
     /// Окна запроса в координатах Cocoa, по порядку `windows`.
     private var targetRects: [NSRect] {
         let primary = primaryHeight
         return windows.map { ConsentBeaconGeometry.cocoaRect(fromCG: $0.bounds, primaryHeight: primary) }
-    }
-
-    private func follow() {
-        let cursor = NSEvent.mouseLocation
-        let targets = targetRects
-        guard let nearest = ConsentBeaconGeometry.nearest(to: cursor, among: targets) else { return }
-        let targetRect = targets[nearest]
-        let screens = NSScreen.screens
-        guard ConsentBeaconGeometry.showsPlaque(cursor: cursor, targets: targets),
-              let index = ConsentBeaconGeometry.screenIndex(of: cursor, in: screens.map { $0.frame }) else {
-            plaque?.orderOut(nil)
-            return
-        }
-        let other = ConsentBeaconGeometry.screenIndex(
-            of: NSPoint(x: targetRect.midX, y: targetRect.midY), in: screens.map { $0.frame }) != index
-        let arrow = ConsentBeaconGeometry.arrow(from: cursor, to: NSPoint(x: targetRect.midX, y: targetRect.midY))
-        let lines = ConsentBeaconGeometry.lines(arrow: arrow, otherScreen: other)
-        let panel = plaque ?? makePlaque()
-        plaque = panel
-        let text = lines.joined(separator: "\n")
-        if text != plaqueText {
-            plaqueText = text
-            panel.show(lines: lines)
-        }
-        let current: NSRect? = panel.isVisible ? panel.frame : nil
-        guard let frame = ConsentBeaconGeometry.plaqueFrame(current: current, cursor: cursor, size: panel.frame.size,
-                                                            visible: screens[index].visibleFrame, avoid: targets) else {
-            panel.orderOut(nil)
-            return
-        }
-        if frame != panel.frame { panel.setFrame(frame, display: true) }
-        if !panel.isVisible { panel.orderFrontRegardless() }
     }
 
     /// Клик по плашке: курсор — в центр окна запроса. Кнопку жмёт человек.
@@ -400,126 +327,5 @@ public final class ConsentBeacon {
         // Warp глушит мышь на четверть секунды — возвращаем сразу.
         CGAssociateMouseAndMouseCursorPosition(1)
         warps += 1
-        if style == .classic { follow() }
     }
-
-    // MARK: - окна
-
-    /// Одна полоса рамки: своё окно, клики насквозь.
-    private func makeStrip() -> NSWindow {
-        let window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.level = .screenSaver
-        window.isOpaque = false
-        window.hasShadow = false
-        window.backgroundColor = .clear
-        window.ignoresMouseEvents = true
-        window.sharingType = .none
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
-        window.contentView = ConsentStripView(frame: .zero)
-        return window
-    }
-
-    private func makePlaque() -> ConsentPlaquePanel {
-        let panel = ConsentPlaquePanel()
-        panel.onClick = { [weak self] in self?.warpToTarget() }
-        return panel
-    }
-}
-
-/// Мигающая полоса рамки: залита целиком, без тени (тень за край окна не выходит, а на мигании
-/// без `shadowPath` её пересчёт — лишняя работа каждый кадр).
-private final class ConsentStripView: NSView {
-    private let fill = CALayer()
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        autoresizingMask = [.width, .height]
-        fill.backgroundColor = NSColor.systemOrange.cgColor
-        layer?.addSublayer(fill)
-        let blink = CABasicAnimation(keyPath: "opacity")
-        blink.fromValue = 1
-        blink.toValue = 0.15
-        blink.duration = 0.45
-        blink.autoreverses = true
-        blink.repeatCount = .infinity
-        fill.add(blink, forKey: "blink")
-    }
-
-    required init?(coder: NSCoder) { nil }
-
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        fill.frame = bounds
-        CATransaction.commit()
-    }
-}
-
-/// Плашка у курсора: не забирает фокус у окна запроса, ловит только клик.
-private final class ConsentPlaquePanel: NSPanel {
-    var onClick: () -> Void = {}
-    private let box = ConsentPlaqueView(frame: .zero)
-
-    init() {
-        super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        isReleasedWhenClosed = false
-        level = .screenSaver
-        isOpaque = false
-        // Без тени окна: защита macOS от перекрытия может считать и её — ничего нашего рядом с окном запроса.
-        hasShadow = false
-        backgroundColor = .clear
-        hidesOnDeactivate = false
-        becomesKeyOnlyIfNeeded = true
-        sharingType = .none
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
-        box.onClick = { [weak self] in self?.onClick() }
-        contentView = box
-    }
-
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
-
-    func show(lines: [String]) {
-        let text = NSMutableAttributedString()
-        for (index, line) in lines.enumerated() {
-            let head = index == 0
-            text.append(NSAttributedString(string: (head ? "" : "\n") + line, attributes: [
-                .font: head ? NSFont.systemFont(ofSize: 16, weight: .bold) : NSFont.systemFont(ofSize: 12, weight: .medium),
-                .foregroundColor: head ? NSColor.white : NSColor.white.withAlphaComponent(0.85),
-            ]))
-        }
-        let label = NSTextField(labelWithAttributedString: text)
-        label.maximumNumberOfLines = 0
-        label.sizeToFit()
-        let padding = NSSize(width: 16, height: 10)
-        let size = NSSize(width: ceil(label.frame.width) + padding.width * 2,
-                          height: ceil(label.frame.height) + padding.height * 2)
-        box.subviews.forEach { $0.removeFromSuperview() }
-        label.frame = NSRect(origin: NSPoint(x: padding.width, y: padding.height), size: label.frame.size)
-        box.addSubview(label)
-        setContentSize(size)
-    }
-}
-
-private final class ConsentPlaqueView: NSView {
-    var onClick: () -> Void = {}
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.95).cgColor
-        layer?.cornerRadius = 10
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
-        layer?.borderWidth = 2
-    }
-
-    required init?(coder: NSCoder) { nil }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func hitTest(_ point: NSPoint) -> NSView? { frame.contains(point) ? self : nil }
-    override func mouseDown(with event: NSEvent) { onClick() }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }

@@ -87,38 +87,40 @@ final class PatcherWF101Tests: XCTestCase {
 
     func testFatRefusedWhenAnySliceUsesDigest() throws {
         let off = fat([(Self.x86, thin(cpu: Self.x86, used: 0)), (Self.arm64, thin(used: 0))])
-        XCTAssertEqual(Patcher.asarIntegrityVerdict(framework: try file(off)), .ok)
+        XCTAssertEqual(Patcher.asarIntegrityVerdict(framework: try file(off), integrity: nil), .ok)
         let on = fat([(Self.x86, thin(cpu: Self.x86, used: 0)), (Self.arm64, thin(used: 1))])
-        let verdict = Patcher.asarIntegrityVerdict(framework: try file(on))
+        let verdict = Patcher.asarIntegrityVerdict(framework: try file(on), integrity: nil)
         XCTAssertTrue(isRefuse(verdict), "\(verdict)")
         if case .refuse(let why) = verdict { XCTAssertTrue(why.contains("arm64"), why) }
     }
 
     func testThinSliceAndFrameworkFolderThroughSymlink() throws {
-        XCTAssertEqual(Patcher.asarIntegrityVerdict(framework: try file(thin(used: 0))), .ok)
+        XCTAssertEqual(Patcher.asarIntegrityVerdict(framework: try file(thin(used: 0)), integrity: nil), .ok)
         let app = scratch.appendingPathComponent("Claude.app", isDirectory: true)
         let folder = try framework(in: app, thin(used: 1))
-        XCTAssertTrue(isRefuse(Patcher.asarIntegrityVerdict(framework: folder)), "симлинк Versions/Current не разрешился")
+        XCTAssertTrue(isRefuse(Patcher.asarIntegrityVerdict(framework: folder, integrity: nil)), "симлинк Versions/Current не разрешился")
     }
 
     func testNoSectionIsOk() throws {
-        XCTAssertEqual(Patcher.asarIntegrityVerdict(framework: try file(thin(used: nil))), .ok, "Electron < 41 — патчим как раньше")
-        XCTAssertEqual(Patcher.asarIntegrityVerdict(framework: try file(fat([(Self.arm64, thin(used: nil))]))), .ok)
+        XCTAssertEqual(Patcher.asarIntegrityVerdict(framework: try file(thin(used: nil)), integrity: nil), .ok, "Electron < 41 — патчим как раньше")
+        XCTAssertEqual(Patcher.asarIntegrityVerdict(framework: try file(fat([(Self.arm64, thin(used: nil))])), integrity: nil), .ok)
     }
 
     func testTruncatedOrForeignIsUnknownNotRefuse() throws {
         let whole = fat([(Self.x86, thin(cpu: Self.x86, used: 1)), (Self.arm64, thin(used: 1))])
-        XCTAssertTrue(isUnknown(Patcher.asarIntegrityVerdict(framework: try file(Array(whole.prefix(4096 + 40))))))
-        XCTAssertTrue(isUnknown(Patcher.asarIntegrityVerdict(framework: try file(Array(thin(used: 1).prefix(100))))))
-        XCTAssertTrue(isUnknown(Patcher.asarIntegrityVerdict(framework: try file(Array("не Mach-O вовсе".utf8)))))
-        XCTAssertTrue(isUnknown(Patcher.asarIntegrityVerdict(framework: scratch.appendingPathComponent("нет-такого"))))
+        XCTAssertTrue(isUnknown(Patcher.asarIntegrityVerdict(framework: try file(Array(whole.prefix(4096 + 40))), integrity: nil)))
+        XCTAssertTrue(isUnknown(Patcher.asarIntegrityVerdict(framework: try file(Array(thin(used: 1).prefix(100))), integrity: nil)))
+        XCTAssertTrue(isUnknown(Patcher.asarIntegrityVerdict(framework: try file(Array("не Mach-O вовсе".utf8)), integrity: nil)))
+        XCTAssertTrue(isUnknown(Patcher.asarIntegrityVerdict(framework: scratch.appendingPathComponent("нет-такого"), integrity: nil)))
     }
 
-    /// Живой Claude 2.9939.2 (Electron 44.4.3): оба слота `used = 0` — только чтение.
+    /// Живой Claude: до 4.29 оба слота `used = 0`, с 4.29 замок включён и digest сходится (#11144) — только чтение.
     func testLiveClaudeIsOk() throws {
-        let live = Patcher.electronFramework(of: URL(fileURLWithPath: "/Applications/Claude.app", isDirectory: true))
+        let app = URL(fileURLWithPath: "/Applications/Claude.app", isDirectory: true)
+        let live = Patcher.electronFramework(of: app)
         try XCTSkipUnless(FileManager.default.fileExists(atPath: live.path), "Claude.app не найден")
-        XCTAssertEqual(Patcher.asarIntegrityVerdict(framework: live), .ok)
+        let verdict = Patcher.asarIntegrityVerdict(framework: live, integrity: Patcher.asarIntegrity(of: app))
+        XCTAssertTrue(verdict == .ok || verdict == .digest, "\(verdict)")
     }
 
     // ---------------------------------------------------------------- A2: отказ в патче и обновлении
@@ -142,7 +144,7 @@ final class PatcherWF101Tests: XCTestCase {
         XCTAssertThrowsError(try patcher.install()) { error in
             guard case PatchError.integrityDigestOn(let version, _) = error else { return XCTFail("\(error)") }
             XCTAssertEqual(version, "9.0.0")
-            XCTAssertTrue((error as? LocalizedError)?.errorDescription?.contains("Claude 9.0.0 Пимп пока не патчит") == true)
+            XCTAssertTrue((error as? LocalizedError)?.errorDescription?.contains("Claude 9.0.0 PMP пока не патчит") == true)
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: support.path), "до отказа не создано ничего: ни настроек, ни бэкапа")
     }

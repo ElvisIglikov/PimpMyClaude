@@ -180,7 +180,9 @@ test("viewFile(path) гейта — то же, что пункт «Посмот�
   assert.equal(loaded.api.viewFile("docs/x.html"), false, "только абсолютный путь");
 });
 
-test("ссылка на файл в тексте: html и фото — click в PimpViewer, относительная — от папки чата; прочие не трогаем", async () => {
+// С WF277 (#10644) .md, .txt и ролики — наши только при годной панели материалов (tests/materials-dock-wf277.test.mjs);
+// здесь её нет — прежний фильтр: md, код и прочие файлы остаются Claude.
+test("ссылка на файл в тексте: html и фото — click в PimpViewer, относительная — от папки чата; md без панели и прочие не трогаем", async () => {
   const { loaded, nodes } = page({
     build: (dom, feed, n) => {
       const row = feed.add("div", { attrs: { "data-testid": "transcript-row", "data-index": "14" } });
@@ -188,6 +190,7 @@ test("ссылка на файл в тексте: html и фото — click в 
       n.rel = link(dom, p, "отчёт", "docs/report.html");
       n.abs = link(dom, p, "баннер", "/tmp/b.jpg");
       n.md = link(dom, p, "статус", "docs/status.md");
+      n.code = link(dom, p, "код", "app/main.swift");
     },
   });
   click(loaded, nodes.rel);
@@ -197,11 +200,14 @@ test("ссылка на файл в тексте: html и фото — click в 
   await settle();
   assert.equal(loaded.calls[1], `http://127.0.0.1:47615/open-html?mode=click&path=${encodeURIComponent("/tmp/b.jpg")}&chat=${CHAT}&frame=-1512,-982,640,900&bg=1c1917`);
   assert.deepEqual(loaded.reads, [], "мостом не читали — файл ушёл приложению");
-  const md = { type: "click", isTrusted: true, target: nodes.md, button: 0, stopped: false };
-  md.stopImmediatePropagation = () => { md.stopped = true; };
-  md.preventDefault = () => {};
-  loaded.document.dispatchEvent(md);
-  assert.equal(md.stopped, false, ".md — клик остаётся Claude");
+  for (const [node, name] of [[nodes.md, ".md без панели материалов"], [nodes.code, ".swift"]]) {
+    const event = { type: "click", isTrusted: true, target: node, button: 0, stopped: false };
+    event.stopImmediatePropagation = () => { event.stopped = true; };
+    event.preventDefault = () => {};
+    loaded.document.dispatchEvent(event);
+    assert.equal(event.stopped, false, `${name} — клик остаётся Claude`);
+  }
+  assert.equal(loaded.calls.length, 2);
   const mention = status(loaded).mention;
   assert.deepEqual([mention.links, mention.last.via], [2, "link"]);
   const { mentionPath } = loaded.inner;
@@ -239,4 +245,50 @@ test("«на картинке — …» с карточкой выше: слов
   // dispose снимает метки.
   loaded.api.dispose();
   assert.equal(nodes.p.hasAttribute("data-myclaude-pic"), false);
+});
+
+// #10531 (Элвис 22.10 03:50: «нажимаю… ничего не происходит… в поле ввода встаёт»): в чате на SendUserMessage Claude
+// 3.1623 рисует карточку SendUserFile как div[title=<имя>].opacity-70 без onOpen — пропсы {name, size, path, href,
+// square} у компонента над ней. Клик по ней и «на картинке — …» открывают файл, как кнопку.
+const tile = (parent, path) => {
+  const name = path.split("/").pop();
+  const div = parent.add("div", { class: "flex h-9 min-w-0 max-w-60 items-center gap-2 px-2 text-start opacity-70", attrs: { title: name } });
+  const label = div.add("span", { text: name });
+  div.__reactFiber$test = { memoizedProps: { title: name, children: [] }, return: { memoizedProps: { name, size: 4096, path, href: undefined, square: false }, return: null } };
+  return { div, label };
+};
+
+test("карточка без нажатия (#10531): клик — click в PimpViewer, не полю ввода; чужой div[title] — Claude", async () => {
+  const shot = "/private/tmp/claude-501/-Users-dev-Projects-Rick/s/scratchpad/elblog-4.png";
+  const { loaded, nodes } = page({
+    build: (dom, feed, n) => {
+      const row = feed.add("div", { attrs: { "data-testid": "transcript-row", "data-index": "14" } });
+      n.tile = tile(row.add("div", { class: "flex flex-wrap gap-2 justify-start" }), shot);
+      n.other = row.add("div", { class: "opacity-70", attrs: { title: "elblog-4.png" } });
+    },
+  });
+  const event = { type: "click", isTrusted: true, target: nodes.tile.label, button: 0, detail: 1 };
+  loaded.document.dispatchEvent(event);
+  await settle();
+  assert.match(loaded.calls[0], new RegExp(`^http://127\\.0\\.0\\.1:47615/open-html\\?mode=click&path=${encodeURIComponent(shot).replace(/[.]/g, "\\.")}&chat=${CHAT}`));
+  assert.equal(status(loaded).htmlChrome.clicks, 1, "клик наш (страница его гасит) — до фокуса поля Claude не доходит");
+  const other = { type: "click", isTrusted: true, target: nodes.other, button: 0 };
+  loaded.document.dispatchEvent(other);
+  assert.deepEqual([status(loaded).htmlChrome.clicks, loaded.calls.length], [1, 1], "div[title] без пути у волокна — не карточка");
+});
+
+test("«на картинке — …» над карточкой без нажатия (#10531) — открывает её", async () => {
+  const { loaded, nodes } = page({
+    build: (dom, feed, n) => {
+      const row = feed.add("div", { attrs: { "data-testid": "transcript-row", "data-index": "14" } });
+      tile(row.add("div", { class: "flex flex-wrap gap-2" }), HTML);
+      n.p = dom.leaf(row.add("div", { class: "prose" }), "p", "Готово, на картинке — опись диска.");
+      n.text = n.p.childNodes[0];
+    },
+  });
+  loaded.inner.mentionPaint(true);
+  loaded.document.caretRangeFromPoint = () => ({ startContainer: nodes.text, startOffset: 12 });
+  click(loaded, nodes.p, { clientX: 5, clientY: 5 });
+  await settle();
+  assert.match(loaded.calls.at(-1), new RegExp(`mode=click&path=${encodeURIComponent(HTML).replace(/[.]/g, "\\.")}&chat=`));
 });

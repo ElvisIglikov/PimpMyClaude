@@ -1,0 +1,8 @@
+Policy: Code Signing
+  Matching identities
+  1) 3333333333333333333333333333333333333333 "Developer ID Application: ELVIS IGLIKOV (F27N4S4NJ4)" (CSSMERR_TP_CERT_EXPIRED)
+  2) e6282567e9ac9930b040f0368d3ab8ff783032a6 "PimpMyClaude Local Signing" (CSSMERR_TP_NOT_TRUSTED)
+     2 identities found
+
+  Valid identities only
+     0 valid identities found

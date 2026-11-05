@@ -51,7 +51,7 @@ final class TemperatureWF126Tests: XCTestCase {
         let point = sample(0, nil, battery: 33)
         XCTAssertEqual(point.value, 33)
         XCTAssertFalse(point.isChip)
-        XCTAssertEqual(sample(0, 54).value, 54)
+        XCTAssertEqual(sample(0, 54).value, 58, "#10998: самый горячий датчик, не среднее")
     }
 
     func testWordsAndCaption() {
@@ -61,10 +61,10 @@ final class TemperatureWF126Tests: XCTestCase {
         XCTAssertEqual(MacTemperature.word(.critical), "перегрет")
         let history = [sample(0, 47.2), sample(90, 70.6), sample(180, 54, battery: 34.4, hot: 58, state: .fair)]
         XCTAssertEqual(MacTemperature.caption(history),
-                       "за 3 ч: 47–71° · батарея 34° · macOS: слегка нагрет")
+                       "за 3 ч: 51–75° · батарея 34° · macOS: слегка нагрет", "#10998: линия — самый горячий датчик")
         XCTAssertEqual(MacTemperature.caption([sample(0, nil, battery: 33)]), "", "«macOS: не нагрет» не пишем (#9020)")
         XCTAssertEqual(MacTemperature.caption([sample(0, 50), sample(12, 50)]),
-                       "за 12 мин: 50° · батарея 30°")
+                       "за 12 мин: 54° · батарея 30°")
         XCTAssertEqual(MacTemperature.caption([]), "")
     }
 

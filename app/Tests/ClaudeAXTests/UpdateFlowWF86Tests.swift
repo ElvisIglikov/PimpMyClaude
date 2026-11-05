@@ -157,9 +157,10 @@ final class UpdateFlowWF86Tests: XCTestCase {
     func testShouldOffer() {
         func offer(ready: Bool = true, running: Bool = true, windows: Int = 3, working: Bool? = false,
                    idle: TimeInterval? = 300, last: Date? = nil, snooze: Date? = nil) -> Bool {
-            ClaudeUpdateMenu.shouldOffer(ready: ready, claudeRunning: running, windowCount: windows,
-                                         anyPageWorking: working, idleSeconds: idle, lastOfferAt: last,
-                                         snoozeUntil: snooze, now: t0)
+            // Здесь — страницы: работает, тихо, не знаем; Workflow и терминалы тихо (их случаи — WorkNowWF234Tests).
+            let work = WorkNow(chats: working.map { $0 ? 1 : 0 }, workflows: 0, terminals: 0, idleSeconds: idle)
+            return ClaudeUpdateMenu.shouldOffer(ready: ready, claudeRunning: running, windowCount: windows,
+                                                work: work, lastOfferAt: last, snoozeUntil: snooze, now: t0)
         }
         XCTAssertTrue(offer())
         XCTAssertFalse(offer(ready: false), "не готово — не предлагаем")
@@ -178,16 +179,17 @@ final class UpdateFlowWF86Tests: XCTestCase {
     }
 
     func testOneClickAsksOnlyWhenChatsMayBeWorking() {
-        XCTAssertFalse(ClaudeUpdateMenu.needsConfirm(claudeRunning: false, windowCount: 0, anyPageWorking: nil))
-        XCTAssertFalse(ClaudeUpdateMenu.needsConfirm(claudeRunning: true, windowCount: 0, anyPageWorking: nil),
+        let quiet = WorkNow(chats: 0, workflows: 0, terminals: 0)
+        XCTAssertFalse(ClaudeUpdateMenu.needsConfirm(claudeRunning: false, windowCount: 0, work: WorkNow()))
+        XCTAssertFalse(ClaudeUpdateMenu.needsConfirm(claudeRunning: true, windowCount: 0, work: WorkNow()),
                        "окон нет — без вопроса")
-        XCTAssertTrue(ClaudeUpdateMenu.needsConfirm(claudeRunning: true, windowCount: 2, anyPageWorking: nil),
+        XCTAssertTrue(ClaudeUpdateMenu.needsConfirm(claudeRunning: true, windowCount: 2, work: WorkNow()),
                       "1.5.9: признака работы нет — окна есть, значит спрашиваем")
-        XCTAssertFalse(ClaudeUpdateMenu.needsConfirm(claudeRunning: true, windowCount: 2, anyPageWorking: false))
-        XCTAssertTrue(ClaudeUpdateMenu.needsConfirm(claudeRunning: true, windowCount: 2, anyPageWorking: true))
-        XCTAssertEqual(ClaudeUpdateMenu.confirmWorkingTitle(chats: 1), "Идёт работа в 1 чате — обновить всё равно?")
-        XCTAssertEqual(ClaudeUpdateMenu.confirmWorkingTitle(chats: 3), "Идёт работа в 3 чатах — обновить всё равно?")
-        XCTAssertEqual(ClaudeUpdateMenu.confirmWorkingTitle(chats: 11), "Идёт работа в 11 чатах — обновить всё равно?")
+        XCTAssertFalse(ClaudeUpdateMenu.needsConfirm(claudeRunning: true, windowCount: 2, work: quiet))
+        XCTAssertTrue(ClaudeUpdateMenu.needsConfirm(claudeRunning: true, windowCount: 2,
+                                                    work: WorkNow(chats: 1, workflows: 0, terminals: 0)))
+        XCTAssertEqual(PimpPanelText.confirmQuestion(work: WorkNow(chats: 3, workflows: 0, terminals: 0)),
+                       "Идёт работа в 3 чатах — Claude закроется, работа может сброситься. Обновить всё равно?")
     }
 
     // MARK: - уведомления

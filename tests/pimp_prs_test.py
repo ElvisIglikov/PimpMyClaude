@@ -10,7 +10,6 @@
 """
 
 import contextlib
-import importlib.util
 import io
 import json
 import os
@@ -22,18 +21,10 @@ import unittest.mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "tools" / "pimp.py"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pimp_testlib import CLI, load  # noqa: E402
+
 REPO = "ElvisIglikov/PimpMyClaude"
-
-
-def load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 pimp = load("pimp_for_prs_test", CLI)
 
 # План: {вид: ответ}; ответ — JSON (уйдёт в stdout) или {"code", "err", "out"}. Вид — по аргументам.
@@ -261,12 +252,13 @@ class PrsTest(unittest.TestCase):
         for close_pipes in (False, True):
             with self.subTest(close_pipes=close_pipes):
                 started = time.monotonic()
-                # 1,5 с, не 0,3: на занятом Маке подставной gh не успевал даже записать свой pid (#9472).
-                with unittest.mock.patch.object(pimp, "GH_TIMEOUT_S", 1.5):
+                # 4 с, не 0,3 и не 1,5: на Маке под нагрузкой (марафон, сборки) подставной gh не успевал даже
+                # записать свой pid (#9472, повтор 17.10.2026 под /usr/bin/python3).
+                with unittest.mock.patch.object(pimp, "GH_TIMEOUT_S", 4):
                     code, out = self.run_cli("prs", "--json", plan={
                         "user": {"sleep": True, "close_pipes": close_pipes}})
                 self.assertEqual((code, out, self.err), (1, "", "сеть не отвечает"))
-                self.assertLess(time.monotonic() - started, 8)
+                self.assertLess(time.monotonic() - started, 14)
                 pid = int((self.root / "gh.pid").read_text())
                 with self.assertRaises(ProcessLookupError):
                     os.kill(pid, 0)

@@ -209,7 +209,7 @@ final class TokensWF157Tests: XCTestCase {
     }
 
     func testPathSetting() {
-        let name = "tokens-wf157-\(UUID().uuidString)"
+        let name = testSuiteName()
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
         let root = URL(fileURLWithPath: "/tmp/projects", isDirectory: true)

@@ -1,13 +1,8 @@
 import Foundation
 
-/// Ручки редактора своей темы (решение 1.1 плана WF20): «Цвет», «Акцент», «Сила цвета»
-/// и тумблер «Тёмная/Светлая». Числа целые — `CommandValue` дробей не знает, а в
-/// `my-themes.json` ручки уезжают полем `knobs` тем же порядком.
-///
-/// Своей цветовой математики здесь НЕТ: палитру считает тот же `AutoPaint.palette`, что и
-/// «Раскрасить по кругу», — поэтому нечитаемую тему ползунками не собрать (`pulled` тянет
-/// текст до контраста 7, `banded` кладёт акцент в полосу 4,5…6 тёмной и 4,5…7 светлой).
-/// Ручкам нужен ровно один новый параметр генератора — отдельный тон акцента.
+/// Ручки своей темы (решение 1.1 плана WF20): «Цвет», «Акцент», «Сила цвета» и «Тёмная/Светлая» — поле `knobs`
+/// в `my-themes.json`. Редактор («Своя тема…») снят вместе с меню жёлтой кнопки (WF237, #9524): ручки только
+/// читаются из файла и подбираются по палитре.
 struct ThemeKnobs: Equatable {
     static let accentRange = -180...180
     static let strengthRange = 0...100
@@ -20,11 +15,6 @@ struct ThemeKnobs: Equatable {
     static let accentKey = "accent"
     static let strengthKey = "strength"
     static let lightKey = "light"
-
-    /// Id и имя темы, которой идёт ПРИМЕРКА: в хранилища она не попадает (`preview:true`),
-    /// а у сохранённой темы id и имя свои — их даёт `MyThemesStore`.
-    static let previewID = "user-knobs"
-    static let previewName = "Своя тема"
 
     /// Тон фона, 0…359°: круг замкнут, 360 — это снова 0.
     var hue: Int { didSet { hue = ThemeKnobs.wrapped(hue) } }
@@ -50,36 +40,6 @@ struct ThemeKnobs: Equatable {
 
     static func clamped(_ value: Int, _ range: ClosedRange<Int>) -> Int {
         min(max(value, range.lowerBound), range.upperBound)
-    }
-
-    /// «Сила» в том виде, в каком её ждёт `AutoPaint.palette`.
-    var force: Double { Double(strength) / 100 }
-
-    /// Тон акцента: сдвиг от тона фона по кругу.
-    var accentHue: Double { Double(ThemeKnobs.wrapped(hue + accent)) }
-
-    /// Палитра ручек — генератор автопокраски плюс отдельный тон акцента.
-    func palette() -> [String: String] {
-        AutoPaint.palette(hue: Double(hue), light: light, strength: force, accentHue: accentHue)
-    }
-
-    /// Тема для примерки и для записи в `my-themes.json`.
-    func theme(id: String = ThemeKnobs.previewID, name: String = ThemeKnobs.previewName) -> Theme {
-        Theme(id: id, name: name, type: light ? "light" : "dark", palette: palette())
-    }
-
-    /// Имя, которое панель предложит в диалоге: у каждого тона своё, чтобы два сохранения
-    /// подряд не упирались в вопрос «перезаписать?».
-    var suggestedName: String { "Своя · \(hue)°" }
-
-    /// Поле `knobs`: hue, accent, strength, light — порядок побайтный.
-    var commandValue: CommandValue {
-        .object([
-            (key: ThemeKnobs.hueKey, value: .number(hue)),
-            (key: ThemeKnobs.accentKey, value: .number(accent)),
-            (key: ThemeKnobs.strengthKey, value: .number(strength)),
-            (key: ThemeKnobs.lightKey, value: .bool(light)),
-        ])
     }
 
     /// Ручки из записи `my-themes.json`. Читаем ТОЛЬКО полный набор: половина ключей дала бы
@@ -128,26 +88,12 @@ struct ThemeKnobs: Equatable {
 
     /// Тон цвета в градусах (обратный ход из hex); у серого тона нет — nil.
     static func hue(hex: String) -> Int? {
-        guard let c = AutoPaint.channels(hex: hex) else { return nil }
-        let r = Double(c.r) / 255, g = Double(c.g) / 255, b = Double(c.b) / 255
-        let high = max(r, g, b), low = min(r, g, b)
-        let delta = high - low
-        guard delta > 0 else { return nil }
-        let degrees: Double
-        if high == r {
-            degrees = 60 * ((g - b) / delta)
-        } else if high == g {
-            degrees = 60 * (2 + (b - r) / delta)
-        } else {
-            degrees = 60 * (4 + (r - g) / delta)
-        }
+        guard let value = ColorMath.rgb(hex: hex), let degrees = ColorMath.hsl(value).hue else { return nil }
         return wrapped(Int(degrees.rounded()))
     }
 
     /// Светлота цвета в процентах (обратный ход из hex).
     static func lightness(hex: String) -> Double? {
-        guard let c = AutoPaint.channels(hex: hex) else { return nil }
-        let r = Double(c.r) / 255, g = Double(c.g) / 255, b = Double(c.b) / 255
-        return (max(r, g, b) + min(r, g, b)) / 2 * 100
+        ColorMath.rgb(hex: hex).map { ColorMath.hsl($0).lightness * 100 }
     }
 }

@@ -39,6 +39,9 @@ const page = ({ href = CHAT_A, box = true, claude = true } = {}) => {
     },
   });
   assert.equal(loaded.error, null);
+  // Часы страницы — подставные: окно «крестик и пропажа плитки — одно действие» (3 с)
+  // меряется по Date.now, а под нагрузкой настоящие 3 с проходят между кликом и tick (#11441).
+  loaded.run("(() => { let now = 1767000000000; Date.now = () => now; globalThis.__clock = ms => { now += ms; }; })()");
   tick(loaded);
   loaded.got = [];
   if (claude) loaded.parts.editor.addEventListener("paste", event => {
@@ -207,6 +210,22 @@ test("#9193: чужое поле (поиск) — ⌘Z его; отправка,
   tick(loaded);
   assert.equal(undoState(loaded).undo, 0);
   assert.equal(key(loaded).defaultPrevented, false);
+});
+
+test("#9193: плитка пропала позже 3 с после крестика — это не крестик: стек пуст, ⌘Z — полю", async () => {
+  for (const [ms, ours] of [[2999, true], [3001, false]]) {
+    const loaded = page();
+    paste(loaded, [loaded.dom.image("a.png")]);
+    await settle(loaded);
+    tick(loaded);
+    const node = tiles(loaded)[0];
+    loaded.document.dispatchEvent({ type: "click", target: node.querySelector("button"), isTrusted: true });
+    loaded.run(`__clock(${ms})`);
+    node.remove();
+    tick(loaded);
+    assert.equal(undoState(loaded).undo, ours ? 1 : 0, `${ms} мс после крестика`);
+    assert.equal(key(loaded).defaultPrevented, ours, `${ms} мс: ⌘Z ${ours ? "наш" : "полю"}`);
+  }
 });
 
 test("#9193: Esc стек не трогает; dispose — очищает", async () => {

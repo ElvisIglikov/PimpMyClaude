@@ -39,7 +39,7 @@ final class AppClockWF101Tests: XCTestCase {
         XCTAssertEqual(PimpPanelText.patchCard(hash)?.button, "Вернуть патч")
         XCTAssertEqual(PimpPanelText.patchLostNotice(version: "2.9939.2", reason: "старый лоадер v6"),
                        "Патч слетел (старый лоадер v6) · Claude 2.9939.2. Одно нажатие — всё вернётся.")
-        XCTAssertEqual(PimpPanelText.headerLine(hash, plan: nil), "Claude 2.9939.2")
+        XCTAssertEqual(PimpPanelText.headerLine(hash), "Claude 2.9939.2")
         XCTAssertEqual(StatusIcon.look(mode: .week, limits: nil, patch: hash, phase: .idle, now: now).mark, .patchLost)
     }
 

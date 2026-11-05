@@ -35,8 +35,7 @@ enum WindowHide {
     /// Окно Claude на экране глазами «спрятать»: главное ли и во весь экран ли.
     struct Seen: Equatable {
         let title: String
-        /// `isMainWindowTitle(title) || isMainFrame(frame)` — главным зовём и по заголовку, и по
-        /// рамке его страницы (правка критика WF111): резолвер заголовка может промолчать.
+        /// Главное ли окно — по резолверу окна (`windowIdentity`, номер окна от лоадера).
         let isMain: Bool
         /// `AXFullScreen`: такое окно сворачивать нельзя (macOS сперва выводит его из полного
         /// экрана), его не трогаем и считаем в `skipped`.
@@ -74,24 +73,18 @@ enum WindowHide {
     static let focusDelay: TimeInterval = 0.6
 
     /// Какое из спрятанных окон развернуть само (#8282: «окно, где ждут Элвиса, должно быть видно»):
-    /// первое, чья страница говорит «чат ждёт тебя» (`ChatPage.waiting`). Окно ищется, как в карте чатов:
-    /// попап с тем же заголовком, однофамильцы — по рамке (`ChatProbe.nearest`). nil — никто не ждёт.
-    static func waiting(_ hidden: [(title: String, frame: CGRect?)], pages: [ChatPage],
-                        resolve: ((String, CGRect?) -> WindowIdentity)? = nil) -> Int? {
-        hidden.indices.first { page(for: hidden[$0], in: pages, resolve: resolve)?.waiting == true }
+    /// первое, чья страница говорит «чат ждёт тебя» (`ChatPage.waiting`). Окно опознаёт общий
+    /// резолвер (`WindowIdentity.resolveNative`). nil — никто не ждёт.
+    static func waiting(_ hidden: [(title: String, frame: CGRect?)],
+                        resolve: (String, CGRect?) -> WindowIdentity) -> Int? {
+        hidden.indices.first { page(for: hidden[$0], resolve: resolve)?.waiting == true }
     }
 
-    /// Страница окна по заголовку и рамке; не нашлась или однофамильцы без рамки — nil.
-    static func page(for window: (title: String, frame: CGRect?), in pages: [ChatPage],
-                     resolve: ((String, CGRect?) -> WindowIdentity)? = nil) -> ChatPage? {
-        if let resolve = resolve {
-            guard let page = resolve(window.title, window.frame).page, page.kind == .popout else { return nil }
-            return page
-        }
-        let wanted = ChatProbe.clean(window.title)
-        guard !wanted.isEmpty else { return nil }
-        return ChatProbe.nearest(pages.filter { $0.kind == .popout && ChatProbe.clean($0.title) == wanted },
-                                 to: window.frame)
+    /// Страница попапа этого окна; окно не опознано или это не попап — nil.
+    static func page(for window: (title: String, frame: CGRect?),
+                     resolve: (String, CGRect?) -> WindowIdentity) -> ChatPage? {
+        guard let page = resolve(window.title, window.frame).page, page.kind == .popout else { return nil }
+        return page
     }
 }
 

@@ -17,7 +17,6 @@ final class PanelWF189SnapshotTests: XCTestCase {
         model.now = now
         model.phase = .open
         model.reduceMotion = true
-        model.colorsOpen = false
         model.appVersion = "1.10.12"
         model.patch = .installed(version: "2.26454.2", loader: 8)
         model.limits = ClaudeLimits(at: now, plan: "Max 20x",
@@ -31,7 +30,6 @@ final class PanelWF189SnapshotTests: XCTestCase {
     }
 
     private func render(_ model: PanelModel, height: CGFloat, name: String) throws {
-        guard let dir = dir else { return }
         let view = NSHostingView(rootView: PanelRoot(model: model))
         view.frame = NSRect(x: 0, y: 0, width: PimpPanelController.width + 2 * PimpPanelController.margin, height: height)
         view.appearance = NSAppearance(named: .darkAqua)
@@ -43,6 +41,7 @@ final class PanelWF189SnapshotTests: XCTestCase {
         view.layoutSubtreeIfNeeded()
         let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: rep)
+        guard let dir = dir else { return }
         try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: dir.appendingPathComponent(name))
     }
 
@@ -61,7 +60,6 @@ final class PanelWF189SnapshotTests: XCTestCase {
 
     /// Строка меню: соседи (микрофон, звук, батарея, Wi‑Fi) и значок каждого варианта; номер варианта крупно слева.
     func testSnapshotMenuBar() throws {
-        guard let dir = dir else { return }
         let variants = StatusIcon.Variant.allCases
         let rowH: CGFloat = 30, width: CGFloat = 520, scale: CGFloat = 2
         let height = rowH * CGFloat(variants.count) * 2 + 20
@@ -119,12 +117,12 @@ final class PanelWF189SnapshotTests: XCTestCase {
             }
         }
         NSGraphicsContext.restoreGraphicsState()
+        guard let dir = dir else { return }
         try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: dir.appendingPathComponent("menubar-variants.png"))
     }
 
     /// Каждый цвет PMP на плашке PMP в строке меню — тёмной и светлой.
     func testSnapshotAccents() throws {
-        guard let dir = dir else { return }
         let accents = PMPAccent.allCases
         let cell: CGFloat = 96, width = cell * CGFloat(accents.count) + 20, height: CGFloat = 80, scale: CGFloat = 2
         let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(width * scale),
@@ -168,6 +166,7 @@ final class PanelWF189SnapshotTests: XCTestCase {
             }
         }
         NSGraphicsContext.restoreGraphicsState()
+        guard let dir = dir else { return }
         try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: dir.appendingPathComponent("menubar-accents.png"))
     }
 }

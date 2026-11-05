@@ -5,12 +5,12 @@ import PassKit
 import SwiftUI
 
 // Окно «Поддержать автора» (WF108, #8179; переделано в WF227, #9406, макет `docs/37.html`, кадры 37.3–37.5):
-// сверху — кому платят (фото, имя, город, Instagram), по городу — короткая сводка; ниже — счёт людей «Друзья
-// Пимпа» вместо шкалы денег и способы оплаты. Способ появляется, только когда его адрес есть в donate.json
+// сверху — кому платят (фото, имя, город, Instagram), по городу — короткая сводка; ниже — на что и способы оплаты
+// (счёт «Друзья Пимпа» снят словом Элвиса 10.10 22:12: «вот это какая-то там копится… Убери тоже»). Способ появляется, только когда его адрес есть в donate.json
 // (`Donate.methods`): Apple Pay → Safari, «Картой» и Kaspi → браузер по умолчанию, «Криптой» — адрес и QR в окне.
 // Способов нет — одна тихая строка «оплату подключаю», кнопок в никуда нет. Сети нет: всё из donate.json
 // (`DonateStore`, решения — `Donate` в ClaudeAX, тесты `DonateTests`). Оплату мы не видим: «Спасибо!» — только по
-// возвратной ссылке `pimpmyclaude://donate/thanks`, счёт людей растёт только от нового donate.json.
+// возвратной ссылке `pimpmyclaude://donate/thanks`.
 
 final class DonateModel: ObservableObject {
     enum Selection: Equatable { case preset(Int), own }
@@ -73,11 +73,6 @@ final class DonateWindowController: NSObject, NSWindowDelegate {
 
     /// Конфиг для панели и меню: свежий по mtime.
     func config() -> DonateConfig? { store.current() }
-
-    /// Видны ли входы: окну есть что показать и «Показывать „Поддержать“» не выключен.
-    var entriesVisible: Bool {
-        Donate.entriesVisible(store.current(), hidden: UserDefaults.standard.bool(forKey: Donate.hiddenKey))
-    }
 
     func show() {
         guard let config = store.current(), Donate.windowAvailable(config) else { return }
@@ -265,31 +260,17 @@ enum DonateTone {
     /// Порог для текста (WCAG AA).
     static let textContrast = 4.5
 
-    static func luminance(_ hex: UInt32) -> Double {
-        func channel(_ shift: UInt32) -> Double {
-            let value = Double((hex >> shift) & 0xFF) / 255
-            return value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-        }
-        return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
-    }
+    static func luminance(_ hex: UInt32) -> Double { ColorMath.luminance(hex) }
 
-    static func contrast(_ a: UInt32, _ b: UInt32) -> Double {
-        let (la, lb) = (luminance(a), luminance(b))
-        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
-    }
+    static func contrast(_ a: UInt32, _ b: UInt32) -> Double { ColorMath.contrast(a, b) }
 
     /// Цвет как текст на фоне: шагами тянем к белому (фон тёмный) или к чёрному (светлый), пока контраст
     /// не дойдёт до порога.
     static func readable(_ hex: UInt32, on background: UInt32) -> UInt32 {
-        let target: Double = luminance(background) < 0.5 ? 255 : 0
+        let target: UInt32 = luminance(background) < 0.5 ? 0xFFFFFF : 0x000000
         var color = hex
         for step in 0...20 where contrast(color, background) < textContrast {
-            let share = Double(step) / 20
-            func mix(_ shift: UInt32) -> UInt32 {
-                let value = Double((hex >> shift) & 0xFF)
-                return UInt32((value + (target - value) * share).rounded()) << shift
-            }
-            color = mix(16) | mix(8) | mix(0)
+            color = ColorMath.mix(target, hex, Double(step) / 20)
         }
         return color
     }
@@ -323,7 +304,6 @@ enum DonateColor {
     static let bad = adaptive(0xD9695F, 0xB3372C)
     static let warn = adaptive(0xEFC65C, 0x7A5800)
     static let chip = text.opacity(0.06)
-    static let cell = text.opacity(0.1)
 
     /// Цвет PMP заливкой: на светлом окне — вариант для светлой строки меню (графит там тёмный).
     static var accent: Color {
@@ -359,8 +339,11 @@ private enum DonateAuthor {
     static let name = "Элвис Игликов"
     static let city = "Шемонаиха, Казахстан"
     static let region = "Шемонаиха, Восточный Казахстан"
-    static let line = "Делаю Пимпа один, вместе с нейронками. Он бесплатный и таким останется."
+    /// Текст выбран автором 10.10.2026 (файл 42, собран из 1.3 и 1.1): благодарность первой, без требования.
+    static let line = "Спасибо, что пользуешься PMP — для меня это уже много. Он бесплатный и таким останется. "
+        + "Если он тебе нравится — можешь угостить меня кофе. А нет — просто пользуйся, я рад."
     static let about = "Делаю программы для Mac — один, вместе с нейронками."
+    static let source = "Код PMP на GitHub"
 }
 
 /// Нажатие — пружина, наведение — чуть светлее (как выключатели панели).
@@ -445,7 +428,7 @@ struct DonateView: View {
     private var main: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            if !model.methods.isEmpty { friends }
+            if !model.methods.isEmpty { purpose }
             if model.pay != .idle || !model.methods.isEmpty {
                 paySection
             } else {
@@ -498,6 +481,10 @@ struct DonateView: View {
                     Text(DonateAuthor.about).font(.system(size: 12)).foregroundColor(DonateColor.sub)
                         .fixedSize(horizontal: false, vertical: true).padding(.top, 4)
                     instagram.padding(.top, 6)
+                    // WF234: ссылка ждала открытия кода (решение файла 37) — код открыт 10.10.2026.
+                    if let url = URL(string: PimpPanelText.openSourceURL) {
+                        textLink(DonateAuthor.source, help: url.absoluteString) { actions.open(url) }.padding(.top, 4)
+                    }
                 }
                 Spacer(minLength: 0)
             }
@@ -507,36 +494,12 @@ struct DonateView: View {
         }
     }
 
-    // MARK: счёт людей
+    // MARK: на что
 
-    private var friends: some View {
-        let friends = Donate.friends(config.people)
-        return VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Друзья Пимпа").font(.system(size: 13.5, weight: .semibold)).foregroundColor(DonateColor.text)
-                Spacer()
-                Text(Donate.group(config.people)).font(.system(size: 17, weight: .semibold)).monospacedDigit()
-                    .foregroundColor(DonateColor.text)
-            }
-            if friends.cells > 0 {
-                HStack(spacing: friends.cells > 50 ? 1 : friends.cells > 25 ? 2 : 3) {
-                    ForEach(0..<friends.cells, id: \.self) { index in
-                        RoundedRectangle(cornerRadius: friends.cells > 50 ? 1 : 2, style: .continuous)
-                            .fill(index < friends.filled ? DonateColor.accent : DonateColor.cell)
-                    }
-                }
-                .frame(height: 8)
-                .padding(.top, 1)
-            }
-            Text(friends.note).font(.system(size: 11.5)).foregroundColor(DonateColor.sub)
-            divider
-            Text("На что: Claude для работы над Пимпом и новый Mac.")
-                .font(.system(size: 11.5)).foregroundColor(DonateColor.sub)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(DonateColor.chip))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(DonateColor.frame, lineWidth: 1))
-        .accessibilityElement(children: .combine)
+    /// На что идут деньги — одной тихой строкой (счёта «Друзья Пимпа» нет с ревизии 16.10, вопрос 11).
+    private var purpose: some View {
+        Text("На что: Claude для работы над PMP.")
+            .font(.system(size: 11.5)).foregroundColor(DonateColor.sub)
     }
 
     // MARK: оплата
@@ -560,7 +523,7 @@ struct DonateView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             case .ok:
                 status(spinner: false, "✓ Спасибо!", color: DonateColor.good)
-                hintLine(Text("Счёт друзей обновится с новой версией Пимпа"))
+                hintLine(Text("Счёт друзей обновится с новой версией PMP"))
             case .failed:
                 status(spinner: false, model.via == .applePay ? "Safari не открылся — ссылка в буфере"
                                                               : "Браузер не открылся — ссылка в буфере", color: DonateColor.bad)
@@ -676,7 +639,7 @@ struct DonateView: View {
             EmptyView()
         }
         if !config.crypto.isEmpty, model.cryptoOpen || methods.first == .crypto { crypto }
-        Text("Любая сумма — уже спасибо. Деньги приходят прямо Элвису.")
+        Text("Деньги приходят прямо Элвису.")
             .font(.system(size: 11.5)).foregroundColor(DonateColor.sub)
             .frame(maxWidth: .infinity, alignment: .center)
     }

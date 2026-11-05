@@ -3,7 +3,7 @@ import ApplicationServices
 
 /// Кнопка «💬 Новый чат» в самом чате (#7246; контракт — `docs/CONTRACTS.md`,
 /// раздел WF84). Страница по клику ставит в `document.title` своего окна метку
-/// `Пимп: продолжить в новом чате · <метка>` (метка — `Date.now()` в base36, новая на каждый
+/// `PMP: продолжить в новом чате · <метка>` (метка — `Date.now()` в base36, новая на каждый
 /// клик) и держит её 1,2 с. Приложение читает заголовки окон Claude раз в 0,25 с: увидело
 /// новую метку — запоминает ОКНО, ждёт, пока метка уйдёт (прочитай `handoffNewChat` заголовок
 /// раньше — он взял бы метку вместо имени чата и не узнал бы окно), и зовёт тот же путь, что
@@ -13,8 +13,9 @@ import ApplicationServices
 /// `PimpLock`): спайк S0 показал, что смена `document.title` видна в AX за 3–13 мс, а probe.js
 /// на гейте занят агентом.
 final class ContinueWatch {
-    /// Начало метки — побайтно как `CONTINUE_TITLE_PREFIX` страницы (`inject.js`, раздел 12к).
-    static let labelPrefix = "Пимп: продолжить в новом чате"
+    /// Начало метки — побайтно как `CONTINUE_TITLE_PREFIX` страницы (`inject.js`, раздел 12к); с #9604 — «PMP»,
+    /// менять только парой со страницей.
+    static let labelPrefix = "PMP: продолжить в новом чате"
     static let pollInterval: TimeInterval = 0.25
 
     /// Окна Claude с заголовками. Живьём вешает `ClaudeAXController`.
@@ -28,9 +29,6 @@ final class ContinueWatch {
 
     /// Заголовки страниц внутри окна (главное окно, гейт 26.09) — их читает `windows` контроллера.
     let pages = ContinueWebAreas()
-
-    /// Сколько раз кнопка сработала — поле `cont=` строки диагностики.
-    private(set) var fires = 0
 
     func start() {
         stop()
@@ -54,7 +52,6 @@ final class ContinueWatch {
         case .fire:
             guard let window = armed else { return }
             armed = nil
-            fires += 1
             onContinue?(window)
         }
     }
@@ -125,6 +122,9 @@ struct ContinueWatchMachine: Equatable {
 ///
 /// Корни страниц окна ищутся обходом (дерево без контента — полтора десятка узлов) и
 /// помнятся `refresh` секунд; дальше — одно чтение заголовка на страницу за опрос.
+/// Страницы читаются только у главного окна (#7889, `ClaudeActions.isMainWindowTitle`): попап
+/// сам переносит `document.title` в заголовок окна, и его страница давала лишь лишние обращения
+/// к Claude четыре раза в секунду на каждый попап.
 final class ContinueWebAreas {
     static let role = "AXWebArea"
     /// Глубже корня страницы в главном окне (живьём — 8) не ищем; внутрь страницы не спускаемся:
@@ -136,17 +136,25 @@ final class ContinueWebAreas {
 
     private var known: [(window: AXUIElement, areas: [AXUIElement], at: TimeInterval)] = []
 
-    /// Заголовки окна для `ContinueWatchMachine`: заголовок самого окна и заголовки его
-    /// страниц. Окна, которых в этом опросе нет, забываются.
+    /// Заголовки окна для `ContinueWatchMachine`: заголовок самого окна и у главного окна — заголовки
+    /// его страниц. Окна, которых в этом опросе нет, забываются.
     func titles(of windows: [(window: AXUIElement, title: String)],
                 now: TimeInterval) -> [(window: AXUIElement, title: String)] {
         known.removeAll { entry in !windows.contains { CFEqual($0.window, entry.window) } }
-        return windows.flatMap { item -> [(window: AXUIElement, title: String)] in
-            let pages = areas(of: item.window, now: now).compactMap { area -> String? in
+        return ContinueWebAreas.titles(of: windows) { window in
+            areas(of: window, now: now).compactMap { area -> String? in
                 AX.timeout(area, PimpLock.titleTimeout)
                 return AX.string(area, kAXTitleAttribute)
             }
-            return ContinueWebAreas.titles(window: item.title, pages: pages).map { (window: item.window, title: $0) }
+        }
+    }
+
+    /// Развилка `titles(of:now:)` без AX — её гоняют тесты: `pages` зовётся только у главного окна.
+    static func titles<Window>(of windows: [(window: Window, title: String)],
+                               pages: (Window) -> [String]) -> [(window: Window, title: String)] {
+        windows.flatMap { item -> [(window: Window, title: String)] in
+            let read = ClaudeActions.isMainWindowTitle(item.title) ? pages(item.window) : []
+            return titles(window: item.title, pages: read).map { (window: item.window, title: $0) }
         }
     }
 

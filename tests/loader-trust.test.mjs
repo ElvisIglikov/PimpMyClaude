@@ -85,7 +85,7 @@ test('inject, CSS, probe and private commands reach only trusted Chromium origin
   const answer = JSON.parse(r.writes.get('probe-result.json'));
   assert.deepEqual(answer.results.map(x => x.id), [1, 2, 3]);
   for (const entry of answer.results) {
-    assert.equal(entry.source.loader, 8);
+    assert.equal(entry.source.loader, version);
     assert.equal(entry.source.origin, 'https://claude.ai');
   }
   assert.ok(!r.writes.get('status.json').includes('PRIVATE-DATA'));
@@ -170,7 +170,7 @@ test('CSS cut by a document navigation drops its cache, so the next apply insert
   c.calls.length = 0;
   r.watches.get('claude.css')();
   await settle();
-  assert.deepEqual(c.calls, ['css']);
+  assert.deepEqual(c.calls.map(x => (x === 'css' ? x : 'mark')), ['css', 'mark']);
 });
 
 test('review: CSS must not cross navigation while old sheet is removed', async () => {
@@ -255,4 +255,98 @@ test('main claude.ai page hosted as a WebContentsView gets its window ID from th
   const results = JSON.parse(r.writes.get('probe-result.json')).results;
   assert.equal(results.find(x => x.id === 1).source.windowId, 42);
   assert.equal(results.find(x => x.id === 2).source.windowId, undefined);
+});
+
+// #10787 (v9): Electron снимает вставленный лист только как author — user-лист остаётся. Каждое поколение — в @scope
+// по метке на <html>; новая метка гасит прежние листы, пустой файл тоже двигает метку.
+test('claude.css generations: scoped sheet first, then a growing mark; html and :root become :scope', async () => {
+  const c = page(1, 'https://claude.ai/epitaxy', 'https://claude.ai');
+  const inserted = [];
+  c.insertCSS = async text => { inserted.push(text); c.calls.push('css'); return `k${inserted.length}`; };
+  const r = rig([c]);
+  r.files.set('claude.css', '/* x; html */\nhtml.dark body{color:red}\n:root{--a:1}\n.x, HTML{y:1}\n' +
+    '@media (min-width:1px){:root{--b:2}}\n.html-y,html-z,:root-ish,[lang=html]{z:1}\n:not(:root) a{w:1}');
+  r.watches.get('claude.css')();
+  await settle();
+  assert.equal(inserted.length, 1);
+  assert.equal(inserted[0], '@scope (html[data-myclaude-css="1"]){\n/* x; html */\n:scope.dark body{color:red}\n' +
+    ':scope{--a:1}\n.x, :scope{y:1}\n@media (min-width:1px){:scope{--b:2}}\n.html-y,html-z,:root-ish,[lang=html]{z:1}\n' +
+    ':not(:root) a{w:1}\n}\n');
+  assert.equal(c.calls[0], 'css');
+  assert.match(c.calls[1], /setAttribute\("data-myclaude-css","1"\)/);
+  r.files.set('claude.css', 'body{}');
+  r.watches.get('claude.css')();
+  await settle();
+  assert.match(inserted[1], /^@scope \(html\[data-myclaude-css="2"\]\)\{\nbody\{\}\n\}\n$/);
+  r.files.set('claude.css', '');
+  c.calls.length = 0;
+  r.watches.get('claude.css')();
+  await settle();
+  assert.equal(inserted.length, 2);
+  assert.equal(c.calls.length, 1);
+  assert.match(c.calls[0], /setAttribute\("data-myclaude-css","3"\)/);
+});
+
+test('claude.css mark never goes back: a late answer of an older insert keeps the newer mark', async () => {
+  const c = page(1, 'https://claude.ai/epitaxy', 'https://claude.ai');
+  const r = rig([c]);
+  r.watches.get('claude.css')();
+  await settle();
+  r.files.set('claude.css', 'body{color:red}');
+  r.watches.get('claude.css')();
+  await settle();
+  const marks = c.calls.filter(x => x !== 'css');
+  assert.equal(marks.length, 2);
+  const attrs = new Map();
+  const html = { getAttribute: name => attrs.get(name) ?? null, setAttribute: (name, value) => attrs.set(name, value) };
+  for (const code of [marks[1], marks[0]]) vm.runInNewContext(code, { document: { documentElement: html } });
+  assert.equal(attrs.get('data-myclaude-css'), '2');
+  vm.runInNewContext(marks[0], { document: { documentElement: null } });
+});
+
+// Ревью WF294 п. 1 и 7: метку сняла страница или сорвалась её вставка — тик ставит её заново, без жеста пользователя.
+test('claude.css mark lost or failed is restored by the tick, and only for trusted pages with a sheet', async () => {
+  const c = page(1, 'https://claude.ai/epitaxy', 'https://claude.ai');
+  const gone = page(2, 'https://claude.ai/epitaxy', 'https://claude.ai');
+  const gestures = [];
+  c.mainFrame.executeJavaScript = async (code, gesture) => {
+    c.calls.push(code);
+    if (code.includes('data-myclaude-css')) { gestures.push(gesture); if (gestures.length === 1) throw new Error('frame busy'); }
+  };
+  const pages = [c, gone];
+  const r = rig(pages);
+  r.watches.get('claude.css')();
+  await settle();
+  gone.url = 'https://evil.test'; gone.mainFrame.origin = 'https://evil.test'; gone.calls.length = 0;
+  const fresh = page(3, 'https://claude.ai/epitaxy', 'https://claude.ai');
+  pages.push(fresh);
+  r.intervals[0]();
+  assert.equal(JSON.parse(r.writes.get('status.json')).webContents[0].css, 'inserted');
+  assert.deepEqual(gestures, [true, false]);
+  assert.match(c.calls.at(-1), /setAttribute\("data-myclaude-css","1"\)/);
+  for (const other of [gone, fresh]) assert.ok(!other.calls.some(x => x.includes('data-myclaude-css')), other.url);
+});
+
+// Ревью WF294 п. 3: старый вызов, закончивший последним, не перетирает запись нового — возврат файла к старому
+// тексту вставляет лист заново.
+test('claude.css record keeps the newest generation when an older insert finishes last', async () => {
+  const c = page(1, 'https://claude.ai/epitaxy', 'https://claude.ai');
+  const inserted = [];
+  let release;
+  c.insertCSS = text => { inserted.push(text); c.calls.push('css');
+    return inserted.length === 1 ? new Promise(resolve => { release = () => resolve('k1'); }) : Promise.resolve(`k${inserted.length}`); };
+  const r = rig([c]);
+  r.files.set('claude.css', 'a{x:1}');
+  r.watches.get('claude.css')();
+  await settle();
+  r.files.set('claude.css', 'b{x:2}');
+  r.watches.get('claude.css')();
+  await settle();
+  release();
+  await settle();
+  r.files.set('claude.css', 'a{x:1}');
+  r.watches.get('claude.css')();
+  await settle();
+  assert.equal(inserted.length, 3);
+  assert.match(inserted[2], /^@scope \(html\[data-myclaude-css="3"\]\)\{\na\{x:1\}/);
 });

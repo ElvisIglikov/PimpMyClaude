@@ -7,9 +7,10 @@
 // (2) вставляет CSS с полями sidePadding в страницы claude.ai. Настройки читаются
 // с диска при каждом изменении файла — Claude перезапускать не нужно.
 //
-// Патч меняет app.asar и Info.plist, поэтому Claude переподписывается локальной
-// (ad-hoc) подписью. После первого патча macOS один раз заново спросит разрешения
-// (микрофон, экран, доступ). После обновления Claude патч слетает — запусти снова.
+// Патч меняет app.asar и Info.plist, поэтому Claude переподписывается: постоянной подписью
+// из связки ключей, если PimpMyClaude её уже завёл (sign-identity.json, #10310), иначе локальной
+// (ad-hoc). После первого патча macOS один раз заново спросит разрешения (микрофон, экран,
+// доступ). После обновления Claude патч слетает — запусти снова.
 //
 // Команды:
 //   node patch-claude.mjs            поставить/обновить патч (закроет и снова откроет Claude)
@@ -35,7 +36,7 @@ const SUPPORT = path.join(os.homedir(), "Library", "Application Support", "MyCla
 const CONFIG = path.join(SUPPORT, "claude.json");
 const BACKUPS = path.join(SUPPORT, "backups");
 const BUNDLE_ID = "com.anthropic.claudefordesktop";
-const LOADER_VERSION = 8;
+const LOADER_VERSION = 9;
 const MARK_START = `/* [MyClaude:v${LOADER_VERSION}:start] */`;
 const MARK_END = `/* [MyClaude:v${LOADER_VERSION}:end] */`;
 const DEFAULTS = { minWindowWidth: 280, sidePadding: 24 }; // 280 — как Patcher.configDefaults с WF45; // 24 px — слово Элвиса 08.10.2026 (WF128, было 5 с 04.09); та же цифра в Patcher.configDefaults, LiveStyle.defaultSidePadding и claude.json
@@ -173,22 +174,40 @@ function nativeOwner(c){let owner=null,windowId;try{owner=BrowserWindow.fromWebC
 function claudeSource(c){try{if(c.isDestroyed())return null;const frame=c.mainFrame,u=c.getURL()||"";
 if(!frame||frame.origin!==claudeOrigin)return null;
 if(u!=="about:blank"&&u!==""){const parsed=new URL(u);if(parsed.protocol!=="https:"||parsed.origin!==claudeOrigin||parsed.username||parsed.password)return null}
-const {owner,windowId}=nativeOwner(c);return {frame,owner,epoch:navigationEpoch.get(c)||0,metadata:{loader:8,origin:frame.origin,url:u,processId:frame.processId,routingId:frame.routingId,...(windowId===undefined?{}:{windowId})}}}catch{return null}}
+const {owner,windowId}=nativeOwner(c);return {frame,owner,epoch:navigationEpoch.get(c)||0,metadata:{loader:${LOADER_VERSION},origin:frame.origin,url:u,processId:frame.processId,routingId:frame.routingId,...(windowId===undefined?{}:{windowId})}}}catch{return null}}
 const isClaudePage=c=>!!claudeSource(c);
 function sameSource(c,source){const current=claudeSource(c);return !!current&&current.frame===source.frame&&current.owner===source.owner&&current.metadata.windowId===source.metadata.windowId&&current.epoch===source.epoch&&current.metadata.url===source.metadata.url}
 // CSS живёт в документе, а не в URL и не в окне: ему хватает того же кадра и той же эпохи.
 function sameDocument(c,source){const current=claudeSource(c);return !!current&&current.frame===source.frame&&current.epoch===source.epoch}
 // Эпоху двигает только переход на новый документ: pushState роутера claude.ai (смена чата) документ не меняет.
 app.on("web-contents-created",(_,c)=>{try{c.on("did-start-navigation",(details,url,inPlace,isMainFrame)=>{if((details.isMainFrame??isMainFrame)&&!(details.isSameDocument??inPlace))navigationEpoch.set(c,(navigationEpoch.get(c)||0)+1)})}catch(e){log(e)}});
-async function applyCss(c,force){const source=claudeSource(c);if(!source)return;try{const text=cssText();const prev=cssState.get(c);
+// Лист живёт поколением (v9, #10787): removeInsertedCSS снимает только author-листы, наш user-лист остаётся до
+// перезапуска Claude. Каждая вставка — в @scope по метке поколения на <html>; метка сменилась — прежние листы гаснут.
+// Внутри @scope голый селектор — потомок корня: html и :root в начале селектора становятся :scope.
+let cssSeq=0;
+const cssRoot=/((?:^|[{};,])\s*(?:\/\*[\s\S]*?\*\/\s*)*)(?:html|:root)(?![\w-])/gi;
+const cssScoped=(text,gen)=>'@scope (html[data-myclaude-css="'+gen+'"]){\n'+text.replace(cssRoot,"$1:scope")+'\n}\n';
+// Метка только растёт: поздний ответ прежней вставки её не откатит.
+const cssMark=gen=>'(e=>{if(e&&Number(e.getAttribute("data-myclaude-css")||0)<'+gen+')e.setAttribute("data-myclaude-css","'+gen+'")})(document.documentElement)';
+async function applyCss(c,force){const source=claudeSource(c);if(!source)return;const prev=cssState.get(c);try{const text=cssText();
 // Сорвалось на переходе — запись снимается (если её не сменил вызов свежее), и следующий dom-ready или reapply вставит лист заново.
 const drop=()=>{if(cssState.get(c)===prev)cssState.delete(c)};
 if(!force&&prev&&prev.text===text)return;
 if(prev&&prev.key){try{await c.removeInsertedCSS(prev.key)}catch{}}
 if(!sameDocument(c,source))return drop();
-const key=text?await c.insertCSS(text,{cssOrigin:"user"}):null;
+const gen=++cssSeq;
+const key=text?await c.insertCSS(cssScoped(text,gen),{cssOrigin:"user"}):null;
 if(!sameDocument(c,source)){if(key){try{await c.removeInsertedCSS(key)}catch{}}return drop()}
-cssState.set(c,{text,key})}catch(e){log(e);try{if(sameDocument(c,source))cssState.set(c,{text:null,key:null,error:String(e)})}catch{}}}
+// Запись — только свежее прежней: поздний конец старого вызова не перетрёт новое поколение, иначе возврат файла
+// к старому тексту ничего бы не вставил. Пишется до метки: сорвётся метка — её вернёт тик (remarkCss).
+const cur=cssState.get(c);if(cur&&cur.gen>gen)return;
+const rec={text,key,gen};cssState.set(c,rec);
+// Сначала новый лист, потом метка: без мигания. Пустой файл тоже меняет метку — прежние правила гаснут.
+try{await source.frame.executeJavaScript(cssMark(gen),true)}catch(e){log(e)}
+if(!sameDocument(c,source)&&cssState.get(c)===rec)cssState.delete(c)}catch(e){log(e);try{if(sameDocument(c,source)&&cssState.get(c)===prev)cssState.set(c,{text:null,key:null,error:String(e)})}catch{}}}
+// Метку снимает и сама страница (React при сбое гидрации чистит атрибуты <html>), и сорвавшийся вызов — тогда ни
+// одно поколение не совпадает и весь claude.css молчит. Тик ставит её заново, только вверх; без жеста пользователя.
+function remarkCss(){try{for(const c of webContents.getAllWebContents()){const st=cssState.get(c),source=st&&st.gen?claudeSource(c):null;if(!source)continue;try{source.frame.executeJavaScript(cssMark(st.gen),false).catch(()=>{})}catch{}}}catch(e){log(e)}}
 app.on("web-contents-created",(_,c)=>{try{c.on("dom-ready",()=>applyCss(c,true))}catch(e){log(e)}});
 app.on("browser-window-created",()=>{applyLimits();setTimeout(applyLimits,400);setTimeout(applyLimits,1500)});
 app.whenReady().then(()=>applyLimits()).catch(log);
@@ -208,7 +227,7 @@ fs.writeFileSync(statusPath,JSON.stringify({at:new Date().toISOString(),loader:$
 async function runProbe(){try{const s=stampOf(probePath);if(!s||s===probeStamp)return;probeStamp=s;const code=fs.readFileSync(probePath,"utf8");const results=[];
 for(const c of webContents.getAllWebContents()){const source=claudeSource(c);if(!source)continue;try{const result=await source.frame.executeJavaScript(code,true);if(sameSource(c,source))results.push({id:c.id,url:source.metadata.url,source:source.metadata,result})}catch(e){if(sameSource(c,source))results.push({id:c.id,url:source.metadata.url,source:source.metadata,error:String(e).slice(0,512)})}}
 fs.writeFileSync(probeResultPath,JSON.stringify({at:new Date().toISOString(),results},null,2))}catch(e){log(e)}}
-setInterval(()=>{runProbe();writeStatus()},2000);
+setInterval(()=>{runProbe();remarkCss();writeStatus()},2000);
 // --- живой инжект и команды. inject.js рядом с настройками выполняется в каждой
 // странице при dom-ready и заново при каждом изменении файла (скрипт обязан быть
 // идемпотентным: сам снимает прошлый экземпляр). command.json {id, action, …}
@@ -282,12 +301,74 @@ function updateInfoIntegrity(appPath, headerSha256) {
   run("/usr/libexec/PlistBuddy", ["-c", `Set :ElectronAsarIntegrity:Resources/app.asar:hash ${headerSha256}`, path.join(appPath, INFO_RELATIVE)]);
 }
 
-function signAndVerify(appPath) {
-  say("Переподписываю Claude локальной подписью…");
+// Постоянная подпись (#10310, контракт К-SIGN): тот же выбор, что `SignIdentity.choose` в приложении (общий эталон —
+// tests/fixtures/sign-identity). sign-identity.json пишет только приложение; здесь он только читается, своя личность
+// не заводится — это делает PimpMyClaude.
+const SIGN_DEVELOPER_ID = "Developer ID Application: ELVIS IGLIKOV (F27N4S4NJ4)";
+const SIGN_LOCAL = "PimpMyClaude Local Signing";
+
+function parseSignIdentities(text) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of String(text || "").split("\n")) {
+    const match = raw.match(/^\s*\d+\)\s+([0-9A-Fa-f]{40})\s+"(.*)"(?:\s+\((.*)\))?\s*$/);
+    if (!match) continue;
+    const sha1 = match[1].toUpperCase();
+    if (seen.has(sha1)) continue;
+    seen.add(sha1);
+    out.push({ sha1, name: match[2], problem: match[3] ? match[3] : null });
+  }
+  return out;
+}
+
+function signKind(candidate) {
+  if (candidate.name === SIGN_DEVELOPER_ID) return candidate.problem === null ? "developer-id" : null;
+  if (candidate.name !== SIGN_LOCAL) return null;
+  return candidate.problem === null || candidate.problem.includes("NOT_TRUSTED") ? "local" : null;
+}
+
+// Вывод `security find-identity -p codesigning` (без -v) и сохранённый выбор → { sha1, kind } или null (ad-hoc).
+function chooseSignIdentity(listText, saved) {
+  const usable = parseSignIdentities(listText)
+    .map((candidate) => ({ sha1: candidate.sha1, kind: signKind(candidate) }))
+    .filter((choice) => choice.kind);
+  const savedSha = saved && typeof saved.sha1 === "string" ? saved.sha1.toUpperCase() : null;
+  return usable.find((choice) => choice.sha1 === savedSha)
+    || usable.find((choice) => choice.kind === "developer-id")
+    || usable.find((choice) => choice.kind === "local")
+    || null;
+}
+
+function savedSignIdentity() {
+  try {
+    const json = JSON.parse(fs.readFileSync(path.join(SUPPORT, "sign-identity.json"), "utf8"));
+    if (json?.version !== 1 || !/^[0-9A-Fa-f]{40}$/.test(json.sha1 || "")) return null;
+    if (json.kind !== "developer-id" && json.kind !== "local") return null;
+    return { sha1: json.sha1.toUpperCase(), kind: json.kind };
+  } catch { return null; }
+}
+
+// Подпись личностью — не дольше 120 с на шаг (как SignIdentity.signTimeout): дольше — висит окно связки ключей.
+function signWith(identity, appPath) {
+  const opts = identity === "-" ? {} : { timeout: 120000 };
   run("/usr/bin/xattr", ["-cr", appPath]);
-  run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", appPath]);
-  run("/usr/bin/codesign", ["--force", "--sign", "-", "--timestamp=none", "--entitlements", ENTITLEMENTS, appPath]);
-  run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
+  run("/usr/bin/codesign", ["--force", "--deep", "--sign", identity, "--timestamp=none", appPath], opts);
+  run("/usr/bin/codesign", ["--force", "--sign", identity, "--timestamp=none", "--entitlements", ENTITLEMENTS, appPath], opts);
+  run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath], opts);
+}
+
+function signAndVerify(appPath) {
+  let list = "";
+  try { list = run("/usr/bin/security", ["find-identity", "-p", "codesigning"], { timeout: 30000 }); } catch {}
+  const identity = chooseSignIdentity(list, savedSignIdentity());
+  if (identity) {
+    say("Подписываю Claude постоянной подписью…");
+    try { signWith(identity.sha1, appPath); return; } catch (error) {
+      say(`Постоянная подпись не вышла: ${(error?.stderr?.toString?.() || error?.message || String(error)).trim()} — ставлю временную.`);
+    }
+  }
+  say("Переподписываю Claude локальной подписью…");
+  signWith("-", appPath);
 }
 
 // Процессы именно ЭТОГО бандла, по пути: имя «Claude» носят и другие копии.

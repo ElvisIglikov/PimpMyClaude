@@ -238,8 +238,9 @@ test("на чужой странице подписки нет", () => {
   const alien = page({ href: "data:text/html,<p>артефакт</p>", title: "Артефакт" });
   assert.equal(alien.error, null, "чужая страница инжект не роняет");
   assert.equal(listeners(alien, "contextmenu"), 0);
-  // Две: «Открыть в Chrome» и правый клик по плашке проекта (#7334).
-  assert.equal(listeners(page(), "contextmenu"), 2);
+  // Четыре: «Открыть в Chrome», правый клик по плашке проекта (#7334), настройка вида глав (WF241) и родная кнопка
+  // диктовки (#9681).
+  assert.equal(listeners(page(), "contextmenu"), 4);
 });
 
 test("dispose(): подписка, наблюдатель, срок и вставленные пункты сняты; второй прогон не удваивает", () => {
@@ -253,7 +254,7 @@ test("dispose(): подписка, наблюдатель, срок и вста�
   const again = loaded.reload();
   assert.equal(again.error, null, "второй прогон упал");
   assert.equal(ours(list).length, 0, "пункт прошлого экземпляра остался в меню");
-  assert.equal(listeners(loaded, "contextmenu"), 2, "подписки задвоились");
+  assert.equal(listeners(loaded, "contextmenu"), 4, "подписки задвоились");
   assert.equal(loaded.counters.observers, base.observers, "наблюдатель прошлого экземпляра жив");
   assert.equal(loaded.counters.timers, base.timers, "срок прошлого экземпляра жив");
   assert.equal(loaded.inner.openChromeInsert(menu, found(loaded)), true);

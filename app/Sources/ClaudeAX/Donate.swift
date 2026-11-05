@@ -2,7 +2,7 @@ import Foundation
 
 /// «Поддержать автора» (WF108, #8179; окно переделано в WF227, #9406, макет `docs/37.html`): чистая часть —
 /// разбор `donate.json`, какой файл сильнее, видны ли входы, какие способы оплаты есть, ряд сумм, ссылки,
-/// счёт людей, адрес Instagram. Сети нет: способы, счёт и курс — только из файла (умолчание в бандле + живой в
+/// адрес Instagram. Сети нет: способы и курс — только из файла (умолчание в бандле + живой в
 /// Application Support/MyClaude, живой сильнее). Окно и строка панели — в приложении.
 public struct DonateConfig: Equatable {
     public struct Coin: Equatable {
@@ -11,8 +11,6 @@ public struct DonateConfig: Equatable {
         public var address: String
     }
 
-    /// Сколько человек поддержали — счёт «Друзья Пимпа» (WF227: вместо шкалы денег).
-    public var people: Int
     /// Тенге за доллар; nil — «≈ $» не пишем.
     public var usdRate: Double?
     public var amounts: [Int]
@@ -41,8 +39,8 @@ public struct DonateConfig: Equatable {
             return Coin(coin: text(item["coin"]) ?? "", network: text(item["network"]) ?? "", address: address)
         }
         let rate = number(json["usdRate"]).flatMap { $0 > 0 && $0.isFinite ? $0 : nil }
-        return DonateConfig(people: max(0, integer(json["people"]) ?? 0),
-                            usdRate: rate,
+        // Поле `people` (счёт «Друзья Пимпа», снят ревизией 16.10) в старых файлах молча пропускается.
+        return DonateConfig(usdRate: rate,
                             amounts: Array((amounts ?? defaultAmounts).prefix(maxAmounts)),
                             applePay: link(json["applePay"]),
                             card: link(json["card"]),
@@ -84,8 +82,6 @@ public struct DonateConfig: Equatable {
 /// Решения окна и входов — тут, чтобы их проверяли тесты (`DonateTests`).
 public enum Donate {
     public static let fileName = "donate.json"
-    /// «Не показывать „Поддержать“» — выключатель в «Ещё».
-    public static let hiddenKey = "donateHidden"
     public static let amountToken = "{amount}"
     public static let unofficial = "Pimp My Claude — неофициальная программа, не связана с Anthropic"
 
@@ -113,11 +109,6 @@ public enum Donate {
         hasAddress(config)
     }
 
-    /// Строка в панели и пункт меню: окну есть что показать и человек их не выключал.
-    public static func entriesVisible(_ config: DonateConfig?, hidden: Bool) -> Bool {
-        windowAvailable(config) && !hidden
-    }
-
     /// Ряд сумм — только если хоть одна ссылка на оплату умеет `{amount}`; нет — сумму спросит страница.
     public static func showsAmounts(_ config: DonateConfig) -> Bool {
         [config.applePay, config.card, config.kaspi].contains { $0?.contains(amountToken) == true }
@@ -137,27 +128,6 @@ public enum Donate {
 
     public static func instagramURL(_ handle: String) -> URL? {
         URL(string: "https://instagram.com/" + handle)
-    }
-
-    /// Счёт «Друзья Пимпа» (WF227, кадр 37.5): ячейки до ближайшей ступени и строка под ними.
-    public struct Friends: Equatable {
-        /// Сколько ячеек в ряду — ближайшая ступень; 0 — все ступени пройдены, ряда нет.
-        public var cells: Int
-        public var filled: Int
-        public var note: String
-    }
-
-    static let friendSteps = [10, 25, 50, 100]
-
-    public static func friends(_ people: Int) -> Friends {
-        let passed = friendSteps.last { people >= $0 }
-        guard let next = friendSteps.first(where: { people < $0 }) else {
-            return Friends(cells: 0, filled: 0, note: "Ступень «\(friendSteps.last ?? 0)» пройдена.")
-        }
-        if people <= 0 { return Friends(cells: next, filled: 0, note: "Пока никто — стань первым.") }
-        let left = "ещё \(next - people)"
-        let note = passed.map { "Ступень «\($0)» пройдена. До «\(next)» — \(left)." } ?? "До ступени «\(next)» — \(left)."
-        return Friends(cells: next, filled: people, note: note)
     }
 
     /// Ссылка на оплату с подставленной суммой; `{amount}` без суммы — nil (кнопка серая).
@@ -205,9 +175,7 @@ public enum Donate {
 /// Два файла: умолчание в бандле и живой. Живой (если разобрался) сильнее целиком; перечитывается
 /// по mtime — зовут при открытии панели и окна.
 public final class DonateStore {
-    public static let liveURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/MyClaude", isDirectory: true)
-        .appendingPathComponent(Donate.fileName)
+    public static let liveURL = CommandChannel.directory.appendingPathComponent(Donate.fileName)
 
     private let live: URL
     private let bundled: URL?

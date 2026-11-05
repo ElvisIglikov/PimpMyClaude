@@ -3,11 +3,15 @@
 # Использование: tools/bundle.sh [debug|release]
 # Переменные: APP_OUT — куда класть .app (по умолчанию app/.build/PimpMyClaude.app),
 #             PIMP_PREBUILT — готовый бинарник (tools/m1.sh release), тогда здесь без компиляции,
-#             SIGN_ID — чем подписывать (по умолчанию Developer ID Application: ELVIS IGLIKOV (F27N4S4NJ4)).
+#             SIGN_ID — чем подписывать (по умолчанию ~/.config/pimpmyclaude/sign-id, иначе
+#             Developer ID Application: ELVIS IGLIKOV (F27N4S4NJ4)).
 # Версия берётся из app/Resources/Info.plist; в конце печатает VERSION=/BUILD=/APP= — это читает tools/release.sh.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONF="${1:-release}"
+# Мак без Developer ID (ноут коллеги, 16.10.2026, слово Элвиса «сделай свою подпись»): в sign-id — SHA-1 своего
+# сертификата из связки ключей, с ним «Универсальный доступ» держится между сборками; нет файла — Developer ID.
+SIGN_ID="${SIGN_ID:-$(tr -d '[:space:]' < "$HOME/.config/pimpmyclaude/sign-id" 2>/dev/null || true)}"
 SIGN_ID="${SIGN_ID:-Developer ID Application: ELVIS IGLIKOV (F27N4S4NJ4)}"
 PLIST="$ROOT/app/Resources/Info.plist"
 ICON="$ROOT/app/Resources/AppIcon.icns"
@@ -20,6 +24,8 @@ esac
 # Ниже cd в app/ — относительный путь должен остаться относительным каталога вызова.
 case "$APP" in /*) ;; *) APP="$PWD/$APP" ;; esac
 case "${PIMP_PREBUILT:-}" in ""|/*) ;; *) PIMP_PREBUILT="$PWD/$PIMP_PREBUILT" ;; esac
+# В бандл едет claude-patch/inject.js — склейка claude-patch/page/*.js (WF248 П3): несвежая — стоп до сборки.
+"$ROOT/tools/page.sh" check || { echo "bundle.sh: inject.js не равен склейке page/ (выше)" >&2; exit 1; }
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$PLIST")"
 BUILD="$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$PLIST")"
 
@@ -39,7 +45,16 @@ if [ -n "${PIMP_PREBUILT:-}" ]; then
   BIN="$PIMP_PREBUILT"
   [ -x "$BIN" ] || { echo "bundle.sh: нет бинарника $BIN" >&2; exit 1; }
 else
-  swift build -c "$CONF" 2>&1 | tail -3
+  # Удачная сборка — три последние строки; упала — весь вывод: в хвосте одни «Compiling», ошибка выше.
+  BUILD_LOG="$(mktemp)"
+  if ! swift build -c "$CONF" > "$BUILD_LOG" 2>&1; then
+    cat "$BUILD_LOG" >&2
+    rm -f "$BUILD_LOG"
+    echo "bundle.sh: swift build -c $CONF упал (весь вывод выше)" >&2
+    exit 1
+  fi
+  tail -3 "$BUILD_LOG"
+  rm -f "$BUILD_LOG"
   BIN="$(swift build -c "$CONF" --show-bin-path)/PimpMyClaude"
 fi
 rm -rf "$APP"
@@ -69,7 +84,15 @@ for f in "$RICK/AGENTS.md" "$RICK/CLAUDE.md" "$RICK/README.md" "$RICK/install.sh
 done
 [ -x "$RICK/install.sh" ] || { echo "bundle.sh: $RICK/install.sh потерял исполняемый бит" >&2; exit 1; }
 cp -R -p "$RICK" "$APP/Contents/Resources/rick-kit"
-codesign --force --options runtime --timestamp \
+# Сторож контекста: KontekstGuard.swift копирует его в Application Support и запускает install.
+KONTEKST="$ROOT/resources/kontekst"
+for f in "$KONTEKST/kontekst_storozh.py" "$KONTEKST/rules_size_guard.py"; do
+  if [ ! -f "$f" ]; then echo "bundle.sh: нет ресурса $f" >&2; exit 1; fi
+done
+cp -R -p "$KONTEKST" "$APP/Contents/Resources/kontekst"
+# Метку времени даёт только сервер Apple и только Developer ID; своей подписи и ad-hoc она не нужна.
+case "$SIGN_ID" in "Developer ID"*) STAMP=--timestamp ;; *) STAMP=--timestamp=none ;; esac
+codesign --force --options runtime "$STAMP" \
   --entitlements "$ROOT/app/Resources/PimpMyClaude.entitlements" \
   --sign "$SIGN_ID" "$APP"
 codesign --verify --strict --verbose=2 "$APP"

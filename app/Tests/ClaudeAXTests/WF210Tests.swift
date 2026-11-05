@@ -11,7 +11,7 @@ final class WF210Tests: XCTestCase {
         if let defaults = defaults {
             store = defaults
         } else {
-            let suite = "wf210-\(UUID().uuidString)"
+            let suite = testSuiteName()
             store = UserDefaults(suiteName: suite)!
             addTeardownBlock { store.removePersistentDomain(forName: suite) }
         }
@@ -77,18 +77,17 @@ final class WF210Tests: XCTestCase {
         XCTAssertFalse(PanelColorTiles.isNewInstall(values: [:], installed: Data("{}".utf8)), "Claude уже патчили")
     }
 
-    func testNewInstallLookIsVioletAndLiveForAllWindows() throws {
+    /// С 03.11.2026 (`docs/decisions/2026-11-03-oformlenie.md`): «Серая» без живого фона.
+    func testNewInstallLookIsGrayWithoutLiveForAllWindows() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("wf210-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("claude-patch")
+        let root = Repo.root.appendingPathComponent("claude-patch")
         let themes = ThemeCatalog.load(directory: root)
-        let violet = try XCTUnwrap(themes.first { $0.id == PanelColorTiles.newInstallThemeID })
-        XCTAssertEqual(violet.name, "Фиолетовая")
-        XCTAssertEqual(violet.type, "dark")
-        let suite = "wf210-\(UUID().uuidString)"
+        let gray = try XCTUnwrap(themes.first { $0.id == PanelColorTiles.newInstallThemeID })
+        XCTAssertEqual(gray.name, "Серая")
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
         let store = ThemeStore(defaults: defaults)
@@ -96,22 +95,19 @@ final class WF210Tests: XCTestCase {
                                     commands: CommandChannel(path: dir.appendingPathComponent("command.json"),
                                                              now: Date.init, schedule: { _, _ in }),
                                     themes: themes, fonts: [], themeStore: store,
-                                    myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")),
-                                    autoPaintStore: AutoPaintStore(defaults: defaults),
-                                    liveColorsStore: LiveColorsStore(defaults: defaults))
+                                    myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")))
         let mirror = WindowThemeStore(url: dir.appendingPathComponent("window-themes.json"))
         actions.windowThemes = mirror
         XCTAssertNil(store.allThemeID)
         XCTAssertFalse(store.allLook.aurora, "до умолчаний «Живой» выключен")
 
-        actions.applyNewInstallLook(theme: violet, look: PanelColorTiles.liveLook(Look(), on: true))
+        actions.applyNewInstallLook(theme: gray, look: PanelColorTiles.liveLook(Look(), on: false))
 
-        XCTAssertEqual(store.allThemeID, "violet")
-        XCTAssertTrue(store.allLook.aurora, "«Живой» включён")
-        XCTAssertEqual(store.allLook.schemeID, PanelColorTiles.liveScheme, "в тонах темы")
+        XCTAssertEqual(store.allThemeID, "gray")
+        XCTAssertFalse(store.allLook.aurora, "«Живой» выключен")
         // Страницы ещё нет (Claude не пропатчен): выбор ждёт её в файле и уедет возвратом `themes-restore`.
         let all = try XCTUnwrap(mirror.entries[WindowThemeStore.allKey])
         XCTAssertNotNil(all.layers["theme"])
-        XCTAssertNotNil(all.layers["look"])
+        XCTAssertNil(all.layers["look"], "«Живой» выключен — вид как у Claude, слоя вида нет")
     }
 }

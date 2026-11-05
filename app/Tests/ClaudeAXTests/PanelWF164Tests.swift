@@ -61,15 +61,12 @@ final class PanelWF164Tests: XCTestCase {
 
     // MARK: память — подписи по уровню
 
-    func testHelpLikeActivityMonitorAndColorWords() {
-        XCTAssertEqual(MacMemory.color(.normal), "зелёная")
-        XCTAssertEqual(MacMemory.color(.warn), "жёлтая")
-        XCTAssertEqual(MacMemory.color(.critical), "красная")
-        // WF177: в ГБ занятого из всей памяти Мака.
+    func testHelpLikeActivityMonitor() {
+        // WF177: в ГБ занятого из всей памяти Мака. WF242: слова цвета («жёлтая») нет — график серый.
         XCTAssertEqual(MacMemory.help([sample(0, 40), sample(1, 65.4, .warn)]),
-                       "Память: занято 6 из 8 ГБ — 75 % · жёлтая, под нагрузкой")
+                       "Память: занято 6 из 8 ГБ — 75 % · под нагрузкой")
         XCTAssertEqual(MacMemory.help([sample(0, 91, .critical)]),
-                       "Память: занято 6 из 8 ГБ — 75 % · красная, не хватает")
+                       "Память: занято 6 из 8 ГБ — 75 % · не хватает")
         XCTAssertEqual(MacMemory.help([sample(0, 30, nil)]), "Память: занято 6 из 8 ГБ — 75 %")
         XCTAssertEqual(MacMemory.help([]), "Память")
         // Слово подписи — уровень последней точки, тот же, что цвет точки «сейчас» на графике.
@@ -83,12 +80,12 @@ final class PanelWF164Tests: XCTestCase {
             let status = PanelProjects.parse("# \(name)\n1️⃣ Workflow 💭 идёт\n- о чём: x\n")
             return PanelProject(folder: "/p/\(name)", name: name, marker: "", isMain: false,
                                 updated: Self.t0.addingTimeInterval(-minutesAgo * 60), now: "", words: [], note: "",
-                                waits: false, running: status.workflows, finished: [], planned: [],
+                                waits: false, running: status.workflows,
                                 workflows: status.workflows, marathon: "")
         }
         let snapshot = PanelSnapshot(waiting: [], working: [project("Old", minutesAgo: 90), project("New", minutesAgo: 1),
                                                             project("Mid", minutesAgo: 30)],
-                                     others: [], mainEntry: nil, mainName: nil)
+                                     others: [])
         XCTAssertEqual(PanelTiles.groups(snapshot, now: Self.t0)[0].tiles.map { $0.name }, ["New", "Mid", "Old"])
     }
 }

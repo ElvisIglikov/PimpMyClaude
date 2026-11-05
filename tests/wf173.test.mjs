@@ -124,7 +124,8 @@ test("карточки файлов в ленте — плашка в строк
   assert.match(rule(text, `${tile} .justify-between,`), /flex-direction:row !important/);
   assert.match(rule(text, `${tile} .line-clamp-2{`), /-webkit-line-clamp:1/);
   // Ссылку карточки (клик Claude) не прячем и не перекрываем.
-  for (const line of text.split("\n").filter(item => item.includes("MessageAttachmentsFile"))) {
+  // Снимок карточки HTML (#10229) мышь пропускает к плашке — это и есть «не перекрываем».
+  for (const line of text.split("\n").filter(item => item.includes("MessageAttachmentsFile") && !/\[data-myclaude-heic-img\]\{[^}]*pointer-events:none/.test(item))) {
     assert.ok(!/pointer-events|a\{|button\{/.test(line), `клик карточки тронут: ${line}`);
   }
 });

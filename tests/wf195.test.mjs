@@ -99,8 +99,9 @@ test("WF195: подписи нижней строки коротко при ЛЮ
   const css = plain(loaded.inner.RULES).join("\n");
   assert.ok(css.includes('[data-cds="ChatComposerChin"] [data-myclaude-short]{font-size:0 !important;letter-spacing:0 !important}'), "полная подпись Claude не прячется в широкой строке");
   assert.ok(css.includes('[data-cds="ChatComposerChin"] [data-myclaude-short]::after{content:attr(data-myclaude-short);font-size:11px;line-height:16px}'));
-  assert.ok(css.includes('[data-cds="ChatComposerChin"] [data-myclaude-short-tail]::before{content:attr(data-myclaude-short);font-size:10px !important;line-height:16px}'), "«Op» — не мелко");
-  assert.ok(css.includes('[data-cds="ChatComposerChin"] [data-myclaude-short-tail]::after{content:attr(data-myclaude-short-tail);font-size:8px !important;line-height:12px;margin-left:0}'), "«5.5» — не мелко и не слитно");
+  // #9813: слово модели мелко сверху, номер — кеглем соседей снизу (было «Op» 10 + «5.5» 8 слитно).
+  assert.ok(css.includes('[data-cds="ChatComposerChin"] [data-myclaude-short-tail]::before{content:attr(data-myclaude-short);display:block;margin-top:-8px;font-size:7.5px !important;line-height:8px}'), "«Opus» — не мелкой верхней строкой");
+  assert.ok(css.includes('[data-cds="ChatComposerChin"] [data-myclaude-short-tail]::after{content:attr(data-myclaude-short-tail);display:block;font-size:11px !important;line-height:16px;margin-left:0}'), "«5.5» — не кеглем соседей");
   // WF226: у держателя с кеглем 0 распорки строки нет — иначе подпись стоит на 2 px выше цифр и значков рядом.
   assert.ok(css.includes('[data-cds="ChatComposerChin"] [data-myclaude-short]{line-height:0 !important}'), "распорка держателя поднимает подписи над строкой");
   assert.doesNotMatch(css, /\[data-myclaude-chin-narrow\] \[data-myclaude-short/, "короткие подписи снова зависят от тесноты строки — в широкой вернутся длинные");
@@ -110,7 +111,8 @@ test("WF195: подписи нижней строки коротко при ЛЮ
   const { chin, modeText, modelText, effortText } = loaded.parts;
   assert.equal(chin.hasAttribute("data-myclaude-chin-narrow"), false);
   const short = node => node.getAttribute("data-myclaude-short");
-  assert.deepEqual([short(modeText), short(modelText), modelText.getAttribute("data-myclaude-short-tail"), short(effortText)], ["Bp", "Op", "5.5", "Ex"]);
+  assert.deepEqual([short(modeText), short(modelText), modelText.getAttribute("data-myclaude-short-tail"), short(effortText)], ["Bypass", "Opus", "5.5", "Effort"]);
+  assert.equal(effortText.getAttribute("data-myclaude-short-tail"), "Ex", "код эффорта — нижней строкой (#9813)");
 });
 
 test("WF195: короткая подпись — с подсказкой полным именем; сменился режим — подсказка за ним; чужую не трогаем; dispose снимает свою", () => {

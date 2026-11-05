@@ -327,7 +327,6 @@ final class ClaudeUpdaterTests: XCTestCase {
 
     func testCheckFallsBackToGitHubAndReadsRedirect() throws {
         var updater = makeUpdater()
-        updater.allowMirrors = true // Explicit legacy/opt-in policy keeps the mirror race.
         try makeBundle(at: updater.appURL, version: "2.9000.0")
         let github = """
             {"draft":false,"prerelease":false,"tag_name":"claude-app-v2.9939.2","assets":[{"name":"Claude-mac-universal.dmg",\

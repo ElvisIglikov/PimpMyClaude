@@ -109,14 +109,14 @@ test("#7702: Элвис листал ленту вверх недавно — ч
   assert.deepEqual([attn(loaded).scrolls, attn(loaded).skip], [0, "читает выше"]);
 });
 
-test("#7702: листал давно (окно брошено) — крутим; колесо вниз и вне ленты не в счёт", () => {
+test("#7702: листал давно (окно брошено) — крутим; колесо вне ленты не в счёт", () => {
   const { loaded, tick } = page();
-  loaded.win.dispatchEvent({ type: "wheel", deltaY: 40, target: loaded.parts.old });
   loaded.win.dispatchEvent({ type: "wheel", deltaY: -40, target: loaded.parts.editor });
-  assert.equal(attn(loaded).reading, false, "вниз и над полем ввода — не чтение старого");
-  loaded.win.dispatchEvent({ type: "wheel", deltaY: -40, target: loaded.parts.old });
-  // Прошло больше ATTN_READING_MS (5 мин).
-  tick(301000);
+  assert.equal(attn(loaded).reading, false, "над полем ввода — не чтение");
+  loaded.win.dispatchEvent({ type: "wheel", deltaY: 40, target: loaded.parts.old });
+  assert.equal(attn(loaded).reading, true, "#9319: дочитывает вниз — тоже читает");
+  // Прошло больше ATTN_READING_MS (минута с #10360).
+  tick(61000);
   loaded.parts.stop.remove();
   for (let spent = 0; spent <= SETTLE + 500; spent += 500) tick();
   assert.equal(loaded.parts.feed.scrollTop, 2000);
@@ -401,29 +401,65 @@ test("wf92-ap2: окно 280 — значок жмётся к рамке, стр
   assert.match(css, /@media \(max-width:319px\)\{\[data-cds="ChatComposerChin"\]\[data-myclaude-mic-room\]\{padding-left:23px !important\}\}/);
 });
 
-test("wf92-ap2: «читает выше» держится, пока лента не у низа (до 5 мин), и снимается у низа", () => {
+// Часы страницы (performance.now стенда = Date.now) — вперёд на ms: «читает» считается от жеста по ним.
+const later = ms => { const real = Date.now; Date.now = () => real() + ms; return () => { Date.now = real; }; };
+
+test("wf92-ap2: «читает выше» держится, пока лента не у низа (до минуты, #10360), и снимается у низа", () => {
   const { loaded, tick } = page();
   loaded.win.dispatchEvent({ type: "wheel", deltaY: -40, target: loaded.parts.old });
-  tick(120000);
-  assert.equal(attn(loaded).reading, true, "2 минуты, лента выше — всё ещё читает");
-  loaded.parts.feed.scrollTop = 1500;
-  tick();
-  assert.equal(attn(loaded).reading, false, "вернулся к низу — дочитал");
+  const back = later(40000);
+  try {
+    tick(40000);
+    assert.equal(attn(loaded).reading, true, "40 с, лента выше — всё ещё читает");
+    loaded.parts.feed.scrollTop = 1500;
+    tick();
+    assert.equal(attn(loaded).reading, false, "вернулся к низу — дочитал");
+  } finally { back(); }
 });
 
-test("wf92-ap2: Shift+Space и полоса прокрутки — тоже «читает выше»", () => {
-  const key = page();
-  key.loaded.win.dispatchEvent({ type: "keydown", key: " ", shiftKey: true, target: key.loaded.parts.old });
-  assert.equal(attn(key.loaded).reading, true);
-  const plainSpace = page();
-  plainSpace.loaded.win.dispatchEvent({ type: "keydown", key: " ", target: plainSpace.loaded.parts.old });
-  assert.equal(attn(plainSpace.loaded).reading, false, "просто пробел — не вверх");
+test("#9319: у низа двигал только что — читает 30 с, потом лента снова едет за новым", () => {
+  const { loaded, tick } = page({ tail: { clientHeight: 500, scrollHeight: 2000, scrollTop: 1500 } });
+  loaded.win.dispatchEvent({ type: "wheel", deltaY: 40, target: loaded.parts.old });
+  tick(2000);
+  assert.equal(attn(loaded).reading, true, "у низа, но двигал только что");
+  const back = later(31000);
+  try { assert.equal(attn(loaded).reading, false, "30 с без жеста у низа — едет за новым"); } finally { back(); }
+});
 
-  const bar = page();
-  const feed = bar.loaded.parts.feed;
-  feed.clientWidth = 1190;
-  bar.loaded.win.dispatchEvent({ type: "pointerdown", target: feed, clientX: 600 });
-  assert.equal(attn(bar.loaded).reading, false, "нажатие в ленту, не в полосу");
-  bar.loaded.win.dispatchEvent({ type: "pointerdown", target: feed, clientX: 1195 });
-  assert.equal(attn(bar.loaded).reading, true, "нажатие в полосу прокрутки");
+test("#9319: выделенный в ленте текст — читает, сколько бы ни прошло", () => {
+  const { loaded } = page();
+  const text = loaded.parts.old.firstChild;
+  loaded.document.getSelection = () => ({ isCollapsed: false, rangeCount: 1, anchorNode: text });
+  assert.equal(attn(loaded).reading, true);
+  loaded.document.getSelection = () => ({ isCollapsed: false, rangeCount: 1, anchorNode: loaded.parts.editor });
+  assert.equal(attn(loaded).reading, false, "выделение в поле ввода — не чтение ленты");
+});
+
+test("#9319: жест в другом чате «читает» новому не передаёт", () => {
+  const { loaded } = page();
+  loaded.win.dispatchEvent({ type: "wheel", deltaY: -40, target: loaded.parts.old });
+  assert.equal(attn(loaded).reading, true);
+  loaded.win.location.href = "https://claude.ai/epitaxy/local_bbbb-2222";
+  assert.equal(attn(loaded).reading, false);
+});
+
+test("wf92-ap2 / #9319: клавиши листания, нажатие в ленте и её полосе — «читает»; в поле ввода — нет", () => {
+  for (const event of [{ key: " ", shiftKey: true }, { key: " " }, { key: "PageDown" }, { key: "End" }, { key: "ArrowDown" }]) {
+    const key = page();
+    key.loaded.win.dispatchEvent({ type: "keydown", ...event, target: key.loaded.parts.old });
+    assert.equal(attn(key.loaded).reading, true, JSON.stringify(event));
+  }
+  const typing = page();
+  typing.loaded.win.dispatchEvent({ type: "keydown", key: " ", target: typing.loaded.parts.editor });
+  assert.equal(attn(typing.loaded).reading, false, "пробел в поле ввода — набор, не чтение");
+
+  for (const [where, clientX] of [["в ленту", 600], ["в полосу прокрутки", 1195]]) {
+    const press = page();
+    const feed = press.loaded.parts.feed;
+    feed.clientWidth = 1190;
+    press.loaded.win.dispatchEvent({ type: "pointerdown", target: press.loaded.parts.editor, clientX: 600 });
+    assert.equal(attn(press.loaded).reading, false, "нажатие в поле ввода — не чтение");
+    press.loaded.win.dispatchEvent({ type: "pointerdown", target: feed, clientX });
+    assert.equal(attn(press.loaded).reading, true, `нажатие ${where}`);
+  }
 });

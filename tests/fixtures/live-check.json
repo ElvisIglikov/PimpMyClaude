@@ -1,0 +1,82 @@
+{
+  "v": 1,
+  "at": "2026-10-22T09:14:07.880Z",
+  "by": "cli",
+  "claude": "3.1623.0",
+  "pimp": "1.10.65",
+  "ok": false,
+  "red": [
+    {"window": "main", "chat": "local_5b0c7e2a-41d3-4f8e-9a6b-2c1d0e9f7a13", "check": "wide"},
+    {"window": "main", "chat": "local_5b0c7e2a-41d3-4f8e-9a6b-2c1d0e9f7a13", "check": "fold"}
+  ],
+  "pages": [
+    {
+      "id": 3,
+      "health": {
+        "v": 1,
+        "version": "wf272-page-98",
+        "page": "https://claude.ai/epitaxy/local_5b0c7e2a-41d3-4f8e-9a6b-2c1d0e9f7a13",
+        "kind": "main",
+        "mode": "code",
+        "wide": true,
+        "chat": "local_5b0c7e2a-41d3-4f8e-9a6b-2c1d0e9f7a13",
+        "title": "Сторожи Пимпа",
+        "at": "2026-10-22T09:14:05.312Z",
+        "checks": [
+          {"id": "anchors", "ok": true},
+          {"id": "wide", "ok": false, "why": "dock-left: лента 0–1184, дока 0–1184"},
+          {"id": "fold", "ok": false, "why": "no-target: modelRow"},
+          {"id": "title", "ok": true},
+          {"id": "sidebarButton", "ok": true},
+          {"id": "look", "ok": true, "skip": "live-off"},
+          {"id": "ownButtons", "ok": true},
+          {"id": "claudeButtons", "ok": true},
+          {"id": "install", "ok": true, "at": "2026-10-22T08:51:40.027Z"}
+        ],
+        "red": ["wide", "fold"]
+      }
+    },
+    {
+      "id": 7,
+      "health": {
+        "v": 1,
+        "version": "wf272-page-98",
+        "page": "about:blank",
+        "kind": "popout",
+        "mode": "code",
+        "wide": false,
+        "chat": "local_9e41a0d6-77c2-4b15-8f3e-d0a2b6c4e581",
+        "title": "Вкуснофф — меню",
+        "at": "2026-10-22T09:14:05.298Z",
+        "checks": [
+          {"id": "anchors", "ok": true},
+          {"id": "wide", "ok": true},
+          {"id": "fold", "ok": true},
+          {"id": "title", "ok": true, "skip": "narrow"},
+          {"id": "sidebarButton", "ok": true},
+          {"id": "look", "ok": true, "skip": "live-off"},
+          {"id": "ownButtons", "ok": true},
+          {"id": "claudeButtons", "ok": true},
+          {"id": "install", "ok": true, "at": "2026-10-22T08:51:39.884Z"}
+        ],
+        "red": []
+      }
+    }
+  ],
+  "unchecked": 0,
+  "app": {
+    "v": 1,
+    "version": "1.10.65",
+    "at": "2026-10-22T09:14:06.104Z",
+    "claude": "3.1623.0",
+    "checked": "3.1623.0",
+    "checks": [
+      {"id": "statusItem", "ok": true},
+      {"id": "iconNumber", "ok": true},
+      {"id": "stripWindow", "ok": true, "skip": "hidden"},
+      {"id": "clickLog", "ok": true},
+      {"id": "panelOpaque", "ok": true, "skip": "closed"}
+    ],
+    "red": []
+  }
+}

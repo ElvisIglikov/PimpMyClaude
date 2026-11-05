@@ -302,7 +302,7 @@ test("папку называет только главное окно и тол
 // конца сверяют НАСТОЯЩИЙ ответ chats(), без фильтра хвоста.
 test("порядок ключей ответа — прежний эталон и optional sendDelaySetting WF119", async () => {
   // Общие эталоны остаются проверкой старого отправителя; новый добавляет одно поле.
-  const keys = name => Object.keys(fixture(name)).flatMap(key => key === "galleryCounted" ? [key, "sendDelaySetting"] : [key]);
+  const keys = name => [...Object.keys(fixture(name)).flatMap(key => key === "galleryCounted" ? [key, "sendDelaySetting"] : [key]), "zoom"];
   const home = homeWindow(undefined, { geometry: { frame: FRAME_MAIN } });
   await home.loaded.api.chats({ nonce: "f13" });
   await drain();

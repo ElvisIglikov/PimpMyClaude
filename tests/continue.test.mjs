@@ -4,7 +4,7 @@
 // Слово Элвиса 23.09: кнопка там, где блок продолжения, «чтоб всё автоматически
 // было под рукой… и новый чат, который продолжается, сразу в закреплённые
 // уходит». Канал к приложению — метка в document.title (как замок К6): клик
-// ставит `Пимп: продолжить в новом чате · <метка>` на CONTINUE_HOLD_MS, ответ
+// ставит `PMP: продолжить в новом чате · <метка>` на CONTINUE_HOLD_MS, ответ
 // приложения — команда cashout с handoff. Контракт — docs/CONTRACTS.md, WF84.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -14,7 +14,7 @@ import { loadInject, plain } from "./load.mjs";
 const fixture = name => JSON.parse(readFileSync(new URL(`./fixtures/cashout/${name}.json`, import.meta.url), "utf8"));
 const HANDOFF = fixture("record-handoff").text;
 const BOX = "[data-myclaude-continue]";
-const PREFIX = "Пимп: продолжить в новом чате · ";
+const PREFIX = "PMP: продолжить в новом чате · ";
 
 // Ответ с блоком передачи — разметка Claude 2.2553: div.epitaxy-codeblock >
 // div.relative > div[data-code-text].
@@ -96,7 +96,7 @@ test("#7246: клик — метка в заголовке окна на сро�
   assert.ok(title.startsWith(PREFIX), `метка в заголовке: ${title}`);
   assert.match(title.slice(PREFIX.length), /^[0-9a-z]+$/, "метка — base36");
   assert.equal(loaded.inner.windowTitle(), "VkusnoffKz 2", "адресация и ключ темы видят имя чата");
-  assert.equal(label(loaded), "⏳ Зову Пимпа…");
+  assert.equal(label(loaded), "⏳ Зову PMP…");
   assert.equal(button(loaded).getAttribute("aria-disabled"), "true");
   // Claude переписал заголовок посреди срока — метка встаёт обратно.
   loaded.document.title = "VkusnoffKz 2 (попап)";
@@ -142,7 +142,7 @@ test("#7246: приложение молчит — кнопка снова жи�
   assert.equal(status.silent, 1);
   assert.equal(label(loaded), "💬 Новый чат");
   assert.equal(button(loaded).hasAttribute("aria-disabled"), false);
-  assert.ok(loaded.document.body.textContent.includes("Пимп пока не взялся — проверь, что он запущен и у него есть доступ, и нажми ещё раз"), "плашка");
+  assert.ok(loaded.document.body.textContent.includes("PMP пока не взялся — проверь, что он запущен и у него есть доступ, и нажми ещё раз"), "плашка");
   assert.equal(loaded.document.title, "VkusnoffKz 2");
 });
 

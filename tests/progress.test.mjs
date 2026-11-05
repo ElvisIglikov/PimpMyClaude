@@ -517,6 +517,46 @@ test("окно без примет ответа: своя строка из па
   assert.equal(progress.of, 4, "счёт свой, а не девять чужих");
 });
 
+// Ревизия WF247 (P2): запасной путь шёл и там, где приметы ответа совпали, — innerText всей панели в каждом
+// чате без строки состояния (до раза в секунду), и строка из ответа старше PROGRESS_LOOKBACK (12) вставала
+// полосой. Теперь он — только когда примет меньше LOOKBACK (вынесенное окно: 0–3 узла).
+const rows = (count, { lineAt = null, extra = null } = {}) => lane => {
+  for (let at = 0; at < count; at += 1) {
+    lane.add("div", { attrs: { "data-testid": "transcript-row" } })
+      .add("span", { text: `Ответ ${at}.${count - at === lineAt ? "\n\n💭⚪[PimpMyClaude](docs/status.md) · WF 2 из 4 · идёт💭" : ""}` });
+  }
+  if (extra) lane.add("div").add("span", { text: extra });
+};
+// Стаб: innerText узла смотрит display у каждого ребёнка-элемента, textContent — нет; у панели ребёнок один —
+// лента, поэтому вызовы display у ленты и есть чтения panel.innerText.
+const panelReads = loaded => {
+  const lane = loaded.dom.query('[data-testid="epitaxy-virtual-transcript"]');
+  const reads = { count: 0 };
+  const real = lane.style.getPropertyValue.bind(lane.style);
+  lane.style.getPropertyValue = name => { if (name === "display") reads.count += 1; return real(name); };
+  return reads;
+};
+
+test("обычный чат: 14 ответов без строки — панель целиком не читается; строка старше 12 ответов полосой не встаёт", () => {
+  const plainChat = loadInject({ title: "PimpMyClaude", html: claudeWindow(rows(14)) });
+  const reads = panelReads(plainChat);
+  for (let at = 0; at < 10; at += 1) plainChat.dom.fireKind("interval");
+  assert.equal(reads.count, 0, "примет хватило — запасной путь не нужен");
+  assert.equal(plain(plainChat.api.status().progress).wf, null);
+  const stale = loadInject({ title: "PimpMyClaude", html: claudeWindow(rows(14, { lineAt: 14 })) });
+  assert.equal(plain(stale.api.status().progress).wf, null, "строка 14-го ответа с конца — за PROGRESS_LOOKBACK");
+  const fresh = loadInject({ title: "PimpMyClaude", html: claudeWindow(rows(14, { lineAt: 12 })) });
+  assert.equal(plain(fresh.api.status().progress).wf, 2, "12-й с конца — ещё свой");
+});
+
+test("вынесенное окно с 1–3 узлами примет: строка из панели читается запасным путём", () => {
+  for (const count of [1, 3]) {
+    const loaded = loadInject({ title: "PimpMyClaude", html: claudeWindow(rows(count, {
+      extra: "Готово.\n\n💭⚪[PimpMyClaude](docs/status.md) · WF 3 из 4 · идёт💭" })) });
+    assert.equal(plain(loaded.api.status().progress).wf, 3, `${count}`);
+  }
+});
+
 test("сводка: точное имя проекта выигрывает, префикс — только когда он один", () => {
   const loaded = loadInject({ title: "X" });
   loaded.dom.command({

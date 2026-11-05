@@ -13,7 +13,7 @@ final class SendLookWF111Tests: XCTestCase {
     }
 
     func testMenuChecksDefaultWhenNoKey() {
-        let suite = "wf161-look-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
         defaults.set("1.5", forKey: "sendLookStyle") // старый ключ WF119 не читается
@@ -29,7 +29,7 @@ final class SendLookWF111Tests: XCTestCase {
     }
 
     func testChosenStyleRememberedBroadcastAndPreviewed() {
-        let suite = "wf161-look-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
         let settings = PageLookSettings(defaults: defaults)
@@ -41,9 +41,9 @@ final class SendLookWF111Tests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: SendLook.styleKey), "1.10")
         XCTAssertEqual(settings.current.style, "1.10")
         XCTAssertTrue(settings.previewSendDelay(seconds: 5, match: nil, chat: "local_a"))
-        XCTAssertEqual(sent, ["{\"style\":\"1.10\",\"size\":100,\"preview\":false}",
-                              "{\"style\":\"1.10\",\"size\":100,\"preview\":false}",
-                              "{\"style\":\"1.10\",\"size\":100,\"preview\":true,\"seconds\":5,\"chat\":\"local_a\"}"])
+        XCTAssertEqual(sent, ["{\"style\":\"1.10\",\"size\":150,\"preview\":false}",
+                              "{\"style\":\"1.10\",\"size\":150,\"preview\":false}",
+                              "{\"style\":\"1.10\",\"size\":150,\"preview\":true,\"seconds\":5,\"chat\":\"local_a\"}"])
         XCTAssertEqual(CommandChannel.payload(action: SendLook.action,
             fields: SendLook.fields(style: "1.9", size: 100, preview: false, match: nil),
             id: "wf161-look", at: PimpChannel.date("2026-10-08T00:00:00Z")!),

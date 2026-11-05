@@ -8,9 +8,10 @@ final class PanelWF181Tests: XCTestCase {
 
     func testDefaultLayoutPairsTilesLikeShot37() {
         let all = Set(PanelWidget.allCases.map { $0.rawValue })
+        // Пары снимка 37 целы; с #10461 порядок — как у коллеги (`PanelLikeWindows10308Tests`).
         XCTAssertEqual(PanelWidgetLayout.standard.rows(visible: all).map { $0.map { $0.id } },
-                       [["workflow"], ["week", "reset"], ["limits", "fable"], ["temperature", "memory"], ["tokens"],
-                        ["colors"]])
+                       [["week", "reset"], ["limits", "fable"], ["temperature", "memory"], ["cpu", "gpu"],
+                        ["tokens", "colors"], ["terminals"]])
         // Сохранённая раскладка человека — своя, умолчание её не трогает.
         let mine = PanelWidgetLayout(items: PanelWidget.allCases.map { .init(id: $0.rawValue, wide: true) })
         XCTAssertFalse(mine.isStandard)
@@ -46,7 +47,7 @@ final class PanelWF181Tests: XCTestCase {
     func testHeaderLineHasNoEllipsis() {
         for patch: StatusIcon.Patch in [.unknown, .claudeNotFound, .notInstalled(version: "2.1"), .lost(version: "2.1"),
                                         .installed(version: "2.1", loader: 8)] {
-            let line = PimpPanelText.headerLine(patch, plan: "Max 20x", app: "1.10.10")
+            let line = PimpPanelText.headerLine(patch, app: "1.10.10")
             XCTAssertFalse(line.contains("…"), line)
         }
     }
@@ -54,13 +55,13 @@ final class PanelWF181Tests: XCTestCase {
     func testMemoryGigabytesAndPercentOneFormula() {
         let sample = MacMemorySample(at: Date(), pressure: 50, level: .normal,
                                      used: 6 * Self.gb + 3 * Self.gb / 10, total: 8 * Self.gb)
-        XCTAssertEqual(MacMemory.amount(sample), "6,3 ГБ")
+        XCTAssertEqual(MacMemory.amount(sample), "6.3 ГБ")
         XCTAssertEqual(MacMemory.usedPercent(sample), 79, "6,3 из 8 — 79 %, а не нагрузка macOS 50 %")
-        XCTAssertEqual(MacMemory.help([sample]), "Память: занято 6,3 из 8 ГБ — 79 % · зелёная, в норме")
+        XCTAssertEqual(MacMemory.help([sample]), "Память: занято 6.3 из 8 ГБ — 79 % · в норме")
         XCTAssertFalse(MacMemory.caption([sample]).contains("…"))
         // Занятого не знаем — процент честно назван нагрузкой macOS.
         let blind = MacMemorySample(at: Date(), pressure: 47, level: .normal, used: nil, total: 8 * Self.gb)
         XCTAssertNil(MacMemory.usedPercent(blind))
-        XCTAssertEqual(MacMemory.help([blind]), "Память: нагрузка по macOS 47 % · зелёная, в норме")
+        XCTAssertEqual(MacMemory.help([blind]), "Память: нагрузка по macOS 47 % · в норме")
     }
 }

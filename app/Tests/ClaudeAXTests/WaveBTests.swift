@@ -96,20 +96,6 @@ final class WaveBTests: XCTestCase {
                      "донор новым окном не бывает")
     }
 
-    func testMainFrameByMainPageOnly() {
-        let frame = CGRect(x: 0, y: 34, width: 490, height: 859)
-        let main = ChatPage(kind: .main, chat: nil, title: "Проект", store: "ok", frame: frame, at: t0)
-        let artifact = ChatPage(kind: .other, chat: nil, title: "", store: "skip", frame: frame, at: t0)
-        let popout = ChatPage(kind: .popout, chat: nil, title: "Проект", store: "ok",
-                              frame: frame.offsetBy(dx: 1, dy: 0), at: t0)
-        XCTAssertTrue(ClaudeActions.isMainFrame(frame, pages: [main, artifact]))
-        XCTAssertTrue(ClaudeActions.isMainFrame(frame.offsetBy(dx: 1, dy: 1), pages: [main]), "допуск 2 pt")
-        XCTAssertFalse(ClaudeActions.isMainFrame(frame, pages: [main, popout]), "попап в той же рамке — ничья")
-        XCTAssertFalse(ClaudeActions.isMainFrame(frame, pages: [artifact]))
-        XCTAssertFalse(ClaudeActions.isMainFrame(nil, pages: [main]))
-        XCTAssertFalse(ClaudeActions.isMainFrame(frame.offsetBy(dx: 500, dy: 0), pages: [main]))
-    }
-
     // MARK: - шов cashoutTick: закрытие донора только в правильном случае (проверка wf93-n2)
 
     private typealias Win = (id: CGWindowID, window: AXUIElement, title: String, frame: CGRect)
@@ -127,6 +113,9 @@ final class WaveBTests: XCTestCase {
         let fresh = AXUIElementCreateApplication(999_903)
         let stranger = AXUIElementCreateApplication(999_904)
         let donorFrame = CGRect(x: 500, y: 34, width: 480, height: 859)
+        /// Резолвер окна стенда (в бою — `WindowIdentity.resolveNative`): окно «Claude» и окно в
+        /// рамке `mainFrame` — главное, прочие — попапы своего чата.
+        var mainFrame: CGRect?
 
         init(at: Date) {
             now = at
@@ -141,6 +130,11 @@ final class WaveBTests: XCTestCase {
             actions.cashoutAnswers = { [unowned self] in self.pages }
             actions.closeWindow = { [unowned self] window in self.closed.append(window); return true }
             actions.onWarning = { [unowned self] in self.warnings.append($0) }
+            actions.windowIdentity = { [unowned self] title, frame in
+                let isMain = title == "Claude" || (frame != nil && frame == self.mainFrame)
+                return .page(ChatPage(kind: isMain ? .main : .popout, chat: isMain ? nil : "local_donor",
+                                      title: title, store: "ok", at: self.now))
+            }
             windows = [(1, main, "Claude", CGRect(x: 0, y: 34, width: 490, height: 859)),
                        (2, donor, "Старый чат", donorFrame)]
         }
@@ -255,7 +249,7 @@ final class WaveBTests: XCTestCase {
 
         // …или его рамка — рамка страницы главного окна.
         let byFrame = CashRig(at: t0)
-        byFrame.actions.isMainFrame = { [donorFrame = byFrame.donorFrame] in $0 == donorFrame }
+        byFrame.mainFrame = byFrame.donorFrame
         byFrame.start(handoff: true)
         byFrame.now = t0.addingTimeInterval(9)
         byFrame.born()
@@ -334,62 +328,14 @@ final class WaveBTests: XCTestCase {
         XCTAssertTrue(ProjectIndex.isLoadingTitle(" loading "))
         XCTAssertFalse(ProjectIndex.isLoadingTitle("Code"))
         let old = ChatPage(kind: .popout, chat: "local_6f1bd03f", title: "Loading", store: "ok", at: t0)
-        XCTAssertNil(ChatProbe.chat(forTitle: "Loading", in: [old]), "прежний id по заглушке не берём — ждём имя")
         XCTAssertNil(ClaudeActions.cashoutFresh(title: "Loading", before: [1],
                                                 windows: [(1, "Claude"), (3, "Loading")]))
-    }
-
-    // MARK: - замок в обе стороны: цепочки ждут пустое окно
-
-    func testChainsWaitForBlankJob() {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("waveb-\(UUID().uuidString)", isDirectory: true)
-        let actions = ClaudeActions(app: IsolatedClaudeApp.make(),
-                                    commands: CommandChannel(path: dir.appendingPathComponent("command.json")))
-        var now = t0
-        actions.clock = { now }
-        var queued: [(delay: TimeInterval, run: () -> Void)] = []
-        actions.schedule = { delay, block in queued.append((delay, block)) }
-        var busy = true
-        actions.blankBusy = { busy }
-        var ran = 0
-
-        actions.whenBlankIdle { ran += 1 }
-        XCTAssertEqual(ran, 0, "черновик ловится — цепочка ждёт")
-        XCTAssertEqual(queued.map { $0.delay }, [BlankWindow.pollSeconds])
-        now = now.addingTimeInterval(0.25)
-        queued.removeFirst().run()
-        XCTAssertEqual(ran, 0)
-        busy = false
-        now = now.addingTimeInterval(0.25)
-        queued.removeFirst().run()
-        XCTAssertEqual(ran, 1, "работа кончилась — цепочка пошла")
-        XCTAssertTrue(queued.isEmpty)
-
-        // Канал свободен — сразу, без таймера.
-        actions.whenBlankIdle { ran += 1 }
-        XCTAssertEqual(ran, 2)
-        XCTAssertTrue(queued.isEmpty)
-
-        // Работа зависла — не дольше потолка.
-        busy = true
-        let start = now
-        actions.whenBlankIdle { ran += 1 }
-        while let next = queued.first {
-            queued.removeFirst()
-            now = now.addingTimeInterval(BlankWindow.pollSeconds)
-            next.run()
-        }
-        XCTAssertEqual(ran, 3)
-        XCTAssertGreaterThanOrEqual(now.timeIntervalSince(start), ClaudeActions.blankWaitSeconds)
-        XCTAssertLessThan(now.timeIntervalSince(start), ClaudeActions.blankWaitSeconds + 0.5)
-        XCTAssertEqual(ClaudeActions.blankWaitSeconds, 8)
     }
 
     // MARK: - маяк окон доступа у часов
 
     func testConsentBeaconDefaultsOn() throws {
-        let suite = "waveb-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         XCTAssertTrue(ConsentBeacon.isEnabled(in: defaults), "нет ключа — включено")

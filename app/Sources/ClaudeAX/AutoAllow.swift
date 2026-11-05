@@ -57,11 +57,13 @@ final class AutoAllowSwitch {
 /// One snapshot BEFORE any startup migration writes defaults. Existing explicit choices win.
 public enum AutomationDefaults {
     public static let allowKey = "autoAllowEnabled"
+    /// Выключатель «Сам нажимать „Allow once“» (#9998, возвращён 16.10.2026) — свой ключ, без миграции: в старом
+    /// `allowKey` у старых установок `true` стоит сам (`migrate`), и вернувшийся выключатель включился бы без выбора
+    /// человека. Нет ключа — выключен (решение WF108).
+    public static let allowOnceKey = "autoAllowOnceEnabled"
     public static let continueKey = "autoContinueEnabled"
     public static let continueMigrationKey = "autoContinuePreservePageChoice"
-    public static let mirrorsKey = "claudeThirdPartySources"
     public static let initializedKey = "automationDefaultsInitialized"
-    public static let downloadQuestionKey = "claudeAutoDownloadQuestionPending"
 
     public static func isLegacy(values: [String: Any], patched: Bool) -> Bool {
         let oldKeys: Set<String> = [allowKey, "setupWindowSeen", "loginItemConfigured", "claudeAppPath",
@@ -97,13 +99,12 @@ public enum AutomationDefaults {
             defaults.set(values[initializedKey] == nil && legacy, forKey: allowKey)
         }
         guard values[initializedKey] == nil else { return }
-        if values[ClaudeUpdateMenu.autoDownloadKey] == nil { defaults.set(legacy, forKey: ClaudeUpdateMenu.autoDownloadKey) }
-        if values[mirrorsKey] == nil { defaults.set(legacy, forKey: mirrorsKey) }
+        // Фоновая загрузка и зеркала с WF126 всегда, выключателей нет (вопрос 9 ревизии 16.10): ключи загрузки,
+        // зеркал и вопроса о загрузке больше не пишутся; у старых установок они лежат и ничего не значат.
         if values[continueKey] == nil {
             defaults.set(legacy, forKey: continueKey)
             defaults.set(legacy, forKey: continueMigrationKey)
         } else if values[continueMigrationKey] == nil { defaults.set(false, forKey: continueMigrationKey) }
-        defaults.set(!legacy && values[ClaudeUpdateMenu.autoDownloadKey] == nil, forKey: downloadQuestionKey)
         defaults.set(true, forKey: initializedKey)
     }
 }

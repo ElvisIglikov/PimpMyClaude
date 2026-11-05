@@ -57,12 +57,11 @@ const mark = node => node.getAttribute("data-myclaude-chin");
 const short = node => node.getAttribute("data-myclaude-short");
 const tail = node => node.getAttribute("data-myclaude-short-tail");
 
-test("короткие имена (#9181, WF179): голова крупно, хвост мелко — Opus 5.5 → Оп + 5.5, Fable → Ф + Б, Sonnet → S + N, Haiku → Х; новой модели — буква и номер с точкой, без номера — не сокращаем", () => {
+test("имя модели полностью (#9813, слово Элвиса 11.10: «Зачем экономить на названии модели?»): слово и номер — у всех моделей, без номера — не трогаем", () => {
   const { inner } = loadInner();
   assert.deepEqual(["Opus 5.5", "Fable 5.1", "Sonnet 5", "Haiku 4.5", "Sonnet 4.5", "Opus 6", "Nova 2.0.1"].map(text => plain(inner.chinModelParts(text))),
-    // WF179 (слово Элвиса 09.10 02:50: «О — непонятно, как ноль; „Оп“ — опус, и мелко 5.5»): Opus — две буквы.
-    [["Op", "5.5"], ["Ф", "Б"], ["S", "N"], ["Х", ""], ["S", "N"], ["Op", "6"], ["N", "2.0.1"]]);
-  assert.deepEqual(["Opus 5.5", "Fable 5.1", "Haiku 4.5"].map(inner.chinModelShort), ["Op5.5", "ФБ", "Х"]);
+    [["Opus", "5.5"], ["Fable", "5.1"], ["Sonnet", "5"], ["Haiku", "4.5"], ["Sonnet", "4.5"], ["Opus", "6"], ["Nova", "2.0.1"]]);
+  assert.deepEqual(["Opus 5.5", "Fable 5.1", "Haiku 4.5"].map(inner.chinModelShort), ["Opus 5.5", "Fable 5.1", "Haiku 4.5"]);
   assert.equal(inner.chinModelShort("Opus"), null, "номера нет — подпись остаётся полной");
   assert.deepEqual(["Low", "Medium", "High", "Extra", "Max", "xhigh"].map(inner.chinEffortShort),
     ["Lo", "Me", "Hi", "Ex", "Mx", "Ex"], "эффорты — две буквы, первая заглавная, вторая строчная (WF183, слово Элвиса 09.10 03:15)");
@@ -82,10 +81,10 @@ test("метки строки: плюсик — значок 16×16, микро�
   assert.equal(parts.mic.isConnected, true, "кнопка Claude в разметке — её жмёт микрофон у кружка (#7054)");
   assert.equal(mark(parts.mode), "text");
   assert.equal(short(parts.modeText), "Ac", "Accept edits → Ac (WF183: первая заглавная, вторая строчная)");
-  assert.equal(short(parts.modelText), "Op", "Opus — «Op» (04:05), не «O», похожая на ноль");
-  assert.equal(tail(parts.modelText), "5.5", "хвост номера — отдельным атрибутом, мельче головы");
-  assert.equal(tail(parts.effortText), null, "у эффорта хвоста нет");
-  assert.equal(short(parts.effortText), "Hi");
+  assert.equal(short(parts.modelText), "Opus", "имя модели полностью — верхней строкой (#9813)");
+  assert.equal(tail(parts.modelText), "5.5", "номер — нижней строкой, крупно");
+  assert.equal(short(parts.effortText), "Effort", "эффорт — в пару к модели: слово сверху (#9813)");
+  assert.equal(tail(parts.effortText), "Hi", "код эффорта «Хх» — нижней строкой (WF183)");
   assert.equal(parts.ring.hasAttribute("data-myclaude-chin"), false, "кружок контекста — свой раздел, его не трогаем");
   assert.equal(parts.modelText.textContent, "Opus 5.5", "подпись Claude не переписана — её держит React");
 });
@@ -99,11 +98,15 @@ test("правила: прячут и ужимают только помечен
   assert.match(css, /\[data-myclaude-chin="icon"\] svg\{width:13px !important;height:13px !important\}/);
   assert.match(css, /@media \(max-width:299px\)\{[^}]*\[data-myclaude-chin="text"\]\{font-size:10px !important;/);
   assert.match(css, /\[data-myclaude-short\]::after\{content:attr\(data-myclaude-short\);font-size:10px !important/);
-  // Подпись модели с хвостом (#9181): голова ::before, хвост ::after мельче (10/8, узкое — 10/7.5); с WF195 — при
-  // любой ширине строки, не только в тесной.
-  assert.match(css, /\[data-cds="ChatComposerChin"\] \[data-myclaude-short-tail\]::before\{content:attr\(data-myclaude-short\);font-size:10px !important/);
-  assert.match(css, /\[data-cds="ChatComposerChin"\] \[data-myclaude-short-tail\]::after\{content:attr\(data-myclaude-short-tail\);font-size:8px !important/);
-  assert.match(css, /@media \(max-width:299px\)\{[^}]*\[data-myclaude-short-tail\]\[data-myclaude-short\]::before\{content:attr\(data-myclaude-short\);font-size:10px !important/);
+  // Модель и эффорт в две строки (#9813): слово ::before мелко сверху, номер ::after кеглем соседей (11/16, узкое — 10)
+  // снизу; держатель — inline-block по нижней строке, слово поднято отрицательным полем — высота подписи 16.
+  assert.match(css, /\[data-cds="ChatComposerChin"\] \[data-myclaude-short-tail\]\{display:inline-block !important;vertical-align:baseline/);
+  assert.match(css, /\[data-cds="ChatComposerChin"\] \[data-myclaude-short-tail\]::before\{content:attr\(data-myclaude-short\);display:block;margin-top:-8px;font-size:7.5px !important;line-height:8px\}/);
+  assert.match(css, /\[data-cds="ChatComposerChin"\] \[data-myclaude-short-tail\]::after\{content:attr\(data-myclaude-short-tail\);display:block;font-size:11px !important;line-height:16px/);
+  assert.match(css, /@media \(max-width:299px\)\{[^}]*\[data-myclaude-short-tail\]\[data-myclaude-short\]::after\{content:attr\(data-myclaude-short-tail\);font-size:10px !important/);
+  // WF248: в узком окне не повторяются правила, что действуют всегда (кегль 0 у короткой подписи, голова «Op»).
+  assert.doesNotMatch(css, /@media \(max-width:299px\)\{[^\n]*\[data-myclaude-short\]\{font-size:0/);
+  assert.doesNotMatch(css, /@media \(max-width:299px\)\{[^\n]*::before\{content:attr\(data-myclaude-short\)/);
   assert.doesNotMatch(css, /Press and hold to record"\]\{display:none/, "кнопку прячем меткой, а не выкидываем");
 });
 
@@ -112,12 +115,12 @@ test("React сменил модель — короткая подпись за �
   const { modelText, model } = loaded.parts;
   loaded.dom.retext(modelText, "Sonnet 4.5");
   settle(loaded);
-  assert.equal(short(modelText), "S");
-  assert.equal(tail(modelText), "N");
+  assert.equal(short(modelText), "Sonnet");
+  assert.equal(tail(modelText), "4.5");
   loaded.dom.retext(modelText, "Haiku 4.5");
   settle(loaded);
-  assert.equal(short(modelText), "Х");
-  assert.equal(tail(modelText), null, "хвоста нет — атрибут снят");
+  assert.equal(short(modelText), "Haiku");
+  assert.equal(tail(modelText), "4.5");
   loaded.dom.retext(modelText, "Opus");
   settle(loaded);
   assert.equal(modelText.hasAttribute("data-myclaude-short"), false, "без номера — метка снята, подпись полная");
@@ -243,7 +246,7 @@ test("WF175 (#9195), WF183: Bypass permissions подписан «Bp», не «B
   const { modeText } = loaded.parts;
   loaded.dom.retext(modeText, "Bypass permissions");
   settle(loaded);
-  assert.equal(short(modeText), "Bp");
+  assert.equal(short(modeText), "Bypass");
   assert.equal(loaded.inner.chinModeShort("Bypass permissions"), "By");
   loaded.dom.retext(modeText, "Auto mode");
   settle(loaded);
@@ -258,7 +261,7 @@ test("WF183: все подписи строки — притемнённым ц�
   const css = plain(inner.RULES).join("\n");
   assert.ok(css.includes('[data-cds="ChatComposerChin"] [data-myclaude-chin="text"],[data-cds="ChatComposerChin"] [data-myclaude-chin="text"] *{color:var(--cds-text-secondary,currentColor) !important}'),
     "подписи строки разными цветами (#03:05 «всё разными цветами»)");
-  assert.ok(css.includes('[data-cds="ChatComposerChin"] [aria-haspopup="dialog"][aria-label^="Usage:"]{flex-shrink:0 !important}'), "кружок ужимается");
+  assert.ok(css.includes('[data-cds="ChatComposerChin"] [aria-haspopup="dialog"]:is([aria-label^="Usage:"],[aria-label^="Использование:"]){flex-shrink:0 !important}'), "кружок ужимается");
   assert.ok(css.includes('[data-cds="ChatComposerChin"] div[class*="--cmp-chin-start"]{padding-inline-end:6px !important}'), "правое поле строки не равно левому");
   assert.match(css, /\[data-myclaude-chin-narrow\] \[data-myclaude-chin="text"\]\{padding-left:3px !important;padding-right:3px !important\}/);
 });

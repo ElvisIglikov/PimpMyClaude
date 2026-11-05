@@ -654,13 +654,3 @@ final class WindowThemeStoreTests: XCTestCase {
         XCTAssertEqual(sent.count, 2, "ближайший тик красит окно заново")
     }
 }
-
-/// UserDefaults в памяти: тумблер покраски не должен попадать в живые настройки приложения.
-private final class MemoryThemeDefaults: ThemeDefaults {
-    private var values: [String: Any] = [:]
-    func string(forKey key: String) -> String? { values[key] as? String }
-    func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
-    func object(forKey key: String) -> Any? { values[key] }
-    func set(_ value: Any?, forKey key: String) { values[key] = value }
-    func removeObject(forKey key: String) { values.removeValue(forKey: key) }
-}

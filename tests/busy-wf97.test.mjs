@@ -24,7 +24,7 @@ import { loadInject, plain } from "./load.mjs";
 
 const BUSY = "data-myclaude-busy";
 const HANDOFF = JSON.parse(readFileSync(new URL("./fixtures/cashout/record-handoff.json", import.meta.url), "utf8")).text;
-const PREFIX = "Пимп: продолжить в новом чате · ";
+const PREFIX = "PMP: продолжить в новом чате · ";
 
 // ---- 1. «ОТКРОЙ НОВЫЙ ЧАТ» и «💬 Новый чат» ---------------------------------
 
@@ -65,7 +65,7 @@ test("#7772: клик по «ОТКРОЙ НОВЫЙ ЧАТ» — «занято
   click(loaded, head);
   assert.deepEqual(busy(head), ["1", "true"], "нажатие не видно сразу");
   assert.equal(head.getAttribute("data-myclaude-continue-state"), "wait");
-  assert.equal(button(loaded).getAttribute("data-myclaude-continue-label"), "⏳ Зову Пимпа…");
+  assert.equal(button(loaded).getAttribute("data-myclaude-continue-label"), "⏳ Зову PMP…");
   assert.deepEqual(busy(button(loaded)), ["1", "true"], "кнопка под блоком не занята");
   // Второй и третий одиночный клик, пока ждём, — ничего нового.
   click(loaded, head);
@@ -142,7 +142,7 @@ test("#7865: ждём Пимпа — блик по буквам, кружок в
   // Кнопка: наливается, кружок, подпись без ⏳ с бликом.
   assert.match(css, /\[data-myclaude-continue\]>button\[data-myclaude-busy\]\[data-myclaude-continue-label\^="⏳"\]\{[^}]*animation:myclaude-fill /);
   assert.match(css, /\[data-myclaude-continue\]>button\[data-myclaude-busy\]\[data-myclaude-continue-label\^="⏳"\]::before\{[^}]*animation:myclaude-spin /);
-  assert.match(css, /\[data-myclaude-continue\]>button\[data-myclaude-busy\]\[data-myclaude-continue-label\^="⏳"\]::after\{content:"Зову Пимпа…";[^}]*animation:myclaude-shim /);
+  assert.match(css, /\[data-myclaude-continue\]>button\[data-myclaude-busy\]\[data-myclaude-continue-label\^="⏳"\]::after\{content:"Зову PMP…";[^}]*animation:myclaude-shim /);
   assert.match(css, /\[data-myclaude-continue-link\]\[data-myclaude-busy\]\{cursor:default\}/, "курсор-рука над занятой ссылкой");
   // Плашка «Новое окно» — тоже блик, «уменьшить движение» — без анимации.
   assert.match(css, /(^|[}\s])\[data-myclaude-busy\]:not\(button\):not\(\[data-myclaude-continue-link\]\)\{background:linear-gradient\(100deg,[^}]*animation:myclaude-shim /m);

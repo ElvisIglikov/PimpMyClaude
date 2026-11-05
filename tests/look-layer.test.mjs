@@ -1,8 +1,8 @@
 // Слой оформления look (WF83, #7178–#7180): живой фон, неон и ретро-экран,
-// плотный текст. Контракт плана WF83: поле `look` команды theme после frame —
+// плотный текст. Контракт плана WF83: поле `look` команды theme —
 // объект {aurora, neon, dense} целиком (ключа нет — false), null — сброс;
-// хранится в карте тем рядом с frame, те же ключи и приоритет, примерка
-// работает, в status() — поле look.
+// хранится в карте тем рядом с темой, те же ключи и приоритет, примерка
+// работает, в status() — поле look. Слоя frame (неоновая рамка) с WF248 нет.
 //
 // Проверяем настоящим путём: команда идёт через dom.command, экран читается
 // dom.sheets(), состояние — api.status(), память — localStorage окна.
@@ -34,14 +34,15 @@ const send = (loaded, detail) => loaded.dom.command({
   id: `wf83-${++seq}`, action: "theme", at: "now", scope: "window", title: "Trelvis", ...detail,
 });
 
-test("живой фон: слой ставится, хранится рядом с frame и виден в status()", () => {
+test("живой фон: слой ставится, хранится рядом с темой и виден в status(); снятый frame старой записи уходит", () => {
   // Живой фон окну даёт «Живой» панели — look у `*` (WF204).
-  const loaded = open({ "chat:Trelvis": { theme: theme("зелёная", "#1eff5a"), frame: true }, "*": { look: { aurora: true, scheme: "theme" } } });
-  send(loaded, { look: { aurora: true, scheme: "theme" } });
-  assert.deepEqual(lookOf(loaded), { aurora: true, neon: false, dense: false, scheme: "theme", source: "window" });
-  assert.deepEqual(stored(loaded)["chat:Trelvis"].look, { aurora: true, neon: false, dense: false, scheme: "theme" },
+  const loaded = open({ "chat:Trelvis": { theme: theme("зелёная", "#1eff5a"), frame: true }, "*": { look: { aurora: true, scheme: "theme", motion: "live" } } });
+  send(loaded, { look: { aurora: true, scheme: "theme", motion: "live" } });
+  assert.deepEqual(lookOf(loaded), { aurora: true, neon: false, dense: false, scheme: "theme", motion: "live", source: "window" });
+  assert.deepEqual(stored(loaded)["chat:Trelvis"].look, { aurora: true, neon: false, dense: false, scheme: "theme", motion: "live" },
     "отсутствующие ключи записаны как false — объект целиком");
-  assert.equal(stored(loaded)["chat:Trelvis"].frame, true, "рамку команда не тронула");
+  assert.equal(stored(loaded)["chat:Trelvis"].theme.id, "зелёная", "тему команда не тронула");
+  assert.equal("frame" in stored(loaded)["chat:Trelvis"], false, "снятая рамка (WF248) из записи уходит при её правке");
   const css = loaded.dom.sheets();
   assert.ok(css.includes("myclaude-aurora-a") && css.includes("myclaude-aurora-b"), "два слоя пятен с разными периодами");
   assert.ok(css.includes("#1eff5a"), "схема «Как у темы» — пятна цветом акцента темы");
@@ -50,27 +51,115 @@ test("живой фон: слой ставится, хранится рядом 
 
 test("живой фон (WF128): двигает только transform, opacity и filter, медленно; при prefers-reduced-motion — Web Animations", () => {
   const { inner } = open();
-  const css = inner.lookCss({ aurora: true, neon: false, dense: false },
+  const css = inner.lookCss({ aurora: true, neon: false, dense: false, motion: "live" },
     { accent: "#c674fe", muted: "#88aabb", foreground: "#ffffff", dark: true });
   const frames = css.match(/@keyframes[^{]+\{([^@]*)\}\s*\}/g) ?? [];
   assert.equal(frames.length, 2);
   for (const block of frames) {
     const props = [...block.matchAll(/([a-z-]+):/g)].map(match => match[1]);
-    assert.ok(props.every(name => ["transform", "opacity"].includes(name)), `в кадрах только композитор, без filter — без перерисовки (#9134): ${props}`);
+    assert.ok(props.every(name => ["transform", "opacity", "animation-timing-function"].includes(name)), `в кадрах только композитор, без filter — без перерисовки (#9134): ${props}`);
   }
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[^}]*animation: none !important/,
     "«уменьшить движение» — CSS-кадров нет (их ужимает Claude), переливание — Web Animations");
   const periods = [...css.matchAll(/animation-duration: (\d+)s/g)].map(match => Number(match[1]) * 2);
   assert.ok(periods.length === 2 && periods.every(value => value >= 40 && value <= 70), `живо, но плавно — круг 40–70 с (#9115): ${periods}`);
   assert.match(css, /z-index: -1/, "подложка под всем, а не поверх текста");
-  const smooth = [...css.matchAll(/animation-duration: \d+s;[^}]*animation-timing-function: ease-in-out;/g)];
-  assert.equal(smooth.length, 2, "плавно, без ступенек (#9134: «резко дёрнулось»)");
   assert.ok(!/requestAnimationFrame/.test(css));
+});
+
+// WF241 (заметка Рика 11.10: «Мак греется… при живой теме»): плавные кадры собирали всё окно на каждый кадр
+// экрана. Положение слоя меняется около 30 раз в секунду по той же кривой ease-in-out — не рывками
+// 10 раз в секунду, как до #9134, и не на каждый кадр.
+test("живой фон (WF241): кадры — около 30 положений в секунду по кривой ease-in-out; ноль возвращает плавные", () => {
+  const { inner } = open();
+  const { lookAuroraFrames, LOOK_AURORA, LOOK_AURORA_FPS } = inner;
+  assert.equal(LOOK_AURORA_FPS, 30);
+  for (const layer of LOOK_AURORA) {
+    const frames = [...lookAuroraFrames(layer)];
+    const spans = layer.keys.length - 1;
+    const parts = (frames.length - 1) / spans;
+    assert.ok(Number.isInteger(parts) && parts >= 8, `каждый переход разбит на отрезки: ${parts}`);
+    assert.equal(frames[0].offset, 0);
+    assert.equal(frames.at(-1).offset, 1);
+    assert.ok(frames.every((frame, index) => index === 0 || frame.offset > frames[index - 1].offset), "кадры идут по порядку");
+    const steps = frames.map(frame => Number(/^steps\((\d+), end\)$/.exec(frame.easing)?.[1]));
+    assert.ok(steps.every(count => count >= 1), `внутри отрезка — ступени: ${frames[0].easing}`);
+    const perSecond = steps[0] * parts * spans / (layer.ms / 1000);
+    assert.equal(perSecond, 30, `ровно 30 положений в секунду у обоих слоёв — шагают в одни моменты: ${perSecond}`);
+    // Опорные положения те же, что были: начало, середина, конец.
+    const [x0, y0, s0, r0, o0] = layer.keys[0];
+    assert.equal(frames[0].transform, `translate3d(${x0}%, ${y0}%, 0) scale(${s0}) rotate(${r0}deg)`);
+    assert.equal(frames[0].opacity, o0);
+    const [x1, y1, s1, r1, o1] = layer.keys[1];
+    assert.equal(frames[parts].transform, `translate3d(${x1}%, ${y1}%, 0) scale(${s1}) rotate(${r1}deg)`);
+    assert.equal(frames[parts].opacity, o1);
+    // Кривая ease-in-out: у края перехода шаг в разы меньше, чем в середине — без рывка на развороте.
+    const shift = index => Math.abs(Number(/translate3d\((-?[\d.]+)%/.exec(frames[index + 1].transform)[1]) - Number(/translate3d\((-?[\d.]+)%/.exec(frames[index].transform)[1]));
+    assert.ok(shift(Math.floor(parts / 2)) > shift(0) * 3, `середина быстрее края: ${shift(Math.floor(parts / 2))} против ${shift(0)}`);
+    assert.ok(Math.abs(shift(0) - shift(parts - 1)) < 0.05, "разгон и торможение симметричны");
+    // Откат одной строкой: ноль — прежние три плавных кадра.
+    const smooth = [...lookAuroraFrames(layer, 0)];
+    assert.deepEqual(smooth.map(frame => frame.easing), ["ease-in-out", "ease-in-out", "ease-in-out"]);
+    assert.deepEqual(smooth.map(frame => frame.offset), [0, 0.5, 1]);
+  }
+  const css = inner.lookCss({ aurora: true, neon: false, dense: false, motion: "live" }, { accent: "#c674fe", muted: "#88aabb", foreground: "#ffffff", dark: true });
+  assert.equal((css.match(/animation-timing-function: steps\(\d+, end\)/g) ?? []).length, 62, "CSS-кадры — те же кадры, по 31 на слой");
+  assert.ok(!/animation-timing-function: ease-in-out/.test(css));
+  assert.equal(Math.round(inner.lookEase(0.5) * 1000), 500, "кривая симметрична");
+  assert.ok(inner.lookEase(0.1) < 0.03 && inner.lookEase(0.9) > 0.97, "у краёв медленно");
+});
+
+test("живой фон (WF241): окно дольше LOOK_IDLE_MS без фокуса — фон стоит; фокус вернулся — идёт; без живого фона отсчёта нет", () => {
+  const loaded = open({ "*": { look: { aurora: true, motion: "live" } } });
+  const html = loaded.document.documentElement;
+  const idle = () => [...loaded.dom.timers.values()].filter(item => item.kind === "timeout" && item.ms === loaded.inner.LOOK_IDLE_MS);
+  assert.equal(loaded.inner.LOOK_IDLE_MS, 20000);
+  assert.equal(idle().length, 0, "окно в фокусе — отсчёта нет");
+  loaded.document.hasFocus = () => false;
+  loaded.win.dispatchEvent({ type: "blur" });
+  assert.equal(idle().length, 1, "фокус ушёл — отсчёт заведён");
+  assert.equal(html.hasAttribute("data-myclaude-look-still"), false, "сразу фон не замирает");
+  loaded.win.dispatchEvent({ type: "blur" });
+  assert.equal(idle().length, 1, "второй blur отсчёт не задваивает");
+  loaded.dom.fireKind("timeout");
+  assert.equal(html.hasAttribute("data-myclaude-look-still"), true, "20 секунд без фокуса — кадры стоят");
+  assert.equal(loaded.api.status().lookStill, true, "и это видно в status()");
+  loaded.document.hasFocus = () => true;
+  loaded.win.dispatchEvent({ type: "focus" });
+  assert.equal(html.hasAttribute("data-myclaude-look-still"), false, "фокус вернулся — идёт дальше");
+  assert.equal(loaded.api.status().lookStill, false);
+  // Вернулся раньше срока — фон не замирал вовсе.
+  loaded.document.hasFocus = () => false;
+  loaded.win.dispatchEvent({ type: "blur" });
+  loaded.document.hasFocus = () => true;
+  loaded.win.dispatchEvent({ type: "focus" });
+  assert.equal(idle().length, 0, "отсчёт снят");
+  assert.equal(html.hasAttribute("data-myclaude-look-still"), false);
+  // Скрытое окно стоит независимо от фокуса, как раньше.
+  loaded.document.hidden = true;
+  loaded.document.dispatchEvent({ type: "visibilitychange" });
+  assert.equal(html.hasAttribute("data-myclaude-look-still"), true);
+  loaded.document.hidden = false;
+  loaded.document.dispatchEvent({ type: "visibilitychange" });
+  assert.equal(html.hasAttribute("data-myclaude-look-still"), false);
+  // Живой фон выключили — отсчёт без фокуса не нужен и снят.
+  loaded.document.hasFocus = () => false;
+  loaded.win.dispatchEvent({ type: "blur" });
+  assert.equal(idle().length, 1);
+  send(loaded, { scope: "all", look: null });
+  assert.equal(idle().length, 0, "фона нет — отсчёта нет");
+  loaded.win.dispatchEvent({ type: "blur" });
+  assert.equal(idle().length, 0);
+  // dispose снимает отсчёт.
+  send(loaded, { scope: "all", look: { aurora: true, motion: "live" } });
+  assert.equal(idle().length, 1, "фон включили в окне без фокуса — отсчёт заведён");
+  loaded.api.dispose();
+  assert.equal(idle().length, 0, "отсчёт пережил dispose");
 });
 
 test("живой фон (WF128): одна подложка на всё окно, панели — стекло, без линий и обводок", () => {
   const { inner } = open();
-  const css = inner.lookCss({ aurora: true, neon: false, dense: false },
+  const css = inner.lookCss({ aurora: true, neon: false, dense: false, motion: "live" },
     { accent: "#c674fe", muted: "#88aabb", foreground: "#ffffff", dark: true });
   assert.match(css, /:is\(\.dframe-root, \.epitaxy-chat-panel:not\(\.dframe-root \*\)\)::before/,
     "подложка — у .dframe-root, в попапе без него — у панели ленты");
@@ -80,7 +169,6 @@ test("живой фон (WF128): одна подложка на всё окно,
   assert.match(css, /aside\.dframe-sidebar \{ background-color: transparent !important/, "левая панель прозрачна (#9104)");
   assert.match(css, /aside\.dframe-sidebar \{[^}]*box-shadow: none !important; border-color: transparent !important/);
   assert.match(css, /rounded-card[^{]*\{[^}]*outline: none !important; box-shadow: none !important/, "у карточки ленты нет обводки");
-  assert.match(css, /--myclaude-split-line: transparent/, "вертикальная линия у колонки поля гаснет");
   assert.match(css, /:is\(\.cursor-zoom-in, \[data-cds-attachment\]\) \{ border-color: transparent !important; box-shadow: none !important/,
     "фото без обводок");
   assert.match(css, /:root\[data-myclaude-look-still\][^{]*::after \{ animation-play-state: paused !important; \}/);
@@ -90,12 +178,13 @@ test("живой фон (WF128): одна подложка на всё окно,
   const shares = [...css.matchAll(/#[0-9a-f]{6} (\d+)%/g)].map(match => Number(match[1]));
   assert.ok(shares.length && Math.max(...shares) <= 38, `не ярче прежнего: ${shares}`);
   const layout = inner.layoutCss();
-  assert.match(layout, /inset 1px 0 0 0 var\(--myclaude-split-line, var\(--cds-border\)\)/, "без живого фона линия прежняя");
+  // #11216: линии между лентой и колонкой поля нет и без живого фона.
+  assert.doesNotMatch(layout, /inset 1px 0 0 0/, "без живого фона вернулась линия у колонки поля");
 });
 
 test("#9104/#9105 (WF139): под полем, у краёв и в меню — не сплошные плашки, а подложка или стекло", () => {
   const { inner } = open();
-  const css = inner.lookCss({ aurora: true, neon: false, dense: false },
+  const css = inner.lookCss({ aurora: true, neon: false, dense: false, motion: "live" },
     { accent: "#c674fe", muted: "#88aabb", foreground: "#ffffff", dark: true });
   // Всё, что Claude заливает цветом ленты (дока, маска под ней, шторка), — прозрачно; слой темы
   // красит те же узлы по классу, поэтому правило сильнее его на тех же корнях.
@@ -126,14 +215,16 @@ test("«уменьшить движение»: Web Animations теми же ка
     html: dom => { dom.document.body.add("div", { class: "dframe-root" }); },
   });
   loaded.win.__reducedMotion = true;
-  send(loaded, { scope: "all", look: { aurora: true } });
+  send(loaded, { scope: "all", look: { aurora: true, motion: "live" } });
   const running = () => loaded.dom.running().filter(item => item.options?.pseudoElement);
   assert.equal(running().length, 2, "::before и ::after у .dframe-root");
   for (const item of running()) {
     assert.ok(item.node.className.includes("dframe-root"));
     assert.equal(item.options.iterations, Infinity);
     assert.ok(item.options.duration >= 20000 && item.options.duration <= 35000, "живо, но плавно");
-    assert.equal(item.options.easing, "ease-in-out", "плавно, без ступенек");
+    assert.equal(item.frames.length, 31, "те же кадры, что у CSS: по 15 отрезков на переход");
+    assert.ok(item.frames.every(frame => /^steps\(\d+, end\)$/.test(frame.easing)), "около 30 положений в секунду по кривой ease-in-out (WF241)");
+    assert.equal(item.options.direction, "alternate");
     assert.ok(item.frames.every(frame => !("filter" in frame)), "без filter — без перерисовки");
     assert.ok(item.frames.every(frame => "transform" in frame), "пятна плывут и при «уменьшить движение»");
   }
@@ -142,13 +233,13 @@ test("«уменьшить движение»: Web Animations теми же ка
   send(loaded, { scope: "all", look: null });
   assert.equal(running().length, 0, "живой фон снят — анимаций нет");
   loaded.win.__reducedMotion = false;
-  send(loaded, { scope: "all", look: { aurora: true } });
+  send(loaded, { scope: "all", look: { aurora: true, motion: "live" } });
   assert.equal(running().length, 0, "без «уменьшить движение» крутит CSS");
 });
 
 test("живой фон стоит в скрытом окне и идёт снова, когда окно показано", () => {
-  const loaded = open({ "*": { look: { aurora: true } } });
-  send(loaded, { look: { aurora: true } });
+  const loaded = open({ "*": { look: { aurora: true, motion: "live" } } });
+  send(loaded, { look: { aurora: true, motion: "live" } });
   const html = loaded.document.documentElement;
   assert.equal(html.hasAttribute("data-myclaude-look-still"), false);
   loaded.document.hidden = true;
@@ -172,7 +263,7 @@ test("плотный текст: межстрочный и отступы мен
 test("неон и ретро-экран (WF128) сняты: ключ хранится, страница его не рисует", () => {
   const loaded = open();
   send(loaded, { look: { neon: true, dense: true } });
-  assert.deepEqual(lookOf(loaded), { aurora: false, neon: true, dense: true, scheme: "violet", source: "window" });
+  assert.deepEqual(lookOf(loaded), { aurora: false, neon: true, dense: true, scheme: "violet", motion: "still", source: "window" });
   assert.deepEqual(stored(loaded)["chat:Trelvis"].look, { aurora: false, neon: true, dense: true }, "формат прежний");
   const css = loaded.dom.sheets();
   assert.ok(!/repeating-linear-gradient/.test(css), "сканлайнов нет");
@@ -184,7 +275,7 @@ test("null и объект без единого true — сброс слоя, �
   const loaded = open();
   send(loaded, { look: { aurora: true } });
   send(loaded, { look: null });
-  assert.deepEqual(lookOf(loaded), { aurora: false, neon: false, dense: false, scheme: "violet", source: "window" });
+  assert.deepEqual(lookOf(loaded), { aurora: false, neon: false, dense: false, scheme: "violet", motion: "still", source: "window" });
   assert.equal(stored(loaded)["chat:Trelvis"], undefined, "пустая запись не хранится");
   assert.ok(!loaded.dom.sheets().includes("myclaude-aurora"), "живого фона на экране нет");
 
@@ -207,16 +298,16 @@ test("поле look нет — слой не трогаем", () => {
 test("примерка: только на экран, конец примерки возвращает сохранённое", () => {
   const loaded = open({ "chat:Trelvis": { look: { dense: true } } });
   send(loaded, { preview: true, look: { aurora: true } });
-  assert.deepEqual(lookOf(loaded), { aurora: true, neon: false, dense: false, scheme: "violet", source: "preview" });
+  assert.deepEqual(lookOf(loaded), { aurora: true, neon: false, dense: false, scheme: "violet", motion: "still", source: "preview" });
   assert.deepEqual(stored(loaded)["chat:Trelvis"].look, { dense: true }, "хранилище примерка не тронула");
   send(loaded, { preview: false });
-  assert.deepEqual(lookOf(loaded), { aurora: false, neon: false, dense: true, scheme: "violet", source: "chat" });
+  assert.deepEqual(lookOf(loaded), { aurora: false, neon: false, dense: true, scheme: "violet", motion: "still", source: "chat" });
   assert.ok(!loaded.dom.sheets().includes("myclaude-aurora"), "живой фон ушёл вместе с примеркой");
 });
 
 test("приоритет как у остальных слоёв: запись чата сильнее «всем»", () => {
   const loaded = open({ "*": { look: { neon: true } }, "chat:Trelvis": { look: { dense: true } } });
-  assert.deepEqual(lookOf(loaded), { aurora: false, neon: false, dense: true, scheme: "violet", source: "chat" });
+  assert.deepEqual(lookOf(loaded), { aurora: false, neon: false, dense: true, scheme: "violet", motion: "still", source: "chat" });
   const other = loadInject({ title: "Другой", storage: { local: { [MAP_KEY]: JSON.stringify({ "*": { look: { neon: true } } }) } } });
   assert.equal(other.api.status().look.neon, true);
   assert.equal(other.api.status().look.source, "all");
@@ -254,7 +345,7 @@ const hexes = css => new Set([...css.matchAll(/color-mix\(in oklab, (#[0-9a-f]{6
 test("схемы живого фона (WF146): у каждой свои тона, доли прежние, акцент темы не нужен", () => {
   const { inner } = open();
   const schemes = inner.LOOK_SCHEMES;
-  assert.ok(schemes.length >= 7 && schemes.length <= 8, "6–8 схем");
+  assert.ok(schemes.length >= 7 && schemes.length <= 9, "7–9 схем (#10015: девятая — «Тёплое свечение»)");
   assert.equal(schemes[0].id, "violet", "по умолчанию — фиолетовые сумерки первой");
   assert.equal(schemes.at(-1).id, "theme");
   const seen = new Set();
@@ -323,6 +414,6 @@ test("схема хранится как look: на чат, «всем», при
   assert.deepEqual(stored(restored)["chat:Trelvis"].look, { ...AURORA, scheme: "graphite" });
   assert.equal(restored.api.status().look.scheme, "graphite");
   const list = JSON.parse(JSON.stringify(restored.api.status().look.schemes));
-  assert.deepEqual(list.map(item => item.id), ["violet", "aurora", "sea", "lavender", "sunset", "forest", "graphite", "theme"]);
+  assert.deepEqual(list.map(item => item.id), ["violet", "aurora", "sea", "lavender", "sunset", "forest", "graphite", "warm", "theme"]);
   assert.ok(list.every(item => typeof item.name === "string" && item.name && !("tones" in item)), "меню — id и название");
 });

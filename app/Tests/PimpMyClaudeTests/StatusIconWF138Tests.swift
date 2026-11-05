@@ -76,13 +76,3 @@ final class StatusIconWF138Tests: XCTestCase {
         XCTAssertGreaterThan(dark, light + 0.3, "в тёмной строке меню — светлый, в светлой — тёмный")
     }
 }
-
-/// WF164 (31.1): идущие Workflow в плитках — цветом PMP; зелёный, бирюзовый и янтарь — белым.
-final class TileRunColorWF164Tests: XCTestCase {
-    func testRunColorAvoidsDoneAndWaitColors() {
-        XCTAssertEqual(PMPAccent.violet.runHex, 0xA98BFA)
-        XCTAssertEqual(PMPAccent.blue.runHex, 0x7AA2F7)
-        XCTAssertEqual(PMPAccent.graphite.runHex, 0xECECEE)
-        for accent in [PMPAccent.red, .orange, .green, .teal, .amber] { XCTAssertEqual(accent.runHex, 0xECECEE, accent.name) }
-    }
-}

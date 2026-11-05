@@ -12,15 +12,8 @@ final class RestartClaudeTests: XCTestCase {
     private static let chatB = "local_66666666-7777-4888-9999-aaaaaaaaaaaa"
     private static let lost = "local_bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
 
-    private static var fixtures: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("tests/fixtures/pimp", isDirectory: true)
-    }
-
     private func fixture(_ name: String) throws -> Data {
-        try Data(contentsOf: RestartClaudeTests.fixtures.appendingPathComponent(name))
+        try Data(contentsOf: Repo.fixture("pimp/" + name))
     }
 
     private func fixtureText(_ name: String) throws -> String {

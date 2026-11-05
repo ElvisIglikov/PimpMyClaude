@@ -9,7 +9,8 @@ final class PanelWF171Tests: XCTestCase {
     func testProjectWidgetsGoneRestStay() {
         let ids = PanelWidget.allCases.map { $0.rawValue }
         // WF214 (#9404, слово Элвиса 10.10): «Идёт Workflow сейчас» вернулся кольцами — новым id `workflow`.
-        XCTAssertEqual(ids, ["workflow", "week", "limits", "fable", "reset", "temperature", "memory", "tokens", "colors"])
+        XCTAssertEqual(ids, ["workflow", "week", "limits", "fable", "reset", "temperature", "memory", "tokens", "cpu", "gpu",
+                             "terminals", "colors"])
         for id in Self.removed { XCTAssertNil(PanelWidget(rawValue: id), id) }
         XCTAssertFalse(PanelWidget.allCases.map { $0.title }.contains { $0.contains("списком") || $0.contains("проекты") })
         XCTAssertEqual(Set(PanelWidgetLayout.standard.items.map { $0.id }), Set(ids))
@@ -26,7 +27,8 @@ final class PanelWF171Tests: XCTestCase {
                   forKey: PanelWidgetLayout.key)
         var layout = PanelWidgetLayout.load(store)
         XCTAssertEqual(layout.items.map { $0.id },
-                       ["workflow", "week", "limits", "fable", "reset", "temperature", "memory", "tokens", "colors"],
+                       ["workflow", "week", "limits", "fable", "reset", "temperature", "memory", "tokens", "cpu", "gpu",
+                        "terminals", "colors"],
                        "WF177: при первом чтении «Цвет Claude» переезжает вниз; WF214: новый блок — сверху")
         XCTAssertEqual(layout.item("week")?.wide, false, "свои настройки остальных виджетов целы")
         XCTAssertEqual(layout.item("limits")?.wide, false)

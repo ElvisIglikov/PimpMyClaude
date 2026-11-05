@@ -288,6 +288,6 @@ test("chats(): working, autoContinue, galleryCounted, sendDelaySetting и limits
   const loaded = loadInject({ href: "https://claude.ai/epitaxy/local_aaa", title: "Trelvis", geometry: { frame: [0, 25, 800, 600] } });
   const keys = Object.keys(await loaded.api.chats({ nonce: "k" }));
   const at = keys.indexOf("working");
-  assert.deepEqual(keys.slice(at - 2, at + 5), ["frame", "mic", "working", "autoContinue", "galleryCounted", "sendDelaySetting", "limits"]);
+  assert.deepEqual(keys.slice(at - 2, at + 5), ["mic", "micNative", "working", "autoContinue", "galleryCounted", "sendDelaySetting", "limits"]);
   if (keys.includes("themes")) assert.equal(keys[at + 5], "themes");
 });

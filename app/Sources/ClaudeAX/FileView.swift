@@ -103,14 +103,12 @@ public final class FileView: NSObject, NSWindowDelegate, WKNavigationDelegate, W
 
     /// Надписи тёмные — фон светлый (относительная яркость sRGB больше 0,5); мусор — графит.
     static func prefersDarkText(bg: String?) -> Bool {
-        let (r, g, b) = rgb(HtmlChromeOpener.color(bg) ?? fallbackBackground)
-        func linear(_ c: CGFloat) -> CGFloat { c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
-        return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b) > 0.5
+        ColorMath.luminance(background(bg)) > 0.5
     }
 
-    static func rgb(_ hex: String) -> (CGFloat, CGFloat, CGFloat) {
-        let value = Int(hex, radix: 16) ?? 0
-        return (CGFloat((value >> 16) & 0xff) / 255, CGFloat((value >> 8) & 0xff) / 255, CGFloat(value & 0xff) / 255)
+    /// Фон окна: цвет страницы, мусор — графит.
+    static func background(_ bg: String?) -> UInt32 {
+        ColorMath.rgb(hex: HtmlChromeOpener.color(bg) ?? fallbackBackground) ?? 0
     }
 
     /// Окно Claude, которое вернуть вперёд: больше всего пересекается с рамкой чата.
@@ -292,7 +290,7 @@ public final class FileView: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     }
 
     private func paint(bg: String?) {
-        let (r, g, b) = Self.rgb(HtmlChromeOpener.color(bg) ?? Self.fallbackBackground)
+        let (r, g, b) = ColorMath.components(Self.background(bg))
         let background = NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
         let text = Self.prefersDarkText(bg: bg) ? NSColor(white: 0.1, alpha: 0.9) : NSColor(white: 0.95, alpha: 0.9)
         window?.backgroundColor = background

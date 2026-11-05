@@ -1,6 +1,6 @@
 // WF120, батч B-P1a (раздел 3а inject.js; #7976): «🙈 Прятать инструменты» —
 // контракт К-B1. Команда `hide-tools` {on:"true"|"false"} всем окнам; флаг —
-// localStorage["myclaude.hideTools"] = "1" | нет ключа; метка — атрибут
+// localStorage["myclaude.hideTools"] = "1" | "0", нет ключа — включено (с 11.10); метка — атрибут
 // data-myclaude-hide-tools на <html>; прячет правило раздела 4;
 // status().hideTools = {on, hidden}.
 //
@@ -86,10 +86,40 @@ const page = ({ storage = {} } = {}) => {
 const hide = loaded => plain(loaded.api.status().hideTools);
 const marked = loaded => loaded.document.documentElement.hasAttribute(MARK);
 
-test("#7976: по умолчанию выключено — ни метки, ни спрятанного", () => {
+// Слово Элвиса 11.10 01:40: «Скрой… Всё лишнее сейчас будем убирать» — без команды включено.
+test("#7976: по умолчанию включено — метка стоит, законченное спрятано; выключает только \"0\"", () => {
   const loaded = page();
-  assert.deepEqual(hide(loaded), { on: false, hidden: 0 });
-  assert.equal(marked(loaded), false);
+  assert.deepEqual(hide(loaded), { on: true, hidden: 3 });
+  assert.equal(marked(loaded), true);
+  const off = page({ storage: { [KEY]: "0" } });
+  assert.deepEqual(hide(off), { on: false, hidden: 0 });
+  assert.equal(marked(off), false);
+});
+
+// Claude 2.31226 (замер 11.10): у группы своя стрелка и миниатюры снимков, карточка правок — строка на файл.
+test("разметка 2.31226: группа со стрелкой и миниатюрой и карточка «файл +3 −0» спрятаны; чужая кнопка в группе — видна", () => {
+  const loaded = page();
+  const body = loaded.parts.text.parentNode;
+  const fresh = group(body, "done", "Ran 5 commands, read 6 files");
+  fresh.add("button", { attrs: { "data-cds-row-toggle": "", "aria-expanded": "false" } });
+  fresh.add("span", { attrs: { "data-cds-row-media": "" } }).add("button", { attrs: { "aria-label": "Screenshot 1 of 2" } });
+  fresh.querySelector("[data-cds-row]").add("span", { attrs: { role: "button", tabindex: "0" }, text: "dezhurny-auto-pravila.md" });
+  const card = body.add("div", { class: "contents", attrs: { "data-find-omitted": "" } });
+  const row = card.add("div", { class: "mt-pad-xs flex w-full select-text flex-col gap-1 rounded-lg" })
+    .add("ul", { attrs: { role: "list" } }).add("li", { class: "relative -mx-pad-xs flex min-w-0 items-center" });
+  row.add("span", { class: "contents" }).add("button", { attrs: { "data-base-ui-tooltip-trigger": "" } }).add("span", { text: "dezhurny-auto-pravila.md" });
+  const diff = row.add("span", { class: "pointer-events-none" });
+  diff.add("span", { class: "text-git-added", text: "+3" });
+  diff.add("span", { class: "text-git-removed", text: "−0" });
+  loaded.dom.command({ action: "hide-tools", on: "true" });
+  assert.equal(hide(loaded).hidden, 5, "к трём прежним — новая группа и карточка файла");
+  fresh.add("button", { text: "Allow once" });
+  assert.equal(hide(loaded).hidden, 4);
+  card.add("p", { text: "и текст ответа рядом" });
+  assert.equal(hide(loaded).hidden, 3);
+  const rule = [...loaded.inner.RULES].find(item => item.includes("data-myclaude-tool-done"));
+  assert.ok(rule.includes(':not([data-myclaude-work^="open"])'), "в раскрытой серии «Работа идёт» группы видны");
+  assert.ok([...loaded.inner.RULES].includes(".epitaxy-toc{top:48px !important}"), "полоски глав — ниже кнопок окна");
 });
 
 test("#7976: команда on — флаг, метка на <html>; спрятаны две законченные группы и список правок, остальное видно", () => {
@@ -104,7 +134,7 @@ test("#7976: команда off — флага и метки нет; мусор 
   const loaded = page({ storage: { [KEY]: "1" } });
   assert.equal(marked(loaded), true, "флаг из прошлого — метка с установки");
   loaded.dom.command({ action: "hide-tools", on: "false" });
-  assert.equal(loaded.win.localStorage.getItem(KEY), null);
+  assert.equal(loaded.win.localStorage.getItem(KEY), "0");
   assert.equal(marked(loaded), false);
   assert.deepEqual(hide(loaded), { on: false, hidden: 0 });
   loaded.dom.command({ action: "hide-tools", on: "true" });
@@ -151,7 +181,7 @@ test("#7976: storage из соседнего окна сразу включае�
   loaded.win.dispatchEvent({ type: "storage", key: KEY });
   assert.equal(marked(loaded), true);
   assert.equal(hide(loaded).hidden, 3);
-  loaded.win.localStorage.removeItem(KEY);
+  loaded.win.localStorage.setItem(KEY, "0");
   loaded.win.dispatchEvent({ type: "storage", key: KEY });
   assert.equal(marked(loaded), false);
   assert.equal(hide(loaded).hidden, 0);
@@ -165,4 +195,39 @@ test("#7976: Edited рядом с планом и роль alert на самой
   assert.equal(loaded.parts.edited.hasAttribute("data-myclaude-tool-done"), false);
   assert.equal(loaded.parts.done.hasAttribute("data-myclaude-tool-done"), false);
   assert.equal(hide(loaded).hidden, 1);
+});
+
+// Слово Элвиса 11.10 06:27 по снимку «Background command completed · Add Elvis's words…»: «Я не могу понять, ты
+// закончил это делать или ещё чё-то думаешь дальше?» Разметка — замер живого окна 11.10 (Claude 2.31226).
+test("строка фоновых команд: законченная спрятана, как «Ran N commands»; идущая, упавшая и раскрытая — на виду", () => {
+  const loaded = page();
+  const body = loaded.parts.text.parentNode;
+  const before = hide(loaded).hidden;
+  const tasks = (...spans) => {
+    const wrap = body.add("div", { class: "flex min-w-0 flex-col empty:hidden", attrs: { "data-find-omitted": "" } });
+    const line = wrap.add("div", { class: "flex min-w-0" }).add("button", { class: "group/tool flex flex-col", attrs: { type: "button", "data-transcript-keeps-pin": "" } }).add("span");
+    for (const text of spans) line.add("span", { text });
+    return wrap;
+  };
+  const one = tasks("Background command completed", "· Add Elvis's words as comments to existing tasks");
+  const bare = tasks("Background command completed");
+  const many = tasks("2 background commands completed");
+  const single = tasks("1 background command completed");
+  const running = tasks("2 background commands completed", ", 1 running");
+  const failed = tasks("1 background command completed", ", 1 failed");
+  const notice = tasks("Claude Code notice");
+  loaded.dom.command({ action: "hide-tools", on: "true" });
+  for (const node of [one, bare, many, single]) assert.equal(node.hasAttribute("data-myclaude-tool-done"), true, node.textContent);
+  for (const node of [running, failed, notice]) assert.equal(node.hasAttribute("data-myclaude-tool-done"), false, node.textContent);
+  assert.equal(hide(loaded).hidden, before + 4);
+  // Строку раскрыли или рядом с ней появилось что-то ещё — снова видна.
+  one.querySelector("button").setAttribute("aria-expanded", "true");
+  bare.add("p", { text: "и текст рядом" });
+  loaded.dom.command({ action: "hide-tools", on: "true" });
+  assert.equal(one.hasAttribute("data-myclaude-tool-done"), false);
+  assert.equal(bare.hasAttribute("data-myclaude-tool-done"), false);
+  const rule = [...loaded.inner.RULES].find(item => item.includes("div[data-find-omitted]") && item.includes("data-myclaude-tool-done"));
+  assert.ok(rule?.endsWith(':not([data-myclaude-work^="open"]){display:none !important}'), "в раскрытой серии «Работа идёт» строка видна");
+  loaded.dom.command({ action: "hide-tools", on: "false" });
+  assert.equal(many.hasAttribute("data-myclaude-tool-done"), false);
 });

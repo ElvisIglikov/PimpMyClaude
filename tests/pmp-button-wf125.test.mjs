@@ -8,7 +8,7 @@
 // у часов — её команда «Настройки Пимпа»: GET http://127.0.0.1:47615/panel (cors);
 // пока ждём ответа — новые нажатия ничего; отказ или тишина 3 с — «PimpMyClaude не
 // отвечает» и возврат вида; фокус поля не отнимает;
-// status().pmp = {button, clicks, last, state, open, rows, terminals, running, lastError}.
+// status().pmp = {button, clicks, last, state, open, rows, flowsOpen, terminals, running, lastError}.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadInject, plain } from "./load.mjs";
@@ -83,7 +83,7 @@ const settings = (loaded, detail = 1) => {
   // Стаб событий не всплывает: слушатель панели получает нажатие с целью-кнопкой.
   return button ? loaded.dom.query(PANEL).dispatchEvent({ type: "click", detail, target: button }) : null;
 };
-const QUIET = { open: false, rows: 0, terminals: 0, running: 0, lastError: null };
+const QUIET = { open: false, rows: 0, flowsOpen: false, terminals: 0, running: 0, lastError: null };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const hint = loaded => loaded.dom.query(HINT);
 
@@ -106,8 +106,9 @@ test("#8894: окно проекта Rick — плашка «PMP» у поля, 
 test("#8894: с «Галереей» — правее неё, место у группы на обе", () => {
   const loaded = page({ files: [3, 0] });
   const gallery = loaded.dom.query(GALLERY);
-  assert.equal(px(node(loaded), "left"), px(gallery, "left") + px(gallery, "width") + 6);
-  assert.equal(loaded.parts.left.getAttribute("data-myclaude-gallery-room"), `${6 + 26 + 6 + 24 + 6}px`);
+  // #9507: у «Галереи» числа нет — ширина одна, 20.
+  assert.equal(px(node(loaded), "left"), px(gallery, "left") + 20 + 6);
+  assert.equal(loaded.parts.left.getAttribute("data-myclaude-gallery-room"), `${6 + 20 + 6 + 24 + 6}px`);
 });
 
 test("#8894: свёрнутое поле — между микрофоном и «Галереей»", () => {
@@ -118,7 +119,7 @@ test("#8894: свёрнутое поле — между микрофоном и 
   assert.equal(mic.dataset.spot, "ring");
   assert.equal(node(loaded).dataset.spot, "ring");
   assert.equal(px(node(loaded), "left"), px(mic, "left") - 6 - 24, "не левее микрофона");
-  assert.equal(px(loaded.dom.query(GALLERY), "left"), px(node(loaded), "left") - 6 - 26, "«Галерея» не левее кнопки PMP");
+  assert.equal(px(loaded.dom.query(GALLERY), "left"), px(node(loaded), "left") - 6 - 20, "«Галерея» не левее кнопки PMP");
 });
 
 test("WF213 (критик п. 13): главное окно — кнопка в любом чате; попап — только в чате папки Rick", () => {
@@ -126,7 +127,7 @@ test("WF213 (критик п. 13): главное окно — кнопка в �
     const loaded = page({ cwd });
     assert.equal(node(loaded).style.getPropertyValue("display"), "flex", cwd);
     assert.equal(pmp(loaded).button, true);
-    assert.equal(loaded.api.status().rickCells.wanted, false, "старый блок Workflow — только в чате Рика");
+    assert.equal(loaded.dom.queryAll("#myclaude-rick-cells").length, 0, "блок счёта Workflow у поля снят (WF239)");
     press(loaded);
     assert.equal(pmp(loaded).open, true, cwd);
     assert.equal(loaded.calls.length, 0, "нажатие открывает панель страницы, а не панель у часов");
@@ -200,28 +201,29 @@ test("#8894: dispose посреди ожидания — узла нет, поз
   assert.notEqual(loaded.dom.query(HINT)?.style.getPropertyValue("display"), "block", "подсказка после dispose");
 });
 
-// #9136 (слово Элвиса 08.10 ~23:00: «серенький непонятный… я бы вообще пимпу убрал… 19
-// подержал и всё»): у поля — только число недели цветом соседних подписей, без плашки.
-test("#9136: только число недели, без серой плашки; числа нет — тихая надпись «PMP»", () => {
+// #9136 (слово Элвиса 08.10 ~23:00: «серенький непонятный…»): без серой плашки. #9507 (10.10 ~11:00 по
+// снимку «10 ⊞ 54 ▶6»: «весь функционал кнопки… подменили, оно сейчас не нужно»): чисел у кнопки нет —
+// ни процента недели с полоской, ни «▶N»; на ней тихая надпись «PMP».
+test("#9136, #9507: без серой плашки и без чисел — процента недели нет и при известных лимитах, только надпись «PMP»", () => {
   const week = { at: Date.now(), plan: "max", weekly: { used: 19, resetsAt: Date.now() + 86400000 } };
   const loaded = page({ local: { "myclaude-limits-v1": JSON.stringify(week) } });
   const item = node(loaded);
   assert.equal(item.style.getPropertyValue("display"), "flex");
-  assert.equal([...item.children][1].textContent, "19");
-  assert.equal([...item.children][2].textContent, "", "знак «▶N» без идущих Workflow");
-  assert.equal(item.textContent, "PMP19", "надпись «PMP» в узле, на экране её прячет лист стилей");
-  assert.equal(item.style.getPropertyValue("--pmp-week"), "19%");
+  assert.equal(item.textContent, "PMP");
+  assert.equal(item.children.length, 1, "узлов числа недели и «▶N» нет");
+  assert.equal(item.style.getPropertyValue("--pmp-week"), "");
+  assert.equal(item.style.getPropertyValue("width"), "", "ширина не растёт от знаков");
   const sheet = loaded.dom.query("#myclaude-input-handle-style").textContent;
   assert.ok(!sheet.includes("#4b4b52"), "серая плашка осталась");
-  assert.match(sheet, /#myclaude-pmp>\.p\{display:none;/, "плашка «PMP» видна рядом с числом");
-  assert.match(sheet, /#myclaude-pmp:has\(>\.n:empty\)>\.p\{display:flex\}/, "без числа кнопка пропала бы");
-  assert.match(sheet, /#myclaude-pmp\{[^}]*color:inherit;[^}]*opacity:1;/, "число бледнее соседних подписей");
-  assert.match(sheet, /#myclaude-pmp>\.n\{[^}]*color:inherit;[^}]*font:600 1[2-3]px/, "число мельче соседних подписей");
+  assert.match(sheet, /#myclaude-pmp>\.p\{display:flex;/, "надпись «PMP» видна всегда");
+  assert.ok(!/#myclaude-pmp[^{]*>\.(n|w)\b/.test(sheet), "правила числа недели или «▶N» остались");
+  assert.ok(!sheet.includes("--pmp-week"));
+  assert.match(sheet, /#myclaude-pmp\{[^}]*color:inherit;[^}]*opacity:1;/, "кнопка бледнее соседних подписей");
   press(loaded);
-  assert.equal(pmp(loaded).open, true, "клик по числу открывает панель оркестрации");
+  assert.equal(pmp(loaded).open, true, "клик по надписи открывает панель оркестрации");
 });
 
-test("#9181: в нижней строке поля число недели и «Галерея» — цветом, гарнитурой и кеглем подписей строки (как BY), не белее", () => {
+test("#9181: в нижней строке поля надпись «PMP» и «Галерея» — цветом, гарнитурой и кеглем подписей строки (как BY), не белее", () => {
   const loaded = page({ files: [8, 0] });
   const model = loaded.dom.query('[data-testid="epitaxy-cds-model-selector"]');
   assert.equal(model.getAttribute("data-myclaude-chin"), "text");
@@ -236,17 +238,17 @@ test("#9181: в нижней строке поля число недели и «
   }
   const css = plain(loaded.inner.RULES).join("\n");
   assert.match(css, /#myclaude-pmp\[data-spot="field"\]\{color:var\(--k,inherit\)\}/);
-  // WF175 (#9195: «все цифры плавают»): строка числа 16, как у подписей строки, — общая базовая линия.
-  assert.match(css, /#myclaude-pmp\[data-spot="field"\]>\.n\{padding-bottom:0;font:400 var\(--rs,11px\)\/16px var\(--rf,[^}]*font-variant-numeric:tabular-nums/);
-  assert.match(css, /#myclaude-gallery\[data-spot="field"\]\[data-fresh="true"\]::after\{display:none\}/, "точка над числом в строке поля");
+  // WF175 (#9195: «все цифры плавают»): строка надписи 16, как у подписей строки, — общая базовая линия.
+  assert.match(css, /#myclaude-pmp\[data-spot="field"\]>\.p\{font:400 var\(--rs,11px\)\/16px var\(--rf,[^}]*letter-spacing:0;opacity:1\}/);
+  assert.match(css, /#myclaude-gallery\[data-spot="field"\]\[data-fresh="true"\]::after\{display:none\}/, "точка над значком в строке поля");
   assert.match(css, /#myclaude-gallery\[data-spot="field"\]\{color:var\(--k,inherit\);opacity:1\}/);
-  assert.match(css, /#myclaude-gallery\[data-spot="field"\]>i\{font:400 var\(--rs,11px\)/);
+  assert.ok(!css.includes("#myclaude-gallery>i") && !css.includes('#myclaude-gallery[data-spot="field"]>i'), "#9507: числа у «Галереи» нет");
   // По вертикали — по середине подписи модели (её строка 16), не группы слева (у Claude прижата кверху).
   model.rect = { left: 1000, top: 754, width: 60, height: 16 };
   settle(loaded);
   const mid = node => Number(node.style.getPropertyValue("top").replace("px", "")) + Number(node === gallery ? 20 : 14) / 2;
   assert.equal(mid(gallery), 762, "«Галерея» не на линии подписи модели");
-  assert.equal(mid(node(loaded)), 762, "число недели не на линии подписи модели");
+  assert.equal(mid(node(loaded)), 762, "надпись «PMP» не на линии подписи модели");
   // Правило цвета у «Галереи» — после «свежей» и «нажатой» (там color:inherit — белее подписей строки).
   const at = needle => css.indexOf(needle);
   assert.ok(at('#myclaude-gallery[data-spot="field"]{') > at('#myclaude-gallery[data-fresh="true"],#myclaude-gallery[data-on="true"]{'));

@@ -49,12 +49,19 @@ final class Fix7749Tests: XCTestCase {
                                              block()
                                          })
             actions = ClaudeActions(app: app, commands: channel, themes: [], fonts: [],
-                                    themeStore: ThemeStore(defaults: Fix7749Defaults()),
+                                    themeStore: ThemeStore(defaults: MemoryThemeDefaults()),
                                     myThemes: MyThemesStore(url: dir.appendingPathComponent("my.json")))
             actions.clock = { clock.now }
             actions.schedule = { [unowned self] delay, block in self.queued.append((delay, block)) }
             actions.isMainWindowTitle = { $0 == "Claude" }
-            actions.chatForTitle = { _, _ in Fix7749Tests.donorChat }
+            // Резолвер окна (в бою — `WindowIdentity.resolveNative`): «Claude» — главное, прочее — попап донора.
+            actions.windowIdentity = { title, _ in
+                title == "Claude"
+                    ? .page(ChatPage(kind: .main, chat: nil, title: title, path: Fix7749Tests.mainMatch,
+                                     store: "ok", at: clock.now))
+                    : .page(ChatPage(kind: .popout, chat: Fix7749Tests.donorChat, title: title, store: "ok",
+                                     at: clock.now))
+            }
             actions.projectForChat = { [unowned self] in $0 == Fix7749Tests.donorChat ? self.project : nil }
             actions.mainWindowMatch = { Fix7749Tests.mainMatch }
             actions.onProjectUsed = { [unowned self] in self.used.append($0) }
@@ -124,14 +131,4 @@ final class Fix7749Tests: XCTestCase {
         XCTAssertTrue(rig.written.isEmpty)
         XCTAssertEqual(rig.queued.map { $0.delay }, [rig.actions.focusDelay])
     }
-}
-
-/// Настройки в памяти — своя копия: у соседних файлов она `private`.
-private final class Fix7749Defaults: ThemeDefaults {
-    var values: [String: Any] = [:]
-    func string(forKey key: String) -> String? { values[key] as? String }
-    func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
-    func object(forKey key: String) -> Any? { values[key] }
-    func set(_ value: Any?, forKey key: String) { values[key] = value }
-    func removeObject(forKey key: String) { values.removeValue(forKey: key) }
 }

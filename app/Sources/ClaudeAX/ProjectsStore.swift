@@ -42,13 +42,7 @@ final class ProjectsStore {
     /// Список для меню и ответа канала: пропавшие с диска папки не показываем — пункт меню
     /// молча открыл бы чат в несуществующем каталоге (то же правило, что у `ProjectIndex`).
     func recent(limit: Int) -> [Project] {
-        guard limit > 0 else { return [] }
-        var out: [Project] = []
-        for project in load() where ProjectIndex.isDirectory(project.folder, fileManager) {
-            out.append(project)
-            if out.count == limit { break }
-        }
-        return out
+        Project.existing(load(), limit: limit, fileManager: fileManager)
     }
 
     /// Папку открыли (клик по пункту меню или запрос `new-window`) — она самая свежая.

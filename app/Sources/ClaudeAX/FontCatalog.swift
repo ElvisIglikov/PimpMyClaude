@@ -63,12 +63,6 @@ struct Size: Equatable {
     /// Ни одной половины: слать нечего — страница поняла бы пустой объект как «сброс».
     var isEmpty: Bool { answer == nil && question == nil }
 
-    /// Слой поверх запомненного: половина, которой в команде нет, остаётся прежней —
-    /// ровно так же слой склеивает страница.
-    func merging(_ other: Size) -> Size {
-        Size(answer: other.answer ?? answer, question: other.question ?? question)
-    }
-
     /// Слой как вложенный объект command.json: только заданные половины, ответы первыми.
     var commandValue: CommandValue {
         var fields: [(key: String, value: CommandValue)] = []

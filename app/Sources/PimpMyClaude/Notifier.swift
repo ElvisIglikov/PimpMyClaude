@@ -17,6 +17,12 @@ enum Notifier {
     static let laterAction = "UpdateClaudeLater"
     private static let lostRequestID = "patch-lost"
     private static let readyRequestID = "claude-update-ready"
+    /// Проверка окна нашла поломки (#10527): кнопка «Отчёт» открывает файл отчёта, путь — в `userInfo`.
+    static let liveCheckCategory = "LiveCheckRed"
+    static let liveCheckReportAction = "LiveCheckReport"
+    static let liveCheckFileKey = "file"
+    private static let liveCheckRequestID = "live-check-red"
+    private static let heatRequestID = "mac-heat"
 
     static var center: UNUserNotificationCenter? {
         guard Bundle.main.bundleIdentifier != nil else { return nil }
@@ -42,7 +48,9 @@ enum Notifier {
                                            actions: [update, later],
                                            intentIdentifiers: [],
                                            options: [])
-        center.setNotificationCategories([category, ready])
+        let report = UNNotificationAction(identifier: liveCheckReportAction, title: "Отчёт", options: [.foreground])
+        let live = UNNotificationCategory(identifier: liveCheckCategory, actions: [report], intentIdentifiers: [], options: [])
+        center.setNotificationCategories([category, ready, live])
     }
 
     /// Шаг 3 первого запуска. Отказ ничего не ломает — возвращаем false и идём дальше.
@@ -69,25 +77,29 @@ enum Notifier {
 
     /// Одно уведомление «патч слетел». Повтор гасит сам центр: id запроса один и тот же.
     static func postPatchLost(_ body: String, completion: @escaping (Bool) -> Void = { _ in }) {
-        guard let center = center else { completion(false); return }
-        center.getNotificationSettings { settings in
-            switch settings.authorizationStatus {
-            case .authorized, .provisional: break
-            default: DispatchQueue.main.async { completion(false) }; return
-            }
-            let content = UNMutableNotificationContent()
-            content.title = "Патч Claude слетел"
-            content.body = body
-            content.categoryIdentifier = lostCategory
-            content.sound = .default
-            center.add(UNNotificationRequest(identifier: lostRequestID, content: content, trigger: nil)) { error in
-                DispatchQueue.main.async { completion(error == nil) }
-            }
-        }
+        post(id: lostRequestID, title: "Патч Claude слетел", body: body, category: lostCategory, completion: completion)
     }
 
     /// «Скачалось обновление Claude X» с кнопкой «Обновить». Повтор гасит id запроса.
     static func postClaudeReady(version: String, completion: @escaping (Bool) -> Void = { _ in }) {
+        post(id: readyRequestID, title: ClaudeUpdateMenu.readyNotificationTitle(version: version),
+             body: ClaudeUpdateMenu.readyNotificationBody, category: ClaudeUpdateMenu.readyCategory, completion: completion)
+    }
+
+    /// «Claude 3.1623: Пимп нашёл поломки — …» с кнопкой «Отчёт» (#10527): одно на версию — его зовут один раз.
+    static func postLiveCheck(_ body: String, file: URL?) {
+        post(id: liveCheckRequestID, title: "Проверка окна Claude", body: body, category: liveCheckCategory,
+             userInfo: file.map { [liveCheckFileKey: $0.path] } ?? [:], completion: { _ in })
+    }
+
+    /// «Мак перегрелся» (#10998): что грузит — в тексте; не чаще раза в 30 мин решает `MacHeatWarner`, повтор id заменяет.
+    static func postHeatWarn(title: String, body: String) {
+        post(id: heatRequestID, title: title, body: body, category: "", completion: { _ in })
+    }
+
+    /// Проверить разрешение и показать уведомление со звуком; `completion` — на главной очереди, показано ли.
+    private static func post(id: String, title: String, body: String, category: String,
+                             userInfo: [String: String] = [:], completion: @escaping (Bool) -> Void) {
         guard let center = center else { completion(false); return }
         center.getNotificationSettings { settings in
             switch settings.authorizationStatus {
@@ -95,11 +107,12 @@ enum Notifier {
             default: DispatchQueue.main.async { completion(false) }; return
             }
             let content = UNMutableNotificationContent()
-            content.title = ClaudeUpdateMenu.readyNotificationTitle(version: version)
-            content.body = ClaudeUpdateMenu.readyNotificationBody
-            content.categoryIdentifier = ClaudeUpdateMenu.readyCategory
+            content.title = title
+            content.body = body
+            content.categoryIdentifier = category
+            content.userInfo = userInfo
             content.sound = .default
-            center.add(UNNotificationRequest(identifier: readyRequestID, content: content, trigger: nil)) { error in
+            center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { error in
                 DispatchQueue.main.async { completion(error == nil) }
             }
         }

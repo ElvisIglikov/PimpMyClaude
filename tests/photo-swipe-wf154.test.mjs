@@ -79,12 +79,14 @@ test("всплывашка Claude с фото: → закрывает её и л
   assert.equal(loaded.api.status().photo.from, "feed");
 });
 
-test("фото всплывашки вне ленты — первым, ← ведёт к последнему фото чата", () => {
+test("фото всплывашки вне ленты — первым, ← дальше первого не идёт, → — первое фото чата (#10230, без круга)", () => {
   const { loaded } = page();
   claudePreview(loaded, "data:image/png;base64,ZZZ");
   key(loaded, "ArrowLeft");
-  assert.deepEqual(view(loaded), { open: true, index: 3, total: 4, zoom: false, grown: false });
-  assert.equal(loaded.inner.photoState.parts.img.src, "data:image/png;base64,CCC");
+  assert.deepEqual(view(loaded), { open: true, index: 0, total: 4, zoom: false, grown: false });
+  assert.equal(loaded.inner.photoState.parts.img.src, "data:image/png;base64,ZZZ");
+  key(loaded, "ArrowRight");
+  assert.equal(view(loaded).index, 1);
 });
 
 test("свайп вбок по всплывашке — один шаг на жест", () => {

@@ -68,15 +68,15 @@ final class ConsentBeaconWF98Tests: XCTestCase {
 
     // MARK: - вид
 
-    func testStyleSingleMonitorShowsNothing() {
-        XCTAssertEqual(ConsentBeaconStyle.choose(hasTargets: false, screenCount: 3, classic: false, waterAvailable: true), .idle)
-        XCTAssertEqual(ConsentBeaconStyle.choose(hasTargets: true, screenCount: 1, classic: false, waterAvailable: true), .single)
-        XCTAssertEqual(ConsentBeaconStyle.choose(hasTargets: true, screenCount: 1, classic: true, waterAvailable: false), .single)
-        XCTAssertEqual(ConsentBeaconStyle.choose(hasTargets: true, screenCount: 2, classic: false, waterAvailable: true), .water)
-        XCTAssertEqual(ConsentBeaconStyle.choose(hasTargets: true, screenCount: 3, classic: true, waterAvailable: true), .classic)
-        XCTAssertEqual(ConsentBeaconStyle.choose(hasTargets: true, screenCount: 2, classic: false, waterAvailable: false), .classic)
+    /// С 11.10.2026 (слово Элвиса 02:25, #9661) один монитор — тоже вода, а не «ничего».
+    func testStyleSingleMonitorShowsWaterToo() {
+        XCTAssertEqual(ConsentBeaconStyle.choose(hasTargets: false, waterAvailable: true), .idle)
+        XCTAssertEqual(ConsentBeaconStyle.choose(hasTargets: true, waterAvailable: true), .water)
+        // Оранжевой рамки WF91 нет (ревизия 16.10, вопрос 12): Metal не завёлся — не рисуем ничего.
+        XCTAssertEqual(ConsentBeaconStyle.choose(hasTargets: true, waterAvailable: false), .noMetal)
+        XCTAssertEqual(ConsentBeaconStyle.choose(hasTargets: false, waterAvailable: false), .idle)
+        XCTAssertEqual(ConsentBeaconStyle.noMetal.rawValue, "no-metal")
         XCTAssertEqual(ConsentBeacon.soundKey, "consentBeaconSound")
-        XCTAssertEqual(ConsentBeacon.classicKey, "consentBeaconClassic")
     }
 
     // MARK: - окна-слои (решение 12.5)

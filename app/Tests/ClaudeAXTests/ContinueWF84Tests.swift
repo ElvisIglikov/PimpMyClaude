@@ -8,27 +8,22 @@ final class ContinueWF84Tests: XCTestCase {
     private static let id = "1756900000123-0042"
     private static let at = Date(timeIntervalSince1970: 1_756_900_000)
     private static let mainMatch = "/epitaxy/local_facfb20c-4b3c-4aa9-838f-e084b0941b74"
-    private static let repositoryRoot = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().deletingLastPathComponent()
-
     private func fixture(_ name: String) throws -> String {
-        try String(contentsOf: ContinueWF84Tests.repositoryRoot
-            .appendingPathComponent("tests/fixtures/cashout/\(name)"), encoding: .utf8)
+        try String(contentsOf: Repo.fixture("cashout/\(name)"), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private let mark = "Пимп: продолжить в новом чате · mfw3k2a1"
+    private let mark = "PMP: продолжить в новом чате · mfw3k2a1"
 
     // MARK: - метка
 
     func testNonceParsesOnlyOurLabel() {
         XCTAssertEqual(ContinueWatchMachine.nonce(of: mark), "mfw3k2a1")
         XCTAssertEqual(ContinueWatchMachine.nonce(of: "  \(mark)  "), "mfw3k2a1")
-        XCTAssertNil(ContinueWatchMachine.nonce(of: "Пимп: продолжить в новом чате"), "без метки — не клик")
+        XCTAssertNil(ContinueWatchMachine.nonce(of: "PMP: продолжить в новом чате"), "без метки — не клик")
         XCTAssertNil(ContinueWatchMachine.nonce(of: "Пимп жмёт Allow · Trelvis"), "замок К6 — не наша метка")
         XCTAssertNil(ContinueWatchMachine.nonce(of: "VkusnoffKz 2"))
-        XCTAssertEqual(ContinueWatch.labelPrefix, "Пимп: продолжить в новом чате", "побайтно как страница")
+        XCTAssertEqual(ContinueWatch.labelPrefix, "PMP: продолжить в новом чате", "побайтно как страница (#9604 — PMP)")
     }
 
     // MARK: - машина: запомнить окно, дождаться ухода метки, сработать один раз
@@ -48,7 +43,7 @@ final class ContinueWF84Tests: XCTestCase {
         _ = machine.step(titles: [mark], now: 0)
         XCTAssertEqual(machine.step(titles: [], now: 1), .fire)
         XCTAssertEqual(machine.step(titles: [mark], now: 1.25), .none, "та же метка мигнула снова — клик уже исполнен")
-        let next = "Пимп: продолжить в новом чате · mfw3k9zz"
+        let next = "PMP: продолжить в новом чате · mfw3k9zz"
         XCTAssertEqual(machine.step(titles: ["Claude", next], now: 5), .arm(1), "новый клик — новая метка")
     }
 
@@ -64,7 +59,7 @@ final class ContinueWF84Tests: XCTestCase {
     func testMemoryIsBounded() {
         var machine = ContinueWatchMachine()
         for index in 0..<(ContinueWatchMachine.memory + 5) {
-            let label = "Пимп: продолжить в новом чате · n\(index)"
+            let label = "PMP: продолжить в новом чате · n\(index)"
             _ = machine.step(titles: [label], now: Double(index))
             _ = machine.step(titles: [], now: Double(index) + 0.5)
         }

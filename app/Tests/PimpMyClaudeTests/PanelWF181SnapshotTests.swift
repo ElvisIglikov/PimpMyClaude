@@ -14,7 +14,6 @@ final class PanelWF181SnapshotTests: XCTestCase {
         model.now = now
         model.phase = .open
         model.reduceMotion = true
-        model.colorsOpen = false
         model.appVersion = "1.10.10"
         model.patch = .installed(version: "2.26454.2", loader: 8)
         model.limits = ClaudeLimits(at: now, plan: "Max 20x",
@@ -37,7 +36,7 @@ final class PanelWF181SnapshotTests: XCTestCase {
         return model
     }
 
-    private func render(_ model: PanelModel, to url: URL) throws {
+    private func render(_ model: PanelModel, to url: URL?) throws {
         let view = NSHostingView(rootView: PanelRoot(model: model))
         view.frame = NSRect(x: 0, y: 0, width: PimpPanelController.width + 2 * PimpPanelController.margin, height: 760)
         view.appearance = NSAppearance(named: .darkAqua)
@@ -49,15 +48,16 @@ final class PanelWF181SnapshotTests: XCTestCase {
         view.layoutSubtreeIfNeeded()
         let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: rep)
+        guard let url = url else { return }
         try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: url)
     }
 
     func testSnapshotDefaultPanel() throws {
-        guard let dir = ProcessInfo.processInfo.environment["PMP_SNAPSHOT_DIR"] else { return }
+        let dir = ProcessInfo.processInfo.environment["PMP_SNAPSHOT_DIR"].map { URL(fileURLWithPath: $0) }
         let now = Date()
-        try render(model(now: now), to: URL(fileURLWithPath: dir).appendingPathComponent("panel-default.png"))
+        try render(model(now: now), to: dir?.appendingPathComponent("panel-default.png"))
         let open = model(now: now)
         open.memoryOpen = true
-        try render(open, to: URL(fileURLWithPath: dir).appendingPathComponent("panel-memory-open.png"))
+        try render(open, to: dir?.appendingPathComponent("panel-memory-open.png"))
     }
 }

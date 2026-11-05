@@ -14,7 +14,7 @@
 // ---- разбор селекторов ----------------------------------------------------
 // Поддержано ровно то, чем пользуется inject.js: тег, .класс, #id, [атрибут],
 // [атрибут="значение"] с ^= $= *=, потомки через пробел, перечисление запятой,
-// :root и :not(...) с простым содержимым. Остальное (:has, :is) селектором
+// :root, :not(...) и :is(...) с простым содержимым. Остальное (:has) селектором
 // ничего не находит — это честнее выдуманного совпадения: такие селекторы живут
 // в тексте CSS, а не в querySelector.
 //
@@ -83,6 +83,12 @@ const compoundHit = (node, compound) => {
       const negated = token.match(/^:not\((.+)\)$/);
       if (negated) {
         if (splitTop(negated[1], ",").some(part => compoundHit(node, part))) return false;
+        continue;
+      }
+      // :is(...) — #11618: надпись на двух языках, uiAria(["Usage:", "Использование:"]) в разделе 1.
+      const any = token.match(/^:is\((.+)\)$/);
+      if (any) {
+        if (!splitTop(any[1], ",").some(part => compoundHit(node, part))) return false;
         continue;
       }
       if (token !== ":root" || node !== node.ownerDocument?.documentElement) return false;
@@ -218,10 +224,10 @@ export const createDom = ({
     node.__ops = [];
     const context = {
       font: "10px sans-serif", fillStyle: "#000000", strokeStyle: "#000000", lineWidth: 1,
-      textAlign: "start", textBaseline: "alphabetic",
+      textAlign: "start", textBaseline: "alphabetic", globalAlpha: 1, globalCompositeOperation: "source-over",
       measureText: text => ({ width: String(text).length * (Number(/(\d+(?:\.\d+)?)px/.exec(context.font)?.[1]) || 10) * 0.6 }),
     };
-    for (const name of ["drawImage", "beginPath", "roundRect", "fill", "stroke", "fillText"]) {
+    for (const name of ["drawImage", "beginPath", "roundRect", "fill", "stroke", "fillText", "clearRect", "fillRect", "setTransform"]) {
       context[name] = (...args) => {
         node.__ops.push({
           op: name,
@@ -835,12 +841,15 @@ export const createDom = ({
     File,
     KeyboardEvent: eventClass({ key: "" }),
     ClipboardEvent: eventClass({ clipboardData: null }),
+    DragEvent: eventClass({ dataTransfer: null }),
     PopStateEvent: eventClass({ state: null }),
     CustomEvent: eventClass({ detail: null }),
     Event: eventClass({}),
     queueMicrotask: fn => queueMicrotask(fn),
-    getComputedStyle: node => {
-      const own = node?.computed ?? {};
+    // Псевдоэлемент (#10527, health(): подложка «Show sidebar», слой живого фона): его стили тест кладёт в
+    // node.pseudo["::before"]; не положил — ответ самого узла, как было.
+    getComputedStyle: (node, pseudo = null) => {
+      const own = (pseudo && node?.pseudo?.[pseudo]) || node?.computed || {};
       const style = node?.style;
       const read = name => own[name] ?? style?.getPropertyValue?.(name) ?? style?.[name] ?? "";
       return {

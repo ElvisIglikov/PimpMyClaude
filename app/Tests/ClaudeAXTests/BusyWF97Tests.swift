@@ -146,14 +146,4 @@ final class BusyWF97Tests: XCTestCase {
 
     // MARK: - «Бэкап чатов» в меню
 
-    func testArchiveItemShowsBusy() {
-        var config = MinimizeMenu.MenuConfig()
-        let idle = MinimizeMenu.archiveChatsItem(config)
-        XCTAssertEqual(idle.title, MenuModel.archiveChatsTitle)
-        XCTAssertTrue(idle.isEnabled)
-        config.archiveBusy = true
-        let busy = MinimizeMenu.archiveChatsItem(config)
-        XCTAssertEqual(busy.title, MenuModel.archiveChatsBusyTitle)
-        XCTAssertFalse(busy.isEnabled)
-    }
 }

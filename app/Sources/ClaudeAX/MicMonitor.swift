@@ -26,6 +26,23 @@ enum MicMode: String {
     }
 }
 
+/// Чья диктовка у кнопок микрофона (#9681, слово Элвиса 11.10.2026: «чтобы диктатор её перехватывал эту кнопку…
+/// чтобы правой кнопкой… можно было выбирать диктовка какая стандартная клауде или… другая»). Выбор — в меню правой
+/// кнопки на кружке и на родной кнопке Claude; хранится у приложения. По умолчанию — Диктатор (как было до #9681).
+enum MicChoice: String {
+    case dictator, claude
+
+    static let key = "micChoiceWF9681"
+
+    static func load(_ defaults: UserDefaults = .standard) -> MicChoice {
+        defaults.string(forKey: key).flatMap(MicChoice.init(rawValue:)) ?? .dictator
+    }
+
+    func save(_ defaults: UserDefaults = .standard) { defaults.set(rawValue, forKey: Self.key) }
+
+    var title: String { self == .dictator ? "Диктатор" : "Диктовка Claude" }
+}
+
 /// От какого края окна страница считает место значка (контракт WF92 (б), пятый элемент `mic`).
 enum MicAnchor: Int, Equatable {
     /// dx от правого края — значок у кружка (как было до WF92).
@@ -38,19 +55,6 @@ enum MicAnchor: Int, Equatable {
         let raw = number.doubleValue
         guard raw == raw.rounded() else { return nil }
         return MicAnchor(rawValue: Int(raw))
-    }
-}
-
-/// «Свет окна» Диктатора (#8115): один выключатель на свет окна диктовки — и у Диктатора, и у Пимпа.
-enum DictatorLight {
-    static let windowKey = "glowWindowFrame"
-
-    static func windowOn(_ value: Any?) -> Bool { (value as? Bool) ?? (value as? NSNumber)?.boolValue ?? true }
-
-    static func windowOn() -> Bool {
-        let app = DictatorHotkey.domain as CFString
-        CFPreferencesAppSynchronize(app)
-        return windowOn(CFPreferencesCopyAppValue(windowKey as CFString, app))
     }
 }
 
@@ -271,19 +275,14 @@ final class MicMonitor {
     var postKey: () -> Void = { DictatorHotkey.live().post() }
     /// Команда `mic-refused` (чат, заголовок нажатого окна); ушла — true.
     var sendRefused: (_ chat: String?, _ match: String) -> Bool = { _, _ in false }
-    /// Команда `dictating {on}` во все окна (#8112): Диктатор пишет — окно с фокусом ярко светится.
-    var sendDictating: (Bool) -> Bool = { _ in false }
-    /// «Свет окна» в настройках Диктатора (`glowWindowFrame`, нет ключа — включён, как у Диктатора с завода).
-    var windowLight: () -> Bool = { DictatorLight.windowOn() }
     /// Часы нажатий (тесты подменяют).
     var now: () -> Date = { Date() }
 
     private(set) var dictatorRunning = false
-    /// Что последним ушло страницам `dictating`; nil — ещё ничего (новое поколение страниц).
-    private(set) var dictatingSent: Bool?
-    private var dictatingCheckedAt: Date?
-    /// Как часто спрашивать Диктатора, пишет ли он (AX строки меню).
-    static let dictatingEvery: TimeInterval = 0.5
+    /// Выбор диктовки (#9681); `dictator` работает, только пока Диктатор запущен.
+    private(set) var choice = MicChoice.load()
+    /// Где хранится выбор (тесты подменяют).
+    var defaults: UserDefaults = .standard
     private(set) var rickAvailable = false
     private(set) var keys = 0
     private(set) var menus = 0
@@ -300,7 +299,6 @@ final class MicMonitor {
     private let resend = AutoAllowSwitch()
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
-    private var dictatingTimer: Timer?
     /// Значок, на котором нажали левую кнопку, и его окно: клавиша уходит, только если
     /// отпустили там же.
     private var pressed: Hit?
@@ -313,11 +311,13 @@ final class MicMonitor {
         let match: String
     }
 
-    var mode: MicMode { dictatorRunning ? .dictator : .claude }
+    /// Режим страниц: Диктатор запущен и выбран (#9681).
+    var dictating: Bool { dictatorRunning && choice == .dictator }
+    var mode: MicMode { dictating ? .dictator : .claude }
     /// Карта страниц нужна кружку: есть Диктатор или Рик (`ChatProbe.isMicWanted`).
     var wantsPages: Bool { dictatorRunning || rickAvailable }
-    /// Карту освежать чаще (контракт WF92 (в)): режим `dictator` и кружок хоть где-то виден.
-    var wantsFastPages: Bool { dictatorRunning && pages().contains { $0.mic != nil } }
+    /// Карту освежать чаще (контракт WF92 (в)): режим `dictator` и кружок или родная кнопка хоть где-то видны.
+    var wantsFastPages: Bool { dictating && pages().contains { $0.mic != nil || $0.micNative != nil } }
     /// Поле `mic=` строки диагностики: режим/повтор поколения/нажатий клавиши/меню Рика/отказов.
     var status: String { "\(mode.rawValue)/\(resend.status)/\(keys)/\(menus)/\(refusals)" }
 
@@ -326,11 +326,6 @@ final class MicMonitor {
         rickAvailable = RickVoices.isAvailable()
         noteDictator(MicMonitor.isDictatorRunning())
         resend.beginGeneration()
-        let timer = Timer(timeInterval: Self.dictatingEvery, repeats: true) { [weak self] _ in
-            self?.tickDictating(at: Date())
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        dictatingTimer = timer
         let events: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseUp, .rightMouseDown]
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: events, handler: { [weak self] event in
             self?.handle(event.type, clickCount: event.clickCount)
@@ -348,9 +343,6 @@ final class MicMonitor {
     }
 
     func stop() {
-        dictatingTimer?.invalidate()
-        dictatingTimer = nil
-        dictatingCheckedAt = nil
         monitors.forEach { NSEvent.removeMonitor($0) }
         monitors = []
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
@@ -361,29 +353,15 @@ final class MicMonitor {
     /// Новое поколение страниц (перезапуск Claude): localStorage с режимом умер вместе с ними.
     func beginGeneration() {
         resend.beginGeneration()
-        dictatingSent = nil
     }
 
     /// Общий тик: режим страницам — первый тик поколения с окнами и смена их состава.
     func tick(titles: [String], at: Date) {
         expireOwner(at: at)
-        tickDictating(at: at)
-        resend.on = dictatorRunning
+        resend.on = dictating
         resend.tick(titles: titles, at: at) { [weak self] dictator in
             self?.sendMode(dictator ? .dictator : .claude) ?? false
         }
-    }
-
-    /// Пишет ли Диктатор — страницам, только когда меняется (и заново новому поколению). Диктатора нет —
-    /// не пишет; плашку не прочесть (unknown) — не пишет: ложное свечение хуже, чем его нет.
-    func tickDictating(at: Date) {
-        if let checked = dictatingCheckedAt, at.timeIntervalSince(checked) < MicMonitor.dictatingEvery { return }
-        dictatingCheckedAt = at
-        // Выключатель один — «Свет окна» Диктатора (#8115, слово Элвиса 29.09: «свет окна выключил. И у тебя всё
-        // равно… свечение… две настройки конфликтующих?»): выключен — окно не светит и у Пимпа.
-        let on = dictatorRunning && windowLight() && dictatorState() == .recording
-        guard on != dictatingSent else { return }
-        if sendDictating(on) { dictatingSent = on }
     }
 
     static func isDictatorRunning() -> Bool {
@@ -411,7 +389,16 @@ final class MicMonitor {
         if !running { clearOwner() }
         guard running != dictatorRunning else { return }
         dictatorRunning = running
-        resend.on = running
+        resend.on = dictating
+        resend.beginGeneration()
+    }
+
+    /// Выбор в меню правой кнопки (#9681): запомнить и сразу разослать режим страницам новым поколением.
+    func choose(_ value: MicChoice) {
+        choice = value
+        value.save(defaults)
+        if value == .claude { clearOwner() }
+        resend.on = dictating
         resend.beginGeneration()
     }
 
@@ -428,16 +415,17 @@ final class MicMonitor {
     func mouse(_ type: NSEvent.EventType, clickCount: Int, at point: CGPoint, hit: () -> Hit?) {
         switch type {
         case .leftMouseDown:
-            pressed = dictatorRunning && clickCount <= 1 ? hit() : nil
+            pressed = dictating && clickCount <= 1 ? hit() : nil
         case .leftMouseUp:
             guard let hit = pressed else { return }
             pressed = nil
             guard MicMonitor.contains(hit.rect, point) else { return }
             // Режим `dictator` проверяем ещё раз: Диктатор мог выйти, пока держали кнопку.
-            guard dictatorRunning else { return }
+            guard dictating else { return }
             press(hit)
         case .rightMouseDown:
-            guard rickAvailable, hit() != nil else { return }
+            // #9681: правой кнопкой — выбор диктовки (пока Диктатор запущен) и голоса Рика.
+            guard rickAvailable || dictatorRunning, hit() != nil else { return }
             // Ходом вперёд: монитор не место для модального меню.
             DispatchQueue.main.async { [weak self] in self?.showRickMenu(at: point) }
         default:
@@ -476,22 +464,26 @@ final class MicMonitor {
     /// Значок под курсором и его окно: верхнее окно в точке — окно Claude, его страница видит кружок.
     private func micHit(at point: CGPoint) -> Hit? {
         let known = pages()
-        guard known.contains(where: { $0.mic != nil }), isTrusted(), let pid = claudePID(),
+        guard known.contains(where: { $0.mic != nil || $0.micNative != nil }), isTrusted(), let pid = claudePID(),
               let window = MicMonitor.frontWindow(at: point, in: MicMonitor.windowList(),
                                                   ownPID: getpid()),
               window.pid == pid,
               let page = MicMonitor.page(window: window.frame, title: windowTitle(window.frame) ?? "",
                                          in: known),
-              let spot = page.mic else { return nil }
-        let rect = MicMonitor.micRect(spot: spot, window: window.frame, anchor: page.micAnchor)
-        guard MicMonitor.contains(rect, point) else { return nil }
+              let rect = MicMonitor.spots(page, window: window.frame).first(where: { MicMonitor.contains($0, point) })
+        else { return nil }
         return Hit(rect: rect, key: MicMonitor.ownerKey(window: window, page: page), chat: page.chat,
                    match: page.title)
     }
 
     private func showRickMenu(at point: CGPoint) {
-        let rick = RickVoices.load()
+        let rick = rickAvailable ? RickVoices.load() : (voices: [RickVoice](), current: String?.none)
         let menu = MicMonitor.rickMenu(voices: rick.voices, current: rick.current,
+                                       choice: dictatorRunning ? choice : nil,
+                                       choose: { [weak self] value in
+            self?.choose(value)
+            self?.notice("🎙 Диктовка — \(value.title)")
+        },
                                        use: { [weak self] voice in
             RickVoices.run(["use", voice.alias]) { ok, said in
                 self?.notice(ok ? "🎙 Голос Рика — \(voice.name)" : "🎙 Голос не сменился: \(said)")
@@ -547,11 +539,31 @@ final class MicMonitor {
         "\(page.kind.rawValue):" + (page.chat ?? page.title)
     }
 
-    /// Меню «🎙 Рик» (макет 6.4): заголовок, голоса с отметкой ●/○, «Повторить».
-    static func rickMenu(voices: [RickVoice], current: String?,
+    /// Места кнопок окна в экранных координатах: кружок и родная кнопка Claude (#9681).
+    static func spots(_ page: ChatPage, window: CGRect) -> [CGRect] {
+        [page.mic.map { micRect(spot: $0, window: window, anchor: page.micAnchor) },
+         page.micNative.map { micRect(spot: $0, window: window, anchor: page.micNativeAnchor) }].compactMap { $0 }
+    }
+
+    static let dictationTitle = "🎙 Диктовка"
+
+    /// Меню правой кнопки: выбор диктовки (#9681, пока Диктатор запущен — `choice` не nil) с отметкой ●/○, дальше
+    /// «🎙 Рик» (макет 6.4): заголовок, голоса с отметкой ●/○, «Повторить». Голосов нет — раздела Рика нет.
+    static func rickMenu(voices: [RickVoice], current: String?, choice: MicChoice? = nil,
+                         choose: @escaping (MicChoice) -> Void = { _ in },
                          use: @escaping (RickVoice) -> Void, repeatLast: @escaping () -> Void) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+        if let choice = choice {
+            let head = NSMenuItem(title: dictationTitle, action: nil, keyEquivalent: "")
+            head.isEnabled = false
+            menu.addItem(head)
+            for value in [MicChoice.dictator, .claude] {
+                menu.addItem(BlockMenuItem(title: (value == choice ? "● " : "○ ") + value.title) { choose(value) })
+            }
+            guard !voices.isEmpty else { return menu }
+            menu.addItem(.separator())
+        }
         let head = NSMenuItem(title: rickTitle, action: nil, keyEquivalent: "")
         head.isEnabled = false
         menu.addItem(head)
@@ -604,15 +616,7 @@ final class MicMonitor {
     }
 
     static func windowList() -> [ScreenWindow] {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return [] }
-        return list.compactMap { info in
-            guard let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
-                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
-                  let frame = CGRect(dictionaryRepresentation: bounds) else { return nil }
-            let alpha = (info[kCGWindowAlpha as String] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 1
-            let id = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0
-            return ScreenWindow(pid: pid, frame: frame, alpha: alpha, id: id)
-        }
+        WindowInfo.list([.optionOnScreenOnly, .excludeDesktopElements])
+            .map { ScreenWindow(pid: $0.pid, frame: $0.frame, alpha: $0.alpha, id: $0.id) }
     }
 }

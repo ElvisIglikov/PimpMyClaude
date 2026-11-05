@@ -12,7 +12,7 @@ final class ProjectIdentityTests: XCTestCase {
         try FileManager.default.createDirectory(at: old.appendingPathComponent(".git"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: box) }
-        let suite = "project-identity-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let session: [String: Any] = ["sessionId": "local_a1", "title": "Old", "titleSource": "user",

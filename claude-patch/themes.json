@@ -2,45 +2,6 @@
   "version": 1,
   "themes": [
     {
-      "id": "red",
-      "name": "Красная",
-      "type": "dark",
-      "palette": {
-        "accent": "#ff5c5c",
-        "background": "#3b1414",
-        "foreground": "#ffe4e4",
-        "sidebar": "#2a0e0e",
-        "panel": "#4e1d1d",
-        "muted": "#d69a9a"
-      }
-    },
-    {
-      "id": "orange",
-      "name": "Оранжевая",
-      "type": "dark",
-      "palette": {
-        "accent": "#ff9147",
-        "background": "#3a2010",
-        "foreground": "#f9e9dc",
-        "sidebar": "#2a170b",
-        "panel": "#4a2b16",
-        "muted": "#cfae92"
-      }
-    },
-    {
-      "id": "yellow",
-      "name": "Жёлтая",
-      "type": "dark",
-      "palette": {
-        "accent": "#ffc83d",
-        "background": "#3a2e0c",
-        "foreground": "#fdf4d9",
-        "sidebar": "#2a2107",
-        "panel": "#4d3e12",
-        "muted": "#d5bd82"
-      }
-    },
-    {
       "id": "green",
       "name": "Зелёная",
       "type": "dark",
@@ -145,19 +106,6 @@
       }
     },
     {
-      "id": "pink",
-      "name": "Розовая",
-      "type": "dark",
-      "palette": {
-        "accent": "#ff8ec4",
-        "background": "#3b1a2f",
-        "foreground": "#ffe6f3",
-        "sidebar": "#2b1123",
-        "panel": "#4f2441",
-        "muted": "#d9a6c4"
-      }
-    },
-    {
       "id": "crimson",
       "name": "Малиновая",
       "type": "dark",
@@ -171,16 +119,16 @@
       }
     },
     {
-      "id": "brown",
-      "name": "Коричневая",
+      "id": "wine",
+      "name": "Винная",
       "type": "dark",
       "palette": {
-        "accent": "#d9a066",
-        "background": "#2e2018",
-        "foreground": "#f3e7db",
-        "sidebar": "#221710",
-        "panel": "#3f2d21",
-        "muted": "#bfa48c"
+        "accent": "#e2647c",
+        "background": "#2e1019",
+        "foreground": "#fbe8eb",
+        "sidebar": "#220b12",
+        "panel": "#411824",
+        "muted": "#cf9ca8"
       }
     },
     {
@@ -207,19 +155,6 @@
         "sidebar": "#17171a",
         "panel": "#1c1c1e",
         "muted": "#b8b0a8"
-      }
-    },
-    {
-      "id": "peach",
-      "name": "Персиковая",
-      "type": "light",
-      "palette": {
-        "accent": "#d9611c",
-        "background": "#fff1e8",
-        "foreground": "#3a2216",
-        "sidebar": "#ffe2d1",
-        "panel": "#ffffff",
-        "muted": "#8a6a58"
       }
     },
     {
@@ -327,76 +262,6 @@
       }
     },
     {
-      "id": "mango",
-      "name": "Манго",
-      "type": "dark",
-      "set": "bright",
-      "palette": {
-        "accent": "#fd8b27",
-        "background": "#512b15",
-        "foreground": "#fce9de",
-        "sidebar": "#3a1d0c",
-        "panel": "#6b3c22",
-        "muted": "#be8c6f"
-      }
-    },
-    {
-      "id": "honey",
-      "name": "Мёд",
-      "type": "dark",
-      "set": "bright",
-      "palette": {
-        "accent": "#e6ad02",
-        "background": "#503c14",
-        "foreground": "#fcf2de",
-        "sidebar": "#38290c",
-        "panel": "#695121",
-        "muted": "#bca069"
-      }
-    },
-    {
-      "id": "lemonade",
-      "name": "Лимонад",
-      "type": "light",
-      "set": "bright",
-      "palette": {
-        "accent": "#b12c00",
-        "background": "#ffeb85",
-        "foreground": "#322b08",
-        "sidebar": "#ffe45e",
-        "panel": "#fff7cf",
-        "muted": "#7f7234"
-      }
-    },
-    {
-      "id": "orangeade",
-      "name": "Апельсин",
-      "type": "light",
-      "set": "bright",
-      "palette": {
-        "accent": "#a31000",
-        "background": "#ffcb8f",
-        "foreground": "#321f08",
-        "sidebar": "#ffb969",
-        "panel": "#ffedd9",
-        "muted": "#815d35"
-      }
-    },
-    {
-      "id": "lime",
-      "name": "Лайм",
-      "type": "dark",
-      "set": "bright",
-      "palette": {
-        "accent": "#7ed102",
-        "background": "#374912",
-        "foreground": "#f2fcde",
-        "sidebar": "#25320a",
-        "panel": "#4c631f",
-        "muted": "#95b457"
-      }
-    },
-    {
       "id": "coral",
       "name": "Коралл",
       "type": "dark",
@@ -436,20 +301,6 @@
         "sidebar": "#0c2938",
         "panel": "#215169",
         "muted": "#6ca2bd"
-      }
-    },
-    {
-      "id": "ultra",
-      "name": "Ультрафиолет",
-      "type": "dark",
-      "set": "bright",
-      "palette": {
-        "accent": "#c674fe",
-        "background": "#381655",
-        "foreground": "#eedefc",
-        "sidebar": "#270d3f",
-        "panel": "#4b236e",
-        "muted": "#a078c2"
       }
     },
     {

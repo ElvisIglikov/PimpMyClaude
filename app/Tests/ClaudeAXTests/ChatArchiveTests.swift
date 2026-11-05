@@ -232,18 +232,4 @@ final class ChatArchiveTests: XCTestCase {
         XCTAssertEqual(ChatArchive.archivesWord(5), "5 бэкапов")
     }
 
-    func testMenuItemSitsUnderRestoreWindows() throws {
-        var config = MinimizeMenu.MenuConfig()
-        var asked = 0
-        config.archiveChats = { asked += 1 }
-        let menu = MinimizeMenu.build(config: config)
-        let more = try XCTUnwrap(menu.items.first { $0.title == MenuModel.moreTitle }?.submenu)
-        let titles = more.items.map { $0.title }
-        let restore = try XCTUnwrap(titles.firstIndex(of: MenuModel.restoreWindowsTitle))
-        XCTAssertEqual(titles[restore + 1], MenuModel.archiveChatsTitle)
-        let item = more.items[restore + 1]
-        let target = try XCTUnwrap(item.target as? NSObject)
-        target.perform(try XCTUnwrap(item.action))
-        XCTAssertEqual(asked, 1)
-    }
 }

@@ -10,7 +10,7 @@ final class WF167Tests: XCTestCase {
         if let defaults = defaults {
             store = defaults
         } else {
-            let suite = "wf167-\(UUID().uuidString)"
+            let suite = testSuiteName()
             store = UserDefaults(suiteName: suite)!
             addTeardownBlock { store.removePersistentDomain(forName: suite) }
         }
@@ -86,7 +86,7 @@ final class WF167Tests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("wf167-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
-        let suite = "wf167-pad-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
         let config = directory.appendingPathComponent("claude.json")

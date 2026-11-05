@@ -105,13 +105,6 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
         return channel
     }
 
-    private static var fixtures: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("tests/fixtures/pimp", isDirectory: true)
-    }
-
     private func text(_ url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -119,7 +112,21 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
     private let dictator = Project(folder: URL(fileURLWithPath: "/tmp", isDirectory: true), name: "Dictator",
                                    lastFocusedAt: 0)
 
-    // MARK: - канал: «🪟 Новое окно ▸ проект» из меню
+    /// «Новое окно справа» запросом канала (`pimp.py open Dictator`): до WF237 те же проверки шли пунктом меню
+    /// «🪟 Новое окно ▸ проект» — путь в канале тот же (`makePlan` → `begin` → `openNewWindow`). true — работа пошла.
+    private var opened = 0
+    private func open(_ pimp: PimpChannel, _ rig: Rig, in box: URL) throws -> Bool {
+        opened += 1
+        let id = "1788780000000-98\(opened)"
+        let body = "{\"id\":\"\(id)\",\"at\":\"\(PimpChannel.stampText(rig.now))\",\"action\":\"new-window\","
+            + "\"from\":\"\",\"project\":\"Dictator\",\"place\":\"right\"}"
+        try Data(body.utf8).write(to: box.appendingPathComponent(id + ".json"))
+        let before = rig.origins.count
+        pimp.tick()
+        return rig.origins.count == before + 1
+    }
+
+    // MARK: - канал: новое окно справа
 
     /// Ячейка до команды: соседи раздвинуты сразу, угол ячейки ушёл точкой; окно родилось там
     /// Claude-размера — и опрос поставил ему размер ячейки в первый же шаг после появления.
@@ -128,7 +135,7 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
         rig.windows = [PimpWindow(id: 1, title: "Claude", frame: CGRect(x: 0, y: 34, width: 735, height: 859)),
                        PimpWindow(id: 2, title: "Второй", frame: CGRect(x: 735, y: 34, width: 735, height: 859))]
         let pimp = channel(rig, in: box)
-        XCTAssertTrue(pimp.startNewWindow(project: dictator))
+        XCTAssertTrue(try open(pimp, rig, in: box))
 
         XCTAssertEqual(rig.room, [[1, 2, PimpChannel.phantomID]], "«справа» — призрак последним")
         XCTAssertEqual(rig.origins.count, 1)
@@ -166,7 +173,7 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
             PimpWindow(id: 2, title: "Второй", frame: CGRect(x: 735, y: 34, width: 735, height: 859)),
         ]
         let pimp = channel(rig, in: box)
-        let request = PimpChannel.fixturesRequest(NewWindowPlaceWF98Tests.fixtures)
+        let request = PimpChannel.fixturesRequest(Repo.fixture("pimp"))
         try Data(contentsOf: request).write(to: box.appendingPathComponent("1788780000000-0421.json"))
         pimp.tick()
         XCTAssertEqual(rig.room, [[1, PimpChannel.phantomID, 2]])
@@ -179,12 +186,12 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
                                           frame: CGRect(x: 490, y: 34, width: 900, height: 700)))
         }
         XCTAssertEqual(try text(box.appendingPathComponent("1788780000000-0421.result.json")),
-                       try text(NewWindowPlaceWF98Tests.fixtures.appendingPathComponent("new-window.result.json")))
+                       try text(Repo.fixture("pimp/new-window.result.json")))
     }
 
     /// Окно не пришло за 40 с — раздвинутые соседи возвращаются, где стояли; тот, кого Элвис
     /// подвинул сам, остаётся где его поставили.
-    func testNoWindowPutsNeighboursBack() {
+    func testNoWindowPutsNeighboursBack() throws {
         let box = makeTemp(), rig = Rig()
         let one = CGRect(x: 0, y: 34, width: 490, height: 859)
         let two = CGRect(x: 490, y: 34, width: 490, height: 859)
@@ -193,7 +200,7 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
                        PimpWindow(id: 2, title: "Второй", frame: two),
                        PimpWindow(id: 3, title: "Третий", frame: three)]
         let pimp = channel(rig, in: box)
-        XCTAssertTrue(pimp.startNewWindow(project: dictator))
+        XCTAssertTrue(try open(pimp, rig, in: box))
         XCTAssertEqual(rig.windows.map { $0.frame.width }, [367.5, 367.5, 367.5])
         let manual = CGRect(x: 100, y: 100, width: 600, height: 600)
         rig.move(2, to: manual)
@@ -203,7 +210,11 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
         XCTAssertFalse(pimp.isWaitingPage)
         XCTAssertEqual(rig.placed.last, [PimpMove(id: 1, frame: one), PimpMove(id: 3, frame: three)])
         XCTAssertEqual(rig.windows.map { $0.frame }, [one, manual, three])
-        XCTAssertEqual(rig.notices.count, 1, "работа из меню говорит плашкой, как раньше")
+        // Отказ запросу — файлом ответа (`window-missing`), плашки нет.
+        let answer = try String(contentsOf: box.appendingPathComponent("1788780000000-98\(opened).result.json"),
+                                encoding: .utf8)
+        XCTAssertTrue(answer.contains("\"error\":\"window-missing\""), answer)
+        XCTAssertTrue(rig.notices.isEmpty)
     }
 
     /// Пока ждали, ряд сменился (соседа закрыли) — план не годен, окно ставится по-старому.
@@ -212,7 +223,7 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
         rig.windows = [PimpWindow(id: 1, title: "Claude", frame: CGRect(x: 0, y: 34, width: 735, height: 859)),
                        PimpWindow(id: 2, title: "Второй", frame: CGRect(x: 735, y: 34, width: 735, height: 859))]
         let pimp = channel(rig, in: box)
-        XCTAssertTrue(pimp.startNewWindow(project: dictator))
+        XCTAssertTrue(try open(pimp, rig, in: box))
         rig.windows.removeAll { $0.id == 2 }
         rig.windows.append(PimpWindow(id: 3, title: "Dictator", frame: CGRect(x: 980, y: 34, width: 900, height: 700)))
         rig.poll(until: rig.now.addingTimeInterval(1))
@@ -247,7 +258,7 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
         let box = makeTemp(), rig = Rig()
         rig.windows = [PimpWindow(id: 1, title: "Claude", frame: CGRect(x: 0, y: 34, width: 1470, height: 859))]
         let pimp = channel(rig, in: box)
-        XCTAssertTrue(pimp.startNewWindow(project: dictator))
+        XCTAssertTrue(try open(pimp, rig, in: box))
         rig.extraIDs = [77]
         let before = rig.windowsCalls
         rig.poll(until: rig.now.addingTimeInterval(1.05))
@@ -266,7 +277,7 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
         let pimp = channel(rig, in: box)
         var born = 0
         pimp.seats.windowBorn = { born += 1 }
-        XCTAssertTrue(pimp.startNewWindow(project: dictator))
+        XCTAssertTrue(try open(pimp, rig, in: box))
         rig.poll(until: rig.now.addingTimeInterval(0.35))
         XCTAssertEqual(born, 0, "нового номера нет — кэш живёт")
         rig.extraIDs = [77]
@@ -285,7 +296,7 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
         var seats = rig.seats()
         seats.windowIDs = nil
         pimp.seats = seats
-        XCTAssertTrue(pimp.startNewWindow(project: dictator))
+        XCTAssertTrue(try open(pimp, rig, in: box))
         XCTAssertTrue(rig.queued.isEmpty)
     }
 
@@ -298,7 +309,7 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
         rig.windows = [PimpWindow(id: 1, title: "Claude", frame: CGRect(x: 0, y: 34, width: 735, height: 859)),
                        PimpWindow(id: 2, title: "Второй", frame: CGRect(x: 735, y: 34, width: 735, height: 859))]
         let pimp = channel(rig, in: box)
-        XCTAssertTrue(pimp.startNewWindow(project: dictator))
+        XCTAssertTrue(try open(pimp, rig, in: box))
         rig.windows.append(PimpWindow(id: 3, title: "Dictator", frame: CGRect(x: 980, y: 34, width: 900, height: 700)))
         let cell = CGRect(x: 980, y: 34, width: 490, height: 859)
         var bounced = false
@@ -327,7 +338,7 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
         let pimp = channel(rig, in: box)
         var restoring = true
         pimp.seats.isRestoring = { restoring }
-        XCTAssertTrue(pimp.startNewWindow(project: dictator))
+        XCTAssertTrue(try open(pimp, rig, in: box))
         XCTAssertTrue(rig.room.isEmpty, "во время возврата соседей не раздвигаем")
         XCTAssertEqual(rig.windows.map { $0.frame }, [one, two])
         XCTAssertNil(rig.origins.first ?? nil, "точки нет — окно рождается как в меню")
@@ -361,7 +372,7 @@ final class NewWindowPlaceWF98Tests: XCTestCase {
             pimp.seats.placeChatGPT = { gptPlaced.append($0); gpt = $0 }
             let room = pimp.seats.makeRoom
             pimp.seats.makeRoom = { ids in gpt = narrow; return room(ids) }
-            XCTAssertTrue(pimp.startNewWindow(project: dictator))
+            XCTAssertTrue(try open(pimp, rig, in: box))
             XCTAssertEqual(gpt, narrow)
             if movedByHand { gpt = CGRect(x: 200, y: 200, width: 600, height: 600) }
 

@@ -429,13 +429,7 @@ public final class ChatArchive {
     }
 
     static func plural(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
-        let tail = n % 100
-        if (11...14).contains(tail) { return "\(n) \(many)" }
-        switch n % 10 {
-        case 1: return "\(n) \(one)"
-        case 2...4: return "\(n) \(few)"
-        default: return "\(n) \(many)"
-        }
+        "\(n) \(Plural.ru(n, one, few, many))"
     }
 
     static func chatsWord(_ n: Int) -> String { plural(n, "чат", "чата", "чатов") }

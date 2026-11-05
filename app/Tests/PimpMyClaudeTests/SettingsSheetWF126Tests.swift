@@ -13,15 +13,13 @@ final class SettingsSheetWF126Tests: XCTestCase {
         XCTAssertEqual(SettingsText.enter(SendDelaySetting(on: false, seconds: 5)), "нет")
         XCTAssertEqual(SettingsText.chats(bypass: true), "Bypass")
         XCTAssertEqual(SettingsText.chats(bypass: false), "", "ответов из панели нет (#9023) — и строки ответа нет")
-        XCTAssertEqual(SettingsText.pinned(PinnedLook()), "проект и таймер")
-        XCTAssertEqual(SettingsText.pinned(PinnedLook(folder: false, clock: true)), "только таймер")
-        XCTAssertEqual(SettingsText.pinned(PinnedLook(folder: false, clock: false)), "ничего")
-        XCTAssertEqual(SettingsText.more(autoAllow: true), "Allow — сам")
-        XCTAssertEqual(SettingsText.more(autoAllow: false), "")
+        // WF245: выключателя таймера нет (таймеров у закреплённых нет с page-64) — сводка только о проекте.
+        XCTAssertEqual(SettingsText.pinned(PinnedLook()), "с проектом")
+        XCTAssertEqual(SettingsText.pinned(PinnedLook(folder: false)), "без проекта")
     }
 
     func testWindowsGroupLeavesMoreTogglesOut() {
-        let toggles = [toggle(AutomationDefaults.allowKey, on: false), toggle(AutomationDefaults.continueKey, on: false),
+        let toggles = [toggle(AutomationDefaults.allowOnceKey, on: false), toggle(AutomationDefaults.continueKey, on: false),
                        toggle("menu", on: true), toggle("quit", on: true), toggle("login", on: false)]
         XCTAssertEqual(SettingsText.windowToggles(toggles).map { $0.id }, ["menu", "quit", "login"])
         XCTAssertEqual(SettingsText.windows(toggles), "включено 2 из 3")

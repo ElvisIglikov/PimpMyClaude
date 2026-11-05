@@ -16,9 +16,13 @@ import { loadInner } from "./load.mjs";
 const { inner } = loadInner({ title: "Trelvis" });
 const { epitaxyCss, contrastRatio } = inner;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const THEMES = JSON.parse(readFileSync(path.join(ROOT, "claude-patch", "themes.json"), "utf8")).themes;
-const RED = ["red", "crimson", "coral", "magma"];
-const BEFORE = { red: 1.83, crimson: 1.64, coral: 1.71, magma: 1.91 };
+// «Красная» ушла из набора в WF245 (слово Элвиса 11.10.2026), но у кого она стоит — окно показывает её дальше:
+// палитра лежит в записи окна целиком. Поэтому рамка сверяется и на ней — по палитре, какой она была в каталоге.
+const GONE = [{ id: "red", name: "Красная", type: "dark", palette: { accent: "#ff5c5c", background: "#3b1414", foreground: "#ffe4e4", sidebar: "#2a0e0e", panel: "#4e1d1d", muted: "#d69a9a" } }];
+const THEMES = [...GONE, ...JSON.parse(readFileSync(path.join(ROOT, "claude-patch", "themes.json"), "utf8")).themes];
+// «Винная» (#9683, лист 43 ★3.3) — тёмно-красная по тону фона, рамку ей тоже дотягивает (замер до правки 1,82).
+const RED = ["red", "crimson", "coral", "magma", "wine"];
+const BEFORE = { red: 1.83, crimson: 1.64, coral: 1.71, magma: 1.91, wine: 1.82 };
 
 const borders = theme => {
   const css = epitaxyCss({ type: theme.type, ...theme.palette });
@@ -35,7 +39,7 @@ const mix = (left, right, ratio) => {
 test("#8128: тёмно-красные темы — рамка поля ≥ 3:1 к фону поля (в фокусе ≥ 3,6:1), до правки было < 2", () => {
   for (const id of RED) {
     const theme = THEMES.find(item => item.id === id);
-    assert.ok(theme, `темы ${id} нет в themes.json`);
+    assert.ok(theme, `темы ${id} нет ни в themes.json, ни среди ушедших`);
     const { panel, accent, background } = theme.palette;
     const before = contrastRatio(mix(accent, background, 0.55), panel);
     assert.equal(before.toFixed(2), BEFORE[id].toFixed(2), `${id}: замер «до» поехал`);
@@ -47,9 +51,9 @@ test("#8128: тёмно-красные темы — рамка поля ≥ 3:1 
   }
 });
 
-test("#8128: не тёмно-красные темы (розовая, фуксия, лазер, светлые) — рамка прежняя, побайтно", () => {
+test("#8128: не тёмно-красные темы (фуксия, лазер, светлые) — рамка прежняя, побайтно", () => {
   const others = THEMES.filter(theme => !RED.includes(theme.id));
-  assert.ok(others.some(theme => theme.id === "pink") && others.some(theme => theme.type === "light"));
+  assert.ok(others.some(theme => theme.id === "fuchsia") && others.some(theme => theme.type === "light"));
   for (const theme of others) {
     const { accent, background } = theme.palette;
     const { blur, focus } = borders(theme);

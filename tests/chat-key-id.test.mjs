@@ -193,7 +193,7 @@ test("запись не обрезает запись по заголовку", 
     href: "about:blank",
     title: "Trelvis",
     opener: parent.win,
-    storage: { local: map({ "chat:Trelvis": { theme: theme("цвет"), font: font("Menlo"), frame: true } }) },
+    storage: { local: map({ "chat:Trelvis": { theme: theme("цвет"), font: font("Menlo"), look: { dense: true } } }) },
   });
   assert.equal(plain(await popup.api.chats({ scan: true })).self, "local_pop");
   // Сторож заголовка ещё не тикнул: переноса не было, а команда уже приехала.
@@ -201,7 +201,7 @@ test("запись не обрезает запись по заголовку", 
   const entry = readMap(popup.win)["id:local_pop"];
   assert.equal(entry.font.family, "Monaco", "слой команды записан");
   assert.equal(entry.theme.id, "цвет", "тема чата не потерялась");
-  assert.equal(entry.frame, true, "рамка чата не потерялась");
+  assert.equal(entry.look?.dense, true, "оформление чата не потерялось");
 });
 
 // z1-r01: одинаковые заголовки у Элвиса — норма. Тень `chat:<заголовок>`
@@ -213,15 +213,15 @@ test("z1-r01: цвет чата А не переезжает на чат Б с �
   a.dom.command({ id: "a1", action: "theme", at: "now", scope: "window", title: TITLE, theme: theme("красный", "#ff0000") });
   assert.equal(readMap(a.win)[`chat:${TITLE}`].by, "local_aaa", "тень помечена владельцем");
 
-  // Попап без id дописал шрифт в тень, приложение вернуло рамку — владелец цел.
+  // Попап без id дописал шрифт в тень, приложение вернуло оформление — владелец цел.
   const popup = loadInject({ href: "about:blank", title: TITLE, storage: { local: map(readMap(a.win)) } });
   assert.equal(popup.inner.chatIdKey(), null);
   assert.equal(popup.api.status().theme.id, "красный", "окно без id живёт на тени, как раньше");
   popup.dom.command({ id: "p1", action: "theme", at: "now", scope: "window", title: TITLE, font: font("Menlo") });
-  popup.dom.command({ id: "p2", action: "themes-restore", at: "now", scope: "all", entries: { [`chat:${TITLE}`]: { frame: true } } });
+  popup.dom.command({ id: "p2", action: "themes-restore", at: "now", scope: "all", entries: { [`chat:${TITLE}`]: { look: { dense: true } } } });
   const shadow = readMap(popup.win)[`chat:${TITLE}`];
   assert.equal(shadow.font.family, "Menlo");
-  assert.equal(shadow.frame, true, "themes-restore долил слой");
+  assert.equal(shadow.look?.dense, true, "themes-restore долил слой");
   assert.equal(shadow.by, "local_aaa", "владелец пережил запись окна без id и themes-restore");
 
   const b = loadInject({ href: "https://claude.ai/epitaxy/local_bbb", title: TITLE, storage: { local: map(readMap(popup.win)) } });

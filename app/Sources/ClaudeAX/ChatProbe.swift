@@ -12,6 +12,8 @@ struct ChatPage: Equatable {
     /// CGWindowID from loader-owned BrowserWindow metadata, never from renderer result.
     let windowId: CGWindowID?
     var sendDelaySetting: SendDelaySetting?
+    /// Масштаб окна Claude в процентах (`ClaudeZoom`); nil — страница не сказала.
+    var zoom: Int?
     var autoContinue: Bool?
     var galleryCounted: Int?
     /// id чата ЭТОЙ страницы (`local_<uuid>`); nil — страница себя не опознала.
@@ -44,6 +46,10 @@ struct ChatPage: Equatable {
     /// От какого края окна считан `mic.x` (контракт WF92 (б), пятый элемент): 0 — от правого
     /// (значок у кружка), 1 — от левого (значок в открытом поле). Пятого нет — правый.
     let micAnchor: MicAnchor
+    /// Место родной кнопки диктовки Claude (#9681, поле `micNative` того же вида, что `mic`): в режиме `dictator`
+    /// её нажатие тоже запускает Диктатора, правой кнопкой — выбор диктовки. nil — кнопки не видно или поля нет.
+    var micNative: CGRect?
+    var micNativeAnchor: MicAnchor = .right
     /// Работает ли чат страницы (кнопка стопа видна, WF87): только у main и popout;
     /// nil — поля нет (старая страница, чужой origin).
     let working: Bool?
@@ -59,6 +65,9 @@ struct ChatPage: Equatable {
     /// кончен и строка состояния говорит «жду»/«упал»; просто законченный ход — нет): у наших страниц и только
     /// в круге с `status()`; nil — не спрашивали.
     var waiting: Bool?
+    /// Ход Workflow из строки состояния последнего ответа (#10315, `chats().flow`) — у main и popout; nil — строки
+    /// нет или страница старая (поля нет ≠ «не идёт»).
+    var flow: PageFlow?
     /// Когда пришёл круг, в котором страница ответила.
     let at: Date
 
@@ -88,6 +97,30 @@ struct ChatPage: Equatable {
     }
 }
 
+/// Ход Workflow из строки состояния последнего ответа чата («⚪[PimpMyClaude](docs/status.md) · WF 2 из 3 · идёт 💭»):
+/// `chats().flow = {state, project}` (#10315, раздел 340 страницы, контракт 510). По нему блок Workflow панели знает,
+/// что Workflow проекта идёт прямо сейчас.
+struct PageFlow: Equatable {
+    static let states: Set<String> = ["run", "wait", "fail", "done"]
+    static let projectLimit = 80
+
+    /// `run` · `wait` · `fail` · `done`.
+    let state: String
+    /// Имя проекта из строки; нет, пустое, длиннее 80 знаков или с управляющими знаками — nil.
+    let project: String?
+
+    /// Состояние не из четырёх слов или не объект — nil.
+    static func parse(_ value: Any?) -> PageFlow? {
+        guard let map = value as? [String: Any], let state = map["state"] as? String, states.contains(state) else {
+            return nil
+        }
+        let raw = (map["project"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let clean = !raw.isEmpty && raw.count <= projectLimit
+            && !raw.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+        return PageFlow(state: state, project: clean ? raw : nil)
+    }
+}
+
 /// Ход цепочки «Нового окна» главной страницы — слепок `status().newWindow` (`inject.js`,
 /// раздел 12б). По нему приложение знает, что «💬 Новый чат» из попапа РОДИЛСЯ и текст
 /// передачи ушёл, даже когда свежий попап себя не опознал и «вставлено» не сказал (#7378).
@@ -113,6 +146,8 @@ struct NewWindowRun: Equatable {
         let effort: String?
     }
     var actual: Actual? = nil
+    /// Черновик прежнего чата у renew главного окна (#11201, WF302, `carry`); nil — переносить было нечего.
+    var carry: DraftCarry? = nil
 
     static func actual(_ raw: Any?) -> Actual? {
         guard let fields = raw as? [String: Any] else { return nil }
@@ -153,7 +188,8 @@ struct NewWindowRun: Equatable {
         return NewWindowRun(at: Date(timeIntervalSince1970: at / 1000), step: text("step"),
                             handoff: text("handoff"), chat: ChatProbe.chatId(text("id")) ?? "",
                             state: text("state"),
-                            busy: (map["busy"] as? Bool) == true, actual: actual(map["actual"]))
+                            busy: (map["busy"] as? Bool) == true, actual: actual(map["actual"]),
+                            carry: DraftCarry.parse(map["carry"]))
     }
 }
 
@@ -330,6 +366,10 @@ final class ChatProbe {
     /// Есть окна, спрятанные Пимпом (#8282): канал работает при любом тумблере, спрашивает страницы раз
     /// в `askInterval` и просит `status()` — ждёт ли чат Элвиса. Живьём вешает `ClaudeAXController`.
     var isWaitWanted: () -> Bool = { false }
+    /// Пора просить у страниц `health()` (#10527, К-HEALTH): Claude обновился, главная страница отвечает 20 с.
+    /// Пока пора, канал работает при любом тумблере и круг несёт ещё ключ `health`. Живьём вешает `ClaudeAXController`
+    /// на `LiveCheckRunner.due`.
+    var isHealthDue: () -> Bool = { false }
 
     private var answers: [ChatPage] = []
     private var answeredAt: Date?
@@ -352,6 +392,9 @@ final class ChatProbe {
     /// Карта тем последнего круга (решение 3 плана WF35): её забирает `WindowThemeStore`,
     /// и забирает ровно один раз.
     private var freshThemes: [String: WindowThemeEntry]?
+    /// Круг, который ждём, просил `health()`; ответы такого круга ждут `takeHealth()`.
+    private var pendingHealth = false
+    private var freshHealth: [LiveCheck.PageAnswer]?
     /// Приложение только что писало зеркало тем — повод спросить страницы (решение 3 плана
     /// WF35). Разовый: снимается первым же вопросом.
     private var mirrored = false
@@ -413,22 +456,9 @@ final class ChatProbe {
         return main.path == homePath && isRecent(main, at: at)
     }
 
-    /// Чат попапа по AX-заголовку окна и рамке окна. Заголовок пустой или заглушка — nil
-    /// (такой носит и главное окно, и безымянный попап); заголовок носят два окна — решает
-    /// РАМКА, а без неё ничья и nil: лучше не покрасить, чем покрасить чужим цветом.
+    /// Окна этого тика (заголовок и рамка) — по ним круг решает, не пора ли спросить страницы
+    /// снова (`refinementFingerprint`). Опознание окна — `WindowIdentity.resolveNative` в контроллере.
     private var nativeWindows: [WindowIdentity.Native] = []
-
-    func chat(forTitle title: String, frame: CGRect? = nil) -> String? {
-        let identity = WindowIdentity.resolve(title: title, frame: frame, pages: pages, nativeWindows: nativeWindows, at: now())
-        return identity.page?.kind == .popout ? identity.page?.chat : nil
-    }
-
-    /// Чистый вариант общего резолвера. Без native inventory один заголовок ничего не доказывает.
-    static func chat(forTitle title: String, frame: CGRect? = nil, in pages: [ChatPage],
-                     nativeWindows: [WindowIdentity.Native]? = nil) -> String? {
-        let identity = WindowIdentity.resolve(title: title, frame: frame, pages: pages, nativeWindows: nativeWindows)
-        return identity.page?.kind == .popout ? identity.page?.chat : nil
-    }
 
     /// Одноимённые страницы назвали один и тот же чат — рамка тут ни при чём. Хоть одна
     /// себя не назвала (находка 4 проверки WF29) или чатов два — nil, дальше решает рамка.
@@ -492,6 +522,12 @@ final class ChatProbe {
     func takeThemes() -> [String: WindowThemeEntry]? {
         defer { freshThemes = nil }
         return freshThemes
+    }
+
+    /// Ответы последнего круга с `health()` (#10527); отдаются один раз, круга не было — nil.
+    func takeHealth() -> [LiveCheck.PageAnswer]? {
+        defer { freshHealth = nil }
+        return freshHealth
     }
 
     /// Приложение записало зеркало тем: ближайший круг обязан спросить страницы, иначе файл
@@ -568,7 +604,7 @@ final class ChatProbe {
         untrustedAt.map { now().timeIntervalSince($0) < ChatProbe.workingSeconds } ?? false
     }
 
-    /// Строка для `statusText`: канал / сколько страниц ответило / сколько назвали свой чат.
+    /// Сводка канала для тестов и отладки: канал / сколько страниц ответило / сколько назвали свой чат.
     var status: String {
         "\(channel.rawValue)/\(answers.count)/\(answers.filter { $0.chat != nil }.count)"
     }
@@ -599,7 +635,8 @@ final class ChatProbe {
         // Лимиты (WF87): канал открывается на свой круг раз в минуту и держится, пока круг не закрыт.
         let limits = isLimitsWanted() && !windows.isEmpty && (pendingNonce != nil || limitsDue(at))
         let wait = isWaitWanted()
-        guard isEnabled() || isDemanded(at) || cash || isMicWanted() || limits || wait || isLayoutGuardWanted() else {
+        let health = isHealthDue()
+        guard isEnabled() || isDemanded(at) || cash || isMicWanted() || limits || wait || health || isLayoutGuardWanted() else {
             channel = .off
             return
         }
@@ -612,8 +649,8 @@ final class ChatProbe {
         // Повод запоминаем ТОЛЬКО вместе с вопросом: окно открылось, пока шёл прошлый круг
         // или пока канал держал агент, — повод обязан дожить до первого нашего вопроса.
         guard reason(titles: sorted, revision: indexRevision, unknown: unknown, stale: stale,
-                     at: at),
-              claim(at), ask(scan: unknown, cash: cash || wait, at: at) else { return }
+                     health: health, at: at),
+              claim(at), ask(scan: unknown, cash: cash || wait, health: health, at: at) else { return }
         titles = sorted
         revision = indexRevision
         started = true
@@ -629,7 +666,7 @@ final class ChatProbe {
     /// Четвёртый повод добавил WF35: приложение писало зеркало тем, и файл обязан догнать
     /// правду страницы. Плюс два тормоза: пол частоты и незакрытый круг.
     private func reason(titles: [String], revision: Int, unknown: Bool, stale: Bool,
-                        at: Date) -> Bool {
+                        health: Bool = false, at: Date) -> Bool {
         // Прошлый круг не закрыт и ещё не потерян — второй не начинаем: старый ответ
         // затёр бы свежий (критик В2 плана WF29).
         if pendingNonce != nil, let wrote = lastWriteAt,
@@ -649,6 +686,8 @@ final class ChatProbe {
         if isLayoutGuardWanted() { floor = min(floor, ChatProbe.cashoutInterval) }
         if let wrote = lastWriteAt, at.timeIntervalSince(wrote) < floor { return false }
         if !started { return true }
+        // Проверка окна после обновления Claude (#10527): один круг с `health()`, как только пора.
+        if health { return true }
         // Идущий перенос — повод сам по себе, как и домашний экран: ни заголовки окон, ни
         // состав чатов от того, что текст лёг в поле, не меняются (задача #5779).
         if cash || isLayoutGuardWanted() { return true }
@@ -723,7 +762,7 @@ final class ChatProbe {
         let data = files.readResult()
         let fresh = ChatProbe.parseAnswer(data, nonce: nonce, at: at)
         guard !fresh.pages.isEmpty else {
-            // Наш круг отвечен, но только без печати лоадера v8 — Claude живёт со старым лоадером.
+            // Наш круг отвечен, но только без печати лоадера v8+ — Claude живёт со старым лоадером.
             if ChatProbe.answeredUntrusted(data, nonce: nonce) { untrustedAt = at }
             return
         }
@@ -733,6 +772,8 @@ final class ChatProbe {
         // Карта тем ждёт своего читателя (`WindowThemeStore.absorb`); поля не было — nil,
         // и файл в этом круге не трогают вовсе.
         freshThemes = fresh.themes
+        if pendingHealth { freshHealth = ChatProbe.parseHealth(data, nonce: nonce) }
+        pendingHealth = false
         absorbSignals(fresh.pages, at: at)
         answeredAt = at
         pendingNonce = nil
@@ -780,8 +821,10 @@ final class ChatProbe {
     static func isOwnScript(_ text: String) -> Bool {
         guard let nonce = markNonce(text) else { return false }
         for scan in [false, true] {
-            for cash in [false, true] where text == script(nonce: nonce, scan: scan, cash: cash) {
-                return true
+            for cash in [false, true] {
+                for health in [false, true] where text == script(nonce: nonce, scan: scan, cash: cash, health: health) {
+                    return true
+                }
             }
         }
         return false
@@ -816,14 +859,15 @@ final class ChatProbe {
 
     /// Спросить страницы. Запись не удалась (папки нет, прав нет) — считаем, что не спросили:
     /// повод останется, и ближайший тик попробует снова.
-    private func ask(scan: Bool, cash: Bool = false, at: Date) -> Bool {
+    private func ask(scan: Bool, cash: Bool = false, health: Bool = false, at: Date) -> Bool {
         let nonce = ChatProbe.makeNonce(at: at, random: random())
-        let text = ChatProbe.script(nonce: nonce, scan: scan, cash: cash)
+        let text = ChatProbe.script(nonce: nonce, scan: scan, cash: cash, health: health)
         guard files.writeScript(text) else { return false }
         lastScript = text
         lastStamp = files.scriptInfo()?.stamp
         lastWriteAt = at
         pendingNonce = nonce
+        pendingHealth = health
         return true
     }
 
@@ -841,10 +885,14 @@ final class ChatProbe {
     /// считается на каждой из четырёх десятков страниц, и платить за него в обычном круге
     /// незачем. Обычный круг при этом остался ПОБАЙТНО прежним: иначе первый запуск после
     /// обновления приложения считал бы свой же вчерашний `probe.js` чужим и молчал 10 минут.
-    static func script(nonce: String, scan: Bool, cash: Bool = false) -> String {
+    ///
+    /// `health` (#10527, К-HEALTH) добавляет к ответу каждой страницы ключ `health` ПОСЛЕДНИМ: ответ
+    /// `window.__myclaude.health()` (только чтение), страница без `health()` — `{v:0}`, ошибка — null. Круги без
+    /// `health` побайтно прежние.
+    static func script(nonce: String, scan: Bool, cash: Bool = false, health: Bool = false) -> String {
         let miss = "{v:1,nonce:\(CommandChannel.jsonString(nonce)),kind:\"other\",store:\"skip\"}"
         let ask = "api.chats({ scan: \(scan), nonce: \(CommandChannel.jsonString(nonce)) })"
-        let body = cash ? """
+        let body = health ? healthBody(ask: ask, cash: cash) : cash ? """
             var answer = \(ask);
             var cashout = null;
             var newWindow = null;
@@ -880,6 +928,53 @@ final class ChatProbe {
         })()
 
         """
+    }
+
+    /// Тело круга с `health()`; при `cash` — с теми же полями `status()`, что у круга переноса.
+    private static func healthBody(ask: String, cash: Bool) -> String {
+        let status = cash ? """
+            extra.cashout = null;
+            extra.newWindow = null;
+            extra.send = null;
+            extra.wait = false;
+            try {
+              if (typeof api.status === "function") {
+                var status = api.status() || {};
+                extra.cashout = status.cashout || null;
+                extra.newWindow = status.newWindow || null;
+                extra.send = status.send || null;
+                extra.wait = !!(status.attention && status.attention.want);
+              }
+            } catch (e) {}
+        """ : ""
+        return """
+            var answer = \(ask);
+            var extra = {};
+        \(status)
+            try {
+              var health = typeof api.health === "function" ? api.health() : { v: 0 };
+              extra.health = health === undefined ? null : health;
+            } catch (e) {
+              extra.health = null;
+            }
+            return Promise.resolve(answer).then(function (r) {
+              return (r && typeof r === "object") ? Object.assign({}, r, extra) : r;
+            });
+        """
+    }
+
+    /// Ответы круга с `health()`: у каждой нашей страницы claude.ai или попапа со СВОИМ `nonce` и ключом `health` —
+    /// id webContents, адрес и сам ответ.
+    static func parseHealth(_ data: Data?, nonce: String) -> [LiveCheck.PageAnswer] {
+        guard let data = data,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = root["results"] as? [[String: Any]] else { return [] }
+        return list.compactMap { entry in
+            guard trustedSource(entry), let result = entry["result"] as? [String: Any],
+                  (result["nonce"] as? String) == nonce, let health = result["health"],
+                  let id = (entry["id"] as? NSNumber)?.intValue else { return nil }
+            return LiveCheck.PageAnswer(id: id, url: entry["url"] as? String ?? "", health: health is NSNull ? nil : health)
+        }
     }
 
     /// Метка круга: миллисекунды и четыре случайные цифры — как `id` у команд.
@@ -940,8 +1035,14 @@ final class ChatProbe {
                                   at: at))
             // #8282: ждёт ли чат Элвиса — у наших страниц, поле есть только в круге с `status()`.
             if kind != .other { pages[pages.count - 1].waiting = result["wait"] as? Bool }
+            if kind != .other {
+                pages[pages.count - 1].micNative = micSpot(result["micNative"])
+                pages[pages.count - 1].micNativeAnchor = micAnchor(result["micNative"])
+            }
             if kind != .other { pages[pages.count - 1].sendDelaySetting = SendDelaySetting.parse(result["sendDelaySetting"]) }
+            if kind != .other { pages[pages.count - 1].zoom = ClaudeZoom.parse(result["zoom"]) }
             if kind != .other { pages[pages.count - 1].autoContinue = result["autoContinue"] as? Bool }
+            if kind != .other { pages[pages.count - 1].flow = PageFlow.parse(result["flow"]) }
             if kind != .other, let value = result["galleryCounted"] as? NSNumber,
                CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue.isFinite,
                value.doubleValue >= 0, value.doubleValue <= 9_007_199_254_740_991,
@@ -952,21 +1053,24 @@ final class ChatProbe {
         return (pages, themes)
     }
 
-    /// На наш круг ответили страницы, и ни на одной нет печати лоадера v8 (WF111): так отвечает
+    /// На наш круг ответили страницы, и ни на одной нет печати лоадера v8+ (WF111; v9 — WF294): так отвечает
     /// Claude со старым лоадером (v7) — до перепатча или если перепатч сорвался.
     static func answeredUntrusted(_ data: Data?, nonce: String) -> Bool {
         guard let data = data,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let list = root["results"] as? [[String: Any]] else { return false }
         let ours = list.filter { (($0["result"] as? [String: Any])?["nonce"] as? String) == nonce }
-        return !ours.isEmpty && !ours.contains { ($0["source"] as? [String: Any])?["loader"] as? Int == 8 }
+        return !ours.isEmpty && !ours.contains { sealed(($0["source"] as? [String: Any])?["loader"]) }
     }
+
+    /// Печать лоадера v8 и новее (v9 — WF294, до перепатча в Claude стоит v8): `source` пишет сам лоадер.
+    static func sealed(_ loader: Any?) -> Bool { (loader as? Int).map { $0 >= 8 } ?? false }
 
     /// Metadata is written outside renderer-controlled `result` by loader v8. Old loaders cannot
     /// establish blank-page provenance, so their answers fail closed until an authorized repatch.
     static func trustedSource(_ entry: [String: Any]) -> Bool {
         guard let source = entry["source"] as? [String: Any],
-              source["loader"] as? Int == 8, source["origin"] as? String == "https://claude.ai",
+              sealed(source["loader"]), source["origin"] as? String == "https://claude.ai",
               let url = source["url"] as? String, entry["url"] as? String == url,
               let process = source["processId"] as? Int, process > 0,
               let routing = source["routingId"] as? Int, routing > 0 else { return false }
@@ -1035,14 +1139,7 @@ final class ChatProbe {
         return path
     }
 
-    /// id чата из ответа страницы. Сито то же, что у адреса страницы в `ProjectIndex.page(url:)`:
-    /// `local_` и дальше только буквы, цифры, дефис и подчёркивание — всё прочее пришло не от
-    /// Claude, и в поле `chat` команды ему делать нечего.
-    static func chatId(_ value: String?) -> String? {
-        guard let id = value?.trimmingCharacters(in: .whitespaces),
-              id.hasPrefix(ProjectIndex.sessionPrefix), id.count > ProjectIndex.sessionPrefix.count,
-              id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") })
-        else { return nil }
-        return id
-    }
+    /// id чата из ответа страницы — `ChatID.parse`: всё прочее пришло не от Claude, и в поле `chat` команды ему
+    /// делать нечего.
+    static func chatId(_ value: String?) -> String? { ChatID.parse(value) }
 }

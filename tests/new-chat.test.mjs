@@ -417,7 +417,13 @@ test('#7379: terminal popout failure clears captured readback', async () => {
   q.loaded.inner.setModuleImporter(() => Promise.resolve({ Store: store }));
   q.loaded.dom.command(newChat()); await run(q.loaded);
   assert.equal(q.loaded.api.status().newWindow.state, 'popout-failed');
-  assert.equal(q.loaded.api.status().newWindow.actual, null); q.loaded.api.dispose();
+  assert.equal(q.loaded.api.status().newWindow.actual, null);
+  // WF248 П2 (лист 48 · 2.1): меню «⋯ Ещё ▸ 🪟 Вынести этот чат в окно» снято — плашка зовёт к ⌘-клику самого Claude.
+  const note = q.loaded.dom.query('#myclaude-new-window-note')?.textContent ?? '';
+  assert.equal(note, q.loaded.inner.NEW_WINDOW_NOTE_CREATED);
+  assert.match(note, /⌘-клик по нему в списке слева/);
+  assert.doesNotMatch(note, /Ещё ▸|Вынести этот чат/);
+  q.loaded.api.dispose();
 });
 
 for (const id of ['', 'x'.repeat(65)]) test(`#7379: invalid command correlation (${id.length} chars) keeps ACK null`, async () => {
@@ -501,4 +507,113 @@ test('#7379: concurrent popout with same token still opens while new-window is b
   assert.equal(calls.length, 2);
   assert.equal(q.loaded.api.status().newWindow.actual.commandId, 'busy-new');
   q.loaded.api.dispose();
+});
+
+// #10261: Claude 2.42304 — кнопки «Effort:» нет, ступень хвостом у кнопки модели («Model: Opus 5.5 High»), ставится
+// подменю «Effort» меню модели; кнопка модели на домашнем экране рождается не сразу (после выбора папки). Renew Рика
+// (stay, «extra») раньше падал в «no-model-button», и новый чат оставался на HIGH.
+const homeNoEffort = () => {
+  const loaded = loadInject({
+    href: "https://claude.ai/epitaxy", title: "Claude",
+    html: dom => {
+      const input = dom.document.body.add("div", { attrs: { "data-testid": "code-prompt-input", contenteditable: "true" } });
+      const send = dom.document.body.add("button", { attrs: { "data-testid": "code-prompt-send" } });
+      const recents = dom.document.body.add("div", { attrs: { "data-testid": "sidebar-recents" } });
+      return { input, send, recents };
+    },
+  });
+  const { parts } = loaded;
+  const body = loaded.document.body;
+  const box = { sent: [], escapes: 0, button: null, menu: null };
+  loaded.win.addEventListener("keydown", event => { if (event.key === "Escape") box.escapes += 1; });
+  parts.send.addEventListener("click", () => {
+    box.sent.push({ text: parts.input.textContent, model: box.button?.getAttribute("aria-label") ?? null });
+    loaded.win.location.pathname = "/epitaxy/local_new";
+    parts.recents.add("div", { attrs: { "data-row-key": "code:local_new" }, text: "Rick" });
+  });
+  box.born = (testid = "epitaxy-cds-model-selector") => {
+    const button = body.add("button", {
+      attrs: { "data-testid": testid, "data-cds": "ModelSelector", "aria-label": "Model: Opus 5.5 High", "aria-haspopup": "menu" },
+    });
+    box.button = button;
+    button.addEventListener("pointerdown", event => {
+      if (event.buttons !== 1 || box.menu) return;
+      box.menu = body.add("div", { attrs: { role: "menu" } });
+      box.menu.add("div", { attrs: { role: "menuitemradio" }, text: "Opus 5.5" });
+      const trigger = box.menu.add("div", { attrs: { role: "menuitem", "aria-haspopup": "menu" }, text: "Effort High" });
+      trigger.addEventListener("click", () => {
+        if (box.menu.querySelector("[data-effort-id]")) return;
+        const sub = box.menu.add("div", { attrs: { role: "menu" } });
+        for (const id of ["low", "medium", "high", "xhigh", "max"]) {
+          const name = id === "xhigh" ? "Extra" : id[0].toUpperCase() + id.slice(1);
+          sub.add("div", { attrs: { role: "menuitemradio", "data-effort-id": id }, text: name }).addEventListener("click", () => {
+            button.setAttribute("aria-label", `Model: Opus 5.5 ${name}`);
+            box.menu.remove(); box.menu = null;
+          });
+        }
+      });
+    });
+  };
+  const store = { calls: [] };
+  const value = { popoutWindows: loaded.run("new Map()"), openPopout: options => store.calls.push(options) };
+  const hook = () => {};
+  hook.getState = () => value;
+  loaded.dom.modules("https://claude.ai/assets/v1/chunk-1.js");
+  loaded.inner.setModuleImporter(() => Promise.resolve({ Store: hook }));
+  return { loaded, box };
+};
+
+test("#10261: renew Рика на «extra» — кнопка модели родилась позже, эффорт встал меню модели до первого сообщения", async () => {
+  const { loaded, box } = homeNoEffort();
+  loaded.dom.command(newChat({ model: "Opus 5.5", effort: "extra", stay: true, text: "Ты — Рик." }));
+  let clock = loaded.win.performance.now();
+  loaded.win.performance.now = () => clock;
+  for (let index = 0; index < 120; index += 1) {
+    if (index === 20) box.born();
+    clock += 100;
+    await settle(4);
+    const ids = loaded.dom.ids("timeout");
+    if (ids.length) loaded.dom.fire(ids[ids.length - 1]);
+  }
+  await settle();
+  const mark = plain(loaded.api.status().newWindow);
+  assert.deepEqual(mark.model.got, { model: "ok", effort: "ok" }, JSON.stringify(mark.model));
+  assert.deepEqual(box.sent, [{ text: "Ты — Рик.", model: "Model: Opus 5.5 Extra" }], "первое сообщение ушло уже на Extra");
+  assert.equal(box.escapes, 0, "Escape не жали");
+});
+
+const renewRick = async (box, loaded, born) => {
+  loaded.dom.command(newChat({ model: "Opus 5.5", effort: "extra", stay: true, text: "Ты — Рик." }));
+  let clock = loaded.win.performance.now();
+  loaded.win.performance.now = () => clock;
+  for (let index = 0; index < 160; index += 1) {
+    if (index === 20 && born) born();
+    clock += 100;
+    await settle(4);
+    const ids = loaded.dom.ids("timeout");
+    if (ids.length) loaded.dom.fire(ids[ids.length - 1]);
+  }
+  await settle();
+  return plain(loaded.api.status().newWindow);
+};
+
+test("#10261 (renew 05:32): на домашнем экране testid кнопки модели другой — узнаём по data-cds и «Model:», Extra встаёт", async () => {
+  const { loaded, box } = homeNoEffort();
+  const mark = await renewRick(box, loaded, () => box.born("cds-model-selector"));
+  assert.deepEqual(mark.model.got, { model: "ok", effort: "ok" }, JSON.stringify(mark.model));
+  assert.deepEqual(box.sent, [{ text: "Ты — Рик.", model: "Model: Opus 5.5 Extra" }]);
+});
+
+test("#10261: кнопки модели нет совсем — в метке кнопки меню экрана (чем Claude её заменил)", async () => {
+  const { loaded, box } = homeNoEffort();
+  const mark = await renewRick(box, loaded, () => loaded.document.body.add("button", { attrs: { "data-testid": "mode-picker", "aria-haspopup": "menu" }, text: "Auto" }));
+  assert.equal(mark.model.got.model, "no-model-button");
+  assert.deepEqual(mark.model.seen, ["mode-picker |  |  | Auto"]);
+});
+
+test("#10261: модель и ступень — без хвоста и хвостом кнопки модели", () => {
+  const { loaded, box } = homeNoEffort();
+  box.born();
+  assert.equal(loaded.inner.newWindowModelName(), "Opus 5.5");
+  assert.equal(loaded.inner.newWindowEffortShown(), "High");
 });

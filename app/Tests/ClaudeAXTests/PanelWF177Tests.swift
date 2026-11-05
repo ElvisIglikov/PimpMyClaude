@@ -18,7 +18,8 @@ final class PanelWF177Tests: XCTestCase {
 
     func testColorsWidgetIsLastAndSavedLayoutMovesOnce() {
         XCTAssertEqual(PanelWidget.allCases.last, .colors)
-        XCTAssertEqual(PanelWidgetLayout.standard.items.last?.id, "colors")
+        // #10461: в умолчании внизу — Workflow, «Оформление» — перед ним, половинкой рядом с «Токенами».
+        XCTAssertEqual(PanelWidgetLayout.standard.items.suffix(3).map { $0.id }, ["colors", "workflow", "terminals"])
         let store = defaults()
         // Раскладка Элвиса до WF177: цвета посередине.
         store.set(#"[{"id":"week","wide":true},{"id":"reset","wide":true},{"id":"limits","wide":true},"#
@@ -51,8 +52,8 @@ final class PanelWF177Tests: XCTestCase {
         let used = UInt64(6.3 * Double(Self.gb))
         let sample = MacMemorySample(at: Date(), pressure: 50, level: .normal, used: used, total: 8 * Self.gb)
         XCTAssertEqual(MacMemory.fraction(sample)!, 6.3 / 8, accuracy: 0.001, "выше середины — на 6,3 из 8")
-        XCTAssertEqual(MacMemory.nowText([sample]), "6,3 ГБ")
-        XCTAssertEqual(MacMemory.amount(sample), "6,3 ГБ")
+        XCTAssertEqual(MacMemory.nowText([sample]), "6.3 ГБ")
+        XCTAssertEqual(MacMemory.amount(sample), "6.3 ГБ")
         let noUsed = MacMemorySample(at: Date(), pressure: 50, level: .normal, used: nil, total: 8 * Self.gb)
         XCTAssertEqual(MacMemory.fraction(noUsed)!, 0.5, accuracy: 0.001, "занятого нет — нагрузка")
         XCTAssertEqual(MacMemory.nowText([noUsed]), "50 %")

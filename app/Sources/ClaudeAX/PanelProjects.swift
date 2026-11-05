@@ -1,8 +1,8 @@
 import Foundation
 
-// Проекты в панели PMP (WF126, `docs/wf126-spec.md` §3–4): «Ждут тебя», «Идут Workflow», «Остальные проекты».
-// Чистая часть — разбор `status.md` (порт `statusParse` страницы, чтобы панель и полоска не спорили), правило
-// готового слова и текст отправки; вид — `PimpPanel.swift`, тесты — `PanelProjectsTests`.
+// Проекты в панели PMP (WF126, `docs/wf126-spec.md` §3–4): снимок сводок проектов для плиток «Идёт Workflow сейчас»
+// и `/digest` (списки WF126 сняты в WF129/WF171). Чистая часть — разбор `status.md` (порт `statusParse` страницы,
+// чтобы панель и полоска не спорили), правило готового слова и текст отправки; тесты — `PanelProjectsTests`.
 
 /// Отрезок полосы фаз Workflow.
 public struct PanelPhase: Equatable {
@@ -10,14 +10,37 @@ public struct PanelPhase: Equatable {
     /// Короткое имя («план», «кодинг»; длиннее 9 знаков — «…»).
     public let name: String
     public let state: State
-    /// Кто: «2 × Opus 5.5»; строку не разобрали — она целиком, `effort` пуст.
-    public let who: String
-    /// HIGH / EXTRA / MAX или пусто.
-    public let effort: String
-    /// MAX или Fable — красным (правило Элвиса «Opus max и Fable — всегда красным»).
-    public let hot: Bool
     /// Полная строка роли — подсказка отрезка.
     public let help: String
+}
+
+/// Роль Workflow целиком — этап карточки блока Workflow (#10239, порт `FlowRole` PMP Tray для Windows):
+/// «кодинг · 2 агента · Opus 5.5 high 💭».
+public struct PanelRole: Equatable {
+    public let name: String
+    /// Модель с эффортом как записана («Opus 5.5 high»), без 🔴 и `**`.
+    public let model: String
+    /// Агентов числом; «я» или не записано — 0.
+    public let agents: Int
+    /// Роль ведёт сам оркестратор («я»).
+    public let me: Bool
+    /// Пометка 💭 — идёт сейчас.
+    public let running: Bool
+    /// Из строки «прошлые шаги».
+    public let past: Bool
+    /// Пометка 🔴 (Fable, max) в status.md.
+    public let red: Bool
+
+    public init(name: String, model: String = "", agents: Int = 0, me: Bool = false, running: Bool = false,
+                past: Bool = false, red: Bool = false) {
+        self.name = name
+        self.model = model
+        self.agents = agents
+        self.me = me
+        self.running = running
+        self.past = past
+        self.red = red
+    }
 }
 
 /// Блок Workflow сводки.
@@ -31,6 +54,8 @@ public struct PanelWorkflow: Equatable {
     /// Строка времени как есть («01:11 → закончит в 03:30 · идёт 1,4 ч»).
     public let time: String
     public let phases: [PanelPhase]
+    /// Роли по порядку: прошлые шаги (которых нет среди записанных ролей), потом роли (#10239).
+    public var roles: [PanelRole] = []
 
     /// Длительность для списка готовых: хвост строки времени после последнего « · », иначе вся строка.
     public var duration: String {
@@ -48,6 +73,8 @@ public struct PanelStatus: Equatable {
     public var workflows: [PanelWorkflow] = []
     /// Строка шапки «марафон «…», волна 2 из 4» как есть (WF129, #9077); нет — пусто.
     public var marathon = ""
+    /// Строка «обновлено 06:10» под заголовком (#10239): часы того, кто писал, — по ним считается «идёт 25 мин».
+    public var stamp = ""
 }
 
 /// Проект в панели.
@@ -58,7 +85,7 @@ public struct PanelProject: Equatable, Identifiable {
     public let name: String
     public let marker: String
     public let isMain: Bool
-    /// Дата правки `status.md`; сводки нет — nil.
+    /// Когда изменилось содержимое `status.md` (#10315, `FlowSeen`; без памяти — дата правки файла); сводки нет — nil.
     public let updated: Date?
     public let now: String
     /// Готовые слова — кнопки «Отправить» (до трёх).
@@ -68,24 +95,26 @@ public struct PanelProject: Equatable, Identifiable {
     public let waits: Bool
     /// Идут и упали.
     public let running: [PanelWorkflow]
-    public let finished: [PanelWorkflow]
-    public let planned: [PanelWorkflow]
     /// Все Workflow сводки по порядку и строка марафона — плитки «Идут Workflow» (WF129).
     public var workflows: [PanelWorkflow] = []
     public var marathon = ""
+    /// Строка «обновлено 06:10» сводки (#10239); нет — пусто.
+    public var stamp = ""
+    /// «Ждёт Элвиса: …» как записано (свежее 7 суток, `freshWait`) — «Ждёт тебя: …» в карточке блока Workflow.
+    public var waitFor = ""
+    /// Путь прочитанной сводки (`readStatus`): рядом с ней run-файлы — цена Workflow (#6282); сводки нет — пусто.
+    public var statusFile = ""
 }
 
-/// Снимок панели: три раздела и имя главного проекта (куда уходит ответ).
+/// Снимок панели: три раздела.
 public struct PanelSnapshot: Equatable {
     public let waiting: [PanelProject]
     public let working: [PanelProject]
     public let others: [PanelProject]
-    /// `mainProject` из claude.json как есть; не задан — nil.
-    public let mainEntry: String?
-    /// Имя главного проекта для подписей («ответ — в чат Rick»).
-    public let mainName: String?
     /// Живые tmux-сессии `rick-<проект>` — имена после «rick-» (WF129); tmux нет — пусто.
     public var terminals: Set<String> = []
+    /// Из них — с движением за 45 мин (#10315, `PanelTiles.activeTerminals`); nil — не спрашивали, считаются все.
+    public var activeTerminals: Set<String>?
 
     public var isEmpty: Bool { waiting.isEmpty && working.isEmpty && others.isEmpty }
 }
@@ -93,8 +122,19 @@ public struct PanelSnapshot: Equatable {
 public enum PanelProjects {
     /// «Ждут тебя»: сводка правилась не раньше 7 суток.
     public static let waitFreshSeconds: TimeInterval = 7 * 86_400
-    /// «Идут Workflow»: не раньше 12 часов (дальше чат давно молчит).
+    /// «Сейчас:» сводки и потолок живого правила (#10315, `isLive`): содержимое старше 12 ч живым не бывает.
     public static let runFreshSeconds: TimeInterval = 12 * 3600
+
+    /// Свежесть всего, что панель и `/digest` берут из сводки (#9846: карточка терминалов показала «Сейчас:» от 11.10
+    /// как живое): «Сейчас:» — только пока сводка моложе `runFreshSeconds`, как идущие Workflow; «Ждёт Элвиса:» — моложе
+    /// `waitFreshSeconds`, как раздел «Ждут тебя». Старше — строки нет: старое не выдаётся за «сейчас».
+    public static func freshNow(_ status: PanelStatus, age: TimeInterval) -> String {
+        age <= runFreshSeconds ? status.now : ""
+    }
+
+    public static func freshWait(_ status: PanelStatus, age: TimeInterval) -> String {
+        age <= waitFreshSeconds && !isNothing(status.waitFor) ? status.waitFor : ""
+    }
     public static let wordLimit = 60
     public static let wordsPerProject = 3
     public static let phasesLimit = 5
@@ -119,6 +159,11 @@ public enum PanelProjects {
             if sawHeading, current == nil, blocks.isEmpty, status.marathon.isEmpty,
                line.lowercased().hasPrefix("марафон") {
                 status.marathon = line
+                continue
+            }
+            // «обновлено 06:10» до первого блока (#10239, как `Parse` PMP Tray).
+            if current == nil, status.stamp.isEmpty, line.lowercased().hasPrefix("обновлено") {
+                status.stamp = line
                 continue
             }
             if StatusFeed.isWorkflowHeading(line) {
@@ -186,12 +231,16 @@ public enum PanelProjects {
 
     /// Роль «роль · агенты · модель усилие [💭]» — как `statusRole` страницы.
     struct Role {
-        let name: String
+        var name: String
         let agents: String
         let model: String
         let effort: String
         let running: Bool
         let line: String
+        /// Для блока Workflow (#10239, `Role` PMP Tray): модель — первая часть после имени, что не «агенты», без 🔴
+        /// и `**`; 🔴 — пометка Fable и max.
+        let shownModel: String
+        let red: Bool
 
         init(_ item: String) {
             line = item
@@ -216,6 +265,17 @@ public enum PanelProjects {
                 effort = ""
                 model = who
             }
+            let first = rest.enumerated().first { $0.offset != agentsAt }?.element ?? ""
+            red = first.contains("🔴")
+            shownModel = first.replacingOccurrences(of: "🔴", with: "").replacingOccurrences(of: "**", with: "")
+                .split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        }
+
+        /// Роль для карточки блока Workflow: агентов числом, «я», прошлая ли.
+        func flow(past: Bool) -> PanelRole {
+            let count = agents.range(of: "\\d+", options: .regularExpression).flatMap { Int(agents[$0]) } ?? 0
+            return PanelRole(name: name, model: shownModel, agents: count, me: agents == "я" || agents.hasPrefix("я "),
+                             running: running, past: past, red: red)
         }
     }
 
@@ -227,6 +287,8 @@ public enum PanelProjects {
         var stepsTotal: Int?
         var time = ""
         var past: [String] = []
+        /// Прошлые шаги ролями целиком («планирование · 1 агент · Opus 5.5 high — итог»), имя — первое слово.
+        var pastRoles: [Role] = []
         var roles: [Role] = []
 
         init(state: PanelWorkflow.State) { self.state = state }
@@ -239,7 +301,15 @@ public enum PanelProjects {
             let lower = item.lowercased()
             if lower.hasPrefix("прошл"), lower.contains("шаг") {
                 let body = item.firstIndex(of: ":").map { String(item[item.index(after: $0)...]) } ?? ""
-                past = body.components(separatedBy: ";").compactMap(PanelProjects.pastName)
+                past = []
+                pastRoles = []
+                for chunk in body.components(separatedBy: ";") {
+                    guard let word = PanelProjects.pastName(chunk) else { continue }
+                    past.append(word)
+                    var was = Role(chunk.components(separatedBy: "—")[0])
+                    was.name = word
+                    pastRoles.append(was)
+                }
                 return
             }
             let hasClock = PanelProjects.hasClock(item)
@@ -251,16 +321,24 @@ public enum PanelProjects {
                 return
             }
             if time.isEmpty, hasClock { time = item; return }
-            let role = item.components(separatedBy: CharacterSet(charactersIn: "·•")).first?
-                .trimmingCharacters(in: .whitespaces) ?? ""
-            if item.contains("·"), !item.contains("→"), !role.isEmpty, !role.contains(where: { $0.isNumber }) {
-                roles.append(Role(item))
+            // Несколько ролей одной строкой через «;» («критик · 1 агент · high; кодинг · 3 агента · high» — так пишут
+            // сводки на Маке, #10239) — каждая своей ролью.
+            for chunk in item.components(separatedBy: ";") {
+                let part = chunk.trimmingCharacters(in: .whitespaces)
+                let role = part.components(separatedBy: CharacterSet(charactersIn: "·•")).first?
+                    .trimmingCharacters(in: .whitespaces) ?? ""
+                if part.contains("·"), !part.contains("→"), !role.isEmpty, !role.contains(where: { $0.isNumber }) {
+                    roles.append(Role(part))
+                }
             }
         }
 
         var workflow: PanelWorkflow {
-            PanelWorkflow(about: about, state: state, stepsDone: stepsDone, stepsTotal: stepsTotal, time: time,
-                          phases: PanelProjects.phases(past: past, roles: roles, state: state))
+            let own = Set(roles.map { $0.name.lowercased() })
+            return PanelWorkflow(about: about, state: state, stepsDone: stepsDone, stepsTotal: stepsTotal, time: time,
+                                 phases: PanelProjects.phases(past: past, roles: roles, state: state),
+                                 roles: pastRoles.filter { !own.contains($0.name.lowercased()) }.map { $0.flow(past: true) }
+                                    + roles.map { $0.flow(past: false) })
         }
     }
 
@@ -307,35 +385,9 @@ public enum PanelProjects {
                     phaseState = .done
                 }
             }
-            let isPastOnly = role == nil
-            out.append(PanelPhase(name: shortName(name), state: phaseState,
-                                  who: isPastOnly ? "" : who(role!),
-                                  effort: isPastOnly ? "" : effortLabel(role!.effort),
-                                  hot: isPastOnly ? false : (role!.effort == "max" || role!.model.lowercased().contains("fable")),
-                                  help: role?.line ?? name))
+            out.append(PanelPhase(name: shortName(name), state: phaseState, help: role?.line ?? name))
         }
         return out
-    }
-
-    /// «2 агента» → «2 × Opus 5.5»; «я» → «я · Opus 5.5»; без усилия — вся строка как есть.
-    static func who(_ role: Role) -> String {
-        guard !role.effort.isEmpty else {
-            return [role.agents, role.model].filter { !$0.isEmpty }.joined(separator: " · ")
-        }
-        let agents = role.agents
-        if let count = Int(agents.prefix { $0.isNumber }), agents.lowercased().contains("аген") {
-            return "\(count) × \(role.model)"
-        }
-        if agents == "я" || agents.hasPrefix("я ") { return "я · \(role.model)" }
-        return [agents, role.model].filter { !$0.isEmpty }.joined(separator: " · ")
-    }
-
-    static func effortLabel(_ effort: String) -> String {
-        switch effort {
-        case "": return ""
-        case "xhigh", "extra": return "EXTRA"
-        default: return effort.uppercased()
-        }
     }
 
     /// «планирование» → «план»; длиннее 9 знаков — «…».
@@ -409,8 +461,32 @@ public enum PanelProjects {
         StatusFeed.isWorkingCopy(name: folder.lastPathComponent, at: folder, fileManager: fileManager)
     }
 
-    /// Сводка папки: первый `{docs,audit,work}/status.md`, чей настоящий файл лежит в ЭТОЙ папке.
+    /// Сводка папки — `ownStatusFile`; у папки с рабочими деревьями git — самая свежая из её и их (#9519: Workflow
+    /// сайта кафе идёт в копии `VkusnoffKz-iiko1019`, Пимпа — в `PimpMyClaude-wf269`, а сводки главных папок стоят, и
+    /// панель, `/digest` и сводка проектов их не видели). Копии сами проектами не становятся (`isWorkingCopy`).
     static func statusFile(in folder: URL, fileManager: FileManager) -> URL? {
+        let files = ([folder] + worktrees(of: folder, fileManager: fileManager)).compactMap { ownStatusFile(in: $0, fileManager: fileManager) }
+        guard files.count > 1 else { return files.first }
+        let changed = { (url: URL) in (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date ?? .distantPast }
+        return files.max { changed($0) < changed($1) }
+    }
+
+    /// Рабочие деревья папки по `.git/worktrees/*/gitdir` (там путь к `<дерево>/.git`); пропавшие с диска — мимо.
+    static func worktrees(of folder: URL, fileManager: FileManager) -> [URL] {
+        let list = folder.appendingPathComponent(".git", isDirectory: true).appendingPathComponent("worktrees", isDirectory: true)
+        guard let names = try? fileManager.contentsOfDirectory(atPath: list.path) else { return [] }
+        return names.sorted().compactMap { name in
+            guard let line = try? String(contentsOf: list.appendingPathComponent(name).appendingPathComponent("gitdir"), encoding: .utf8)
+            else { return nil }
+            let git = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard git.hasSuffix("/.git") else { return nil }
+            let tree = URL(fileURLWithPath: String(git.dropLast(5)), isDirectory: true)
+            return fileManager.fileExists(atPath: tree.path) ? tree : nil
+        }
+    }
+
+    /// Первый `{docs,audit,work}/status.md`, чей настоящий файл лежит в ЭТОЙ папке.
+    static func ownStatusFile(in folder: URL, fileManager: FileManager) -> URL? {
         let own = folder.resolvingSymlinksInPath().standardizedFileURL.path + "/"
         for sub in StatusFeed.statusFolders {
             let url = folder.appendingPathComponent(sub, isDirectory: true).appendingPathComponent(StatusFeed.statusFileName)
@@ -421,9 +497,14 @@ public enum PanelProjects {
         return nil
     }
 
-    /// Обход: папки `root` (без скрытых и рабочих деревьев) и недавние проекты; кто куда — по §3.3.
+    /// Обход: папки `root` (без скрытых и рабочих деревьев) и недавние проекты; кто куда — по §3.3. Идущие и упавшие —
+    /// только у живых проектов (#10315, `isLive`): `terminals` — живые сессии tmux, `activeTerminals` — с движением
+    /// (nil — все), `pages` — работающие страницы, `seen` — память времени содержимого (nil — по mtime), `muted` —
+    /// заглушённые «Ждёт Элвиса:» (#9820, `MutedWaits`: такой строки как будто нет).
     public static func snapshot(root: URL, recent: [(folder: URL, name: String)], mainEntry: String?, now: Date,
-                                fileManager: FileManager = .default) -> PanelSnapshot {
+                                fileManager: FileManager = .default, terminals: Set<String> = [],
+                                activeTerminals: Set<String>? = nil, pages: [FlowPage] = [],
+                                seen memory: FlowSeen? = nil, muted: MutedWaits? = nil) -> PanelSnapshot {
         var folders: [(url: URL, name: String, recent: Bool)] = []
         var seen = Set<String>()
         func add(_ url: URL, _ name: String, recent: Bool) {
@@ -448,30 +529,45 @@ public enum PanelProjects {
                   !isWorkingCopy(url, fileManager: fileManager) else { continue }
             add(url, name, recent: false)
         }
+        // Первый проход — сводки; второй — кто живой (терминал и страница ищут хозяина среди всех проектов) и кто куда.
+        let reads = folders.map { readStatus(in: $0.url, fileManager: fileManager, seen: memory, now: now) }
+        memory?.flush(now: now)
+        var statuses = reads.map { $0.map { parse($0.text) } ?? PanelStatus() }
+        if let muted = muted {
+            for index in statuses.indices
+            where muted.isMuted(folder: folders[index].url, text: statuses[index].waitFor, now: now) {
+                statuses[index].waitFor = ""
+            }
+        }
+        let candidates: [LiveCandidate] = folders.indices.map { index in
+            (key: folders[index].url.standardizedFileURL.path, folder: folders[index].url.lastPathComponent,
+             name: statuses[index].name, updated: reads[index]?.changed, trees: reads[index]?.trees ?? [])
+        }
+        let named = candidates.map { (key: $0.key, folder: $0.folder, name: $0.name, updated: $0.updated) }
+        let busyTerminals = PanelTiles.terminalOwners(named, sessions: activeTerminals ?? terminals)
+        let busyPages = pageOwners(pages, candidates: candidates)
         var waiting: [PanelProject] = [], working: [PanelProject] = [], others: [PanelProject] = []
-        for folder in folders {
-            let file = statusFile(in: folder.url, fileManager: fileManager)
-            let text = file.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
-            let updated = file.flatMap { (try? fileManager.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date }
-            let status = text.map(parse) ?? PanelStatus()
+        for (index, folder) in folders.enumerated() {
+            let status = statuses[index]
+            // Время изменения содержимого, а не правки файла (#10315): checkout старой сводки свежей её не делает.
+            let updated = reads[index]?.changed
             let age = updated.map { now.timeIntervalSince($0) } ?? .infinity
             let path = folder.url.standardizedFileURL.path
             let waitsLine = !status.waitFor.isEmpty && !isNothing(status.waitFor)
             let waitBlocks = status.workflows.filter { $0.state == .waiting }
             let waits = age <= waitFreshSeconds && (waitsLine || !waitBlocks.isEmpty)
-            let running = age <= runFreshSeconds
-                ? status.workflows.filter { $0.state == .running || $0.state == .failed } : []
+            let live = isLive(changedAge: age, terminal: busyTerminals.contains(path), page: busyPages.contains(path))
+            let running = live ? status.workflows.filter { $0.state == .running || $0.state == .failed } : []
             var split: (words: [String], note: String) = waitsLine ? words(status.waitFor) : (words: [], note: "")
             if waits, !waitsLine, let block = waitBlocks.first {
                 split.note = "Workflow «\(block.about)» ждёт тебя"
             }
             let project = PanelProject(
                 folder: path, name: status.name.isEmpty ? folder.name : status.name, marker: status.marker,
-                isMain: PimpChannel.isMainProject(folder: path, entry: mainEntry), updated: updated, now: status.now,
+                isMain: PimpChannel.isMainProject(folder: path, entry: mainEntry), updated: updated, now: freshNow(status, age: age),
                 words: split.words, note: split.note, waits: waits, running: running,
-                finished: status.workflows.filter { $0.state == .done },
-                planned: status.workflows.filter { $0.state == .planned },
-                workflows: status.workflows, marathon: status.marathon)
+                workflows: status.workflows, marathon: status.marathon, stamp: status.stamp,
+                waitFor: freshWait(status, age: age), statusFile: reads[index]?.url.path ?? "")
             if waits { waiting.append(project) }
             if !running.isEmpty { working.append(project) }
             // Главный — всегда плашкой, даже без своей сводки (у Rick она ссылка на чужую).
@@ -486,12 +582,10 @@ public enum PanelProjects {
         working.sort(by: fresh)
         // Главный — первым, дальше как пришли (недавние, потом папки по имени).
         others = others.filter { $0.isMain } + others.filter { !$0.isMain }
-        let all = waiting + working + others
-        let mainName = mainEntry.map { entry in
-            all.first { $0.isMain }?.name ?? URL(fileURLWithPath: entry).lastPathComponent
-        }
-        return PanelSnapshot(waiting: waiting, working: working, others: Array(others.prefix(20)),
-                             mainEntry: mainEntry, mainName: mainName)
+        // Сверх двадцати — только сводки за сутки (#10239): по ним блок Workflow считает «готово» и «впереди».
+        let day = others.dropFirst(20).filter { $0.updated.map { now.timeIntervalSince($0) <= 86_400 } ?? false }
+        return PanelSnapshot(waiting: waiting, working: working, others: Array(others.prefix(20)) + day,
+                             terminals: terminals, activeTerminals: activeTerminals)
     }
 }
 

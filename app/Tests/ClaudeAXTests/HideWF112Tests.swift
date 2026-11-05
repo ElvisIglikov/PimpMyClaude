@@ -61,15 +61,8 @@ final class HideWF112Tests: XCTestCase {
         return url
     }
 
-    private static var fixtures: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("tests/fixtures/pimp", isDirectory: true)
-    }
-
     private func fixture(_ name: String) throws -> String {
-        try String(contentsOf: HideWF112Tests.fixtures.appendingPathComponent(name), encoding: .utf8)
+        try String(contentsOf: Repo.fixture("pimp/" + name), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

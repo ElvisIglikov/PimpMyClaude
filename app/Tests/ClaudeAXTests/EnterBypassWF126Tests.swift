@@ -9,7 +9,7 @@ final class EnterBypassWF126Tests: XCTestCase {
     private static let at = Date(timeIntervalSince1970: 1_791_000_000)
 
     private func makeSettings() -> (PageLookSettings, UserDefaults, () -> [Sent]) {
-        let suite = "wf126-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = UserDefaults(suiteName: suite)!
         addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
         let settings = PageLookSettings(defaults: defaults)
@@ -23,15 +23,10 @@ final class EnterBypassWF126Tests: XCTestCase {
 
     // MARK: - клавиши отсчёта
 
-    /// Подпись превью — ровно `sendDelayLabel` страницы (поправка критика 3).
-    func testLabelMatchesPage() {
-        XCTAssertEqual(EnterKeys(shift: .send).label(left: 3), "Отправка через 3 · Enter или Esc — отмена · ⇧Enter — сразу")
+    /// Умолчания и значения страницы (подпись отсчёта рисует сама страница, `sendDelayLabel`).
+    func testDefaultsAndPageValues() {
+        XCTAssertEqual(EnterKeys().second, .cancel)
         XCTAssertEqual(EnterKeys().shift, .newline, "WF192: ⇧Enter по умолчанию — перенос")
-        XCTAssertEqual(EnterKeys(second: .cancel, shift: .newline).label(left: 3), "Отправка через 3 · Enter или Esc — отмена")
-        XCTAssertEqual(EnterKeys(second: .send).label(left: 5), "Отправка через 5 · Enter — сразу · Esc — отмена")
-        XCTAssertEqual(EnterKeys(second: .send, shift: .newline).label(left: 5), "Отправка через 5 · Enter — сразу · Esc — отмена")
-        XCTAssertEqual(EnterKeys(second: .nothing, shift: .send).label(left: 10), "Отправка через 10 · ⇧Enter — сразу · Esc — отмена")
-        XCTAssertEqual(EnterKeys(second: .nothing, shift: .newline).label(left: 10), "Отправка через 10 · Esc — отмена")
         XCTAssertEqual(EnterKeys.Second.nothing.rawValue, "none", "значение страницы — none")
     }
 
@@ -78,15 +73,6 @@ final class EnterBypassWF126Tests: XCTestCase {
     }
 
     // MARK: - Bypass
-
-    func testDraftSetupModeLastOnlyWhenOn() {
-        let on = BlankWindow.draftSetupFields(folder: "/Users/dev/Projects/Rick", model: "Opus 5.5",
-                                              effort: "High", text: "привет", bypass: true)
-        XCTAssertEqual(CommandValue.object(on).json,
-                       #"{"scope":"window","title":"","draft":true,"folder":"/Users/dev/Projects/Rick","model":"Opus 5.5","effort":"High","text":"привет","mode":"bypass"}"#)
-        let off = BlankWindow.draftSetupFields(folder: nil, model: nil, effort: nil)
-        XCTAssertEqual(CommandValue.object(off).json, #"{"scope":"window","title":"","draft":true}"#)
-    }
 
     func testPermissionFromClaudeConfig() {
         func check(_ json: String?) -> BypassNew.Permission { BypassNew.permission(config: json.map { Data($0.utf8) }) }

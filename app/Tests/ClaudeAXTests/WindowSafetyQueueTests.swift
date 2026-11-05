@@ -4,15 +4,6 @@ import WebKit
 import XCTest
 @testable import ClaudeAX
 
-private final class QueueDefaults: ThemeDefaults {
-    var values: [String: Any] = [:]
-    func string(forKey key: String) -> String? { values[key] as? String }
-    func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
-    func object(forKey key: String) -> Any? { values[key] }
-    func set(_ value: Any?, forKey key: String) { values[key] = value }
-    func removeObject(forKey key: String) { values.removeValue(forKey: key) }
-}
-
 final class WindowSafetyQueueTests: XCTestCase {
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
     private let mainFrame = CGRect(x: 50, y: 60, width: 450, height: 600)
@@ -159,7 +150,7 @@ final class WindowSafetyQueueTests: XCTestCase {
             opened.append(chat)
             live.append(PimpWindow(id: 12, title: "Rick", chat: chat, frame: self.mainFrame, main: false))
         }
-        XCTAssertTrue(channel.startRestore(loaded, fresh: false))
+        XCTAssertTrue(try channel.requestLayoutRestore(loaded, in: box, at: now))
         now += 2; channel.tick()
         XCTAssertEqual(opened, ["local_rick"])
         XCTAssertFalse(moves.contains { $0.id == 99 })
@@ -196,10 +187,8 @@ final class WindowSafetyQueueTests: XCTestCase {
         var now = start
         let actions = ClaudeActions(app: IsolatedClaudeApp.make(),
             commands: CommandChannel(path: command, now: { now }, schedule: { _, _ in }),
-            themes: [], fonts: [], themeStore: ThemeStore(defaults: QueueDefaults()),
-            myThemes: MyThemesStore(url: directory.appendingPathComponent("themes.json")),
-            autoPaintStore: AutoPaintStore(defaults: QueueDefaults()),
-            liveColorsStore: LiveColorsStore(defaults: QueueDefaults()))
+            themes: [], fonts: [], themeStore: ThemeStore(defaults: MemoryThemeDefaults()),
+            myThemes: MyThemesStore(url: directory.appendingPathComponent("themes.json")))
         actions.clock = { now }
         actions.schedule = { _, _ in } // No synthetic keyboard action in a test.
         var notices: [String] = []

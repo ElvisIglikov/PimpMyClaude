@@ -126,10 +126,13 @@ test("в узком окне в ряд встают несколько плаш�
 
 test("WF188: ряд плотный — зазор 4, пять плиток в колонке 330, перенос только когда не влезает", () => {
   // Слово Элвиса 09.10 03:50: «первый, второй, третий, потом перенос, а место было —
-  // четвёртый точно влез, а то и пятый. Трамбуй посильнее». Ряд — контейнер запроса.
+  // четвёртый точно влез, а то и пятый. Трамбуй посильнее». Контейнер запроса — коробка
+  // вложений, не ряд (#11187: ряд-контейнер внутри flex-строки схлопывался до своих полей).
   const row = wideRules.find(rule => rule.selector.includes('[data-cds="MessageAttachments"]'));
   assert.ok(row, "правила ряда плиток нет");
-  assert.match(row.body, /container-type:\s*inline-size !important/, "ряд не контейнер — доля ширины не от ряда");
+  assert.doesNotMatch(row.body, /container-type/, "ряд снова контейнер — схлопнется до полей (#11187)");
+  const box = wideRules.find(rule => rule.selector.trim() === COMPOSER);
+  assert.match(box?.body ?? "", /container-type:\s*inline-size !important/, "коробка вложений не контейнер — доле ширины не от чего считать");
   assert.match(row.body, /gap:\s*4px !important/, "зазор между плитками не 4");
   assert.ok(row.selector.split(",").every(part => part.trim().startsWith(COMPOSER)), "ряд не только в поле ввода");
   const tile = narrowRules.find(rule => rule.selector.endsWith("[data-cds-attachment]"));

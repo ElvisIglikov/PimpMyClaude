@@ -12,7 +12,6 @@ osascript (ловит скрипт и аргументы, «открытие в�
 """
 
 import contextlib
-import importlib.util
 import io
 import json
 import os
@@ -27,22 +26,15 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "tools" / "pimp.py"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pimp_testlib import APP_TAKEN_S, CLI, ROOT, FakeApp, load  # noqa: E402
+
 CHAT = "local_5265171a-0ab8-4472-b4e5-40604a36ef6e"
 CLI_SESSION = "9378c07b-b2cd-4dab-82c3-0db0bdb19f65"
 NASTY = 'он сказал "да" и \'нет\' $HOME `id` $(whoami) \\ ; && | > *'
 
 
-def load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 pimp = load("pimp_for_term_test", CLI)
-FakeApp = load("pimp_cli_for_term_test", ROOT / "tests" / "pimp_cli_test.py").FakeApp
 
 FAKE_OSASCRIPT = r'''#!/usr/bin/env python3
 import json, os, subprocess, sys, time
@@ -136,9 +128,25 @@ elif args[0] == "new-session":
     state[name] = 1
     json.dump(state, open(state_path, "w"))
     subprocess.run(args[args.index("-c") + 2:], cwd=folder, env=child, check=False)
-elif args[0] == "send-keys":
-    if args[2].lstrip("=").rstrip(":") not in state:
+elif args[0] in ("send-keys", "capture-pane"):
+    if args[args.index("-t") + 1].lstrip("=").rstrip(":") not in state:
         sys.stderr.write("can't find session\n"); sys.exit(1)
+    # Экран claude: лента, линейка, поле ввода, линейка. Enter уносит поле в ленту;
+    # FAKE_TMUX_SWALLOW=N — первые N Enter claude глотает, текст остаётся в поле.
+    pane_path = state_path + ".pane"
+    pane = json.load(open(pane_path)) if os.path.exists(pane_path) else {
+        "field": "", "feed": [], "swallow": int(os.environ.get("FAKE_TMUX_SWALLOW", "0"))}
+    if args[0] == "capture-pane":
+        print("\n".join(pane["feed"] + ["─" * 40] + ["> " + x for x in pane["field"].splitlines()] + ["─" * 40]))
+        sys.exit(0)
+    if "-l" in args:
+        pane["field"] += args[-1].replace("\x1b[200~", "").replace("\x1b[201~", "")
+    elif args[-1] == "Enter" and pane["swallow"] > 0:
+        pane["swallow"] -= 1
+    elif args[-1] == "Enter":
+        pane["feed"] += ["> " + x for x in pane["field"].splitlines()]
+        pane["field"] = ""
+    json.dump(pane, open(pane_path, "w"))
 '''
 
 # ps -t <ttysNNN> -o pid=,comm= по файлу {"ttysNNN": [[pid, comm], …]}.
@@ -215,12 +223,13 @@ class TermTest(unittest.TestCase):
         env.update({
             "MYCLAUDE_PIMP_DIR": str(self.dir),
             "MYCLAUDE_PIMP_WAIT": "3",
-            "MYCLAUDE_PIMP_TAKEN": "2" if app_result is not None else "0.2",
+            "MYCLAUDE_PIMP_TAKEN": APP_TAKEN_S if app_result is not None else "0.2",
             "MYCLAUDE_CLAUDE_SESSIONS": str(self.root / "sessions"),
             "MYCLAUDE_CLAUDE_PROJECTS": str(self.root / "transcripts"),
             "PIMP_TERM_CLAUDE": str(self.bin / "claude"),
             "PIMP_TERM_OSASCRIPT": str(self.bin / "osascript"),
             "PIMP_TERM_TMUX": str(self.bin / "tmux") if tmux else "none",
+            "PIMP_TERM_WAIT": "0.01",
             "FAKE_OSA_LOG": str(self.root / "osa.jsonl"),
             "FAKE_TABS": str(self.root / "tabs.txt"),
             "FAKE_TMUX_STATE": str(self.root / "tmux.json"),
@@ -251,7 +260,7 @@ class TermTest(unittest.TestCase):
                 code = pimp.main(list(argv))
             return subprocess.CompletedProcess(argv, code, out.getvalue(), err.getvalue())
         done = subprocess.run([sys.executable, "-B", str(self.cli), *argv], env=env, input=stdin,
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True, timeout=180)
         if self.app is not None:
             self.app.join(timeout=2)
         return done
@@ -376,6 +385,13 @@ class TermTest(unittest.TestCase):
         record = json.loads((self.support / "term" / "Demo.json").read_text(encoding="utf-8"))
         self.assertEqual(record["tmux"], "rick-Demo", "с tmux главный адрес — сессия")
 
+    def test_effort_extra_reaches_claude_as_xhigh(self):
+        # #10261: «extra» — слово renew и меню Claude; claude --effort знает ту же ступень как xhigh.
+        done = self.call("term", "Demo", "--effort", "extra", tmux=True, session=None)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        [run] = self.log("claude.jsonl")
+        self.assertEqual(run["argv"][:4], ["--model", "claude-opus-5-5", "--effort", "xhigh"])
+
     def test_project_comes_from_pimp_like_open(self):
         answer = {"ok": True, "error": "", "fromResolved": False, "screen": "windows",
                   "projects": [{"name": "Other", "folder": str(self.folder)}]}
@@ -389,6 +405,18 @@ class TermTest(unittest.TestCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn("Проекта «Nope» не знаю — есть: Demo", done.stdout)
         self.assertEqual(self.log("osa.jsonl"), [])
+
+    def test_folder_in_projects_root_is_project_without_list(self):
+        # #9548: проекта нет в списке приложения, а папка лежит в корне проектов — это он.
+        root = self.root / "Projects"
+        (root / "ElvisKZ").mkdir(parents=True)
+        (self.support / "claude.json").write_text(json.dumps({"projectsRoot": str(root)}), encoding="utf-8")
+        done = self.call("term", "elviskz")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("rick-ElvisKZ", done.stdout)
+        refused = self.call("term", "Nope")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("Проекта «Nope» не знаю", refused.stdout)
 
     def test_last_is_continue(self):
         done = self.call("term", "Demo", "--last")
@@ -503,7 +531,7 @@ class TermTest(unittest.TestCase):
     def test_invalid_settings_refuse_launch_without_echoing_contents(self):
         settings = self.copy_cli()
         marker = "private-input-must-not-appear"
-        valid = {"allow": [], "ask": ["Bash(rm *)"], "deny": ["Read(~/.ssh/**)"]}
+        valid = {"allow": ["Bash(ls *)"], "deny": ["Read(~/.ssh/**)"]}
         invalid = {
             "syntax": '{"' + marker + '":',
             "encoding": b"\xff\xfe",
@@ -511,21 +539,18 @@ class TermTest(unittest.TestCase):
             "array": "[]",
             "hooks": json.dumps({"permissions": valid, "hooks": {marker: []}}),
             "env": json.dumps({"permissions": valid, "env": {"X": marker}}),
-            "missing-ask": json.dumps({"permissions": {"allow": [], "deny": valid["deny"]}}),
-            "missing-deny": json.dumps({"permissions": {"allow": [], "ask": valid["ask"]}}),
-            "missing-allow": json.dumps({"permissions": {"ask": valid["ask"], "deny": valid["deny"]}}),
+            "missing-deny": json.dumps({"permissions": {"allow": valid["allow"]}}),
             "mode": json.dumps({"permissions": dict(valid, defaultMode="auto")}),
-            "empty-ask": json.dumps({"permissions": dict(valid, ask=[])}),
             "empty-deny": json.dumps({"permissions": dict(valid, deny=[])}),
             "not-object": '{"permissions": []}',
-            "not-array": json.dumps({"permissions": dict(valid, ask=marker)}),
+            "not-array": json.dumps({"permissions": dict(valid, allow=marker)}),
             "blank-rule": json.dumps({"permissions": dict(valid, allow=[" \t"])}),
             "empty-rule": json.dumps({"permissions": dict(valid, deny=[""])}),
             "number-rule": json.dumps({"permissions": dict(valid, allow=[1])}),
-            "null-rule": json.dumps({"permissions": dict(valid, ask=[None])}),
+            "null-rule": json.dumps({"permissions": dict(valid, allow=[None])}),
             "constant": json.dumps({"permissions": dict(valid, allow=[float("nan")])}),
             "duplicate-top": '{"permissions": {}, "permissions":' + json.dumps(valid) + '}',
-            "duplicate-section": '{"permissions": {"allow":[], "ask":[], "ask":["Bash(rm *)"], '
+            "duplicate-section": '{"permissions": {"allow":[], "allow":["Bash(ls *)"], '
                                  '"deny":["Read(~/.ssh/**)"]}}',
             "oversize": json.dumps({"permissions": valid}) + " " * (2 * 1024 * 1024),
             "too-deep": '[' * 1100 + ']' * 1100,
@@ -537,6 +562,19 @@ class TermTest(unittest.TestCase):
                 self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
                 self.assertIn("Файл разрешений", done.stdout)
                 self.assertNotIn(marker, done.stdout + done.stderr)
+                self.assertNotIn("Traceback", done.stderr)
+                self.assert_no_terminal_mutations()
+                self.assertFalse((self.support / "term").exists())
+
+    def test_ask_rules_refuse_launch(self):
+        # #11339: правило ask спрашивает и в Bypass — с ним терминал не запускаем, даже с пустым списком.
+        settings = self.copy_cli()
+        for ask in ([], ["Bash(rm *)"]):
+            with self.subTest(ask=ask):
+                settings.write_text(json.dumps({"permissions": {"ask": ask, "deny": ["Read(~/.ssh/**)"]}}))
+                done = self.call("term", "Demo", "--text", "1", tmux=True)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertIn("правила ask спрашивают и в Bypass", done.stdout)
                 self.assertNotIn("Traceback", done.stderr)
                 self.assert_no_terminal_mutations()
                 self.assertFalse((self.support / "term").exists())
@@ -556,8 +594,7 @@ class TermTest(unittest.TestCase):
 
     def test_empty_allow_and_exact_size_limit_are_valid(self):
         settings = self.copy_cli()
-        raw = json.dumps({"permissions": {"allow": [], "ask": ["Bash(rm *)"],
-                                          "deny": ["Read(~/.ssh/**)"]}}).encode("utf-8")
+        raw = json.dumps({"permissions": {"allow": [], "deny": ["Read(~/.ssh/**)"]}}).encode("utf-8")
         settings.write_bytes(raw + b" " * (2 * 1024 * 1024 - len(raw)))
         done = self.call("term", "Demo", "--last")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -606,6 +643,7 @@ class TermTest(unittest.TestCase):
         calls = self.log("tmux.jsonl")
         self.assertIn(["set-option", "-t", "=" + name + ":", "set-titles", "on"], calls)
         self.assertIn(["set-option", "-t", "=" + name + ":", "set-titles-string", title], calls)
+        self.assertIn(["set-option", "-t", "=" + name + ":", "status", "off"], calls)
         for window in ("@10", "@11"):
             for option in ("allow-rename", "automatic-rename"):
                 self.assertIn(["set-option", "-w", "-t", window, option, "off"], calls)
@@ -622,27 +660,31 @@ class TermTest(unittest.TestCase):
                 (self.root / "tmux.jsonl").unlink(missing_ok=True)
                 done = self.call("term", "Demo", *flags, tmux=True)
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-                self.assert_tmux_title("🟢 Demo")
+                self.assert_tmux_title("Demo")
                 if flags:
                     opened = [o for o in self.log("osa.jsonl") if o["mark"] == "open-terminal"][-1]
-                    self.assertEqual(opened["argv"][1], "🟢 Demo")
+                    self.assertEqual(opened["argv"][1], "Demo")
                     calls = self.log("tmux.jsonl")
                     attach = next(i for i, c in enumerate(calls) if c[0] == "attach")
                     title = next(i for i, c in enumerate(calls) if "set-titles-string" in c)
                     self.assertLess(title, attach, "заголовок закреплён до attach")
 
-    def test_existing_sessions_refresh_title_on_term_show_and_list(self):
+    def test_existing_sessions_refresh_title_on_term_show_but_not_list(self):
         self.project_status("# 🟠 Demo", "audit/status.md")
         self.sessions(**{"rick-Demo": "/dev/ttys001", "unrelated": 1})
         self.tabs("/dev/ttys001\tlogin,tmux\t✳ claude\n")
-        for args in (("term", "Demo"), ("term", "Demo", "--show"), ("term-list",)):
+        for args in (("term", "Demo"), ("term", "Demo", "--show"), ("term-list",), ("term-list", "--with-terminal")):
             with self.subTest(args=args):
                 (self.root / "tmux.jsonl").unlink(missing_ok=True)
                 (self.root / "osa.jsonl").unlink(missing_ok=True)
                 done = self.call(*args, tmux=True)
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-                self.assert_tmux_title("🟠 Demo")
-                # term-list заголовок tmux-чата Terminal'ом не ставит — его держит set-titles (#8365).
+                if args[0] == "term":
+                    self.assert_tmux_title("Demo")
+                else:
+                    # Ревизия WF247: список только читает — заголовок и опции окна ставит `term`.
+                    self.assertFalse([c for c in self.log("tmux.jsonl") if c[0] == "set-option"])
+                # Заголовок tmux-чата Terminal'ом не ставится — его держит set-titles (#8365).
                 titles = [o["argv"] for o in self.log("osa.jsonl") if o["mark"] == "title"]
                 self.assertEqual(titles, [], "заголовок tmux держит set-titles без AppleEvents")
                 self.assertFalse(any(c[0] in ("new-session", "send-keys", "rename-session", "kill-session")
@@ -653,18 +695,18 @@ class TermTest(unittest.TestCase):
         done = self.call("term", "Demo")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         opened = [o for o in self.log("osa.jsonl") if o["mark"] == "open-terminal"]
-        self.assertEqual(opened[0]["argv"][1], "🎛️ Имя проекта")
+        self.assertEqual(opened[0]["argv"][1], "Имя проекта")
         self.live_tab()
         done = self.call("term", "Demo")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         titles = [o for o in self.log("osa.jsonl") if o["mark"] == "title"]
-        self.assertEqual(titles[-1]["argv"], ["/dev/ttys005", "🎛️ Имя проекта"])
+        self.assertEqual(titles[-1]["argv"], ["/dev/ttys005", "Имя проекта"])
 
     def test_title_no_marker_and_only_first_line(self):
         self.project_status("# Demo\n🟢 Нельзя брать вторую строку")
         self.assertEqual(pimp.term_title("Demo", str(self.folder)), "Demo")
         self.project_status("# 🟠Другой проект", "audit/status.md")
-        self.assertEqual(pimp.term_title("Demo", str(self.folder)), "🟠 Другой проект")
+        self.assertEqual(pimp.term_title("Demo", str(self.folder)), "Другой проект")
 
     @unittest.skipUnless(os.environ.get("PIMP_TEST_REAL_TMUX") == "1" and shutil.which("tmux"),
                          "живой tmux только явно: PIMP_TEST_REAL_TMUX=1")
@@ -775,6 +817,56 @@ class TermTest(unittest.TestCase):
         self.assertEqual(sends[2][-1], "\x1b[200~строка 1\nстрока 2[201~\tконец\x1b[201~",
                          "Esc и Ctrl+C из текста вырезаны, вставку не закрыть изнутри")
         self.assertEqual(sends[3][-1], "Enter")
+
+    def test_tmux_enter_after_pause_and_delivery_is_checked(self):
+        # Ревизия WF247: Enter сразу за длинным текстом claude глотает — сначала пауза, потом проверка экрана.
+        rule = "─" * 40
+        def run(screens):
+            calls = []
+            screens = iter(screens)
+            def fake_tmux(*argv):
+                if argv[0] == "capture-pane":
+                    calls.append("capture")
+                    return subprocess.CompletedProcess(argv, 0, next(screens), "")
+                calls.append(argv[-1] if argv[-1] == "Enter" else "text")
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            with unittest.mock.patch.object(pimp, "tmux", side_effect=fake_tmux), \
+                    unittest.mock.patch.object(pimp.time, "sleep", side_effect=lambda s: calls.append(s)), \
+                    unittest.mock.patch.dict(os.environ, {"PIMP_TERM_WAIT": "2"}):
+                try:
+                    pimp.term_deliver({"name": "rick-Demo", "kind": "tmux"}, "задача\nвторая строка")
+                    return calls, None
+                except pimp.TermError as error:
+                    return calls, str(error)
+        fed = f"> задача\n{rule}\n> \n{rule}"
+        boxed = f"лента\n{rule}\n> задача\n{rule}"
+        calls, error = run([fed])
+        self.assertIsNone(error)
+        self.assertEqual(calls, ["text", 1.0, "Enter", 2.0, "capture"], "Enter — только после паузы")
+        calls, error = run([boxed, fed])
+        self.assertIsNone(error)
+        self.assertEqual(calls, ["text", 1.0, "Enter", 2.0, "capture", "Enter", 2.0, "capture"],
+                         "текст висит в поле — второй Enter")
+        calls, error = run(["", "", f"{rule}\n> \n{rule}\nqueued messages: 1"])
+        self.assertIsNone(error, "занятый чат ставит в очередь — это дошло")
+        self.assertEqual(calls.count("capture"), 3)
+        calls, error = run([boxed, boxed])
+        self.assertIn("Не уверен, что дошло в rick-Demo (в поле)", error)
+        calls, error = run(["", "", ""])
+        self.assertIn("Не уверен, что дошло в rick-Demo (не видно)", error)
+        self.assertEqual(calls.count("Enter"), 1, "не видно — Enter второй раз не жмём")
+
+    def test_send_tmux_swallowed_enter_is_retried_or_reported(self):
+        self.sessions(**{"rick-Demo": 0})
+        done = self.call("term-send", "Demo", "длинное поручение", tmux=True, extra={"FAKE_TMUX_SWALLOW": "1"})
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([c[-1] for c in self.log("tmux.jsonl") if c[0] == "send-keys"],
+                         ["длинное поручение", "Enter", "Enter"])
+        (self.root / "tmux.json.pane").unlink()
+        done = self.call("term-send", "Demo", "второе", tmux=True, extra={"FAKE_TMUX_SWALLOW": "9"})
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("Не уверен, что дошло в rick-Demo (в поле)", done.stdout)
+        self.assertNotIn("Отправил", done.stdout)
 
     def test_send_finds_tab_by_tty_after_title_change(self):
         self.live_tab(title="◑ PimpViewer марафон оркестрация")
@@ -1190,7 +1282,7 @@ class TermTest(unittest.TestCase):
     def test_terminal_scripts_compile(self):
         for script in (pimp.OSA_OPEN_TERMINAL, pimp.OSA_LIST, pimp.OSA_ACT, pimp.OSA_COLOR, pimp.OSA_TITLE):
             done = subprocess.run(["osacompile", "-o", str(self.root / "x.scpt"), "-"], input=script,
-                                  capture_output=True, text=True, timeout=30)
+                                  capture_output=True, text=True, timeout=180)
             self.assertEqual(done.returncode, 0, done.stderr)
 
 

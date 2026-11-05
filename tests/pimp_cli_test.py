@@ -11,11 +11,11 @@
 """
 
 import json
-import importlib.util
-from unittest import mock
 import os
+import plistlib
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -24,13 +24,14 @@ import time
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "tools" / "pimp.py"
-FIXTURES = ROOT / "tests" / "fixtures" / "pimp"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pimp_testlib  # noqa: E402
+
+ROOT = pimp_testlib.ROOT
+CLI = pimp_testlib.CLI
+FIXTURES = pimp_testlib.FIXTURES / "pimp"
 ID_RE = re.compile(r"^\d{13,}-\d{4}$")
 CHAT = "local_5265171a-0ab8-4472-b4e5-40604a36ef6e"
-# Подставной ключ: он обязан не попасть ни в вывод, ни в журнал (WF75).
-SECRET = "sk-this-key-must-not-leak"
 # #9116: тесты гонятся и из чата агента, а агенту окна Claude — только с --desktop. Прежние
 # тесты играют Терминал Элвиса (агента в окружении нет); агента зовёт WF141DesktopGuardTest.
 AGENT_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")
@@ -42,66 +43,8 @@ def fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
-class FakeApp(threading.Thread):
-    """Приложение на минималках: взял запрос — ответил по образцу.
-
-    `beats` — сколько раз перезаписать <id>.taken перед ответом с паузой
-    `beat_s`: так приложение показывает, что открывает окна раскладки по одному
-    (heartbeat WF41), и CLI обязан ждать дальше.
-    `result` списком и `count` больше единицы — разговор на несколько запросов
-    подряд: так идёт голосовая фраза (WF75), где шагов несколько, а первым
-    уходит `projects`. Кончились образцы — отвечаем последним.
-    """
-
-    def __init__(self, directory: Path, result, taken: bool = True,
-                 beats: int = 0, beat_s: float = 0.0, count: int = 1):
-        super().__init__(daemon=True)
-        self.dir = Path(directory)
-        self.results = list(result) if isinstance(result, list) else [result]
-        self.taken = taken
-        self.beats = beats
-        self.beat_s = beat_s
-        self.count = count
-        self.requests = []
-        self.paths = []
-        self.seen = set()
-        self._stop = threading.Event()
-
-    def run(self):
-        deadline = time.monotonic() + 20
-        served = 0
-        while time.monotonic() < deadline and not self._stop.is_set():
-            for path in sorted(self.dir.glob("*.json")):
-                if path.name.startswith(".") or path.name.endswith(".result.json"):
-                    continue
-                try:
-                    text = path.read_text(encoding="utf-8")
-                    request = json.loads(text)
-                except (OSError, ValueError):
-                    continue
-                if request["id"] in self.seen:
-                    continue
-                self.seen.add(request["id"])
-                self.requests.append(request)
-                self.paths.append(path)
-                mark = self.dir / f"{request['id']}.taken"
-                if self.taken:
-                    mark.write_text("", encoding="utf-8")
-                for _ in range(self.beats):
-                    if self._stop.wait(self.beat_s):
-                        return
-                    mark.write_text("", encoding="utf-8")   # окно открыто, живы
-                answer = dict(self.results[min(served, len(self.results) - 1)])
-                answer["id"] = request["id"]
-                body = json.dumps(answer, ensure_ascii=False, separators=(",", ":")) + "\n"
-                (self.dir / f"{request['id']}.result.json").write_text(body, encoding="utf-8")
-                served += 1
-                if served >= self.count:
-                    return
-            time.sleep(0.01)
-
-    def stop(self):
-        self._stop.set()
+# Приложение на минималках — общее для наборов CLI (pimp_testlib.FakeApp).
+FakeApp = pimp_testlib.FakeApp
 
 
 class PimpCliTest(unittest.TestCase):
@@ -117,7 +60,7 @@ class PimpCliTest(unittest.TestCase):
             self.app.stop()
             self.app.join(timeout=2)
 
-    def call(self, *argv, result=None, session=CHAT, taken=True, wait="5", silent="2",
+    def call(self, *argv, result=None, session=CHAT, taken=True, wait="5", silent=None,
              beats=0, beat_s=0.0, count=None, extra=None):
         if result is not None:
             self.dir.mkdir(parents=True, exist_ok=True)
@@ -129,36 +72,27 @@ class PimpCliTest(unittest.TestCase):
         env = dict(os.environ)
         env["MYCLAUDE_PIMP_DIR"] = str(self.dir)
         env["MYCLAUDE_PIMP_WAIT"] = wait
+        if silent is None:
+            silent = pimp_testlib.APP_TAKEN_S if result is not None else "2"
         env["MYCLAUDE_PIMP_TAKEN"] = silent
         # summary перечисляет терминалы: живые сессии и Terminal в тесты не попадают.
         env["PIMP_TERM_TMUX"] = "none"
         env["PIMP_TERM_OSASCRIPT"] = "/usr/bin/true"
-        # Ключ Элвиса лежит на его же Маке (0600): ни один тест не смеет попасть в
-        # настоящий файл и в настоящий DeepSeek — оба пути уводим в tmp (WF75).
-        env["MYCLAUDE_VOICE_ENV"] = str(self.support / "pimp-voice.env")
+        # Подставные загрузки (paste-airdrop): настоящие ~/Downloads в тесты не попадают.
         env["MYCLAUDE_DOWNLOADS"] = str(self.support / "Downloads")
-        env.pop("MYCLAUDE_VOICE_FAKE", None)
+        # Сессии и транскрипты Claude — подставные (renew читает прежний чат, #10904): настоящие не попадают.
+        env["MYCLAUDE_CLAUDE_SESSIONS"] = str(self.support / "no-sessions")
+        env["MYCLAUDE_CLAUDE_PROJECTS"] = str(self.support / "no-projects")
         env.pop("CLAUDE_CODE_HOST_SESSION_ID", None)
         if session is not None:
             env["CLAUDE_CODE_HOST_SESSION_ID"] = session
         env.update(extra or {})
+        # timeout — страховка от зависания, не замер: под нагрузкой сам pimp.py шёл дольше 60 с (#11441).
         done = subprocess.run([sys.executable, str(CLI), *argv], env=env,
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True, timeout=180)
         if self.app is not None:
             self.app.join(timeout=2)
         return done
-
-    # ---- голос (WF75): подставной мозг и подставные загрузки ----------------
-    def brain(self, answer: dict) -> str:
-        """Готовый ответ модели на диске: MYCLAUDE_VOICE_FAKE = ни ключа, ни сети."""
-        path = self.support / "brain.json"
-        path.write_text(json.dumps(answer, ensure_ascii=False), encoding="utf-8")
-        return str(path)
-
-    def voice(self, phrase: str, answer: dict, results: list, extra=None, **kwargs):
-        env = {"MYCLAUDE_VOICE_FAKE": self.brain(answer)}
-        env.update(extra or {})
-        return self.call("say", phrase, result=results, extra=env, **kwargs)
 
     def shots(self, ages, suffix=".jpeg"):
         """Фотки в подставных загрузках: ages — сколько секунд назад легла каждая."""
@@ -301,7 +235,7 @@ class PimpCliTest(unittest.TestCase):
         done = self.call("open", "Dictator", result=fixture("busy.result.json"),
                          extra={"MYCLAUDE_PIMP_BUSY": "0.1"})
         self.assertEqual(done.returncode, 1)
-        self.assertEqual(done.stdout.strip(), "Пимп занят — открывает или возвращает окна")
+        self.assertEqual(done.stdout.strip(), "PMP занят — открывает или возвращает окна")
 
     def test_open_busy_then_ok(self):
         # Занят — повтор новым id и свежим at, второй ответ ok (G4 WF101).
@@ -340,7 +274,7 @@ class PimpCliTest(unittest.TestCase):
     def test_bad_request(self):
         done = self.call("arrange", result=fixture("bad.result.json"))
         self.assertEqual(done.returncode, 1)
-        self.assertEqual(done.stdout.strip(), "Пимп не понял запрос")
+        self.assertEqual(done.stdout.strip(), "PMP не понял запрос")
 
     def test_arrange_ok(self):
         # Голая «расставь» — умный путь (WF77): в ответе `row`, но лентой это не
@@ -448,7 +382,7 @@ class PimpCliTest(unittest.TestCase):
         self.assertEqual(done.returncode, 1)
         self.assertEqual(done.stdout.strip(),
                          "Не могу запомнить: не знаю, какой чат в окне «Диктаторик» — "
-                         "включи «Цвет по проекту» в меню Пимпа или подожди минуту")
+                         "включи «Свой цвет у каждого проекта» в «Оформлении» панели PMP или подожди минуту")
 
     def test_layout_restore_ok(self):
         done = self.call("layout", "restore", "Утро",
@@ -543,7 +477,7 @@ class PimpCliTest(unittest.TestCase):
     def test_hide_busy(self):
         done = self.call("hide", result=fixture("busy.result.json"))
         self.assertEqual(done.returncode, 1)
-        self.assertEqual(done.stdout.strip(), "Пимп занят — открывает или возвращает окна")
+        self.assertEqual(done.stdout.strip(), "PMP занят — открывает или возвращает окна")
 
     # ---- притемнение и обратный отсчёт (WF113 #8256, WF119) --------------
     def check_request(self, request: dict, name: str):
@@ -702,7 +636,7 @@ class PimpCliTest(unittest.TestCase):
     def test_look_refused_by_app(self):
         done = self.call("look", "1.8", result=fixture("look-bad.error.json"))
         self.assertEqual(done.returncode, 1)
-        self.assertEqual(done.stdout.strip(), "Пимп не понял запрос")
+        self.assertEqual(done.stdout.strip(), "PMP не понял запрос")
 
     # ---- окна WF94: ChatGPT, честный отказ страницы, мониторы ------------
     def test_windows_names_chatgpt_apart(self):
@@ -778,7 +712,7 @@ class PimpCliTest(unittest.TestCase):
     def test_not_running(self):
         done = self.call("arrange", silent="0.3", wait="5")
         self.assertEqual(done.returncode, 1)
-        self.assertEqual(done.stdout.strip(), "Пимп не запущен")
+        self.assertEqual(done.stdout.strip(), "PMP не запущен")
 
     def test_taken_but_silent(self):
         # Метка взятия есть, ответа нет: это уже не «не запущен», а «завис».
@@ -804,9 +738,11 @@ class PimpCliTest(unittest.TestCase):
     def test_wait_counted_from_heartbeat(self):
         # Раскладка открывает окна по одному и после каждого бьёт <id>.taken:
         # ждём от последнего удара, иначе сдались бы на первом окне (WF41).
+        # Ударов на 1,6 с при ожидании 1 с: счёт от начала сдаётся, а запас 0,8 с на удар
+        # держит опоздание нити под нагрузкой (#11441).
         done = self.call("layout", "restore", "Утро",
                          result=fixture("layout-restore.result.json"),
-                         beats=4, beat_s=0.25, wait="0.5")
+                         beats=8, beat_s=0.2, wait="1.0")
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("Вернул «Утро»", done.stdout)
 
@@ -906,7 +842,7 @@ class PimpCliTest(unittest.TestCase):
     def test_paste_bad_request(self):
         done = self.call("paste-clipboard", result=fixture("paste.error.json"))
         self.assertEqual(done.returncode, 1)
-        self.assertEqual(done.stdout.strip(), "Пимп не понял запрос")
+        self.assertEqual(done.stdout.strip(), "PMP не понял запрос")
 
     def test_paste_airdrop_batch(self):
         # Эйрдроп кладёт пачку подряд: берём её целиком, а лежавшую до неё фотку
@@ -960,184 +896,6 @@ class PimpCliTest(unittest.TestCase):
     def test_hud_cuts_long_text(self):
         self.call("hud", "я" * 300, result=fixture("hud.result.json"))
         self.assertEqual(len(self.app.requests[0]["text"]), 200)
-
-    # ---- WF75: голос ------------------------------------------------------
-    def test_say_fake_touches_neither_key_nor_net(self):
-        # Ключ на месте и адрес заведомо мёртвый: раз фраза прошла, ни файла, ни
-        # сети мозг не касался — проверка MYCLAUDE_VOICE_FAKE стоит ДО ключа.
-        (self.support / "pimp-voice.env").write_text(
-            f"DEEPSEEK_API_KEY={SECRET}\nDEEPSEEK_BASE_URL=https://127.0.0.1:1\n",
-            encoding="utf-8")
-        done = self.voice("что открыто", {"steps": [{"action": "windows"}], "say": "Смотрю"},
-                          [fixture("projects.result.json"), fixture("windows.result.json"),
-                           fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertIn("Окон 1", done.stdout)
-        log = (self.support / "voice-log.jsonl").read_text(encoding="utf-8")
-        self.assertNotIn(SECRET, log, "ключ в журнал не пишется никогда")
-        record = json.loads(log.splitlines()[-1])
-        self.assertEqual(record["phrase"], "что открыто")
-        self.assertEqual(record["model"], "fake")
-        self.assertEqual(oct((self.support / "voice-log.jsonl").stat().st_mode & 0o777),
-                         oct(0o600))
-
-    def test_say_without_fake_reads_key(self):
-        # Тот же ключ и тот же мёртвый адрес, но без подставного ответа — значит
-        # ключ прочитан и в сеть Пимп пошёл (и честно сказал, что не дозвонился).
-        # Заодно единственная проверка, что tools/voice_prompt.md читается: без него
-        # строка была бы другой — промпт собирается ДО запроса.
-        (self.support / "pimp-voice.env").write_text(
-            f"DEEPSEEK_API_KEY={SECRET}\nDEEPSEEK_BASE_URL=https://127.0.0.1:1\n",
-            encoding="utf-8")
-        done = self.call("say", "что открыто",
-                         result=[fixture("projects.result.json"), fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("DeepSeek не ответил", done.stdout)
-        self.assertNotIn(SECRET, done.stdout + done.stderr)
-
-    def test_say_key_not_latin(self):
-        # Кривой ключ валил CLI трассой: Диктатору с его stdout это мусор.
-        (self.support / "pimp-voice.env").write_text(
-            "DEEPSEEK_API_KEY=ключ\nDEEPSEEK_BASE_URL=https://127.0.0.1:1\n",
-            encoding="utf-8")
-        done = self.call("say", "что открыто",
-                         result=[fixture("projects.result.json"), fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("не латинские знаки", done.stdout)
-        self.assertEqual(done.stderr.strip(), "")
-
-    def test_say_without_key(self):
-        done = self.call("say", "что открыто",
-                         result=[fixture("projects.result.json"), fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("ключа DeepSeek нет", done.stdout)
-
-    def test_say_close_needs_the_word(self):
-        # Ворота стоят в КОДЕ: модель решает, что делать, но не решает, можно ли.
-        done = self.voice("открой чат по вкуснофф",
-                          {"steps": [{"action": "close", "project": "VkusnoffKz"}],
-                           "say": "Закрыл"},
-                          [fixture("projects.result.json"), fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("слова «закрой» в твоей фразе нет", done.stdout)
-        self.assertEqual([item["action"] for item in self.app.requests],
-                         ["projects", "hud"], "закрывать канал не просили")
-
-    def test_say_close_with_the_word(self):
-        done = self.voice("закрой чат с вкуснофф",
-                          {"steps": [{"action": "close", "project": "VkusnoffKz"}],
-                           "say": "Закрыл окно Вкусноффа"},
-                          [fixture("projects.result.json"),
-                           fixture("close-window.result.json"), fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 0, done.stderr)
-        request = self.app.requests[1]
-        self.assertEqual(list(request.keys()),
-                         list(fixture("close-window.request.json").keys()))
-        self.assertEqual(request["project"], "VkusnoffKz")
-        self.assertEqual(self.app.requests[2]["text"], "Закрыл окно Вкусноффа")
-
-    def test_say_airdrop_needs_photo_word(self):
-        self.shots([10])
-        done = self.voice("вставь это",
-                          {"steps": [{"action": "paste_airdrop"}], "say": "Вставил"},
-                          [fixture("projects.result.json"), fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("про фотки в твоей фразе нет", done.stdout)
-
-    def test_say_airdrop_with_photo_word(self):
-        self.shots([20, 10])
-        done = self.voice("вставь фотки с эйрдропа",
-                          {"steps": [{"action": "paste_airdrop"}], "say": "Вставил фотки"},
-                          [fixture("projects.result.json"), fixture("paste.result.json"),
-                           fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 0, done.stderr)
-        request = self.app.requests[1]
-        self.assertEqual(list(request.keys()), list(fixture("paste.request.json").keys()))
-        self.assertEqual(len(request["paths"]), 2)
-        self.assertTrue((self.support / "voice-pasted.json").exists())
-
-    def test_say_unknown_project(self):
-        done = self.voice("открой чат по ресторану",
-                          {"steps": [{"action": "open", "project": "Ресторан",
-                                      "chat": "new", "place": "right"}], "say": "Открыл"},
-                          [fixture("projects.result.json"), fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("не знаю проект «Ресторан»", done.stdout)
-
-    def test_say_two_opens_get_arrange(self):
-        # Несколько окон подряд встают стопкой — раскладку дописываем сами, порядком,
-        # который назвала модель.
-        answer = {"steps": [{"action": "open", "project": "VkusnoffKz",
-                             "chat": "new", "place": "right"},
-                            {"action": "open", "project": "PimpMyClaude",
-                             "chat": "last", "place": "right"}],
-                  "say": "Открыл два чата"}
-        done = self.voice("открой чаты по вкуснофф и пимпу", answer,
-                          [fixture("projects.result.json"), fixture("new-window.result.json"),
-                           fixture("new-window-last.result.json"),
-                           fixture("arrange.result.json"), fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual([item["action"] for item in self.app.requests],
-                         ["projects", "new-window", "new-window", "arrange", "hud"])
-        self.assertNotIn("chat", self.app.requests[1])
-        self.assertEqual(self.app.requests[2]["chat"], "last")
-        self.assertEqual(self.app.requests[3]["layout"], "last")
-        self.assertEqual(self.app.requests[3]["order"], ["VkusnoffKz", "PimpMyClaude"])
-        # Всё вышло — плашка говорит короткой фразой модели.
-        self.assertEqual(self.app.requests[4]["text"], "Открыл два чата")
-
-    def test_say_busy_repeats_with_new_id(self):
-        # У прежнего id ответ уже лежит: второй раз приложение его не возьмёт, а
-        # `at` старше 30 с даст stale — поэтому повтор идёт новым id и свежим at.
-        done = self.voice("что открыто", {"steps": [{"action": "windows"}], "say": "Смотрю"},
-                          [fixture("projects.result.json"), fixture("busy.result.json"),
-                           fixture("windows.result.json"), fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 0, done.stderr)
-        first, again = self.app.requests[1], self.app.requests[2]
-        self.assertEqual([first["action"], again["action"]], ["windows", "windows"])
-        self.assertNotEqual(first["id"], again["id"])
-        self.assertGreaterEqual(again["at"], first["at"])
-
-    def test_say_partial_result(self):
-        # Сорвался один шаг из двух — плашка и stdout говорят одно и то же, и это
-        # не фраза модели: она бы соврала.
-        answer = {"steps": [{"action": "windows"}, {"action": "projects"}],
-                  "say": "Всё сделал"}
-        done = self.voice("что открыто и какие проекты", answer,
-                          [fixture("projects.result.json"), fixture("windows.result.json"),
-                           fixture("bad.result.json"), fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("Сделал 1 из 2", done.stdout)
-        self.assertIn("Пимп не понял запрос", done.stdout)
-        self.assertEqual(self.app.requests[3]["text"], done.stdout.strip())
-
-    def test_say_none_step(self):
-        done = self.voice("пимп это отличная штука",
-                          {"steps": [{"action": "none", "say": "Понял, ничего не трогаю"}],
-                           "say": "Понял, ничего не трогаю"},
-                          [fixture("projects.result.json"), fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(done.stdout.strip(), "Понял, ничего не трогаю")
-
-    def test_say_reads_stdin(self):
-        fake = self.brain({"steps": [{"action": "windows"}], "say": "Смотрю"})
-        self.dir.mkdir(parents=True, exist_ok=True)
-        self.app = FakeApp(self.dir, [fixture("projects.result.json"),
-                                      fixture("windows.result.json"),
-                                      fixture("hud.result.json")], count=3)
-        self.app.start()
-        env = dict(os.environ)
-        env["MYCLAUDE_PIMP_DIR"] = str(self.dir)
-        env["MYCLAUDE_PIMP_WAIT"] = "5"
-        env["MYCLAUDE_PIMP_TAKEN"] = "2"
-        env["MYCLAUDE_VOICE_FAKE"] = fake
-        env["MYCLAUDE_VOICE_ENV"] = str(self.support / "pimp-voice.env")
-        done = subprocess.run([sys.executable, str(CLI), "say", "-"], env=env,
-                              input="Пимп, что открыто\n", capture_output=True,
-                              text=True, timeout=60)
-        self.app.join(timeout=2)
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertIn("Окон 1", done.stdout)
 
     # ---- фото чата по номерам (WF98, #7851): порядок как у Viewer chatNumbers ----
     def write_viewer(self, records):
@@ -1203,8 +961,10 @@ class PimpCliTest(unittest.TestCase):
         self.assertEqual(list(request.keys()), list(sample.keys()), "порядок полей запроса")
         for key in ("action", "chat", "text", "model", "effort"):
             self.assertEqual(request[key], sample[key], key)
+        # Файла сессии прежнего чата нет — текст как был, и это сказано (#10904).
         self.assertEqual(done.stdout.strip(), "Заменил окно «Ожидание задачи» новым чатом "
-                         "local_9f1c2d3e-0000-4000-8000-000000000102")
+                         "local_9f1c2d3e-0000-4000-8000-000000000102; последний ответ прежнего "
+                         "чата не нашёл — новый чат начат без него")
 
     def test_renew_request_by_project(self):
         # Не local_… — значит проект; без текста, модели и усилия ключей нет вовсе.
@@ -1220,10 +980,10 @@ class PimpCliTest(unittest.TestCase):
         self.app = FakeApp(self.dir, fixture("renew-window.result.json"))
         self.app.start()
         env = dict(os.environ, MYCLAUDE_PIMP_DIR=str(self.dir), MYCLAUDE_PIMP_WAIT="5",
-                   MYCLAUDE_PIMP_TAKEN="2", CLAUDE_CODE_HOST_SESSION_ID=CHAT)
+                   MYCLAUDE_PIMP_TAKEN=pimp_testlib.APP_TAKEN_S, CLAUDE_CODE_HOST_SESSION_ID=CHAT)
         done = subprocess.run([sys.executable, str(CLI), "renew", "Risovalka", "--text", "-"],
                               env=env, input="Передача\nв две строки\n", capture_output=True,
-                              text=True, timeout=60)
+                              text=True, timeout=180)
         self.app.join(timeout=2)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.app.requests[0]["text"], "Передача\nв две строки")
@@ -1241,6 +1001,12 @@ class PimpCliTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("модель не встала", done.stdout)
 
+    def test_renew_effort_missed(self):
+        answer = dict(fixture("renew-window.result.json"), effort="missed")
+        done = self.call("renew", "Risovalka", "--effort", "extra", result=answer)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("эффорт не встал", done.stdout)
+
     def renew_refused(self, name):
         if self.dir.exists():
             shutil.rmtree(self.dir)     # прошлый запрос в каталоге ответил бы первым
@@ -1250,7 +1016,7 @@ class PimpCliTest(unittest.TestCase):
     def test_renew_refusals(self):
         done = self.renew_refused("renew-window-main.error.json")
         self.assertEqual((done.returncode, done.stdout.strip()),
-                         (1, "Этот чат в главном окне Claude — эта версия Пимпа его не меняет, обнови Пимп"))
+                         (1, "Этот чат в главном окне Claude — эта версия PMP его не меняет, обнови PMP"))
         done = self.renew_refused("renew-window-not-created.error.json")
         self.assertEqual(done.stdout.strip(), "Чат не создан: сообщение не ушло")
         done = self.renew_refused("renew-window-unknown.error.json")
@@ -1304,10 +1070,10 @@ class PimpCliTest(unittest.TestCase):
         self.app = FakeApp(self.dir, fixture("send.result.json"))
         self.app.start()
         env = dict(os.environ, MYCLAUDE_PIMP_DIR=str(self.dir), MYCLAUDE_PIMP_WAIT="5",
-                   MYCLAUDE_PIMP_TAKEN="2", CLAUDE_CODE_HOST_SESSION_ID=CHAT)
+                   MYCLAUDE_PIMP_TAKEN=pimp_testlib.APP_TAKEN_S, CLAUDE_CODE_HOST_SESSION_ID=CHAT)
         done = subprocess.run([sys.executable, str(CLI), "send", "--project", "VkusnoffKz", "-"],
                               env=env, input="Две\nстроки\n", capture_output=True,
-                              text=True, timeout=60)
+                              text=True, timeout=180)
         self.app.join(timeout=2)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.app.requests[0]["text"], "Две\nстроки")
@@ -1326,7 +1092,7 @@ class PimpCliTest(unittest.TestCase):
         self.assertIn("8000", done.stdout)
         env = dict(os.environ, MYCLAUDE_PIMP_DIR=str(self.dir), CLAUDE_CODE_HOST_SESSION_ID=CHAT)
         done = subprocess.run([sys.executable, str(CLI), "send", "--chat", CHAT, "-"], env=env,
-                              input="до\0после", capture_output=True, text=True, timeout=60)
+                              input="до\0после", capture_output=True, text=True, timeout=180)
         self.assertEqual(done.returncode, 1)
         self.assertIn("нулевой", done.stdout)
         self.assertFalse(self.dir.exists())
@@ -1380,7 +1146,7 @@ class PimpCliTest(unittest.TestCase):
         done = self.send_refused(ambiguous)
         self.assertIn("«Вкуснофф 1», «Вкуснофф 2»", done.stdout)
         done = self.send_refused(dict(missing, error="busy"))
-        self.assertEqual(done.stdout.strip(), "Пимп занят — открывает или возвращает окна")
+        self.assertEqual(done.stdout.strip(), "PMP занят — открывает или возвращает окна")
 
     def test_send_json_is_raw(self):
         done = self.call("send", "--chat", CHAT, "текст", "--json",
@@ -1458,15 +1224,6 @@ class PimpCliTest(unittest.TestCase):
         refused.pop("rows")
         done = self.call("arrange", "--layout", "center", result=refused)
         self.assertTrue(done.stdout.startswith("Экран мал"), done.stdout)
-
-    def test_say_never_arranges_center(self):
-        # Голосу центр не отдаём (C5): модель сказала center — уходит умная расстановка.
-        answer = {"steps": [{"action": "arrange", "layout": "center"}], "say": "Расставил"}
-        done = self.voice("расставь рика по центру", answer,
-                          [fixture("projects.result.json"), fixture("arrange.result.json"),
-                           fixture("hud.result.json")])
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(self.app.requests[1]["layout"], "last")
 
     # ---- сводка окон (WF102, #7916): только чтение файлов -----------------------
     def summary_env(self):
@@ -1560,6 +1317,31 @@ class PimpCliTest(unittest.TestCase):
         self.assertIn("жду ❓", done.stdout)
         self.assertNotIn("готово ✅", done.stdout)
 
+    def test_summary_skips_subagent_records_for_running(self):
+        # Ответ основной ветки закончен, ниже в транскрипте — реплики субагента (isSidechain): чат ждёт, а не «идёт».
+        sessions, projects, env = self.summary_env()
+        side = dict(self.answer_record("", stop="tool_use", mid="s1"), isSidechain=True)
+        self.write_session(sessions, projects, CHAT, "cli-side", 5, None,
+                           [self.answer_record("Сделал.\n\n🧪Rick · готово ✅"),
+                            {"type": "user", "isSidechain": True, "message": {"content": "задача субагенту"}},
+                            side])
+        done = self.call("summary", result=self.summary_windows(CHAT), extra=env)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.splitlines()[:2],
+                         ["Rick · «Семь окон» — ждёт · кеш 55 мин", "  🧪Rick · готово ✅"])
+
+    def test_summary_status_line_from_early_part_of_answer(self):
+        # Один ответ Claude пишет в транскрипт кусками с тем же message.id: строка состояния — в раннем куске.
+        sessions, projects, env = self.summary_env()
+        early = self.answer_record("Итог.\n\n🧪Rick · жду ❓", stop=None, mid="m2")
+        self.write_session(sessions, projects, CHAT, "cli-parts", 5, None,
+                           [self.answer_record("Прошлый.\n\n🧪Rick · готово ✅"), early,
+                            self.answer_record("Ссылки — в файле.", mid="m2")])
+        done = self.call("summary", result=self.summary_windows(CHAT), extra=env)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.splitlines()[:2],
+                         ["Rick · «Семь окон» — ждёт · кеш 55 мин", "  🧪Rick · жду ❓"])
+
     def test_digest_groups_projects_by_status(self):
         # #9077: сводка всех проектов — по status.md, рабочие деревья git (.git-файл) не считаются проектом.
         root = self.support / "projects"
@@ -1590,12 +1372,30 @@ class PimpCliTest(unittest.TestCase):
         self.assertEqual([(i["project"], i["group"], i["workflows"], i["done"]) for i in items],
                          [("Alpha", "идут", 2, 1), ("Beta", "ждут", 1, 1), ("Gamma", "тихо", 0, 0)])
 
+    def test_digest_reads_freshest_worktree_status(self):
+        # #9519: Workflow сайта идёт в рабочем дереве (VkusnoffKz-iiko1019), сводка главной папки стоит — берётся
+        # самая свежая сводка из папки и её деревьев (.git/worktrees/*/gitdir), проектом дерево не становится.
+        root = self.support / "projects"
+        (self.support / "claude.json").write_text(json.dumps({"projectsRoot": str(root)}), encoding="utf-8")
+        main, tree = root / "Cafe", root / "Cafe-iiko1019"
+        for folder in (main, tree):
+            (folder / "audit").mkdir(parents=True)
+        (main / "audit" / "status.md").write_text("# 🟠Cafe\n\n1️⃣ Workflow ✅ готово\n- о чём: старое\n", encoding="utf-8")
+        (tree / "audit" / "status.md").write_text("# 🟠Cafe\n\n1️⃣ Workflow ✅ готово\n- о чём: старое\n\n"
+                                                  "2️⃣ Workflow ⏳ идёт\n- о чём: меню кафе\n- шаги 1 из 4\n", encoding="utf-8")
+        (main / ".git" / "worktrees" / "iiko").mkdir(parents=True)
+        (main / ".git" / "worktrees" / "iiko" / "gitdir").write_text(f"{tree}/.git\n", encoding="utf-8")
+        (tree / ".git").write_text(f"gitdir: {main}/.git/worktrees/iiko\n", encoding="utf-8")
+        now = time.time()
+        os.utime(main / "audit" / "status.md", (now - 3600, now - 3600))
+        os.utime(tree / "audit" / "status.md", (now, now))
+        items = json.loads(self.call("digest", "--json").stdout)
+        self.assertEqual([(i["project"], i["group"], i["workflows"]) for i in items], [("Cafe", "идут", 2)])
+
     def test_digest_one_state_rule(self):
         # WF145: правило состояний — как у приложения (PanelProjects.blockState): ⏳ идёт, ⬜ впереди (не «ждёт»),
         # проект «ждут» и по Workflow, что ждёт Элвиса, а не только по строке «Ждёт Элвиса».
-        spec = importlib.util.spec_from_file_location("pimp_digest_wf145", CLI)
-        pimp = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(pimp)
+        pimp = pimp_testlib.load_pimp("pimp_digest_wf145")
         cases = {"1️⃣ Workflow ⏳ идёт": "идёт", "2️⃣ Workflow 💭 идёт": "идёт", "3️⃣ Workflow ✅ готово": "готово",
                  "4️⃣ Workflow ✅ готово, выложено": "готово", "5️⃣ Workflow ⬜ запланирован": "впереди",
                  "6️⃣ Workflow ❓ ждёт Элвиса": "ждёт", "7️⃣ Workflow ⚠️ глянь": "ждёт", "8️⃣ Workflow 🛑 упал": "упал",
@@ -1683,10 +1483,10 @@ class PimpCliTest(unittest.TestCase):
             "restart-claude-failed.error.json":
                 "Claude не перезапустился: Claude не закрылся за 30 секунд. Закрой его сам (⌘Q) и повтори.",
             "restart-claude-timeout.error.json":
-                "Claude перезапустил, но окна не вернулись за 130 с — «↩️ Вернуть окна» в меню Пимпа",
+                "Claude перезапустил, но окна не вернулись за 130 с — верни их: pimp.py restore-screens",
             "restart-claude-gaveup.error.json":
                 "Claude перезапустил, но окна не вернулись («Чат А», «Чат Б», «Дубли задач») — "
-                "«↩️ Вернуть окна» в меню Пимпа",
+                "верни их: pimp.py restore-screens",
         }
         for name, line in cases.items():
             done = self.restart(name=name)
@@ -1757,6 +1557,20 @@ class PimpCliTest(unittest.TestCase):
         self.assertIn("Не понял команду", done.stdout)
         self.assertIn("left, middle, right", done.stderr)
 
+    def test_point_has_at_most_six_digits(self):
+        # Ревизия WF247 (пара к PimpRequest.place): 20 цифр Swift переводит в Int ловушкой — в канал не пускаем;
+        # граница та же, что у приложения: |x|, |y| ≤ 100 000.
+        pimp = pimp_testlib.load_pimp("pimp_point_test")
+        for good in ("1200,-40", "100000,0", "-99999.5,12.123456", "0,0"):
+            self.assertEqual(pimp.parse_place(good), good)
+        for bad in ("100001,0", "999999,0", "0,-1000000", "99999999999999999999,0", "1e300,0", "1.1234567,0", "inf,0"):
+            with self.subTest(bad=bad), self.assertRaises(pimp.argparse.ArgumentTypeError):
+                pimp.parse_place(bad)
+        done = self.call("open", "Dictator", "--at", "99999999999999999999,0")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("числа до 100 000", done.stderr)
+        self.assertEqual(list(self.dir.glob("*.json")), [], "в канал ничего не ушло")
+
 
 class WF141DesktopGuardTest(unittest.TestCase):
     """#9116: агент (CLAUDECODE в окружении) без --desktop окна Claude Desktop не трогает."""
@@ -1800,31 +1614,382 @@ class WF141DesktopGuardTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
 
-class VoiceTransportSafetyTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        spec = importlib.util.spec_from_file_location("pimp_transport_test", CLI)
-        cls.pimp = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(cls.pimp)
+# ---- #10527: pimp.py live-check (контракт К-HEALTH) ------------------------------------------------
+LIVE_EXPRESSION = ('(() => { const m = window.__myclaude; if (!m) return null; if (typeof m.health !== "function") '
+                   'return { v: 0 }; const h = m.health(); return h === null ? { v: 0, other: true } : h; })()')
+APP_PROBE = "// myclaude-chats v1 chats-1617021464-7114\n(() => ({}))()\n"
 
-    def test_invalid_endpoint_refused_before_opening_network(self):
-        for base in ("http://api.deepseek.com", "https://username@api.deepseek.com",
-                     "https://api.deepseek.com?key=hidden", "https://api.deepseek.com#x",
-                     "file:///tmp/api", "https://", "https://api.deepseek.com:bad"):
-            with self.subTest(base=base), mock.patch.object(self.pimp.urllib.request, "build_opener") as opened:
-                with self.assertRaises(self.pimp.VoiceError):
-                    self.pimp.voice_net("test", [], {"DEEPSEEK_API_KEY": SECRET, "DEEPSEEK_BASE_URL": base})
-                opened.assert_not_called()
 
-    def test_https_endpoint_and_no_redirect_with_authorization(self):
-        self.assertEqual(self.pimp.voice_endpoint("https://api.deepseek.com/v1/"),
-                         "https://api.deepseek.com/v1/chat/completions")
-        request = self.pimp.urllib.request.Request("https://api.deepseek.com/chat/completions",
-                                                  data=b"{}", headers={"Authorization": SECRET})
-        for target in ("http://api.deepseek.com/chat/completions", "https://elsewhere.example/chat/completions"):
-            with self.subTest(target=target), self.assertRaises(self.pimp.urllib.error.HTTPError) as raised:
-                self.pimp.VoiceNoRedirect().redirect_request(request, None, 302, "Found", {}, target)
-            raised.exception.close()
+class FakeLoader(threading.Thread):
+    """Лоадер на минималках: увидел новый probe.js — кладёт probe-result.json с ответом answer(script).
+    answer вернул None — молчит (страницы не ответили). `stale` — круг приложения (с nonce), который
+    ложится ПЕРЕД ответом на наш скрипт: CLI обязан его пропустить."""
+
+    def __init__(self, support: Path, answer, stale=None):
+        super().__init__(daemon=True)
+        self.support = support
+        self.answer = answer
+        self.stale = stale
+        self.scripts = []
+        self._halt = threading.Event()
+
+    def write(self, results):
+        body = json.dumps({"at": "2026-10-22T09:14:05.400Z", "results": results}, ensure_ascii=False)
+        (self.support / "probe-result.json").write_text(body, encoding="utf-8")
+
+    def run(self):
+        probe = self.support / "probe.js"
+        last = None
+        deadline = time.monotonic() + 40
+        while time.monotonic() < deadline and not self._halt.is_set():
+            try:
+                stat = probe.stat()
+                stamp = (stat.st_mtime_ns, stat.st_size)
+                script = probe.read_text(encoding="utf-8")
+            except OSError:
+                stamp = script = None
+            if stamp is not None and stamp != last:
+                last = stamp
+                self.scripts.append(script)
+                if script.startswith("// pimp live-check v1 ") and self.stale is not None:
+                    time.sleep(0.05)
+                    self.write(self.stale)
+                results = self.answer(script)
+                if results is not None:
+                    time.sleep(0.05)
+                    self.write(results)
+            time.sleep(0.02)
+
+    def stop(self):
+        self._halt.set()
+
+
+def probe_entry(number, url, result):
+    return {"id": number, "url": url,
+            "source": {"loader": 8, "origin": "https://claude.ai", "url": url, "processId": 9, "routingId": 2},
+            "result": result}
+
+
+def report_pages():
+    """Страницы эталона отчёта (tests/fixtures/live-check.json) записями probe-result.json."""
+    pages = pimp_testlib.fixture_json("live-check.json")["pages"]
+    return [probe_entry(page["id"], page["health"]["page"], page["health"]) for page in pages]
+
+
+class LiveCheckTest(unittest.TestCase):
+    setUp_base = PimpCliTest.setUp
+    tearDown_base = PimpCliTest.tearDown
+    call_base = PimpCliTest.call
+
+    def setUp(self):
+        self.setUp_base()
+        self.loader = None
+        (self.support / "installed.json").write_text(json.dumps({"version": "3.1623.0"}), encoding="utf-8")
+        self.live = self.support / "live-check"
+
+    def tearDown(self):
+        if self.loader is not None:
+            self.loader.stop()
+            self.loader.join(timeout=2)
+        self.tearDown_base()
+
+    def call(self, *argv, wait="3", extra=None, **kwargs):
+        env = {"MYCLAUDE_LIVE_WAIT": wait, "MYCLAUDE_CLAUDE_APP": str(self.support / "NoClaude.app"),
+               "MYCLAUDE_SLICE_DIR": str(self.support / "claude-dom")}
+        env.update(extra or {})
+        return self.call_base(*argv, extra=env, **kwargs)
+
+    def load(self, answer, stale=None):
+        self.loader = FakeLoader(self.support, answer, stale=stale)
+        self.loader.start()
+
+    def pages_answer(self, results):
+        return lambda script: results if script.startswith("// pimp live-check v1 ") else None
+
+    def app_answer(self, app):
+        return dict(fixture("live-check.result.json"), app=app)
+
+    def test_green(self):
+        # Канал держало приложение — берём; после проверки probe.js нет, приложение заберёт канал обратно.
+        (self.support / "probe.js").write_text(APP_PROBE, encoding="utf-8")
+        health = pimp_testlib.fixture_json("health.json")
+        self.load(self.pages_answer([probe_entry(3, health["page"], health)]))
+        done = self.call("live-check", result=fixture("live-check-first.result.json"))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertFalse((self.support / "probe.js").exists(), "probe.js удалён")
+        script = self.loader.scripts[-1]
+        head, body, tail = script.split("\n")
+        self.assertRegex(head, r"^// pimp live-check v1 \d{13,}-\d{4}$")
+        self.assertEqual(body, LIVE_EXPRESSION, "выражение — побайтно по контракту")
+        self.assertEqual(tail, "")
+        request = self.app.requests[0]
+        self.assertEqual(list(request), list(fixture("live-check.request.json")), "порядок полей запроса")
+        self.assertEqual(request["action"], "live-check")
+        lines = done.stdout.splitlines()
+        self.assertRegex(lines[0], r"^Claude 3\.1623\.0 · страница wf274-page-100 · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+        self.assertEqual(lines[1].split(), ["anchors", "wide", "fold", "title", "sidebarButton", "look",
+                                            "ownButtons", "claudeButtons", "install"])
+        self.assertEqual(lines[2].split(), ["main", "широкое", "Сторожи", "Пимпа"] + ["✓"] * 9)
+        self.assertEqual(lines[3], "Пимп 1.10.65: statusItem ✓ · iconNumber – · stripWindow – · clickLog – · "
+                                   "panelOpaque –")
+        dated = sorted(self.live.glob("*-claude-3.1623.0.json"))
+        self.assertEqual(len(dated), 1)
+        self.assertEqual(lines[-1], f"Отчёт: {dated[0]}")
+        report = json.loads(dated[0].read_text(encoding="utf-8"))
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["red"], [])
+        self.assertEqual((self.live / "live-check.json").read_text(encoding="utf-8"),
+                         dated[0].read_text(encoding="utf-8"), "копия последнего прогона")
+        self.assertEqual(oct(self.live.stat().st_mode & 0o777), oct(0o700))
+        self.assertEqual(oct(dated[0].stat().st_mode & 0o777), oct(0o600))
+        self.assertEqual([p.name for p in self.live.iterdir() if p.name.startswith(".")], [], "временных нет")
+
+    def test_red_report_matches_fixture(self):
+        sample = pimp_testlib.fixture_json("live-check.json")
+        # Круг приложения, легший после нашей записи, — не наш ответ: CLI его пропускает.
+        stale = [probe_entry(3, "https://claude.ai/epitaxy/x", {"nonce": "chats-1-0001", "kind": "main"})]
+        self.load(self.pages_answer(report_pages()), stale=stale)
+        done = self.call("live-check", result=self.app_answer(sample["app"]))
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        report = json.loads((self.live / "live-check.json").read_text(encoding="utf-8"))
+        self.assertRegex(report.pop("at"), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
+        sample.pop("at")
+        self.assertEqual(report, sample, "отчёт = эталон tests/fixtures/live-check.json")
+        self.assertEqual(json.dumps(report, ensure_ascii=False), json.dumps(sample, ensure_ascii=False),
+                         "и порядок ключей")
+        out = done.stdout
+        self.assertIn("✗ main широкое Сторожи Пимпа · wide: dock-left: лента 0–1184, дока 0–1184", out)
+        self.assertIn("✗ main широкое Сторожи Пимпа · fold: no-target: modelRow", out)
+        self.assertIn("popout узкое Вкуснофф — меню", out)
+        self.assertNotIn("\033[", out, "не терминал — без цвета")
+
+    def test_json_prints_report_only(self):
+        self.load(self.pages_answer(report_pages()))
+        done = self.call("live-check", "--json", result=self.app_answer(fixture("live-check.result.json")["app"]))
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        printed = json.loads(done.stdout)
+        self.assertEqual(printed, json.loads((self.live / "live-check.json").read_text(encoding="utf-8")))
+        self.assertIn({"window": "app", "chat": "", "check": "clickLog"}, printed["red"])
+        self.assertEqual(printed["red"][-1], {"window": "app", "chat": "", "check": "clickLog"}, "app — последним")
+
+    def test_pimp_silent_is_red_answer(self):
+        health = pimp_testlib.fixture_json("health.json")
+        self.load(self.pages_answer([probe_entry(3, health["page"], health)]))
+        done = self.call("live-check")                    # Пимпа нет: taken не появится
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        report = json.loads((self.live / "live-check.json").read_text(encoding="utf-8"))
+        self.assertIsNone(report["app"])
+        self.assertIsNone(report["pimp"])
+        self.assertEqual(report["red"], [{"window": "app", "chat": "", "check": "answer"}])
+        self.assertIn("Пимп: не ответил (не взял запрос)", done.stdout)
+        self.assertIn("✗ Пимп · answer: не взял запрос", done.stdout)
+
+    def test_no_pages_exit_2_without_report(self):
+        for results in ([], [probe_entry(3, "https://claude.ai/epitaxy/x", {"v": 0})]):
+            with self.subTest(results=results):
+                shutil.rmtree(self.dir, ignore_errors=True)
+                self.load(self.pages_answer(results))
+                done = self.call("live-check", result=fixture("live-check-first.result.json"))
+                self.loader.stop()
+                self.loader.join(timeout=2)
+                self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+                self.assertIn("Ни одной страницы с health()", done.stdout)
+                self.assertFalse(self.live.exists(), "при коде 2 отчёт не пишется")
+                self.assertFalse((self.support / "probe.js").exists())
+
+    def test_page_without_inject_is_red_install(self):
+        health = pimp_testlib.fixture_json("health.json")
+        self.load(self.pages_answer([probe_entry(3, health["page"], health),
+                                     probe_entry(5, "https://claude.ai/settings", None)]))
+        done = self.call("live-check", result=fixture("live-check-first.result.json"))
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        report = json.loads((self.live / "live-check.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["red"], [{"window": "main", "chat": "", "check": "install"}])
+        self.assertIn("✗ main · install:", done.stdout)
+
+    def test_non_chat_page_is_not_red(self):
+        health = pimp_testlib.fixture_json("health.json")
+        self.load(self.pages_answer([probe_entry(3, health["page"], health),
+                                     probe_entry(5, "https://claude.ai/settings", {"v": 0, "other": True})]))
+        done = self.call("live-check", result=fixture("live-check-first.result.json"))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        report = json.loads((self.live / "live-check.json").read_text(encoding="utf-8"))
+        self.assertEqual((report["red"], report["unchecked"], len(report["pages"])), ([], 0, 1),
+                         "страница не чата (health() → null) — не красная и не «без health()»")
+
+    def test_busy_channel_untouched(self):
+        foreign = "window.__myclaude?.status?.()\n"
+        (self.support / "probe.js").write_text(foreign, encoding="utf-8")
+        done = self.call("live-check")
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        self.assertIn("Канал probe занят", done.stdout)
+        self.assertEqual((self.support / "probe.js").read_text(encoding="utf-8"), foreign, "чужое не трогаем")
+        self.assertFalse(self.dir.exists(), "в канал «Пимп» ничего не ушло")
+        self.assertFalse(self.live.exists())
+
+    def test_timeout_removes_probe(self):
+        self.load(lambda script: None)                    # страницы молчат
+        done = self.call("live-check", wait="1")
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        self.assertIn("Страницы не ответили за 1 с", done.stdout)
+        self.assertFalse((self.support / "probe.js").exists(), "probe.js удалён и после ошибки")
+        self.assertFalse(self.live.exists())
+
+    def test_ctrl_c_removes_probe(self):
+        env = dict(os.environ, MYCLAUDE_PIMP_DIR=str(self.dir), MYCLAUDE_LIVE_WAIT="30", MYCLAUDE_PIMP_TAKEN="30",
+                   MYCLAUDE_CLAUDE_APP=str(self.support / "NoClaude.app"))
+        probe = self.support / "probe.js"
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(sig=sig):
+                proc = subprocess.Popen([sys.executable, str(CLI), "live-check"], env=env,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and not probe.exists():
+                    time.sleep(0.02)
+                self.assertTrue(probe.exists(), "CLI положил probe.js")
+                proc.send_signal(sig)
+                proc.communicate(timeout=10)
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertFalse(probe.exists(), "probe.js удалён после прерывания")
+
+    def test_press_is_stage_3(self):
+        (self.support / "probe.js").write_text(APP_PROBE, encoding="utf-8")
+        done = self.call("live-check", "--press")
+        self.assertEqual(done.returncode, 2)
+        self.assertEqual(done.stdout.strip(), "--press: этап 3, не сделан")
+        self.assertEqual((self.support / "probe.js").read_text(encoding="utf-8"), APP_PROBE, "ничего не тронуто")
+        self.assertFalse(self.dir.exists())
+
+    def test_old_reports_pruned_to_50(self):
+        self.live.mkdir(mode=0o700)
+        for day in range(55):
+            old = self.live / f"2026-08-{day % 28 + 1:02d}-claude-1.{day}.json"
+            old.write_text("{}", encoding="utf-8")
+            os.utime(old, (1_000_000 + day, 1_000_000 + day))
+        health = pimp_testlib.fixture_json("health.json")
+        self.load(self.pages_answer([probe_entry(3, health["page"], health)]))
+        done = self.call("live-check", result=fixture("live-check-first.result.json"))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        dated = [p.name for p in self.live.iterdir() if p.name != "live-check.json"]
+        self.assertEqual(len(dated), 50)
+        self.assertNotIn("2026-08-01-claude-1.0.json", dated, "старейшие ушли")
+        self.assertTrue(any(name.endswith("-claude-3.1623.0.json") for name in dated), "свежий остался")
+
+    def test_slice(self):
+        health = pimp_testlib.fixture_json("health.json")
+        root = {"t": "body", "r": [0, 0, 1200, 800], "k": [{"t": "div", "c": ["epitaxy-chat-panel"],
+                                                           "r": [0, 0, 1200, 800]}]}
+
+        def answer(script):
+            if script.startswith("// pimp live-check v1 "):
+                return [probe_entry(3, health["page"], health)]
+            if script.startswith("// pimp live-check slice v1 "):
+                nonce = script.split("\n", 1)[0].rsplit(" ", 1)[1]
+                return [probe_entry(3, health["page"], json.dumps({"pimpSlice": nonce, "page": "wf274-page-100",
+                                                                   "viewport": [1200, 800], "dpr": 2, "nodes": 2,
+                                                                   "root": root}))]
+            return None
+
+        self.load(answer)
+        done = self.call("live-check", "--slice", "main-wide", result=fixture("live-check-first.result.json"))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        path = self.support / "claude-dom" / "3.1623-main-wide.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(list(data), ["v", "claude", "page", "view", "at", "viewport", "dpr", "root"])
+        self.assertEqual((data["claude"], data["page"], data["view"], data["root"]),
+                         ("3.1623.0", "wf274-page-100", "main-wide", root))
+        self.assertIn(f"Слепок: {path} (2 узла)", done.stdout)
+        self.assertFalse((self.support / "probe.js").exists())
+        slice_script = self.loader.scripts[-1]
+        self.assertIn(json.dumps(health["chat"]), slice_script, "слепок только нужного окна")
+        shutil.rmtree(self.dir, ignore_errors=True)
+        self.load(answer)
+        done = self.call("live-check", "--slice", "popout", result=fixture("live-check-first.result.json"))
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("Слепок: нет окна вида popout", done.stdout)
+        self.assertFalse((self.support / "probe.js").exists())
+
+    def test_slice_script_reads_only_shape(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("нет node")
+        pimp = pimp_testlib.load_pimp("pimp_live_slice")
+        health = {"page": "https://claude.ai/epitaxy/local_x", "chat": "local_x", "kind": "main"}
+        script = self.support / "slice.js"
+        script.write_text(pimp.slice_script(health, "n-1"), encoding="utf-8")
+        runner = self.support / "run.mjs"
+        runner.write_text("""import fs from "node:fs";
+const el = (tag, attrs = {}, kids = [], rect = [0, 0, 10, 10]) => ({ tagName: tag.toUpperCase(), children: kids,
+  getAttribute: name => (name in attrs ? attrs[name] : null),
+  getBoundingClientRect: () => ({ left: rect[0], top: rect[1], width: rect[2], height: rect[3] }) });
+const body = el("body", { class: "a myclaude-x" }, [
+  el("div", { id: "myclaude-rail" }, [el("span")]),
+  el("div", { "data-testid": "t", "aria-label": "Model: Opus 5.5", title: "секрет", "data-state": "open",
+              style: "color:red", "data-myclaude-x": "1", "data-row-key": "k", "data-cds": "ChatComposerChin",
+              role: "group", "aria-hidden": "x".repeat(80) }, [
+    el("svg", {}, [el("path")]), el("script"), el("style"),
+    el("h2", { id: "как-устроено", "aria-label": "Привет мир" }),
+    el("button", { id: "radix-:r1:", "aria-label": "Show sidebar", type: "button" }),
+  ], [1.4, 2.6, 100.2, 50.5]),
+  el("div", { id: "myclaude-image-undo-composer-v1", role: "group" }, [
+    el("button", { "data-pane-title": "Секретный чат", "aria-haspopup": "dialog" }),
+  ]),
+]);
+const want = JSON.parse(process.argv[3]);
+globalThis.window = { __myclaude: { health: () => ({ v: 1, version: "wf-x", ...want }) },
+  innerWidth: 1200, innerHeight: 800, devicePixelRatio: 2 };
+globalThis.document = { body };
+process.stdout.write(JSON.stringify((0, eval)(fs.readFileSync(process.argv[2], "utf8"))));
+""", encoding="utf-8")
+
+        def run(want):
+            done = subprocess.run([node, str(runner), str(script), json.dumps(want)], capture_output=True,
+                                  text=True, timeout=180)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            out = json.loads(done.stdout)
+            return json.loads(out) if isinstance(out, str) else out
+
+        out = run(health)
+        self.assertEqual((out["pimpSlice"], out["page"], out["viewport"], out["dpr"], out["nodes"]),
+                         ("n-1", "wf-x", [1200, 800], 2, 7))
+        body = out["root"]
+        self.assertEqual(body["c"], ["a"], "классы myclaude-* вырезаны")
+        self.assertEqual(len(body["k"]), 2, "узел myclaude-… вырезан с детьми")
+        self.assertEqual(body["k"][1], {"t": "div", "role": "group", "r": [0, 0, 10, 10], "k": [
+            {"t": "button", "a": {"aria-haspopup": "dialog", "data-pane-title": ""}, "r": [0, 0, 10, 10]}]},
+            "узел Claude с нашим id остаётся без id; data-pane-title — только наличие")
+        div = body["k"][0]
+        self.assertEqual(div, {"t": "div", "tid": "t", "cds": "ChatComposerChin", "role": "group", "aria": "Model:…",
+                               "a": {"aria-hidden": "x" * 64, "data-state": "open"}, "r": [1, 3, 100, 51],
+                               "k": div["k"]})
+        self.assertEqual([kid["t"] for kid in div["k"]], ["svg", "h2", "button"], "script и style не пишутся")
+        self.assertNotIn("k", div["k"][0], "у svg детей нет")
+        self.assertEqual(div["k"][1], {"t": "h2", "r": [0, 0, 10, 10]}, "id из текста и чужой aria-label не идут")
+        self.assertEqual(div["k"][2], {"t": "button", "id": "radix-:r1:", "aria": "Show sidebar",
+                                       "a": {"type": "button"}, "r": [0, 0, 10, 10]})
+        self.assertIsNone(run(dict(health, chat="local_other")), "чужое окно отвечает null")
+
+    def test_summary_and_digest_line(self):
+        report = pimp_testlib.fixture_json("live-check.json")
+        self.live.mkdir(mode=0o700)
+        (self.live / "live-check.json").write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+        app = self.support / "Claude.app" / "Contents"
+        app.mkdir(parents=True)
+        (self.support / "claude.json").write_text(json.dumps({"projectsRoot": str(self.support / "none")}),
+                                                  encoding="utf-8")
+        line = "проверка окна Claude 3.1623.0: 2 красных (wide, fold)"
+        for version, expected in (("3.1623.0", True), ("3.1700.0", False)):
+            with self.subTest(version=version):
+                with (app / "Info.plist").open("wb") as handle:
+                    plistlib.dump({"CFBundleShortVersionString": version}, handle)
+                env = {"MYCLAUDE_CLAUDE_APP": str(self.support / "Claude.app")}
+                digest = self.call("digest", extra=env)
+                self.assertEqual(digest.returncode, 0, digest.stderr)
+                summary = self.call("summary", extra=env)            # Пимп молчит — строка всё равно есть
+                self.assertEqual(summary.returncode, 1)
+                for done in (digest, summary):
+                    self.assertEqual(line in done.stdout.splitlines(), expected, done.stdout)
+                self.assertNotIn("проверка окна", self.call("digest", "--json", extra=env).stdout)
 
 
 if __name__ == "__main__":

@@ -109,7 +109,6 @@ final class ClaudeApp {
 
     /// Тот Claude, с которым работаем, и сколько их запущено всего — на последней сверке.
     private(set) var chosen: ClaudeInstance?
-    private(set) var instanceCount = 0
     /// Лишние процессы, о которых уже сказали плашкой. Ушедший забывается: запустят снова —
     /// скажем снова.
     private var announced: Set<pid_t> = []
@@ -158,7 +157,6 @@ final class ClaudeApp {
             }
         }
         chosen = next
-        instanceCount = list.count
 
         let extras = list.filter { $0.pid != next?.pid }
         for extra in extras where !announced.contains(extra.pid) { onDuplicate?(extra, list.count) }
@@ -173,14 +171,6 @@ final class ClaudeApp {
     var launchDate: Date? {
         _ = running()
         return chosen?.launchDate
-    }
-
-    /// Поле `claude=` строки диагностики (критик WF82 п. 4): pid выбранного Claude и сколько
-    /// их запущено всего — `49762/2` сразу говорит, что рядом живёт лишний.
-    var statusField: String {
-        _ = running()
-        guard let chosen = chosen else { return "нет" }
-        return "\(chosen.pid)/\(instanceCount)"
     }
 
     // MARK: - выбор экземпляра (#7096)
@@ -360,20 +350,12 @@ final class ClaudeApp {
     private static func layerZeroWindows(allSpaces: Bool = false) -> [(owner: pid_t, frame: ClaudeWindowFrame)] {
         let options: CGWindowListOption = allSpaces ? [.optionAll, .excludeDesktopElements]
             : [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return [] }
-        var out: [(owner: pid_t, frame: ClaudeWindowFrame)] = []
-        for info in list {
-            guard let owner = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value else { continue }
-            guard (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 else { continue }
-            guard let number = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { continue }
-            guard let bounds = info[kCGWindowBounds as String] as? NSDictionary else { continue }
-            guard let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { continue }
-            let alpha = (info[kCGWindowAlpha as String] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 1
-            guard allSpaces ? alpha >= minWindowAlpha : !isServiceWindow(frame: rect, alpha: alpha) else { continue }
-            let onScreen = !allSpaces || (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true
-            out.append((owner: owner, frame: ClaudeWindowFrame(id: number, frame: rect, onScreen: onScreen)))
+        return WindowInfo.list(options).filter { info in
+            info.layer == 0 && info.id > 0
+                && (allSpaces ? info.alpha >= minWindowAlpha : !isServiceWindow(frame: info.frame, alpha: info.alpha))
+        }.map { info in
+            (owner: info.pid, frame: ClaudeWindowFrame(id: info.id, frame: info.frame, onScreen: !allSpaces || info.onScreen))
         }
-        return out
     }
 
     /// Шаг подъёма окна вперёд.

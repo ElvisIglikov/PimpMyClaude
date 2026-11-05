@@ -2,15 +2,6 @@ import AppKit
 import XCTest
 @testable import ClaudeAX
 
-private final class BugsDefaults: ThemeDefaults {
-    var values: [String: Any] = [:]
-    func string(forKey key: String) -> String? { values[key] as? String }
-    func dictionary(forKey key: String) -> [String: Any]? { values[key] as? [String: Any] }
-    func object(forKey key: String) -> Any? { values[key] }
-    func set(_ value: Any?, forKey key: String) { values[key] = value }
-    func removeObject(forKey key: String) { values.removeValue(forKey: key) }
-}
-
 /// WF137 «Ошибки Swift»: #9060 (К5, `new-window` + `mode:"bypass"`) и #7829 (меню ⌘B гасит
 /// вылетающую панель Claude и своё подменю при спуске вниз).
 final class BugsWF137Tests: XCTestCase {
@@ -50,10 +41,8 @@ final class BugsWF137Tests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let actions = ClaudeActions(app: IsolatedClaudeApp.make(),
             commands: CommandChannel(path: command, now: { now }, schedule: { _, _ in }),
-            themes: [], fonts: [], themeStore: ThemeStore(defaults: BugsDefaults()),
-            myThemes: MyThemesStore(url: directory.appendingPathComponent("themes.json")),
-            autoPaintStore: AutoPaintStore(defaults: BugsDefaults()),
-            liveColorsStore: LiveColorsStore(defaults: BugsDefaults()))
+            themes: [], fonts: [], themeStore: ThemeStore(defaults: MemoryThemeDefaults()),
+            myThemes: MyThemesStore(url: directory.appendingPathComponent("themes.json")))
         actions.clock = { now }
         actions.schedule = { _, _ in } // без синтетического ⌘N
         actions.bypassNew = { bypass }

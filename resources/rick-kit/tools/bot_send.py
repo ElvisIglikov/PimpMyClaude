@@ -49,8 +49,9 @@ def call(token, method, fields, file=None, name=None):
     body += f"--{boundary}--\r\n".encode()
     req = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}", data=body,
                                  headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    limit = 60 + (len(body) // 100_000 if file else 0)  # 1 с на 100 КБ: большие файлы за 60 с не уходили (#11162)
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=limit) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         return json.load(e)

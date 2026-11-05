@@ -450,3 +450,57 @@ test("подмены высоты у обычной ступени нет вов
   assert.ok(loaded.parts.root.style.getPropertyValue(HEIGHT_VARIABLE) !== "",
     "и вот тогда подмена появляется — по воле руки, а не сама");
 });
+
+test("3.1623: строка модели дорисовалась после поля — рамка ищется заново, и поле сворачивается", () => {
+  // Слово Элвиса 22.10.2026: «кнопка свёртки перестала работать… один раз развернулось». Строка модели
+  // (ChatComposerChin) появляется позже поля: на первом проходе её нет, рамкой выходил весь низ окна, а
+  // дальше рамка не пересчитывалась — сворачивать было нечего.
+  const late = dom => {
+    const parts = newBuildStand()(dom);
+    parts.modelRow.remove();
+    parts.scrollButton.remove();
+    return parts;
+  };
+  const loaded = loadInject({ html: late, title: "Trelvis" });
+  const { block, shell, modelRow } = loaded.parts;
+  assert.equal(loaded.api.status().modelRow, false, "строки модели ещё нет");
+  block.appendChild(modelRow);
+  // Проход раскладки: ступень туда и обратно (setStage на той же ступени ничего не делает).
+  loaded.api.setStage(STRETCHED);
+  loaded.api.setStage(NORMAL);
+  assert.equal(loaded.api.status().modelRow, true, "строка дорисовалась — найдена");
+  loaded.api.setStage(COLLAPSED);
+  assert.equal(loaded.api.status().stage, COLLAPSED, "ступень держится");
+  assert.equal(collapsed(shell), "collapsed", "рамка поля свернулась");
+  assert.equal(collapsed(modelRow), "collapsed", "и строка модели — режим чтения");
+});
+
+// #11693 (Элвис 05.11: «оно же ниже должно иметь возможность встать… и полностью разворачиваться»): высота за курсором
+// непрерывная — из свёрнутого поле встаёт низким, а не прыжком на свою высоту Claude; у своей высоты — упор «обычная».
+test("#11693: тяга из свёрнутого — поле ниже своей высоты Claude, у своей — упор «обычная»", () => {
+  const loaded = loadInject({ html: newBuildStand(), title: "Trelvis" });
+  loaded.api.setStage(COLLAPSED);
+  const natural = loaded.api.status().natural ?? 96;
+  const handle = handleOf(loaded);
+  handle.dispatchEvent({ type: "pointerdown", button: 0, clientY: 700, pointerId: 1 });
+  loaded.document.dispatchEvent({ type: "pointermove", clientY: 690, pointerId: 1 });
+  assert.equal(loaded.api.status().stage, COLLAPSED, "до минимума поле свёрнуто");
+  loaded.document.dispatchEvent({ type: "pointermove", clientY: 640, pointerId: 1 });
+  assert.equal(loaded.api.status().stage, STRETCHED, "ниже своей высоты Claude — растянуто рукой, а не «обычная»");
+  assert.equal(loaded.api.status().height, 60, "высота — ровно за курсором");
+  loaded.document.dispatchEvent({ type: "pointermove", clientY: 700 - natural - 3, pointerId: 1 });
+  assert.equal(loaded.api.status().stage, NORMAL, "у своей высоты Claude — упор");
+  loaded.document.dispatchEvent({ type: "pointerup", clientY: 700 - natural - 3, pointerId: 1 });
+});
+
+test("#11693: полоса Claude нулевой высоты — потолок у самого верха окна, а не запасные 42", () => {
+  const zero = dom => {
+    const parts = newBuildStand()(dom);
+    dom.document.body.add("div", { class: "epitaxy-titlebar", rect: { left: 0, top: 0, width: 1200, height: 0 } });
+    return parts;
+  };
+  const loaded = loadInject({ html: zero, title: "Trelvis" });
+  const tall = loaded.inner.clampHeight(1e6);
+  const base = loadInject({ html: newBuildStand(), title: "Trelvis" }).inner.clampHeight(1e6);
+  assert.equal(tall - base, 42 - 9, "потолок поднялся на разницу запасного отступа и половины ручки");
+});

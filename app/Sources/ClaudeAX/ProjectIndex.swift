@@ -68,6 +68,12 @@ struct Project: Equatable {
     let folder: URL
     let name: String
     let lastFocusedAt: Double
+
+    /// Первые `limit` проектов списка, чьи папки есть на диске (пропавшие не показываем, но и не забываем).
+    static func existing(_ projects: [Project], limit: Int, fileManager: FileManager = .default) -> [Project] {
+        guard limit > 0 else { return [] }
+        return Array(projects.lazy.filter { ProjectIndex.isDirectory($0.folder, fileManager) }.prefix(limit))
+    }
 }
 
 /// Индекс чатов Claude Code — внутренние файлы Claude Desktop:
@@ -94,7 +100,7 @@ final class ProjectIndex {
     /// Индекс чатов внутри домашней папки.
     static let sessionsPath = "Library/Application Support/Claude/claude-code-sessions"
     /// Имя файла сессии: `local_<uuid>.json`.
-    static let sessionPrefix = "local_"
+    static let sessionPrefix = ChatID.prefix
     static let sessionExtension = "json"
     /// Диагностика лоадера (v7) — рядом с command.json, переписывается раз в 2 с.
     static let statusFileName = "status.json"
@@ -245,13 +251,7 @@ final class ProjectIndex {
     /// Папки, которой больше нет на диске, в списке быть не должно: пункт меню молча открыл бы
     /// чат в несуществующем каталоге (решение 2 плана WF16).
     func recentProjects(limit: Int) -> [Project] {
-        guard limit > 0 else { return [] }
-        var out: [Project] = []
-        for project in projects() where ProjectIndex.isDirectory(project.folder, fileManager) {
-            out.append(project)
-            if out.count == limit { break }
-        }
-        return out
+        Project.existing(projects(), limit: limit, fileManager: fileManager)
     }
 
     /// Уникальное имя чата для «🪟 Новое окно ▸ <проект>»: имя проекта, а занято — «Имя 2»,
@@ -455,10 +455,7 @@ final class ProjectIndex {
     static func page(url: String) -> Page? {
         guard url.hasPrefix("https://"), let parts = URLComponents(string: url),
               parts.host == pageHost, parts.path.hasPrefix(pagePrefix) else { return nil }
-        let id = String(parts.path.dropFirst(pagePrefix.count))
-        guard id.hasPrefix(sessionPrefix),
-              id.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") })
-        else { return nil }
+        guard let id = ChatID.parse(String(parts.path.dropFirst(pagePrefix.count))) else { return nil }
         return Page(sessionId: id, match: parts.path)
     }
 }

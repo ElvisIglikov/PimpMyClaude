@@ -20,7 +20,7 @@ test('F11: saved/used at — реальные миллисекунды; теку
   const entries = { ...oldEntries(210), 'id:local_aaa_recent': { font: 'none', at: start - 100 },
     'id:local_current': { font: { id: 'Menlo', family: 'Menlo' }, at: 1 },
     'chat:Current': { font: { id: 'Menlo', family: 'Menlo' }, by: 'local_current', at: 1 },
-    '*': { size: 'none' }, main: { frame: 'none' } };
+    '*': { size: 'none' }, main: { look: 'none' } };
   const p = open(entries);
   assert.equal(p.error, null);
   assert.ok(Object.keys(read(p)).length > 200, 'до inventory глобальная уборка отложена');

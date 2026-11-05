@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "version": "wf274-page-100",
+  "page": "https://claude.ai/epitaxy/local_5b0c7e2a-41d3-4f8e-9a6b-2c1d0e9f7a13",
+  "kind": "main",
+  "mode": "code",
+  "wide": true,
+  "chat": "local_5b0c7e2a-41d3-4f8e-9a6b-2c1d0e9f7a13",
+  "title": "Сторожи Пимпа",
+  "at": "2026-10-22T09:14:05.312Z",
+  "checks": [
+    {"id": "anchors", "ok": true},
+    {"id": "wide", "ok": true},
+    {"id": "fold", "ok": true},
+    {"id": "title", "ok": true},
+    {"id": "sidebarButton", "ok": true},
+    {"id": "look", "ok": true},
+    {"id": "ownButtons", "ok": true},
+    {"id": "claudeButtons", "ok": true},
+    {"id": "install", "ok": true, "at": "2026-10-22T08:51:40.027Z"}
+  ],
+  "red": []
+}

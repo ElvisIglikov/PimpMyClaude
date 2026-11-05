@@ -5,7 +5,7 @@ import XCTest
 /// в рамку `main_window`, и её `document.title` с меткой в заголовок окна не попадает — окно
 /// всегда «Claude». Метку видно только в заголовке корня страницы (`AXWebArea`) внутри окна.
 final class MainLinkTests: XCTestCase {
-    private static let mark = "Пимп: продолжить в новом чате · mfw3k2a1"
+    private static let mark = "PMP: продолжить в новом чате · mfw3k2a1"
 
     /// Узел дерева AX живого главного окна 2.9939.2 (снято 26.09 чтением, без кликов).
     private final class Node {

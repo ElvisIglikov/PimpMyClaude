@@ -8,7 +8,7 @@ final class RuntimeStateTests: XCTestCase {
     private let right = CGRect(x: 500, y: 40, width: 400, height: 700)
 
     func testThemeMenuMemorySeparatesTwinsAndSurvivesRenameAndMove() throws {
-        let suite = "theme-memory-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = ThemeStore(defaults: defaults)
@@ -146,23 +146,6 @@ final class RuntimeStateTests: XCTestCase {
         let other = ProjectTarget(key: "c:local_b", match: "", chat: "local_b", title: "Same", folder: nil)
         XCTAssertTrue(ProjectPaint.ownedByEditor(own))
         XCTAssertFalse(ProjectPaint.ownedByEditor(other))
-    }
-
-    func testGlobalThemeRemainsAvailableToSaveAndEditorButWindowOverrideWins() throws {
-        let suite = "theme-all-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let store = ThemeStore(defaults: defaults)
-        let all = Theme(id: "all", name: "All", type: "dark", palette: ["accent": "#0088ff", "background": "#111122"])
-        let own = Theme(id: "own", name: "Own", type: "light", palette: ["accent": "#ff8800", "background": "#eeeeee"])
-        let actions = ClaudeActions(app: IsolatedClaudeApp.make(), commands: CommandChannel(), themes: [all, own], fonts: [], themeStore: store)
-        actions.windowIdentity = { _, _ in .page(ChatPage(kind: .main, chat: "local_a", title: "A", store: "ok", windowId: 101, at: self.start)) }
-        store.setAllTheme(all.id)
-        XCTAssertEqual(actions.themeToSave(window: nil), all)
-        XCTAssertEqual(actions.editorKnobs(window: nil), ThemeKnobs.from(palette: all.palette, type: all.type))
-        store.setWindowTheme(own.id, title: "c:local_a")
-        XCTAssertEqual(actions.themeToSave(window: nil), own)
-        XCTAssertEqual(actions.editorKnobs(window: nil), ThemeKnobs.from(palette: own.palette, type: own.type))
     }
 
 }

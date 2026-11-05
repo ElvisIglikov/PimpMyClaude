@@ -199,6 +199,10 @@ final class SelfUpdaterWF217Tests: XCTestCase {
         XCTAssertTrue(SelfUpdater.mayInstall(.pimp, SelfUpdateMoment(viewerRunning: true)), "Пимпу запущенный Viewer не мешает")
         XCTAssertFalse(SelfUpdater.mayInstall(.viewer, SelfUpdateMoment(busy: true)))
         XCTAssertFalse(SelfUpdater.mayInstall(.viewer, SelfUpdateMoment(enabled: false)))
+        // WF234: идёт работа (страницы, Workflow, терминальные чаты) или про неё не знаем — Пимп себя не подменяет.
+        XCTAssertFalse(SelfUpdater.mayInstall(.pimp, SelfUpdateMoment(working: true)), "идёт работа")
+        XCTAssertTrue(SelfUpdater.mayInstall(.viewer, SelfUpdateMoment(working: true)),
+                      "Viewer не запущен — его подмена никого не прерывает")
     }
 
     // ---------------------------------------------------------------- проверить и скачать заранее
@@ -272,7 +276,7 @@ final class SelfUpdaterWF217Tests: XCTestCase {
         let elsewhere = scratch.appendingPathComponent("Desktop", isDirectory: true)
         let app = try makeApp(in: elsewhere, version: "1.10.19")
         var updater = makeUpdater(version: "1.10.20", archive: try goodZip("1.10.20"))
-        XCTAssertEqual(updater.placeProblem(app, product: pimp), "Пимп лежит не в «Программах»")
+        XCTAssertEqual(updater.placeProblem(app, product: pimp), "PMP лежит не в «Программах»")
         updater.check(pimp, app: app)
         XCTAssertEqual(asked, 0, "ставить некуда — и спрашивать незачем")
         XCTAssertEqual(downloads, 0)
@@ -430,7 +434,7 @@ final class SelfUpdaterWF217Tests: XCTestCase {
         XCTAssertEqual(leftovers(), [], "архив и распаковка убраны")
         let state = updater.loadState()
         XCTAssertNil(state.products["pimp"]?.ready)
-        XCTAssertEqual(SelfUpdater.noteLine(state.notes), "Пимп обновился до 1.10.20")
+        XCTAssertEqual(SelfUpdater.noteLine(state.notes), "PMP обновился до 1.10.20")
         XCTAssertNil(try updater.install(pimp, app: installedApp), "второй раз ставить нечего")
         updater.clearNotes()
         XCTAssertNil(SelfUpdater.noteLine(updater.loadState().notes))
@@ -512,12 +516,12 @@ final class SelfUpdaterWF217Tests: XCTestCase {
         try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: installedApp.path)
         defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installedApp.path) }
         let place = updater.placeProblem(installedApp, product: pimp)
-        XCTAssertEqual(place, "Пимп в «Программах» закрыт от записи")
+        XCTAssertEqual(place, "PMP в «Программах» закрыт от записи")
         updater.check(pimp, app: installedApp)
         XCTAssertEqual(asked, 0, "поставить не сможем — и спрашивать незачем")
         XCTAssertEqual(downloads, 0)
         XCTAssertEqual(SelfUpdater.statusLine(installed: "1.10.19", state: nil, enabled: true, place: place, now: clock),
-                       "Стоит 1.10.19 · Пимп в «Программах» закрыт от записи — сам не обновится")
+                       "Стоит 1.10.19 · PMP в «Программах» закрыт от записи — сам не обновится")
     }
 
     /// Находка R2: посреди работы канала «Пимп» и возврата окон Пимп себя не подменяет; Viewer это не держит.
@@ -824,7 +828,7 @@ final class SelfUpdaterWF217Tests: XCTestCase {
         state.ready = "1.10.20"
         XCTAssertEqual(line(state), "Скачано 1.10.20 — встанет при следующем запуске")
         XCTAssertEqual(line(state, enabled: false), "Стоит 1.10.19", "выключено — только что стоит")
-        XCTAssertEqual(line(state, place: "Пимп лежит не в «Программах»"), "Стоит 1.10.19 · Пимп лежит не в «Программах» — сам не обновится")
+        XCTAssertEqual(line(state, place: "PMP лежит не в «Программах»"), "Стоит 1.10.19 · PMP лежит не в «Программах» — сам не обновится")
         state.ready = "1.10.19"
         state.refused = "1.10.18"
         state.checkedAt = now
@@ -832,7 +836,7 @@ final class SelfUpdaterWF217Tests: XCTestCase {
         let notes = [SelfUpdateState.Note(product: "pimp", from: "1.10.18", to: "1.10.19"),
                      SelfUpdateState.Note(product: "viewer", from: "1.10.7", to: "1.10.8"),
                      SelfUpdateState.Note(product: "pimp", from: "1.10.19", to: "1.10.20")]
-        XCTAssertEqual(SelfUpdater.noteLine(notes), "Пимп обновился до 1.10.20 · Viewer обновился до 1.10.8")
+        XCTAssertEqual(SelfUpdater.noteLine(notes), "PMP обновился до 1.10.20 · Viewer обновился до 1.10.8")
         XCTAssertNil(SelfUpdater.noteLine([]))
     }
 

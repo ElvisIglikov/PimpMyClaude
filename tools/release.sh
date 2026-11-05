@@ -41,12 +41,12 @@ mkdir -p "$DIST"
 # а dist/ в .gitignore и вернуть её неоткуда (#5747).
 rm -f "$UPLOAD_ZIP" "$FINAL_ZIP" "$SUBMIT_JSON"
 
-# 0. Комплект Workflow против правил SkilZZZ (z7-r03): расхождение — предупреждение, не стоп
-#    (у команды каталога правил нет, а собирать ей выпуск всё равно можно).
+# 0. Комплект Workflow против правил SkilZZZ (z7-r03). Есть каталог правил — расхождение = стоп: предупреждение
+#    никто не читал, и выпуски 1.10.x везли команде правила 26.09 (ревизия WF247). Каталога нет (Мак команды) —
+#    сверять не с чем, выпуск собирается.
 if [ -d "$HOME/Projects/SkilZZZ" ]; then
-  if ! python3 -B "$ROOT/tools/kit_build.py" --check; then
-    echo "⚠️  комплект Workflow отстал от SkilZZZ — пересобери: python3 tools/kit_build.py" >&2
-  fi
+  python3 -B "$ROOT/tools/kit_build.py" --check \
+    || die "комплект Workflow расходится с SkilZZZ: подтяни SkilZZZ (git pull), пересобери python3 tools/kit_build.py, закоммить и повтори"
 fi
 
 # 1. Сборка и подпись Developer ID (bundle.sh сам сносит старый $APP).

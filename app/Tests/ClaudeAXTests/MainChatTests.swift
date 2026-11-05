@@ -286,15 +286,8 @@ final class MainChatTests: XCTestCase {
         Data(("{\"id\":\"\(id)\",\"at\":\"\(at)\",\"action\":\"main\",\"from\":\"\",\"chat\":\"\(chat)\"}").utf8)
     }
 
-    private static var fixtures: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("tests/fixtures/pimp", isDirectory: true)
-    }
-
     private func fixture(_ name: String) throws -> Data {
-        try Data(contentsOf: MainChatTests.fixtures.appendingPathComponent(name))
+        try Data(contentsOf: Repo.fixture("pimp/" + name))
     }
 
     private func fixtureText(_ name: String) throws -> String {

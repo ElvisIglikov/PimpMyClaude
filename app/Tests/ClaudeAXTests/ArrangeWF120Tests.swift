@@ -162,8 +162,14 @@ final class ArrangeWF120Tests: XCTestCase {
                     PimpWindow(id: id, title: "", frame: CGRect(x: index * 480, y: 34, width: 480, height: 700))
                 }
             }
+            channel.seats.projects = { [Project(folder: dir, name: "Test", lastFocusedAt: 0)] }
             channel.start()
-            XCTAssertTrue(channel.startNewWindow(project: Project(folder: dir, name: "Test", lastFocusedAt: 0)))
+            // WF237: пункта меню «🪟 Новое окно ▸ проект» нет — та же работа запросом канала (`pimp.py open`).
+            let id = "1790000000000-012\(variant)"
+            try Data(("{\"id\":\"\(id)\",\"at\":\"\(PimpChannel.stampText(now))\",\"action\":\"new-window\","
+                      + "\"from\":\"\",\"project\":\"Test\",\"place\":\"right\"}").utf8)
+                .write(to: dir.appendingPathComponent(id + ".json"))
+            channel.tick()
             XCTAssertEqual(actual, narrow)
             if variant == 1 { actual = wide.offsetBy(dx: 1, dy: 100) }
             if variant == 2 { actual = nil }

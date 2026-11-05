@@ -1,4 +1,5 @@
 import Foundation
+import Patcher
 
 /// Набор меню: три коротких списка цветов вместо одного длинного (слово Элвиса 12.09:
 /// «мне надо будет три списка, не один длинный», задача #5801). Признак ТОЛЬКО для
@@ -57,24 +58,15 @@ struct Theme: Equatable {
             (key: "palette", value: paletteValue),
         ])
     }
-
-    /// Светлая ли тема для СТРАНИЦЫ (`color-scheme`). Со списком меню не путать: яркие
-    /// «Лимонад» и «Апельсин» светлые и при этом лежат в наборе «Яркие».
-    var isLight: Bool { type == "light" }
 }
 
 /// Каталог тем: `themes.json` из ресурсов .app (кладёт tools/bundle.sh рядом с inject.js).
-/// Файла нет или он битый — каталог пуст, подменю тем в меню кнопки не появляется.
+/// Файла нет или он битый — каталог пуст, полос цветов в «Оформлении» панели нет.
 enum ThemeCatalog {
     static let fileName = "themes.json"
 
-    /// Ресурсы .app; PIMPMYCLAUDE_RESOURCES — та же подмена, что у патчера (удобно на гейте).
-    static var resourcesDirectory: URL? {
-        if let override = ProcessInfo.processInfo.environment["PIMPMYCLAUDE_RESOURCES"] {
-            return URL(fileURLWithPath: override, isDirectory: true)
-        }
-        return Bundle.main.resourceURL
-    }
+    /// Ресурсы .app — те же, что у патчера (`Patcher.bundledResourcesDirectory`, с подменой PIMPMYCLAUDE_RESOURCES).
+    static var resourcesDirectory: URL? { Patcher.bundledResourcesDirectory }
 
     /// Каталог из бандла. Читается один раз за запуск: меню всплывает по наведению, файл там не место.
     static let bundled: [Theme] = load()
@@ -123,6 +115,8 @@ struct Look: Equatable {
     /// Схема цвета живого фона (WF146, `look.scheme`): id из `LookScheme.all`; nil — умолчание («violet»),
     /// и ключа в объекте нет. Не эффект: пустоту вида не меняет.
     var scheme: String?
+    /// Движение живого фона (#9994, `look.motion`): `.still` — умолчание, ключа в объекте нет. Не эффект.
+    var motion: LookMotion = .still
 
     /// Эффект — он же ключ объекта в команде, в `window-themes.json` и в `.pimpmyclaude.json`.
     enum Effect: String, CaseIterable {
@@ -159,15 +153,19 @@ struct Look: Equatable {
     /// Слой из вида: пустой вид — сброс, как у выключенной рамки.
     var layer: Layer<Look> { isEmpty ? .reset : .set(self) }
 
-    /// Ключ схемы в объекте вида — последним, после трёх эффектов (контракт WF146).
+    /// Ключ схемы в объекте вида — после трёх эффектов (контракт WF146).
     static let schemeKey = "scheme"
+    /// Ключ движения — последним, после `scheme` (контракт #9994).
+    static let motionKey = "motion"
 
-    /// Вид как объект команды: все три ключа, по порядку контракта, и `scheme` последним — только если задана.
+    /// Вид как объект команды: все три ключа, по порядку контракта, `scheme` — только если задана, и `motion`
+    /// последним — только при живом фоне и не умолчание (`still` страница берёт сама, когда ключа нет).
     var commandValue: CommandValue {
         var fields = Self.keys.map { key in
             (key: key, value: CommandValue.bool(Effect(rawValue: key).map { self[$0] } ?? false))
         }
         if let scheme = scheme { fields.append((key: Self.schemeKey, value: .string(scheme))) }
+        if aurora, motion != .still { fields.append((key: Self.motionKey, value: .string(motion.rawValue))) }
         return .object(fields)
     }
 
@@ -178,19 +176,21 @@ struct Look: Equatable {
         var look = Look()
         for effect in Effect.allCases { look[effect] = values[effect.rawValue] as? Bool ?? false }
         look.scheme = LookScheme.normalized(values[schemeKey] as? String)
+        look.motion = LookMotion.from(values[motionKey])
         return look
     }
 
-    /// Вид для defaults: только включённые эффекты и схема, если задана.
+    /// Вид для defaults: только включённые эффекты, схема, если задана, и движение, если не умолчание.
     var defaultsValue: [String: Any] {
         var out: [String: Any] = [:]
         for effect in Effect.allCases where self[effect] { out[effect.rawValue] = true }
         if let scheme = scheme { out[Self.schemeKey] = scheme }
+        if motion != .still { out[Self.motionKey] = motion.rawValue }
         return out
     }
 
-    /// Тот же вид с живым фоном и схемой `id` (умолчание и чужое — без ключа): пункт «🎨 Схема ▸» и образцы панели
-    /// включают живой фон вместе с выбором.
+    /// Тот же вид с живым фоном и схемой `id` (умолчание и чужое — без ключа): строка «Схема» панели (до WF237 — пункт
+    /// «🎨 Схема ▸» меню жёлтой кнопки) включает живой фон вместе с выбором.
     func withScheme(_ id: String) -> Look {
         var copy = with(.aurora, true)
         copy.scheme = LookScheme.normalized(id)
@@ -199,6 +199,20 @@ struct Look: Equatable {
 
     /// Действующая схема для галки: нет ключа — умолчание.
     var schemeID: String { scheme ?? LookScheme.defaultID }
+}
+
+/// Движение живого фона (#9994, слово Элвиса 16.10.2026 19:42: «эта анимация заднего свечения дофига ресурсов жрет…
+/// У людей бывают слабые компьютеры… настройку типа анимация, не анимация или просто статическая градиентная картинка»):
+/// `live` — фон движется; `still` — тот же рисунок стоит, ноль перерисовок (умолчание для всех); `image` — простая
+/// градиентная картинка в тонах схемы, без размытых слоёв и анимаций. `fireflies` (WF251) снято 30.10.2026 (#11211,
+/// эффект ушёл в Dictator): старое значение у людей читается как `still`.
+public enum LookMotion: String, CaseIterable {
+    case live, still, image
+
+    /// Из JSON или defaults: нет ключа или мусор (и снятое `fireflies`) — `still`.
+    static func from(_ raw: Any?) -> LookMotion {
+        (raw as? String).flatMap { LookMotion(rawValue: $0.trimmingCharacters(in: .whitespaces)) } ?? .still
+    }
 }
 
 /// Схемы цвета живого фона (WF146, #9107) — копия `LOOK_SCHEMES` страницы (`claude-patch/inject.js`), порядок —
@@ -219,6 +233,10 @@ public struct LookScheme: Equatable {
         LookScheme(id: "sunset", name: "Закат", tones: ["#e6a07c", "#d68a9e", "#c79fc2", "#b08a82"]),
         LookScheme(id: "forest", name: "Лес", tones: ["#7f9f6a", "#9cb89a", "#5f8f7a", "#8a9a78"]),
         LookScheme(id: "graphite", name: "Графит", tones: ["#8a929c", "#a3a7ae", "#767e88", "#9a9590"]),
+        // WF251 (#10015): «Тёплое свечение» — тона темы «Светлячки в тумане» Диктатора у коллеги (оттенок от 0.16 круга ±0.14,
+        // сочность ×1.6): янтарь, мёд, персик, роза — OKLCH (0.72 0.16 55°), (0.80 0.15 74°), (0.78 0.12 45°), (0.72 0.13 10°);
+        // мёд не желтее 74°: жёлтый полупрозрачно на тёмном окне уходит в болотный.
+        LookScheme(id: "warm", name: "Тёплое свечение", tones: ["#eba25f", "#edbb64", "#f1a685", "#e190a2"]),
         LookScheme(id: "theme", name: "Как у темы", tones: nil),
     ]
 

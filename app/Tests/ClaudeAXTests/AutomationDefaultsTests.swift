@@ -4,7 +4,7 @@ import XCTest
 
 final class AutomationDefaultsTests: XCTestCase {
     func testCombinedStartupFreshStaysOffOnSecondLaunchAfterV8Marker() throws {
-        let suite = "automation-defaults-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         let marker = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: marker) }
@@ -14,37 +14,35 @@ final class AutomationDefaultsTests: XCTestCase {
             AutomationDefaults.migrate(defaults, values: previous, legacyPatched: AutomationDefaults.legacyMarker(oldMarker))
         }
         startup()
-        XCTAssertTrue(defaults.bool(forKey: AutomationDefaults.downloadQuestionKey))
-        for key in [AutomationDefaults.allowKey, ClaudeUpdateMenu.autoDownloadKey, AutomationDefaults.continueKey, AutomationDefaults.mirrorsKey] {
+        for key in [AutomationDefaults.allowKey, AutomationDefaults.continueKey] {
             XCTAssertEqual(defaults.object(forKey: key) as? Bool, false)
         }
         try JSONSerialization.data(withJSONObject: ["version": "2.0", "headerSHA256": "abc", "loaderVersion": 8]).write(to: marker)
         startup()
-        for key in [AutomationDefaults.allowKey, ClaudeUpdateMenu.autoDownloadKey, AutomationDefaults.continueKey, AutomationDefaults.mirrorsKey] {
+        for key in [AutomationDefaults.allowKey, AutomationDefaults.continueKey] {
             XCTAssertEqual(defaults.object(forKey: key) as? Bool, false)
         }
         XCTAssertFalse(defaults.bool(forKey: AutomationDefaults.continueMigrationKey))
         defaults.removePersistentDomain(forName: suite)
         startup() // A v8 marker already exists, but no prior application settings do.
-        for key in [AutomationDefaults.allowKey, ClaudeUpdateMenu.autoDownloadKey, AutomationDefaults.continueKey, AutomationDefaults.mirrorsKey] {
+        for key in [AutomationDefaults.allowKey, AutomationDefaults.continueKey] {
             XCTAssertEqual(defaults.object(forKey: key) as? Bool, false)
         }
     }
 
     func testLegacyPreservesExplicitChoicesAndMigratesMissingOnesOnce() throws {
-        let suite = "automation-defaults-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(false, forKey: ClaudeUpdateMenu.autoDownloadKey)
         defaults.set(false, forKey: AutomationDefaults.allowKey)
         let previous = defaults.persistentDomain(forName: suite) ?? [:]
         AutomationDefaults.migrate(defaults, values: previous, legacyPatched: false)
-        XCTAssertFalse(defaults.bool(forKey: ClaudeUpdateMenu.autoDownloadKey))
         XCTAssertFalse(defaults.bool(forKey: AutomationDefaults.allowKey), "прежнее значение не трогаем")
         XCTAssertTrue(defaults.bool(forKey: AutomationDefaults.continueKey))
         XCTAssertTrue(defaults.bool(forKey: AutomationDefaults.continueMigrationKey))
-        XCTAssertTrue(defaults.bool(forKey: AutomationDefaults.mirrorsKey))
-        XCTAssertFalse(defaults.bool(forKey: AutomationDefaults.downloadQuestionKey))
+        for key in ["claudeAutoDownload", "claudeThirdPartySources", "claudeAutoDownloadQuestionPending"] {
+            XCTAssertNil(defaults.object(forKey: key), "\(key): выключателей загрузки и зеркал нет с WF126 — ключ не пишется")
+        }
         defaults.set(false, forKey: AutomationDefaults.continueKey)
         defaults.set(false, forKey: AutomationDefaults.continueMigrationKey)
         AutomationDefaults.migrate(defaults, values: defaults.persistentDomain(forName: suite) ?? [:], legacyPatched: true)
@@ -82,16 +80,16 @@ final class AutomationDefaultsTests: XCTestCase {
     }
 
     func testNewPolicyKeysAloneNeverProveLegacy() throws {
-        let suite = "automation-defaults-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        for key in [ClaudeUpdateMenu.autoDownloadKey, AutomationDefaults.continueKey, AutomationDefaults.mirrorsKey, "unknownPreference"] {
+        for key in ["claudeAutoDownload", AutomationDefaults.continueKey, "claudeThirdPartySources", "unknownPreference"] {
             defaults.removePersistentDomain(forName: suite)
             defaults.set(false, forKey: key)
             let previous = defaults.persistentDomain(forName: suite) ?? [:]
             XCTAssertFalse(AutomationDefaults.isLegacy(values: previous, patched: false))
             AutomationDefaults.migrate(defaults, values: previous, legacyPatched: false)
-            for policy in [AutomationDefaults.allowKey, ClaudeUpdateMenu.autoDownloadKey, AutomationDefaults.continueKey, AutomationDefaults.mirrorsKey] {
+            for policy in [AutomationDefaults.allowKey, AutomationDefaults.continueKey] {
                 XCTAssertEqual(defaults.object(forKey: policy) as? Bool, false)
             }
         }
@@ -101,7 +99,7 @@ final class AutomationDefaultsTests: XCTestCase {
     }
 
     func testMissingAutoAllowMigratesOnlyUninitializedLegacyInstallations() throws {
-        let suite = "automation-defaults-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let cases: [(values: [String: Any], patched: Bool, expected: Bool)] = [
@@ -127,7 +125,7 @@ final class AutomationDefaultsTests: XCTestCase {
     }
 
     func testAutoAllowPreservesExplicitBooleansBeforeAndAfterInitialization() throws {
-        let suite = "automation-defaults-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         for initialized in [false, true] {
@@ -145,7 +143,7 @@ final class AutomationDefaultsTests: XCTestCase {
     }
 
     func testMalformedAutoAllowIsStoredAsFalseEvenAfterInitialization() throws {
-        let suite = "automation-defaults-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let malformed: [Any] = ["true", "false", "YES", 1, 0, 1.0, [true], ["on": true]]
@@ -165,14 +163,14 @@ final class AutomationDefaultsTests: XCTestCase {
     }
 
     func testReturningAutoAllowDoesNotRemigrateOtherP2Settings() throws {
-        let suite = "automation-defaults-\(UUID().uuidString)"
+        let suite = testSuiteName()
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let previous: [String: Any] = [
             AutomationDefaults.initializedKey: true, "setupWindowSeen": true, "minimizeMenuEnabled": true,
             AutomationDefaults.continueKey: false, AutomationDefaults.continueMigrationKey: true,
-            ClaudeUpdateMenu.autoDownloadKey: false, AutomationDefaults.mirrorsKey: true,
-            AutomationDefaults.downloadQuestionKey: true, "blockQuitEnabled": false,
+            "claudeAutoDownload": false, "claudeThirdPartySources": true,
+            "claudeAutoDownloadQuestionPending": true, "blockQuitEnabled": false,
             SendDelaySetting.key: ["on": false, "seconds": 3]
         ]
         defaults.setPersistentDomain(previous, forName: suite)

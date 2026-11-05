@@ -86,6 +86,8 @@ const drop = (loaded, { target, files, text = "", trusted = true }) =>
     dataTransfer: { ...clip(files, text), types: ["Files"] },
   });
 const settle = loaded => loaded.inner.shotState.chain;
+// Все микрозадачи вставки до первого таймера — без счёта «двух тиков».
+const drained = () => new Promise(resolve => setImmediate(resolve));
 const names = loaded => loaded.got.map(files => files.map(file => file.name));
 const drawn = file => JSON.parse(String.fromCharCode(...file.__bytes));
 const marks = loaded => [...loaded.parts.box.querySelectorAll("[data-cds-attachment]")].map(node => node.getAttribute(ATTR));
@@ -116,6 +118,8 @@ test("⌘V скриншота в поле: Claude получает «Скрин�
   assert.match(text.font, /^700 50px /, "кегль — доля короткой стороны");
   const box = picture.ops.find(item => item.op === "roundRect").args;
   assert.ok(box[0] > 0 && box[1] + box[3] < 1000, "плашка номера целиком внутри снимка");
+  assert.equal(box[0], 50, "#11217: от левого края — кегль, не полкегля («чтоб они чуть-чуть дышали»)");
+  assert.equal(1000 - (box[1] + box[3]), 50, "#11217: от низа — кегль");
   assert.ok(loaded.dom.bitmaps.every(bitmap => bitmap.closed), "разобранная картинка не закрыта");
   assert.equal(loaded.document.activeElement, loaded.parts.editor);
   assert.equal(note(loaded), null, "без плашек: всё получилось");
@@ -133,8 +137,7 @@ test("три скриншота подряд — 1, 2, 3 по порядку ⌘
     return new Promise(resolve => { release = () => resolve(decode(source)); });
   };
   for (const name of ["a.png", "b.png", "c.png"]) paste(loaded, { files: [loaded.dom.image(name)] });
-  await Promise.resolve();
-  await Promise.resolve();
+  await drained(); // сверка содержимого (#11689) читает байты до разбора
   assert.deepEqual(calls, ["a.png"], "вторая вставка ждёт первую в очереди");
   release();
   await settle(loaded);
@@ -261,6 +264,20 @@ test("холст отказал (контекст или сборка файла
   }
 });
 
+test("#10288: узкий снимок строки меню 1052×61 — с номером; полоска ниже 40 — как есть", async () => {
+  const loaded = page();
+  paste(loaded, { files: [loaded.dom.image("bar.png", { width: 1052, height: 61 })] });
+  await settle(loaded);
+  assert.equal(names(loaded)[0][0], "Скриншот 1.png");
+  const bar = drawn(loaded.got[0][0]).ops.find(item => item.op === "roundRect").args;
+  assert.ok(bar[1] >= 0 && bar[1] + bar[3] <= 61, `#11217: на узкой полосе плашка целиком внутри: ${bar}`);
+  const thin = loaded.dom.image("thin.png", { width: 900, height: 30 });
+  paste(loaded, { files: [thin] });
+  await settle(loaded);
+  assert.equal(loaded.got[1][0], thin);
+  assert.equal(note(loaded), null);
+});
+
 test("значок меньше 64 точек — как есть и молча; огромная — как есть, с плашкой", async () => {
   const loaded = page();
   const icon = loaded.dom.image("icon.png", { width: 32, height: 32 });
@@ -316,7 +333,7 @@ test("⌘V мимо поля (лента): скриншот уезжает в п
   assert.equal(loaded.got[1][0], plain);
 });
 
-test("бросок картинки на блок ввода — с номером; на ленту — не наш", async () => {
+test("бросок картинки на блок ввода и на ленту — с номером (#11310); поиск и терминал — не наши", async () => {
   const loaded = page();
   const passed = drop(loaded, { target: loaded.parts.modelRow, files: [loaded.dom.image("a.png")] });
   assert.equal(passed, false, "бросок на блок ввода обязаны забрать");
@@ -324,15 +341,26 @@ test("бросок картинки на блок ввода — с номеро
   await settle(loaded);
   assert.deepEqual(names(loaded), [["Скриншот 1.png"]]);
 
-  for (const target of [loaded.parts.transcript, loaded.parts.search]) {
+  // Лента (и подложка Claude «брось сюда» поверх окна): Claude кладёт брошенное в поле — с номером, общий ряд.
+  const released = [];
+  loaded.parts.transcript.addEventListener("drop", event => released.push(event));
+  assert.equal(drop(loaded, { target: loaded.parts.transcript, files: [loaded.dom.image("b.png")] }), false);
+  assert.equal(loaded.native.length, 0);
+  await settle(loaded);
+  assert.deepEqual(names(loaded), [["Скриншот 1.png"], ["Скриншот 2.png"]]);
+  assert.equal(released.length, 1, "пустой бросок той же цели гасит подложку Claude");
+  assert.equal(released[0].dataTransfer.files.length, 0, "в пустом броске файлов нет — дубля у Claude не будет");
+
+  const terminal = loaded.document.body.add("div", { attrs: { class: "xterm" } }).add("canvas");
+  for (const target of [loaded.parts.search, terminal]) {
     loaded.native.length = 0;
-    assert.equal(drop(loaded, { target, files: [loaded.dom.image("b.png")] }), true);
-    assert.equal(loaded.native.length, 1, "бросок мимо блока ввода — дело Claude");
+    assert.equal(drop(loaded, { target, files: [loaded.dom.image("c.png")] }), true);
+    assert.equal(loaded.native.length, 1, "поиск и терминал получают бросок как раньше");
   }
-  assert.equal(drop(loaded, { target: loaded.parts.editor, files: [loaded.dom.image("c.png")], trusted: false }), true,
+  assert.equal(drop(loaded, { target: loaded.parts.editor, files: [loaded.dom.image("d.png")], trusted: false }), true,
     "чужой синтетический бросок не трогаем");
   await settle(loaded);
-  assert.equal(loaded.got.length, 1);
+  assert.equal(loaded.got.length, 2);
 });
 
 test("долгий разбор: через 300 мс плашка ожидания, по сроку 5 с — оригинал, плашка ожидания уходит", async () => {
@@ -340,8 +368,7 @@ test("долгий разбор: через 300 мс плашка ожидани
   loaded.win.__bitmapHang = true;
   const original = loaded.dom.image("a.png");
   paste(loaded, { files: [original] });
-  await Promise.resolve();
-  await Promise.resolve();
+  await drained();
   // Свой таймер — последний с таким сроком: он поставлен этой вставкой.
   const timer = ms => [...loaded.dom.timers].filter(([, item]) => item.kind === "timeout" && item.ms === ms).pop()?.[0];
   assert.equal(note(loaded), null, "плашка не мигает у быстрой вставки");

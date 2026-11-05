@@ -1,17 +1,22 @@
 // WF213 (#9370–#9373, #9405; раздел 12п³ inject.js): панель оркестрации на кнопке PMP.
 //
-// Что проверяется (карточка WF213, контракты К-DG и К-KO):
-//   1) чистая часть — разбор /digest в модель панели: строка итога, строки счётчика и «Тихо»,
-//      проценты из шагов, счёт терминалов, «ждут тебя», работа без новых полей (старое приложение);
+// Что проверяется (карточка WF213, контракты К-DG и К-KO; блок Workflow — лист 48 · 1.2, WF248 П2):
+//   1) чистая часть — разбор /digest в модель панели: проекты блока Workflow (только группа «идут»),
+//      слова блока («Идут 7», «Идут 7 Workflow · 4 проекта», «2/3 · 1 идёт»), сколько проектов входит в строку,
+//      проценты из шагов, счёт терминалов, работа без новых полей (старое приложение); «Ждут тебя» снят (#9520);
 //   2) открытие и закрытие — кнопка, повторное нажатие, Esc, клик мимо; опрос, пока открыта;
 //   3) вид каждого состояния — загрузка, данные, пусто, приложение не отвечает;
-//   4) команды — «Запустить Workflow» (GET /kickoff; 404 — пункта нет), «Отчёт», «Что происходит»
-//      (в пустое и непустое поле, набранное не затирается), «Настройки Пимпа» (GET /panel);
+//   4) команды — три главные с подписями (#9552): «Запустить Workflow» (GET /kickoff; 404 — подпись «Нужен PMP у
+//      часов»), «Всё в одном чате» (GET /one-chat), «Сэкономить подписку» (#9547); ниже мелкие «Отчёт», «Что
+//      происходит» (в пустое и непустое поле, набранное не затирается), «Настройки Пимпа» (GET /panel);
 //   5) число «▶N» у кнопки и редкий запрос ради него там, где блока Рика нет;
-//   6) status().pmp — open, rows, terminals, running, lastError.
+//   6) status().pmp — open, rows, flowsOpen, terminals, running, lastError;
+//   7) блок «Идёт Workflow» одной строкой: свёрнут — «Идут 2 · PimpM 2/5 · PimpV 0/1», не влезло — «+N»;
+//      нажал — список по проектам, ещё раз — свернул; проектов нет — «Тихо» без нажатия.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadInject, loadInner, plain } from "./load.mjs";
+import { chin, settle } from "./stands.mjs";
 
 const PMP = "#myclaude-pmp";
 const PANEL = "#myclaude-pmp-panel";
@@ -64,29 +69,58 @@ test("К-DG: шаги «2/4» — процент; время без начала
   assert.equal(inner.pmpTerminalsTitle(21), "Работает 21 терминал");
 });
 
-test("К-DG: /digest → модель панели — итог, строки счётчика, «Тихо», терминалы, «ждут тебя»", () => {
+test("К-DG: /digest → модель панели — проекты блока Workflow, итог, терминалы", () => {
   const { inner } = loadInner();
   const model = plain(inner.pmpModel(DIGEST, NOW));
-  // Итог — по проектам, где сейчас идёт (группа «идут»): давно молчащий проект в счёт не идёт.
+  // Итог — по проектам, где сейчас идёт (группа «идут»): давно молчащий и ждущий проекты в блок не идут.
   assert.deepEqual([model.projects, model.flows, model.done, model.running], [2, 6, 2, 2]);
-  assert.deepEqual(model.rows.map(row => [row.name, row.done, row.total, row.running, row.failed]), [["PimpM", 2, 5, 1, 1], ["PimpV", 0, 1, 1, 0]]);
-  assert.deepEqual(model.rows[0].cells.map(cell => cell.state), ["done", "done", "run", "fail", "plan"]);
-  assert.equal(model.rows[0].color, "#ff2d55");
-  assert.equal(model.rows[0].cells[2].tip, "PimpMyClaude · Workflow 3 · идёт · шаги 2/4\nпанель оркестрации");
-  assert.equal(model.rows[0].cells[0].tip, "PimpMyClaude · Workflow 1 · готово · шаги 3/3\nдело 1");
-  // «Тихо»: всё, где сейчас не идёт; идущий там — янтарный, но не в счёте, и подсказка говорит почему.
-  assert.deepEqual(model.quiet.map(row => [row.name, row.done, row.total, row.running]), [["Menu", 1, 2, 0], ["Plaud", 1, 2, 0]]);
-  assert.equal(model.quiet[0].cells[1].state, "wait");
-  assert.equal(model.quiet[1].color, "", "мусорный цвет не берём");
-  assert.equal(model.quiet[1].cells[1].tip, "PlaudClaud — ночь 01.10 · Workflow 2 · идёт · сводка старше суток\nдело 2");
+  assert.deepEqual(model.rows.map(row => [row.name, row.done, row.total, row.running, row.failed, row.waiting, row.about]),
+    [["PimpM", 2, 5, 1, 1, 0, "панель оркестрации"], ["PimpV", 0, 1, 1, 0, 0, "архив вместо «закрыть»"]]);
+  assert.equal(model.rows[0].title, "PimpMyClaude");
+  assert.equal("quiet" in model, false, "«Тихо · N» с давно молчащими снят вместе с квадратиками (лист 48 · 1.2)");
+  assert.equal("cells" in model.rows[0], false, "квадратиков на Workflow больше нет");
   // Терминалы — проекты с terminal: true; что делает — «Сейчас», нет её — «о чём» идущего, нет ничего — имя.
   assert.equal(model.known, true);
   assert.deepEqual(model.terminals.map(item => [item.name, item.text]), [["PimpM", "идёт панель на кнопке PMP."], ["PimpV", "архив вместо «закрыть»"], ["Bambubek", ""]]);
   assert.deepEqual(model.terminals[0].flows, [{ n: 3, about: "панель оркестрации", steps: { done: 2, total: 4, percent: 50 }, when: "закончит в 04:30 · идёт 20 мин", role: "кодинг" }]);
   assert.equal(model.terminals[0].wait, "файл 37 — четыре вопроса.");
   assert.deepEqual(model.terminals[2].flows, []);
-  // «Ждут тебя»: строка «Ждёт…», нет её — Workflow в состоянии «ждёт»; сводка старше недели — не показываем.
-  assert.deepEqual(model.waits.map(item => [item.name, item.text]), [["PimpM", "файл 37 — четыре вопроса."], ["Menu", "выбрать шрифт меню"]]);
+  assert.equal("waits" in model, false, "«Ждут тебя» снят (#9520): списка в модели нет");
+});
+
+// Слова блока — те же, что у панели у часов (PanelTiles.nowHead / nowOpenHead / ringWords, WF258).
+test("лист 48 · 1.2: слова блока — «Идут 2», «Идут 2 Workflow · 2 проекта», «2/5 · 1 идёт»; идущих нет — «Workflow», проектов нет — «Тихо»", () => {
+  const { inner } = loadInner();
+  const model = inner.pmpModel(DIGEST, NOW);
+  assert.equal(inner.pmpFlowsHead(model), "Идут 2");
+  assert.equal(inner.pmpFlowsOpenHead(model), "Идут 2 Workflow · 2 проекта");
+  const one = inner.pmpModel({ projects: [{ name: "A", title: "A", group: "идут", workflows: [flow(1, "идёт"), flow(2, "готово")] }] }, NOW);
+  assert.deepEqual([inner.pmpFlowsHead(one), inner.pmpFlowsOpenHead(one)], ["Идёт 1", "Идёт 1 Workflow · 1 проект"]);
+  const stopped = inner.pmpModel({ projects: [{ name: "A", title: "A", group: "идут", workflows: [flow(1, "упал")] }] }, NOW);
+  assert.deepEqual([inner.pmpFlowsHead(stopped), inner.pmpFlowsOpenHead(stopped)], ["Workflow", "Workflow · 1 проект"]);
+  const none = inner.pmpModel({ projects: [] }, NOW);
+  assert.deepEqual([inner.pmpFlowsHead(none), inner.pmpFlowsOpenHead(none), inner.pmpFlowsHelp(none)], ["Тихо", "Workflow", "Workflow сейчас не идут"]);
+  const words = row => plain(inner.pmpFlowsWords({ done: 0, total: 3, running: 0, failed: 0, waiting: 0, ...row }));
+  assert.deepEqual(words({ running: 3 }), { text: "3 идут", fail: false });
+  assert.deepEqual(words({ running: 1, failed: 1 }), { text: "1 идёт", fail: false });
+  assert.deepEqual(words({ failed: 1 }), { text: "упал", fail: true });
+  assert.deepEqual(words({ waiting: 1 }), { text: "ждёт", fail: false });
+  assert.deepEqual(words({ done: 3 }), { text: "готово", fail: false });
+  assert.deepEqual(words({ done: 1 }), { text: "", fail: false });
+  assert.equal(inner.pmpFlowsHelp(model), "Идут 2 Workflow · 2 проекта\nPimpMyClaude: готово 2 из 5, 1 идёт — панель оркестрации\nPimpViewer: готово 0 из 1, 1 идёт — архив вместо «закрыть»");
+});
+
+// Пять проектов по «Alpha 0/1»: стенд меряет 0,6 кегля на знак (tests/dom.mjs) — 7,2 на знак шрифта 12.
+const FIVE = ["Alpha", "Bravo", "Charl", "Delta", "Echoo", "Foxtr"];
+const many = (names = FIVE) => ({ v: 1, at: DIGEST.at, projects: names.map(name => ({ name, title: name, group: "идут", terminal: false, workflows: [flow(1, "идёт")] })) });
+test("лист 48 · 1.2: сколько проектов входит в строку — целиком, за ними «+N» (его место тоже считается), без многоточия", () => {
+  const { inner } = loadInner();
+  const model = inner.pmpModel(many(), NOW);
+  // «Идут 6» — 43,2; « · Alpha» + « 0/1» — 86,4; « · +2» — 36.
+  assert.equal(inner.pmpFlowsFit(model, 1000), 6, "всё входит — «+N» нет");
+  assert.equal(inner.pmpFlowsFit(model, 452), 4, "43,2 + 4 × 86,4 + 36 = 424,8 ≤ 452; пятый с «+1» — 511");
+  assert.equal(inner.pmpFlowsFit(model, 242), 1);
+  assert.equal(inner.pmpFlowsFit(model, 60), 0, "ни один не входит — одна шапка и «+6»");
 });
 
 test("К-DG: старое приложение (новых полей нет) — «кто что делает» по группе «идут», остальное как было", () => {
@@ -96,7 +130,6 @@ test("К-DG: старое приложение (новых полей нет) �
   assert.deepEqual([model.projects, model.flows, model.done, model.running], [2, 6, 2, 2]);
   assert.deepEqual(model.terminals.map(item => [item.name, item.text, item.wait]), [["PimpM", "панель оркестрации", ""], ["PimpV", "архив вместо «закрыть»", ""]]);
   assert.deepEqual(plain(model.terminals[0].flows[0]), { n: 3, about: "панель оркестрации", steps: { done: 2, total: 4, percent: 50 }, when: "", role: "" });
-  assert.deepEqual(model.waits.map(item => item.name), ["Menu"]);
   // Имена: два проекта с одним коротким именем — с буквой второй части; три, где и так совпало, — целиком;
   // разметка сводки («**важно**») на экран не идёт.
   const names = list => plain(inner.pmpModel({ projects: list.map(title => ({ name: title, title, group: "идут", terminal: true, now: "чат на **Opus** — `сборка`", workflows: [flow(1, "идёт")] })) }, NOW)).terminals;
@@ -106,34 +139,21 @@ test("К-DG: старое приложение (новых полей нет) �
   // Мусор вместо ответа — пустая модель, без падения.
   for (const junk of [null, {}, { projects: "нет" }, { projects: [null, 5, "x"] }]) {
     const empty = plain(inner.pmpModel(junk, NOW));
-    assert.deepEqual([empty.rows, empty.quiet, empty.terminals, empty.waits, empty.running], [[], [], [], [], 0]);
+    assert.deepEqual([empty.rows, empty.terminals, empty.running], [[], [], 0]);
   }
 });
 
 // ---- страница --------------------------------------------------------------
-const settle = loaded => {
-  loaded.win.dispatchEvent({ type: "resize" });
-  loaded.dom.fireKind("timeout");
-  loaded.dom.fireKind("raf");
-};
 const tick = async () => { for (let i = 0; i < 6; i += 1) await new Promise(resolve => setImmediate(resolve)); };
 const okJson = body => () => Promise.resolve({ ok: true, json: async () => body });
 // Окно стенда: поле left…left+width с верхом top, под ним нижняя строка с группой «+» и кнопкой модели.
-const page = async ({ cwd = "/Users/dev/Projects/Trelvis", digest = okJson(DIGEST), kickoff = () => Promise.resolve({ ok: false, status: 404 }), panel = () => Promise.resolve({ ok: true }), text = "",
+const page = async ({ cwd = "/Users/dev/Projects/Trelvis", digest = okJson(DIGEST), kickoff = () => Promise.resolve({ ok: false, status: 404 }), panel = () => Promise.resolve({ ok: true }), oneChat = () => Promise.resolve({ ok: true }), text = "",
   viewport = { width: 1200, height: 800 }, left = 100, width = 1000, top = 600 } = {}) => {
   const loaded = loadInject({
     title: "Чат", href: `https://claude.ai/epitaxy/${CHAT}`, geometry: { viewport },
     html: dom => {
       const parts = dom.composer({ top, left, width, text });
-      const y = top + 148;
-      parts.chin = parts.block.add("div", { attrs: { "data-cds": "ChatComposerChin" }, rect: { left, top: y - 4, width, height: 28 } });
-      const row = parts.chin.add("div", { class: "flex items-center", rect: { left, top: y, width, height: 20 } });
-      parts.left = row.add("div", { class: "flex items-center self-start", rect: { left, top: y + 2, width: 60, height: 16 } });
-      parts.left.add("button", { attrs: { "aria-label": "Add" }, rect: { left, top: y + 2, width: 20, height: 16 } });
-      const right = row.add("div", { class: "ms-auto flex items-center", rect: { left: left + width - 100, top: y, width: 100, height: 20 } });
-      const grid = right.add("div", { class: "grid", rect: { left: left + width - 100, top: y, width: 100, height: 20 } });
-      grid.add("button", { attrs: { "data-testid": "epitaxy-cds-model-selector" }, text: "Opus 5.5", rect: { left: left + width - 100, top: y + 2, width: 60, height: 16 } });
-      grid.add("button", { attrs: { "aria-haspopup": "dialog", "aria-label": "Usage: Context 300k / 1M (30%)" }, rect: { left: left + width - 20, top: y, width: 20, height: 20 } });
+      chin(parts, { left, top, width });
       const side = dom.document.body.add("div", { attrs: { "data-testid": "sidebar" } });
       const item = side.add("div", { attrs: { "data-row-key": `code:${CHAT}` } });
       item.__reactFiber$test = { memoizedProps: { session: { ref: { id: CHAT }, source: { data: { cwd } } } }, return: null };
@@ -141,8 +161,10 @@ const page = async ({ cwd = "/Users/dev/Projects/Trelvis", digest = okJson(DIGES
     },
   });
   assert.equal(loaded.error, null, String(loaded.error?.stack ?? loaded.error));
+  // Часы стенда — на время сводки (NOW): данные 10.10 не стареют вместе с настоящими часами (ревизия WF247).
+  loaded.run(`{ const real = Date.now, start = real(); Date.now = () => ${NOW} + (real() - start); }`);
   loaded.calls = [];
-  loaded.replies = { digest, kickoff, panel };
+  loaded.replies = { digest, kickoff, panel, "one-chat": oneChat };
   loaded.win.fetch = url => {
     const path = String(url).replace(PORT, "");
     loaded.calls.push(path);
@@ -166,13 +188,74 @@ const open = async loaded => { press(loaded); await tick(); };
 const all = loaded => [...panel(loaded).querySelectorAll("*")];
 const parts = (loaded, k) => all(loaded).filter(node => node.dataset.k === k);
 const heads = loaded => all(loaded).filter(node => node.tagName === "H3").map(node => node.textContent);
-const acts = loaded => all(loaded).filter(node => node.tagName === "BUTTON" && node.parentNode.tagName === "NAV").map(node => node.textContent);
+// Команды панели: у главных (#9552) название — в <b>, под ним подпись.
+const acts = loaded => all(loaded).filter(node => node.tagName === "BUTTON" && node.parentNode.tagName === "NAV")
+  .map(node => (node.dataset.k === "main" ? node.children[0].textContent : node.textContent));
+const note = (loaded, name) => all(loaded).find(node => node.dataset.k === "main" && node.dataset.act === name)?.children[1]?.textContent;
 // Стаб событий не всплывает: слушатель панели получает нажатие с целью — нужным узлом.
 const click = (loaded, target) => panel(loaded).dispatchEvent({ type: "click", detail: 1, target });
 const act = (loaded, name) => click(loaded, all(loaded).find(node => node.tagName === "BUTTON" && node.dataset.act === name));
 const count = (loaded, path) => loaded.calls.filter(item => item === path).length;
 // Клавиши слушает общий слушатель окна (onKeyDown): он на захвате раньше всех слушателей document.
 const key = (loaded, name, extra = {}) => loaded.win.dispatchEvent({ type: "keydown", key: name, ...extra });
+const line = loaded => all(loaded).find(node => node.dataset.k === "line");
+const shownItems = loaded => parts(loaded, "it").filter(node => node.style.getPropertyValue("display") !== "none").map(node => node.textContent);
+
+// Лист 48 · 1.2 (слово Элвиса 17.10 00:37: «делай по рекомендациям»): блок «Идёт Workflow» вернулся одной
+// строкой — как у панели у часов (WF258); «Ждут тебя» не вернулся.
+test("лист 48 · 1.2: блок Workflow одной строкой «Идут 2 · PimpM 2/5 · PimpV 0/1»; нажал — список по проектам; ещё раз — свернул", async () => {
+  const loaded = await page();
+  await open(loaded);
+  assert.equal(shown(loaded), true);
+  const row = line(loaded);
+  assert.equal(row.tagName, "BUTTON", "строка — настоящая кнопка: Tab, Enter и пробел");
+  assert.equal(row.parentNode.dataset.k, "flows");
+  assert.equal(row.textContent, "Идут 2 · PimpM 2/5 · PimpV 0/1");
+  assert.equal(row.getAttribute("aria-expanded"), "false");
+  assert.equal(row.title, "Идут 2 Workflow · 2 проекта\nPimpMyClaude: готово 2 из 5, 1 идёт — панель оркестрации\nPimpViewer: готово 0 из 1, 1 идёт — архив вместо «закрыть»");
+  assert.deepEqual(parts(loaded, "more").map(node => node.textContent), [""], "всё вошло — «+N» нет");
+  assert.deepEqual(heads(loaded), ["Работают 3 терминала"], "заголовка «Идёт Workflow сейчас» и строки итога больше нет");
+  for (const gone of ["Идёт Workflow сейчас", "Ждут тебя", "Тихо", "▶1", "✕1"]) assert.equal(panel(loaded).textContent.includes(gone), false, gone);
+  assert.equal(parts(loaded, "caps").length, 0, "квадратиков нет");
+  assert.equal(pmp(loaded).flowsOpen, false);
+  // Нажал — шапка «Идут 2 Workflow · 2 проекта», под ней строка на проект: имя, «2/5 · 1 идёт», о чём идущий.
+  click(loaded, row);
+  const open1 = line(loaded);
+  assert.equal(open1.getAttribute("aria-expanded"), "true");
+  assert.equal(open1.textContent, "Идут 2 Workflow · 2 проекта");
+  assert.equal(open1.title, "Свернуть");
+  const rows = parts(loaded, "row").filter(node => node.dataset.kind === "flow");
+  assert.deepEqual(rows.map(node => [...node.children].map(child => child.textContent)),
+    [["PimpM", "2/5 · 1 идётпанель оркестрации"], ["PimpV", "0/1 · 1 идётархив вместо «закрыть»"]]);
+  assert.equal(rows[0].children[0].title, "PimpMyClaude", "полное имя — в подсказке");
+  assert.equal(rows[0].style.getPropertyValue("--c"), "", "цвета проекта в блоке нет (лист 48, «Решено»)");
+  assert.equal(pmp(loaded).flowsOpen, true);
+  // Ещё раз — свернул; раскрытость живёт, пока жива страница: закрыл и открыл панель — список на месте.
+  press(loaded);
+  await open(loaded);
+  assert.equal(line(loaded).getAttribute("aria-expanded"), "true");
+  click(loaded, line(loaded));
+  assert.equal(line(loaded).getAttribute("aria-expanded"), "false");
+  assert.deepEqual(parts(loaded, "row").filter(node => node.dataset.kind === "flow"), []);
+  // Знака «▶N» у кнопки нет (лист 48 · 1.2; счётчики у кнопок сняты, #9507) — число в строке блока.
+  assert.equal(button(loaded).textContent, "PMP");
+});
+
+test("лист 48 · 1.2: не влезло — проекты прячутся с конца, за видимыми «+N»; окно сузили — перемерено", async () => {
+  const loaded = await page({ digest: okJson(many()) });
+  await open(loaded);
+  assert.equal(panel(loaded).style.getPropertyValue("width"), "480px");
+  assert.deepEqual(shownItems(loaded), [" · Alpha 0/1", " · Bravo 0/1", " · Charl 0/1", " · Delta 0/1"]);
+  assert.deepEqual(parts(loaded, "more").map(node => node.textContent), [" · +2"]);
+  assert.equal(line(loaded).title.split("\n").length, 7, "в подсказке — все шесть проектов");
+  // Окно сузили до 280: поле 270 — панель 270, в строку входит один проект.
+  loaded.win.innerWidth = 280;
+  loaded.parts.shell.rect = { left: 5, top: 600, width: 270, height: 140 };
+  settle(loaded);
+  assert.equal(panel(loaded).style.getPropertyValue("width"), "270px");
+  assert.deepEqual(shownItems(loaded), [" · Alpha 0/1"]);
+  assert.deepEqual(parts(loaded, "more").map(node => node.textContent), [" · +5"]);
+});
 
 test("#9373: нажатие открывает панель над полем и сразу спрашивает сводку и текст запуска; повторное — закрывает", async () => {
   const loaded = await page();
@@ -190,7 +273,8 @@ test("#9373: нажатие открывает панель над полем и
   assert.equal(style.getPropertyValue("bottom"), `${800 - 600 + 6}px`);
   assert.equal(style.getPropertyValue("max-height"), "560px");
   assert.equal(panel(loaded).dataset.narrow, "false");
-  assert.deepEqual(pmp(loaded), { button: true, clicks: 0, last: null, state: null, open: true, rows: 2, terminals: 3, running: 2, lastError: null });
+  // Блок «Идёт Workflow» виден (лист 48 · 1.2): два проекта, идут два Workflow.
+  assert.deepEqual(pmp(loaded), { button: true, clicks: 0, last: null, state: null, open: true, rows: 2, flowsOpen: false, terminals: 3, running: 2, lastError: null });
   press(loaded);
   assert.equal(shown(loaded), false);
   assert.equal(button(loaded).getAttribute("aria-expanded"), "false");
@@ -218,17 +302,19 @@ test("#9373: Esc и клик мимо закрывают; нажатие вну�
 });
 
 test("#9373: клавиатура — Enter на кнопке открывает и ставит фокус на первый пункт; Tab ходит по пунктам по кругу; Esc возвращает фокус в поле", async () => {
-  const loaded = await page();
+  // Терминал, которому раскрывать нечего (идущих Workflow нет, «Ждёт тебя» нет), — строка с data-flat.
+  const quiet = { name: "Quiet", title: "Quiet", group: "тихо", color: "#336699", terminal: true, now: "читаю отчёт", workflows: [] };
+  const loaded = await page({ digest: okJson({ ...DIGEST, projects: [...DIGEST.projects, quiet] }) });
   button(loaded).dispatchEvent({ type: "keydown", key: "Enter" });
   await tick();
   assert.equal(shown(loaded), true);
   // Строки, которым нечего раскрывать (текст виден целиком), Tab не берёт — у них метка data-flat.
   const items = all(loaded).filter(node => node.tagName === "BUTTON" && node.dataset.flat !== "true");
   assert.ok(items.length >= 5, "пункты панели — настоящие кнопки");
-  const waits = parts(loaded, "row").filter(node => node.dataset.kind === "wait");
-  assert.deepEqual(waits.map(node => node.dataset.flat), ["true", "true"], "стенд: текст в две строки влезает — стрелки и нажатия нет");
-  click(loaded, waits[0]);
-  assert.equal(waits[0].getAttribute("aria-expanded"), "false");
+  const flat = parts(loaded, "row").filter(node => node.dataset.flat === "true");
+  assert.deepEqual(flat.map(node => node.textContent), ["Quietчитаю отчёт"], "стенд: текст влезает — стрелки и нажатия нет");
+  click(loaded, flat[0]);
+  assert.equal(flat[0].getAttribute("aria-expanded"), "false");
   assert.equal(loaded.document.activeElement, items[0]);
   key(loaded, "Tab");
   assert.equal(loaded.document.activeElement, items[1]);
@@ -244,28 +330,17 @@ test("#9373: клавиатура — Enter на кнопке открывает
   assert.equal(shown(loaded), true, "пробел — то же нажатие");
 });
 
-test("#9405, #9371: живые данные — «Идёт Workflow сейчас · N», итог, квадратики, «Тихо», терминалы с плашкой, «Ждут тебя»", async () => {
+test("#9405, #9371: живые данные — строка Workflow, терминалы с плашкой; «Ждут тебя» нет", async () => {
   const loaded = await page();
   await open(loaded);
   assert.equal(panel(loaded).dataset.state, "ok");
-  assert.deepEqual(heads(loaded), ["Идёт Workflow сейчас · 2", "Работают 3 терминала", "Ждут тебя · 2"]);
-  assert.deepEqual(parts(loaded, "sum").map(node => node.textContent), ["2 проекта · 6 Workflow · 2 готово · 2 идут"]);
+  assert.deepEqual(heads(loaded), ["Работают 3 терминала"], "блока «Ждут тебя» нет (#9520)");
   assert.ok(!panel(loaded).textContent.includes("марафон"), "слово «марафон» не пишем");
-  const rows = parts(loaded, "row").filter(node => node.parentNode.dataset.k === "flows");
-  assert.deepEqual(rows.map(node => node.textContent), ["PimpM2/5 ▶1 ✕1", "PimpV0/1 ▶1"]);
-  assert.equal(rows[0].style.getPropertyValue("--c"), "#ff2d55");
-  assert.deepEqual([...parts(loaded, "caps")[0].children].map(node => node.dataset.state), ["done", "done", "run", "fail", "plan"]);
-  // «Тихо» свёрнуто строкой с числом; нажал — строки проектов под ней, приглушённые.
-  const quiet = all(loaded).find(node => node.dataset.act === "quiet");
-  assert.equal(quiet.textContent, "Тихо · 2");
-  assert.equal(quiet.getAttribute("aria-expanded"), "false");
-  assert.equal(pmp(loaded).rows, 2);
-  click(loaded, quiet);
-  assert.deepEqual(all(loaded).filter(node => node.dataset.quiet === "true").map(node => node.textContent), ["Menu1/2", "Plaud1/2"]);
-  assert.equal(pmp(loaded).rows, 4);
+  assert.equal(line(loaded).textContent, "Идут 2 · PimpM 2/5 · PimpV 0/1");
   // Терминалы: строка «имя — что делает»; есть что раскрыть — кнопка; без сведений — просто имя.
   const terms = parts(loaded, "row").filter(node => node.dataset.kind === "term");
   assert.deepEqual(terms.map(node => [node.tagName, node.textContent]), [["BUTTON", "PimpMидёт панель на кнопке PMP."], ["BUTTON", "PimpVархив вместо «закрыть»"], ["DIV", "Bambubek"]]);
+  assert.equal(terms[0].style.getPropertyValue("--c"), "#ff2d55", "имя терминала — цветом проекта, как было");
   const plate = terms[0].nextElementSibling;
   assert.deepEqual([terms[0].getAttribute("aria-expanded"), plate.dataset.k, plate.dataset.open], ["false", "plate", "false"]);
   click(loaded, terms[0].children[1]);
@@ -275,27 +350,15 @@ test("#9405, #9371: живые данные — «Идёт Workflow сейчас
   for (const word of ["агент", "гейт", "батч", "Opus", "wf209"]) assert.ok(!plate.textContent.includes(word), word);
   click(loaded, terms[0]);
   assert.deepEqual([terms[0].getAttribute("aria-expanded"), plate.dataset.open], ["false", "false"], "повторное нажатие не задвинуло");
-  // «Ждут тебя»: имя — чего ждут.
-  assert.deepEqual(parts(loaded, "row").filter(node => node.dataset.kind === "wait").map(node => node.textContent), ["PimpMфайл 37 — четыре вопроса.", "Menuвыбрать шрифт меню"]);
-  assert.deepEqual(acts(loaded), ["Отчёт", "Что происходит", "Настройки Пимпа"], "текста запуска нет (404) — пункта «Запустить Workflow» нет");
-});
-
-test("#9405: наведение на квадратик — какой это Workflow, состояние, шаги и о чём; ушёл — подсказки нет", async () => {
-  const loaded = await page();
-  await open(loaded);
-  const tip = parts(loaded, "tip")[0];
-  const box = parts(loaded, "caps")[0].children[2];
-  panel(loaded).dispatchEvent({ type: "pointerover", target: box });
-  assert.equal(tip.style.getPropertyValue("display"), "block");
-  assert.equal(tip.textContent, "PimpMyClaude · Workflow 3 · идёт · шаги 2/4\nпанель оркестрации");
-  panel(loaded).dispatchEvent({ type: "pointerover", target: parts(loaded, "sum")[0] });
-  assert.equal(tip.style.getPropertyValue("display"), "none");
+  assert.deepEqual(parts(loaded, "row").filter(node => node.dataset.kind === "wait"), [], "строк «Ждут тебя» нет");
+  assert.deepEqual(acts(loaded), ["Запустить Workflow", "Всё в одном чате", "Сэкономить подписку", "Отчёт", "Что происходит", "Настройки PMP"], "текста запуска нет (404) — «Запустить Workflow» всё равно видна (#9552)");
 });
 
 test("#9371: старое приложение — заголовок «Кто что делает», строки по группе «идут»", async () => {
   const loaded = await page({ digest: okJson(OLD) });
   await open(loaded);
-  assert.deepEqual(heads(loaded), ["Идёт Workflow сейчас · 2", "Кто что делает", "Ждут тебя · 1"]);
+  assert.deepEqual(heads(loaded), ["Кто что делает"]);
+  assert.equal(line(loaded).textContent, "Идут 2 · PimpM 2/5 · PimpV 0/1", "блок Workflow старому приложению тот же");
   assert.deepEqual(parts(loaded, "row").filter(node => node.dataset.kind === "term").map(node => node.textContent), ["PimpMпанель оркестрации", "PimpVархив вместо «закрыть»"]);
 });
 
@@ -305,28 +368,29 @@ test("состояния: загрузка — «Смотрю, что идёт�
   await open(slow);
   assert.equal(panel(slow).dataset.state, "load");
   assert.deepEqual(parts(slow, "note").map(node => node.textContent), ["Смотрю, что идёт…"]);
-  assert.deepEqual(acts(slow), ["Отчёт", "Что происходит", "Настройки Пимпа"]);
+  assert.deepEqual(acts(slow), ["Запустить Workflow", "Всё в одном чате", "Сэкономить подписку", "Отчёт", "Что происходит", "Настройки PMP"]);
   // Тишина дольше срока опроса — приложение не отвечает.
   slow.later(10000);
   slow.dom.fireKind("interval");
   assert.equal(panel(slow).dataset.state, "error");
-  assert.equal(pmp(slow).lastError, "Пимп у часов не отвечает");
-  // Пусто: проектов нет; терминалы спросили — их нет.
+  assert.equal(pmp(slow).lastError, "PMP у часов не отвечает");
+  // Пусто: идущих проектов нет — «Тихо» без нажатия; терминалы спросили — их нет.
   const empty = await page({ digest: okJson({ v: 1, at: DIGEST.at, projects: [{ name: "A", title: "A", group: "тихо", color: "#112233", terminal: false, workflows: [flow(1, "готово")] }] }) });
   await open(empty);
-  assert.deepEqual(heads(empty), ["Идёт Workflow сейчас", "Терминалы сейчас не работают"]);
-  assert.deepEqual(parts(empty, "note").map(node => node.textContent), ["Сейчас ничего не идёт"]);
-  assert.equal(all(empty).find(node => node.dataset.act === "quiet").textContent, "Тихо · 1");
-  assert.deepEqual(pmp(empty), { button: true, clicks: 0, last: null, state: null, open: true, rows: 0, terminals: 0, running: 0, lastError: null });
+  assert.deepEqual(heads(empty), ["Тихо", "Терминалы сейчас не работают"]);
+  assert.equal(all(empty).find(node => node.tagName === "H3").title, "Workflow сейчас не идут");
+  assert.equal(line(empty), undefined, "нажимать нечего");
+  assert.deepEqual(parts(empty, "note").map(node => node.textContent), []);
+  assert.deepEqual(pmp(empty), { button: true, clicks: 0, last: null, state: null, open: true, rows: 0, flowsOpen: false, terminals: 0, running: 0, lastError: null });
   // Ошибка: отказ сети и ответ не 200.
   for (const digest of [() => Promise.reject(new Error("net")), () => Promise.resolve({ ok: false, status: 500 })]) {
     const down = await page({ digest, kickoff: () => Promise.resolve({ ok: true, text: async () => KICKOFF }) });
     await open(down);
     assert.equal(panel(down).dataset.state, "error");
-    assert.deepEqual(parts(down, "note").map(node => node.textContent), ["Пимп у часов не отвечает"]);
+    assert.deepEqual(parts(down, "note").map(node => node.textContent), ["PMP у часов не отвечает"]);
     assert.deepEqual(heads(down), []);
-    assert.deepEqual(acts(down), ["Отчёт", "Что происходит"]);
-    assert.equal(pmp(down).lastError, "Пимп у часов не отвечает");
+    assert.deepEqual(acts(down), ["Запустить Workflow", "Всё в одном чате", "Сэкономить подписку", "Отчёт", "Что происходит"], "три главные видны и без приложения; «Настройки PMP» — нет");
+    assert.equal(pmp(down).lastError, "PMP у часов не отвечает");
     // Приложение вернулось — следующий опрос возвращает вид.
     down.replies.digest = okJson(DIGEST);
     down.later(10000);
@@ -334,7 +398,7 @@ test("состояния: загрузка — «Смотрю, что идёт�
     await tick();
     assert.equal(panel(down).dataset.state, "ok");
     assert.equal(pmp(down).lastError, null);
-    assert.deepEqual(acts(down), ["Запустить Workflow", "Отчёт", "Что происходит", "Настройки Пимпа"]);
+    assert.deepEqual(acts(down), ["Запустить Workflow", "Всё в одном чате", "Сэкономить подписку", "Отчёт", "Что происходит", "Настройки PMP"]);
   }
 });
 
@@ -360,11 +424,12 @@ test("опрос: открыта — раз в 10 с; закрыта и блок
   assert.equal(count(loaded, "/digest"), 4, "окно скрыто — запросов нет");
 });
 
-test("К-KO: «Запустить Workflow» — текст /kickoff в поле, как у 12а; набранное не затирается; 404 — пункта нет", async () => {
+test("К-KO: «Запустить Workflow» — текст /kickoff в поле, как у 12а; набранное не затирается; текста нет — кнопка видна, подпись «Нужен PMP у часов» (#9552)", async () => {
   const kickoff = () => Promise.resolve({ ok: true, text: async () => KICKOFF });
   const loaded = await page({ kickoff });
   await open(loaded);
-  assert.deepEqual(acts(loaded), ["Запустить Workflow", "Отчёт", "Что происходит", "Настройки Пимпа"]);
+  assert.deepEqual(acts(loaded), ["Запустить Workflow", "Всё в одном чате", "Сэкономить подписку", "Отчёт", "Что происходит", "Настройки PMP"]);
+  assert.equal(note(loaded, "kickoff"), "Большую задачу делит на шаги и раздаёт агентам; ты видишь ход в панели");
   act(loaded, "kickoff");
   assert.equal(loaded.parts.editor.innerText, KICKOFF);
   assert.equal(loaded.api.status().workflow.result, "вставлено");
@@ -374,11 +439,18 @@ test("К-KO: «Запустить Workflow» — текст /kickoff в поле
   await open(draft);
   act(draft, "kickoff");
   assert.equal(draft.parts.editor.innerText, `${KICKOFF}\n\nмоя недописанная мысль`);
-  // Адреса нет (старое приложение: отказ без CORS) или текста нет — пункта нет.
+  // Адреса нет (старое приложение: отказ без CORS) или текста нет — кнопка видна, подпись честная; нажатие — та же
+  // подсказка над кнопкой PMP, поле не тронуто (и черновик в нём).
   for (const none of [() => Promise.reject(new TypeError("Failed to fetch")), () => Promise.resolve({ ok: false, status: 404 }), () => Promise.resolve({ ok: true, text: async () => "  \n" })]) {
-    const old = await page({ kickoff: none });
+    const old = await page({ kickoff: none, text: "черновик" });
     await open(old);
-    assert.deepEqual(acts(old), ["Отчёт", "Что происходит", "Настройки Пимпа"]);
+    assert.deepEqual(acts(old), ["Запустить Workflow", "Всё в одном чате", "Сэкономить подписку", "Отчёт", "Что происходит", "Настройки PMP"]);
+    assert.equal(note(old, "kickoff"), "Нужен PMP у часов");
+    act(old, "kickoff");
+    assert.equal(old.parts.editor.innerText, "черновик", "поле тронуто");
+    assert.equal(shown(old), false);
+    assert.equal(old.dom.query("#myclaude-mic-hint")?.textContent, "Нужен PMP у часов");
+    assert.equal(old.api.status().workflow.runs, 0);
   }
 });
 
@@ -403,6 +475,134 @@ test("#9370: «Отчёт» и «Что происходит» — фраза в
   }
 });
 
+// #9547 (слово Элвиса: «сократить расход токенов, и чтобы промт вставлялся… в поле ввода»): промпт-исследование —
+// в поле как есть, как «Отчёт»: в конец с новой строки, черновик остаётся, Enter жмёт человек.
+test("#9547: «Сэкономить подписку» (до #9552 — «Сократить расход») — промпт целиком в поле, не отправляет; черновик остаётся; повтор — без второй копии; поля нет — подсказка", async () => {
+  const { inner } = loadInner();
+  const SAVE = inner.PMP_SAVE_TEXT;
+  assert.ok(SAVE.startsWith("Посчитай, куда уходит моя подписка Claude (токены), и скажи, как тратить её медленнее при той же отдаче.\n\n"));
+  assert.ok(SAVE.endsWith("В чат — 5–7 строк: три главные цифры, три лучших способа, насколько точны оценки и путь к файлу."));
+  for (const part of ["## Откуда брать цифры", "## Что посчитать", "## Что выдать", "`~/.claude/projects/<проект>/<чат>.jsonl`",
+    "5. Файлы правил — обязательно.", "`message.usage` (`input_tokens`"]) assert.ok(SAVE.includes(part), part);
+  assert.equal(SAVE.split("`").length - 1, 72, "обратные кавычки текста целы");
+  assert.equal(SAVE.length, 4843);
+  // Пустое поле — текст целиком; панель закрыта; панель у часов не звали.
+  const loaded = await page();
+  await open(loaded);
+  const button = all(loaded).find(node => node.tagName === "BUTTON" && node.dataset.act === "save");
+  assert.equal(button.title, "Вставить в поле промпт: где уходит подписка и как тратить медленнее (отправишь сам)");
+  act(loaded, "save");
+  assert.equal(loaded.parts.editor.innerText, SAVE);
+  assert.equal(shown(loaded), false, "команда выполнена — панель закрыта");
+  assert.equal(count(loaded, "/panel"), 0);
+  assert.equal(loaded.api.status().workflow.result, null, "не путь «Запустить Workflow»");
+  // Повтор — промпт уже в конце поля: второй копии нет.
+  await open(loaded);
+  act(loaded, "save");
+  assert.equal(loaded.parts.editor.innerText, SAVE, "вторая копия промпта");
+  // Редактор переписал разметку («## » стал заголовком, переносы — по-своему): повтор всё равно без копии.
+  const rewritten = SAVE.replace(/^## /gmu, "").replace(/\n\n/gu, "\n");
+  loaded.parts.editor.innerText = rewritten;
+  await open(loaded);
+  act(loaded, "save");
+  assert.equal(loaded.parts.editor.innerText, rewritten, "переписанное поле — вторая копия");
+  // Черновик человека — остаётся, промпт с новой строки в конце.
+  const draft = await page({ text: "моя недописанная мысль" });
+  await open(draft);
+  act(draft, "save");
+  assert.equal(draft.parts.editor.innerText, `моя недописанная мысль\n${SAVE}`, "набранное затёрто");
+  // Старая копия далеко выше длинного черновика — не мешает вставить новую в конец.
+  const long = `${SAVE}\n${"слово ".repeat(200)}`;
+  const far = await page({ text: long });
+  await open(far);
+  act(far, "save");
+  assert.equal(far.parts.editor.innerText, `${long}\n${SAVE}`);
+  // Поля нет — подсказка у кнопки PMP, ошибки нет.
+  const gone = await page();
+  await open(gone);
+  gone.parts.editor.remove();
+  assert.doesNotThrow(() => act(gone, "save"));
+  assert.equal(shown(gone), false);
+  assert.equal(gone.dom.query("#myclaude-mic-hint")?.textContent, "Не вышло вставить в поле ввода");
+});
+
+// #9552 (слово Элвиса: «Запустить Work Flow… понятно людям объясняться… общаться в одном чате, все проекты…
+// сэкономить подписку»): три главные кнопки с объяснением под названием, ниже строкой мелкие.
+test("#9552: три главные кнопки с подписями — порядок и тексты ТЗ дословно; ниже мелкие «Отчёт», «Что происходит», «Настройки PMP»; «Пимп» не пишем", async () => {
+  const { inner } = loadInner();
+  assert.deepEqual(plain(inner.PMP_MAIN).map(item => [item.act, item.name, item.note]), [
+    ["kickoff", "Запустить Workflow", "Большую задачу делит на шаги и раздаёт агентам; ты видишь ход в панели"],
+    ["one", "Всё в одном чате", "Один главный чат ведёт все проекты и сам раздаёт работу — меньше окон, подписка тратится почти так же"],
+    ["save", "Сэкономить подписку", "Разберёт твои журналы и даст личные советы"],
+  ]);
+  const loaded = await page({ kickoff: () => Promise.resolve({ ok: true, text: async () => KICKOFF }) });
+  await open(loaded);
+  const nav = panel(loaded).children[1];
+  assert.equal(nav.tagName, "NAV");
+  const buttons = [...nav.children];
+  assert.deepEqual(buttons.map(node => [node.tagName, node.dataset.k, node.dataset.act]), [
+    ["BUTTON", "main", "kickoff"], ["BUTTON", "main", "one"], ["BUTTON", "main", "save"],
+    ["BUTTON", "small", "report"], ["BUTTON", "small", "ask"], ["BUTTON", "small", "settings"],
+  ], "кнопки — прямые дети строки команд: главные сверху, мелкие ниже");
+  for (const [index, item] of plain(inner.PMP_MAIN).entries()) {
+    const main = buttons[index];
+    assert.deepEqual([...main.children].map(node => [node.tagName, node.textContent]), [["B", item.name], ["SPAN", item.note]], item.act);
+    assert.equal(main.title, item.title);
+  }
+  assert.equal(buttons[2].title, "Вставить в поле промпт: где уходит подписка и как тратить медленнее (отправишь сам)");
+  assert.deepEqual(buttons.slice(3).map(node => node.textContent), ["Отчёт", "Что происходит", "Настройки PMP"]);
+  assert.equal(String(nav.textContent).includes("Пимп"), false, "в интерфейсе — PMP");
+  // «Сэкономить подписку» — то же действие, что «Сократить расход» (#9547).
+  act(loaded, "save");
+  assert.equal(loaded.parts.editor.innerText, inner.PMP_SAVE_TEXT);
+});
+
+test("#9552: «Всё в одном чате» — GET /one-chat тем же путём, что «Настройки PMP»; приложение молчит — подсказка; ждём ответа — «Уже открываю»", async () => {
+  const loaded = await page();
+  await open(loaded);
+  act(loaded, "one");
+  assert.equal(shown(loaded), false, "панель закрыта");
+  assert.deepEqual([count(loaded, "/one-chat"), count(loaded, "/panel")], [1, 0]);
+  assert.deepEqual([pmp(loaded).clicks, pmp(loaded).last], [1, `${PORT}/one-chat`]);
+  await tick();
+  assert.equal(pmp(loaded).state, null, "ответ пришёл — вид кнопки обычный");
+  assert.equal(loaded.parts.editor.innerText, "", "поле не тронуто");
+  // Приложение не отвечает (или старое — адреса не знает, 404 без CORS): подсказка над кнопкой PMP.
+  const down = await page({ oneChat: () => Promise.reject(new TypeError("Failed to fetch")) });
+  await open(down);
+  act(down, "one");
+  await tick();
+  assert.equal(pmp(down).state, "silent");
+  assert.equal(down.dom.query("#myclaude-mic-hint")?.textContent, "PimpMyClaude не отвечает");
+  // Первый запрос ещё ждёт ответа — второго нет, подсказка «Уже открываю».
+  const slow = await page({ oneChat: () => new Promise(() => {}) });
+  await open(slow);
+  act(slow, "one");
+  assert.equal(pmp(slow).state, "wait");
+  await open(slow);
+  act(slow, "one");
+  assert.equal(count(slow, "/one-chat"), 1);
+  assert.equal(shown(slow), false);
+  assert.equal(slow.dom.query("#myclaude-mic-hint")?.textContent, "Уже открываю");
+});
+
+test("#9552: «Запустить Workflow» — ответа /kickoff ещё нет — подпись обычная; первый же 404 — «Нужен PMP у часов»; приложение молчит — три главные видны", async () => {
+  let answer = null;
+  const loaded = await page({ kickoff: () => new Promise(resolve => { answer = resolve; }) });
+  await open(loaded);
+  assert.equal(note(loaded, "kickoff"), "Большую задачу делит на шаги и раздаёт агентам; ты видишь ход в панели");
+  // Первый ответ — 404: текста как не было, так и нет, но подпись обязана смениться.
+  answer({ ok: false, status: 404 });
+  await tick();
+  assert.equal(note(loaded, "kickoff"), "Нужен PMP у часов");
+  // Сводка не пришла и /kickoff молчит — главные кнопки на месте, «Настроек PMP» нет.
+  const down = await page({ digest: () => Promise.reject(new Error("net")), kickoff: () => Promise.reject(new Error("net")) });
+  await open(down);
+  assert.equal(panel(down).dataset.state, "error");
+  assert.deepEqual(acts(down), ["Запустить Workflow", "Всё в одном чате", "Сэкономить подписку", "Отчёт", "Что происходит"]);
+  assert.equal(note(down, "kickoff"), "Нужен PMP у часов");
+});
+
 test("#9373: «Настройки Пимпа» — панель у часов прежним запросом /panel; панель страницы закрывается", async () => {
   const loaded = await page();
   await open(loaded);
@@ -412,29 +612,32 @@ test("#9373: «Настройки Пимпа» — панель у часов п
   assert.deepEqual([pmp(loaded).clicks, pmp(loaded).last], [1, `${PORT}/panel`]);
 });
 
-test("#9373: у кнопки — «▶N», сколько Workflow идёт; нет идущих — знака нет и кнопка прежней ширины", async () => {
+test("#9373, лист 48 · 1.2: знака «▶N» у кнопки нет и ширина прежняя; сколько идёт — в подсказке и status().pmp.running", async () => {
   const loaded = await page();
-  const [, , run] = button(loaded).children;
-  assert.equal(run.textContent, "▶2");
-  assert.equal(button(loaded).style.getPropertyValue("width"), `${24 + 11 + 6}px`);
+  assert.equal(button(loaded).textContent, "PMP");
+  assert.equal(button(loaded).children.length, 1, "#9507: узла под «▶N» нет");
+  assert.equal(button(loaded).style.getPropertyValue("width"), "", "ширина — из листа стилей, от числа не растёт");
   assert.equal(button(loaded).title, "Workflow и терминалы · 2 идут");
-  assert.equal(loaded.parts.left.getAttribute("data-myclaude-gallery-room"), `${6 + 41 + 6}px`, "месту в строке не дали ширину знака");
+  assert.equal(loaded.parts.left.getAttribute("data-myclaude-gallery-room"), `${6 + 24 + 6}px`, "место в строке — под кнопку без знака");
   assert.equal(pmp(loaded).running, 2);
   const calm = await page({ digest: okJson({ v: 1, projects: [] }) });
-  assert.equal(button(calm).children[2].textContent, "");
-  assert.equal(button(calm).style.getPropertyValue("width"), "24px");
+  assert.equal(button(calm).textContent, "PMP");
+  assert.equal(button(calm).style.getPropertyValue("width"), "");
   assert.equal(button(calm).title, "Workflow и терминалы");
 });
 
-test("вид: панель уступает меню Claude и выдвинутому списку слева; плашка — волосок и серая подложка, как у свёрток", () => {
+test("вид: панель уступает меню Claude и выдвинутому списку слева; плашка — волосок и серая подложка, как у свёрток; строка Workflow — без переноса и многоточия", () => {
   const { inner } = loadInner();
   const css = plain(inner.RULES).join("\n");
   assert.match(css, /body:has\(\[role="menu"\][^{]*\) :is\([^)]*#myclaude-pmp-panel[^)]*\)\{visibility:hidden!important\}/);
   assert.match(css, /data-hovering\]\) :is\([^)]*#myclaude-pmp-panel\)\{visibility:hidden !important\}/);
   assert.match(css, /#myclaude-pmp-panel \[data-k="plate"\]>div>div\{[^}]*border-left:1\.5px solid [^;]+;[^}]*background:rgba\(127,127,127,\.12\)/);
   assert.match(css, /#myclaude-pmp-panel \[data-k="plate"\]\{display:grid;grid-template-rows:0fr;transition:grid-template-rows/);
-  assert.match(css, /#myclaude-pmp-panel \[data-k="caps"\]>i\[data-state="wait"\]\{background:transparent;box-shadow:inset 0 0 0 1\.5px var\(--R\)\}/);
-  assert.match(css, /#myclaude-pmp-panel\[data-narrow="true"\] \[data-k="caps"\]\{order:3;flex:0 0 100%/);
+  assert.match(css, /#myclaude-pmp-panel \[data-k="ln"\]\{display:block;overflow:hidden;white-space:nowrap;text-overflow:clip\}/);
+  assert.match(css, /#myclaude-pmp-panel button\[data-k="line"\]::before\{content:"▸"/);
+  assert.match(css, /#myclaude-pmp-panel button\[data-k="line"\]\[aria-expanded="true"\]::before\{content:"▾"\}/);
+  assert.match(css, /#myclaude-pmp-panel\[data-narrow="true"\] :is\(\[data-k="tx"\],\[data-k="fw"\]\)\{flex:0 0 100%\}/);
+  assert.doesNotMatch(css, /myclaude-pmp-panel [^{]*(?:caps|data-quiet|"tip"|"sum")/, "правила квадратиков, «Тихо · N», подсказки и итога сняты");
 });
 
 // WF226 (снимок Элвиса 10.10, замер живого окна 889×514): поле стояло колонкой справа во всю высоту
@@ -496,7 +699,31 @@ test("WF226: команды не выпадают из рамки — сжима
   assert.match(css, /#myclaude-pmp-panel>nav\{flex:0 1 auto;min-height:0;overflow-y:auto/, "команды без сжатия выпадают под рамку низкой панели");
 });
 
-test("узкое окно 280 — панель во всю ширину поля, квадратики под именем; поле свёрнуто — над кнопкой; dispose — узла нет", async () => {
+// #9552: строка команд выросла (три кнопки с подписями и строка мелких) — правила вида и место панели.
+const panelCss = loaded => String(loaded.dom.document.getElementById("myclaude-input-handle-style")?.textContent ?? "");
+test("#9552: окно 380 — главные кнопки во всю ширину, с переносом подписи, панель целиком в окне; над полем 236 — панель сбоку от поля", async () => {
+  const loaded = await page({ viewport: { width: 380, height: 800 }, left: 10, width: 360, top: 500 });
+  await open(loaded);
+  const box = inWindow(loaded);
+  assert.equal(box.width, 360, "не шире поля");
+  assert.ok(box.left >= 8 && box.right <= 380 - 8 && box.top >= 8, `панель вышла за окно: ${JSON.stringify(box)}`);
+  const css = panelCss(loaded);
+  assert.match(css, /#myclaude-pmp-panel>nav>button\[data-k="main"\]\{flex:0 0 100%;[^}]*white-space:normal/, "главная кнопка не во всю ширину или без переноса");
+  assert.match(css, /#myclaude-pmp-panel>nav>button\[data-k="main"\]>span\{font:400 11px\/14px [^}]*white-space:normal/, "подпись не мелко или жирная, как «Запустить Workflow»");
+  assert.match(css, /#myclaude-pmp-panel>nav>button\[data-k="small"\]\{min-height:22px;[^}]*font-size:11px/);
+  const rules = plain(loaded.inner.RULES).join("\n");
+  assert.ok(css.indexOf('button[data-k="main"]{') > css.indexOf(rules.slice(-40)), "правила главных кнопок — после общих (каскад)");
+  // Поле ниже середины невысокого окна: над ним 236 — командам (~220) и телу тесно; сбоку места хватает — панель слева.
+  const side = await page({ viewport: { width: 1000, height: 520 }, left: 500, width: 380, top: 250 });
+  side.parts.shell.rect = { left: 500, top: 250, width: 380, height: 200 };
+  await open(side);
+  const at = inWindow(side);
+  assert.equal(at.right, 500 - 6, "панель не сбоку от поля");
+  assert.equal(at.bottom, 450, "низ — по нижней грани поля");
+  assert.ok(at.top >= 8 && at.left >= 8, `панель вышла за окно: ${JSON.stringify(at)}`);
+});
+
+test("узкое окно 280 — панель во всю ширину поля; поле свёрнуто — над кнопкой; dispose — узла нет", async () => {
   const loaded = await page({ viewport: { width: 280, height: 700 }, left: 5, width: 270, top: 500 });
   await open(loaded);
   const style = panel(loaded).style;
@@ -513,4 +740,12 @@ test("узкое окно 280 — панель во всю ширину поля
   loaded.api.dispose();
   assert.equal(loaded.dom.query(PANEL), null);
   assert.equal(loaded.inner.pmpPanel.open, false);
+});
+
+// Перенесено из rick-cells-off-wf239 (WF248): короткие имена — общий помощник панели (rickShortName).
+test("WF183: короткие имена проектов — «Pimp», «Vkus»; одно короткое имя у двух — с буквой второй части", () => {
+  const { inner } = loadInner();
+  assert.deepEqual(["PimpMyClaude", "VkusnoffKz", "VkusnoffKz — ночь 09.10", "Dictator", "Trelvis", "Rick", "Rick voice", "Вкуснофф", "Проект1"].map(text => inner.rickShortName(text)),
+    ["Pimp", "Vkus", "Vkus", "Dictator", "Trelvis", "Rick", "Rick", "Вкуснофф", "Проект1"]);
+  assert.deepEqual(["PimpMyClaude", "PimpViewer", "Dictator"].map(text => inner.rickShortName(text, true)), ["PimpM", "PimpV", "Dictator"]);
 });

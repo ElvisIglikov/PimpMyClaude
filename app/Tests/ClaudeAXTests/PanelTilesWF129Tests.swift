@@ -47,14 +47,12 @@ final class PanelTilesWF129Tests: XCTestCase {
             marker: status.marker, isMain: false, updated: updated ?? now, now: status.now, words: split.words,
             note: split.note, waits: waits,
             running: running ? status.workflows.filter { $0.state == .running || $0.state == .failed } : [],
-            finished: status.workflows.filter { $0.state == .done },
-            planned: status.workflows.filter { $0.state == .planned },
             workflows: status.workflows, marathon: status.marathon)
     }
 
     private func snapshot(working: [PanelProject] = [], waiting: [PanelProject] = [], others: [PanelProject] = [],
                           terminals: Set<String> = []) -> PanelSnapshot {
-        var snapshot = PanelSnapshot(waiting: waiting, working: working, others: others, mainEntry: nil, mainName: nil)
+        var snapshot = PanelSnapshot(waiting: waiting, working: working, others: others)
         snapshot.terminals = terminals
         return snapshot
     }
@@ -201,7 +199,7 @@ final class PanelTilesWF129Tests: XCTestCase {
     // MARK: раскладка виджетов
 
     private func defaults() -> UserDefaults {
-        let name = "PanelTilesWF129Tests-\(UUID().uuidString)"
+        let name = testSuiteName()
         let defaults = UserDefaults(suiteName: name)!
         defaults.removePersistentDomain(forName: name)
         return defaults
@@ -210,13 +208,15 @@ final class PanelTilesWF129Tests: XCTestCase {
     func testLayoutStandardLoadSaveAndGarbage() {
         let store = defaults()
         XCTAssertEqual(PanelWidgetLayout.load(store), .standard)
-        XCTAssertEqual(PanelWidgetLayout.standard.items.map { $0.id },
-                       ["workflow", "week", "reset", "limits", "fable", "temperature", "memory", "tokens", "colors"],
-                       "WF181: как снимок 37; WF177: «Цвет Claude» — внизу; WF214: «Идёт Workflow сейчас» — сверху")
-        XCTAssertEqual(PanelWidgetLayout.standard.items.filter { $0.wide }.map { $0.id }, ["workflow", "tokens", "colors"],
-                       "WF181: плитки половинками по двое, «Токены» и «Цвет Claude» во всю ширину")
+        XCTAssertEqual(PanelWidgetLayout.standard.items.map { $0.id }, ["week", "reset", "limits", "fable", "temperature", "memory", "cpu", "gpu", "tokens", "colors", "workflow", "terminals"],
+                       "#10461: как у коллеги — «Неделя · Сброс» сверху, Workflow полосой внизу")
+        XCTAssertEqual(PanelWidgetLayout.standard.items.filter { $0.wide }.map { $0.id }, ["workflow", "terminals"],
+                       "#10461: плитки половинками по двое, во всю ширину — только Workflow и Терминалы (#10464)")
         var layout = PanelWidgetLayout.standard
         layout.toggleWidth("week")
+        // «Неделя» во всю ширину — «Сброс» встал в ряд с «5 часов»: пара свёрнута целиком (#11276: пара вразнобой
+        // при чтении разворачивается).
+        layout.setCollapsed("reset", true)
         layout.move("tokens", over: "colors")
         layout.save(store)
         XCTAssertNotNil(store.string(forKey: PanelWidgetLayout.key))
@@ -233,7 +233,8 @@ final class PanelTilesWF129Tests: XCTestCase {
             .init(id: "memory", wide: false), .init(id: "colors"),
         ])
         XCTAssertEqual(layout.items.map { $0.id },
-                       ["workflow", "week", "limits", "fable", "reset", "temperature", "memory", "tokens", "colors"])
+                       ["workflow", "week", "limits", "fable", "reset", "temperature", "memory", "tokens", "cpu", "gpu",
+                        "terminals", "colors"])
         XCTAssertEqual(layout.item("temperature")?.wide, false)
         XCTAssertEqual(layout.item("memory")?.wide, false)
     }

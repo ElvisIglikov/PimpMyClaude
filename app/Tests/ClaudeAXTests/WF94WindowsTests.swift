@@ -199,7 +199,7 @@ final class WF94WindowsTests: XCTestCase {
         let front = CGRect(x: -1503, y: -575, width: 703, height: 720)
         let list = [info(7, 3, front), info(9, 0, front), info(7, 0, CGRect(x: 0, y: 0, width: 50, height: 50)),
                     info(7, 0, front, alpha: 0), info(7, 0, front)]
-        let found = ChatGPTWindows.layerZero(list, pids: [7])
+        let found = ChatGPTWindows.layerZero(list.compactMap(WindowInfo.init), pids: [7])
         XCTAssertEqual(found.map { $0.frame }, [front])
     }
 
@@ -325,15 +325,8 @@ final class WF94WindowsTests: XCTestCase {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static var fixtures: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("tests/fixtures/pimp", isDirectory: true)
-    }
-
     private func fixture(_ name: String) throws -> String {
-        try String(contentsOf: WF94WindowsTests.fixtures.appendingPathComponent(name), encoding: .utf8)
+        try String(contentsOf: Repo.fixture("pimp/" + name), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -408,49 +401,6 @@ final class WF94WindowsTests: XCTestCase {
         pimp.tick()
         let late = try answer("1790000000000-0942", in: box)
         XCTAssertTrue(late.contains("\"error\":\"window-missing\""), late)
-    }
-
-    /// Работа из меню (id nil) отказ получает плашкой — текст канала, не MenuModel.
-    func testMenuJobGetsNoticeOnFailedRun() {
-        let box = makeTemp(), rig = Rig()
-        rig.windows = [PimpWindow(id: 1, title: "Claude", frame: CGRect(x: 0, y: 0, width: 600, height: 600))]
-        let pimp = channel(rig, in: box)
-        let project = Project(folder: URL(fileURLWithPath: "/tmp", isDirectory: true), name: "Dictator",
-                              lastFocusedAt: 0)
-        XCTAssertTrue(pimp.startLast(project: project, place: .right, from: nil, id: nil))
-        XCTAssertEqual(rig.popouts.count, 1)
-        rig.now = rig.now.addingTimeInterval(2)
-        rig.run = NewWindowRun(at: rig.now, step: "popout", handoff: "", chat: "", state: "popout-failed")
-        pimp.tick()
-        XCTAssertEqual(rig.notices, ["«Старый чат»: чат не вынесся в окно — вынеси его руками"])
-        XCTAssertEqual(PimpChannel.notCreatedNotice(state: "draft", name: ""),
-                       "чат не создан — в поле главного окна черновик")
-    }
-
-    /// WF101 (z4-r03): все отказы страницы — словами, без сырого кода исхода.
-    func testNotCreatedNoticeHasWordsForEveryFailedState() {
-        for state in NewWindowRun.failedStates {
-            let text = PimpChannel.notCreatedNotice(state: state, name: "Мой чат")
-            XCTAssertFalse(text.contains(state), text)
-            XCTAssertTrue(text.hasPrefix("«Мой чат»: чат не"), text)
-        }
-        XCTAssertEqual(PimpChannel.notCreatedNotice(state: "boom", name: ""), "чат не создан (boom)")
-    }
-
-    /// WF101 (z4-r02): «🪟 Новое окно ▸ проект» из меню без окна за срок канала — плашка с именем проекта
-    /// и без «нажми ещё раз» (чат мог создаться, повтор завёл бы второй).
-    func testMenuNewWindowTimeoutNamesProject() {
-        let box = makeTemp(), rig = Rig()
-        rig.windows = [PimpWindow(id: 1, title: "Claude", frame: CGRect(x: 0, y: 0, width: 600, height: 600))]
-        let pimp = channel(rig, in: box)
-        let project = Project(folder: URL(fileURLWithPath: "/tmp", isDirectory: true), name: "Dictator",
-                              lastFocusedAt: 0)
-        XCTAssertTrue(pimp.startNewWindow(project: project))
-        rig.now = rig.now.addingTimeInterval(PimpChannel.newWindowSeconds + 1)
-        pimp.tick()
-        let text = rig.notices.last ?? ""
-        XCTAssertTrue(text.contains("Dictator"), text)
-        XCTAssertFalse(text.contains("нажми ещё раз"), text)
     }
 
     // MARK: - 5. окна при смене мониторов

@@ -1,0 +1,7 @@
+Policy: Code Signing
+  Matching identities
+  1) E6282567E9AC9930B040F0368D3AB8FF783032A6 "PimpMyClaude Local Signing" (CSSMERR_TP_NOT_TRUSTED)
+     1 identities found
+
+  Valid identities only
+     0 valid identities found

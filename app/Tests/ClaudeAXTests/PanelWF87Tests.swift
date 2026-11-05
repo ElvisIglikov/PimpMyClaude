@@ -23,9 +23,7 @@ final class PanelWF87Tests: XCTestCase {
     private let installed = StatusIcon.Patch.installed(version: "2.9939.2", loader: 7)
 
     func testCompactPercentAndWarnings() {
-        XCTAssertEqual(StatusIcon.mode("percent"), .percent)
         XCTAssertEqual(StatusIcon.mainKind(.percent, limits()), .week)
-        XCTAssertEqual(StatusIcon.menuTitle(.percent, limits: limits(), now: now), "Только % · неделя")
         for used in [0, 62, 100] {
             let plain = StatusIcon.look(mode: .percent, limits: limits(week: used), patch: installed, phase: .idle, now: now)
             XCTAssertEqual(plain.number, used)
@@ -35,8 +33,10 @@ final class PanelWF87Tests: XCTestCase {
             XCTAssertEqual(lost.mark, .patchLost)
             XCTAssertEqual(lost.width, plain.width + 10, "метка отдельно от числа, в том числе 100%")
         }
+        // #9824: несвежие — последнее известное число, бледным (`stale`), а не прочерк.
         let stale = StatusIcon.look(mode: .percent, limits: limits(age: 601), patch: installed, phase: .idle, now: now)
-        XCTAssertNil(stale.number)
+        XCTAssertEqual(stale.number, 77)
+        XCTAssertTrue(stale.stale)
         XCTAssertTrue(stale.showsNumber)
         XCTAssertEqual(StatusIcon.look(mode: .percent, limits: nil, patch: installed, phase: .idle, now: now).number, nil)
         XCTAssertEqual(StatusIcon.look(mode: .percent, limits: limits(), patch: installed, phase: .ready(version: "2"), now: now).mark, .updateReady)
@@ -55,9 +55,6 @@ final class PanelWF87Tests: XCTestCase {
     // MARK: - значок
 
     func testDefaultModeIsWeekAndNumberIsUsed() {
-        XCTAssertEqual(StatusIcon.mode(nil), .week)
-        XCTAssertEqual(StatusIcon.mode("мусор"), .week)
-        XCTAssertEqual(StatusIcon.mode("fable"), .fable)
         let look = StatusIcon.look(mode: .week, limits: limits(), patch: installed, phase: .idle, now: now)
         XCTAssertEqual(look.number, 77, "израсходовано, как у Claude (#7863)")
         XCTAssertTrue(look.showsNumber)
@@ -83,7 +80,8 @@ final class PanelWF87Tests: XCTestCase {
     }
 
     func testDashWhenNoNumbers() {
-        for broken in [nil, limits(source: nil), limits(week: nil), limits(age: 601)] as [ClaudeLimits?] {
+        // Несвежие (`age: 601`) с #9824 — не прочерк, а последнее известное: `Fix9824Tests`.
+        for broken in [nil, limits(source: nil), limits(week: nil)] as [ClaudeLimits?] {
             let look = StatusIcon.look(mode: .week, limits: broken, patch: installed, phase: .idle, now: now)
             XCTAssertTrue(look.showsNumber)
             XCTAssertNil(look.number, "нет цифр — прочерк")
@@ -149,16 +147,10 @@ final class PanelWF87Tests: XCTestCase {
         }
     }
 
-    func testToolTipAndMenuTitles() {
+    func testToolTipText() {
         let week = limits(weekReset: Date(timeIntervalSince1970: 1_800_000_000 + 4 * 86_400 + 3600))
         XCTAssertEqual(StatusIcon.toolTip(mode: .week, limits: week, now: now, calendar: utc),
                        "PMP — неделя: израсходовано 77 % · сброс вт 09:00")
-        XCTAssertEqual(StatusIcon.menuTitle(.week, limits: limits(), now: now), "Неделя — 77 %")
-        XCTAssertEqual(StatusIcon.menuTitle(.fiveHour, limits: limits(), now: now), "5 часов — 65 %")
-        XCTAssertEqual(StatusIcon.menuTitle(.fable, limits: limits(), now: now), "Fable — 40 %")
-        XCTAssertEqual(StatusIcon.menuTitle(.three, limits: limits(), now: now), "Три полоски")
-        XCTAssertEqual(StatusIcon.menuTitle(.plain, limits: limits(), now: now), "Только PMP")
-        XCTAssertEqual(StatusIcon.menuTitle(.week, limits: nil, now: now), "Неделя", "нет цифр — без « — N %»")
     }
 
     func testResetText() {
@@ -198,20 +190,17 @@ final class PanelWF87Tests: XCTestCase {
         XCTAssertEqual(PimpPanelText.patchCard(.notInstalled(version: "2.9939.2"))?.button, "Пропатчить Claude")
         XCTAssertEqual(PimpPanelText.patchCard(.lost(version: "2.9939.2"))?.button, "Вернуть патч")
         XCTAssertEqual(PimpPanelText.patchCard(.claudeNotFound)?.button, "Найти Claude…")
-        // #8894: план первым, номера лоадера нет, версия приложения — последней. WF126: о беде говорит карточка
-        // патча — в шапке тогда только версии, без плана.
-        XCTAssertEqual(PimpPanelText.headerLine(installed, plan: "Max 20x", app: "1.10.0"),
-                       "Max 20x · Claude 2.9939.2 · PMP 1.10.0")
-        XCTAssertEqual(PimpPanelText.headerLine(installed, plan: nil, app: "1.10.0"), "Claude 2.9939.2 · PMP 1.10.0")
-        XCTAssertEqual(PimpPanelText.headerLine(installed, plan: "Max 20x"), "Max 20x · Claude 2.9939.2")
-        XCTAssertEqual(PimpPanelText.headerLine(.lost(version: "2.9939.2"), plan: nil), "Claude 2.9939.2")
-        XCTAssertEqual(PimpPanelText.headerLine(.lost(version: "2.9939.2"), plan: "Max 20x", app: "1.10.0"),
+        // #8894: номера лоадера нет, версия приложения — последней. WF126: о беде говорит карточка патча. #10308:
+        // тарифа в шапке нет вовсе — только версии.
+        XCTAssertEqual(PimpPanelText.headerLine(installed, app: "1.10.0"), "Claude 2.9939.2 · PMP 1.10.0")
+        XCTAssertEqual(PimpPanelText.headerLine(installed), "Claude 2.9939.2")
+        XCTAssertEqual(PimpPanelText.headerLine(.lost(version: "2.9939.2")), "Claude 2.9939.2")
+        XCTAssertEqual(PimpPanelText.headerLine(.lost(version: "2.9939.2"), app: "1.10.0"), "Claude 2.9939.2 · PMP 1.10.0")
+        XCTAssertEqual(PimpPanelText.headerLine(.notInstalled(version: "2.9939.2"), app: "1.10.0"),
                        "Claude 2.9939.2 · PMP 1.10.0")
-        XCTAssertEqual(PimpPanelText.headerLine(.notInstalled(version: "2.9939.2"), plan: nil, app: "1.10.0"),
-                       "Claude 2.9939.2 · PMP 1.10.0")
-        XCTAssertEqual(PimpPanelText.headerLine(.claudeNotFound, plan: "Max 20x", app: "1.10.0"), "PMP 1.10.0")
+        XCTAssertEqual(PimpPanelText.headerLine(.claudeNotFound, app: "1.10.0"), "PMP 1.10.0")
         // Без «…» в строке (WF181): «Проверяю Claude» — подсказкой.
-        XCTAssertEqual(PimpPanelText.headerLine(.unknown, plan: "Max 20x", app: "1.10.0"), "PMP 1.10.0")
+        XCTAssertEqual(PimpPanelText.headerLine(.unknown, app: "1.10.0"), "PMP 1.10.0")
         XCTAssertEqual(PimpPanelText.headerHelp(.unknown), "Проверяю Claude")
         XCTAssertEqual(PimpPanelText.headerHelp(installed), "")
         // Слова «Пимп» в видимом нет (слово Элвиса 06.10): карточки — «PMP».
@@ -222,9 +211,19 @@ final class PanelWF87Tests: XCTestCase {
         XCTAssertEqual(PimpPanelText.patchStep("Ставлю лоадер в app.asar…", loader: 7), "Ставлю патч 7.0…")
         XCTAssertEqual(PimpPanelText.patchStep("Готово. Открываю Claude…", loader: 7), "Открываю Claude…")
         XCTAssertNil(PimpPanelText.patchStep("Настройки /x/claude.json", loader: 7))
+        // #9842: строки `Patcher.appManagementWaitLine`, `ownershipLine`, `claudeQuitWaitLine` и принудительного выхода.
         XCTAssertEqual(PimpPanelText.patchStep(
-            "macOS спрашивает разрешение «Управление приложениями» — нажми «Разрешить», дальше сам.", loader: 7),
-                       "Нажми «Разрешить» в окне macOS…")
+            "Нужно право «Управление приложениями»: включи PimpMyClaude в Системных настройках — дальше сам.", loader: 7),
+                       "Включи PimpMyClaude в настройках…")
+        XCTAssertEqual(PimpPanelText.patchStep("Право «Управление приложениями» есть — продолжаю.", loader: 7), "Продолжаю…")
+        XCTAssertEqual(PimpPanelText.patchStep(
+            "Claude.app принадлежит пользователю «root» — macOS спросит пароль Мака, чтобы сделать его твоим…", loader: 7),
+                       "Введи пароль Мака…")
+        XCTAssertEqual(PimpPanelText.patchStep("Claude не закрылся сам за 20 с — закрываю принудительно…", loader: 7),
+                       "Закрываю Claude принудительно…")
+        XCTAssertEqual(PimpPanelText.patchStep(
+            "Claude не закрывается — закрой его сам (меню Claude → Завершить), дальше сам.", loader: 7),
+                       "Закрой Claude — дальше сам…")
     }
 
     // MARK: - панель: блок обновления по стадиям
@@ -328,48 +327,52 @@ final class PanelWF87Tests: XCTestCase {
     // MARK: - «самое время»: провязка shouldOffer
 
     func testOfferWiring() {
+        // Workflow и терминалы давно тихо (их случаи — WorkNowWF234Tests): здесь решают страницы.
+        var watch = WorkWatch()
+        watch.note(ProjectsWork(at: now.addingTimeInterval(-3600)))
+        watch.note(ProjectsWork(at: now))
+        func offer(_ pages: PageSignals) -> Bool {
+            ClaudeUpdateMenu.shouldOffer(ready: true, claudeRunning: true, windowCount: 3,
+                                         work: watch.now(pages: pages, at: now),
+                                         lastOfferAt: nil, snoozeUntil: nil, now: now)
+        }
         let signals = PageSignals(workingChats: 0, lastWorkingAt: now.addingTimeInterval(-150))
-        XCTAssertEqual(signals.anyPageWorking, false)
+        XCTAssertEqual(signals.workingChats, 0)
         XCTAssertEqual(signals.idleSeconds(at: now), 150)
-        XCTAssertTrue(ClaudeUpdateMenu.shouldOffer(ready: true, claudeRunning: true, windowCount: 3,
-                                                   anyPageWorking: signals.anyPageWorking,
-                                                   idleSeconds: signals.idleSeconds(at: now),
-                                                   lastOfferAt: nil, snoozeUntil: nil, now: now))
+        XCTAssertTrue(offer(signals))
         let busy = PageSignals(workingChats: 2, lastWorkingAt: now)
-        XCTAssertFalse(ClaudeUpdateMenu.shouldOffer(ready: true, claudeRunning: true, windowCount: 3,
-                                                    anyPageWorking: busy.anyPageWorking,
-                                                    idleSeconds: busy.idleSeconds(at: now),
-                                                    lastOfferAt: nil, snoozeUntil: nil, now: now))
-        XCTAssertNil(PageSignals().anyPageWorking, "ответа нет — не знаем")
+        XCTAssertFalse(offer(busy))
+        XCTAssertNil(PageSignals().workingChats, "ответа нет — не знаем")
         XCTAssertNil(PageSignals().idleSeconds(at: now))
         // Гейт 2 WF87: работы не видели — тишина с первого тихого круга; меньше 2 мин — не предлагаем.
         let started = PageSignals(workingChats: 0, quietSince: now.addingTimeInterval(-30))
         XCTAssertEqual(started.idleSeconds(at: now), 30)
-        XCTAssertFalse(ClaudeUpdateMenu.shouldOffer(ready: true, claudeRunning: true, windowCount: 3,
-                                                    anyPageWorking: started.anyPageWorking,
-                                                    idleSeconds: started.idleSeconds(at: now),
-                                                    lastOfferAt: nil, snoozeUntil: nil, now: now))
+        XCTAssertFalse(offer(started))
         XCTAssertEqual(PageSignals(lastWorkingAt: now.addingTimeInterval(-10), quietSince: now.addingTimeInterval(-900))
                         .idleSeconds(at: now), 10, "работа была — считаем от неё")
         // «Обновить»: ответ до нажатия не годится.
         let answered = PageSignals(workingChats: 0, workingAt: now)
         XCTAssertEqual(answered.answered(after: now).workingChats, 0)
         XCTAssertNil(answered.answered(after: now.addingTimeInterval(0.1)).workingChats)
-        XCTAssertNil(PageSignals(workingChats: 0).answered(after: now).anyPageWorking)
+        XCTAssertNil(PageSignals(workingChats: 0).answered(after: now).workingChats, "времени ответа нет — не знаем")
 
-        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: false, windowCount: 0, idleSeconds: nil), "Claude не запущен")
-        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: true, windowCount: 0, idleSeconds: nil), "окна Claude закрыты")
-        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: true, windowCount: 2, idleSeconds: 150),
+        func quiet(_ idle: TimeInterval?) -> WorkNow { WorkNow(chats: 0, workflows: 0, terminals: 0, idleSeconds: idle) }
+        // Окон нет — молчание страниц не мешает: Workflow и терминалы ответили «тихо».
+        let closed = WorkNow(workflows: 0, terminals: 0)
+        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: false, windowCount: 0, work: closed), "Claude не запущен")
+        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: true, windowCount: 0, work: closed), "окна Claude закрыты")
+        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: true, windowCount: 2, work: quiet(150)),
                        "2 мин никто не работает")
-        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: true, windowCount: 2, idleSeconds: 60),
+        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: true, windowCount: 2, work: quiet(60)),
                        "никто не работает", "меньше 2 мин наблюдения — минут не называем")
-        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: true, windowCount: 2, idleSeconds: nil),
+        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: true, windowCount: 2, work: quiet(nil)),
                        "никто не работает")
-        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: true, windowCount: 2, idleSeconds: 600),
+        XCTAssertEqual(PimpPanelText.offerReason(claudeRunning: true, windowCount: 2, work: quiet(600)),
                        "10 мин никто не работает")
 
-        XCTAssertEqual(PimpPanelText.confirmQuestion(workingChats: 2), "Идёт работа в 2 чатах — обновить всё равно?")
-        XCTAssertEqual(PimpPanelText.confirmQuestion(workingChats: nil),
+        XCTAssertEqual(PimpPanelText.confirmQuestion(work: WorkNow(chats: 2, workflows: 0, terminals: 0)),
+                       "Идёт работа в 2 чатах — Claude закроется, работа может сброситься. Обновить всё равно?")
+        XCTAssertEqual(PimpPanelText.confirmQuestion(work: WorkNow()),
                        "Claude закроется вместе с окнами — обновить сейчас?")
     }
 

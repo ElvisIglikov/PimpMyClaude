@@ -4,9 +4,7 @@ import XCTest
 /// WF216 (#9381): Рик — житель Пимпа. Комплект из ресурсов ложится в `<projectsRoot>/Rick` только там, где папки
 /// нет; чужая папка, заданный `mainProject` и сбой копирования ничего на диске не меняют. Всё — на временных каталогах.
 final class RickKitWF216Tests: XCTestCase {
-    private static let kit = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("resources/rick-kit", isDirectory: true)
+    private static let kit = Repo.root.appendingPathComponent("resources/rick-kit", isDirectory: true)
     private let fm = FileManager.default
 
     /// Песочница: `projects` — корень проектов (ещё не создан), `claude.json` — рядом.
